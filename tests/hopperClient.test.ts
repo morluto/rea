@@ -51,7 +51,7 @@ const startClient = async () => {
   clients.push(client);
   await expect(client.start()).resolves.toEqual({
     ok: true,
-    value: { name: "betterBinaryMCP Hopper bridge", version: "1.0.0" },
+    value: { name: "REA Hopper bridge", version: "1.0.0" },
   });
   return client;
 };

@@ -41,8 +41,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   ): Promise<Result<BridgeLaunch, HopperStartError>> {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
     const source = [
-      `BETTER_BINARY_SOCKET = ${JSON.stringify(session.socketPath)}`,
-      `BETTER_BINARY_TOKEN = ${JSON.stringify(session.token)}`,
+      `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
+      `REA_TOKEN = ${JSON.stringify(session.token)}`,
       `exec(compile(open(${JSON.stringify(this.options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(this.options.bridgeScriptPath)}, 'exec'))`,
       "",
     ].join("\n");

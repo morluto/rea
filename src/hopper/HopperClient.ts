@@ -341,7 +341,7 @@ const parseServerInfo = (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    value.name === "betterBinaryMCP Hopper bridge" &&
+    value.name === "REA Hopper bridge" &&
     typeof value.version === "string"
   ) {
     return ok({ name: value.name, version: value.version });

@@ -180,7 +180,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
-/** All 8 reverse-engineering tools implemented by betterBinaryMCP. */
+/** All 8 reverse-engineering tools implemented by REA. */
 export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
     "swift_classes",

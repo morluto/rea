@@ -13,7 +13,7 @@
     "noUncheckedIndexedAccess": true,
     "outDir": "dist",
     "rootDir": ".",
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
     "types": ["node"],

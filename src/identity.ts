@@ -1,10 +1,10 @@
-/** Provisional product identifiers kept together for release-time renaming. */
+/** Public REA identifiers kept together for consistent packaging and setup. */
 export const PRODUCT_IDENTITY = {
-  displayName: "Better Binary",
-  packageName: "better-binary-mcp",
-  cliBinary: "better-binary",
-  mcpBinary: "better-binary-mcp",
-  mcpServerKey: "better-binary",
-  skillName: "better-binary-analysis",
-  configFileName: "better-binary.json",
+  displayName: "REA",
+  packageName: "@morluto/rea",
+  cliBinary: "rea",
+  mcpCommand: "npx -y @morluto/rea mcp",
+  mcpServerKey: "rea",
+  skillName: "rea-analysis",
+  configFileName: "rea.json",
 } as const;

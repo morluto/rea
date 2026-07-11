@@ -1,11 +1,10 @@
 {
-  "name": "better-binary-mcp",
+  "name": "@morluto/rea",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "better-binary": "./scripts/better-binary.mjs",
-    "better-binary-mcp": "./dist/main.js"
+    "rea": "./scripts/rea.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -13,7 +12,7 @@
   "files": [
     "dist",
     "bridge",
-    "scripts/better-binary.mjs",
+    "scripts/rea.mjs",
     "skills",
     "README.md",
     "LICENSE"
@@ -31,7 +30,8 @@
     "typecheck": "tsc --noEmit",
     "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs",
     "verify:package": "npm run build && node scripts/verify-package.mjs",
-    "config:print": "node scripts/print-mcp-config.mjs"
+    "config:print": "node scripts/print-mcp-config.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0-beta.3",

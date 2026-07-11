@@ -115,8 +115,7 @@ export const runSetup = async (
     ...(doctor.healthy
       ? {}
       : {
-          remediation:
-            "Run better-binary doctor and apply each reported remediation.",
+          remediation: "Run rea doctor and apply each reported remediation.",
         }),
   };
 };
@@ -186,7 +185,10 @@ export const configureJsonClient = async (
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
   const servers = objectValue(document.mcpServers);
-  const desired = { command: PRODUCT_IDENTITY.mcpBinary };
+  const desired = {
+    command: "npx",
+    args: ["-y", PRODUCT_IDENTITY.packageName, "mcp"],
+  };
   if (
     JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
     JSON.stringify(desired)
@@ -194,7 +196,7 @@ export const configureJsonClient = async (
     return { status: "unchanged" };
   let backupPath: string | undefined;
   if (original !== undefined) {
-    backupPath = `${client.configPath}.better-binary.backup`;
+    backupPath = `${client.configPath}.rea.backup`;
     try {
       await copyFile(client.configPath, backupPath);
     } catch {
@@ -206,7 +208,7 @@ export const configureJsonClient = async (
     [PRODUCT_IDENTITY.mcpServerKey]: desired,
   };
   const encoded = `${JSON.stringify(document, null, 2)}\n`;
-  const temporary = `${client.configPath}.better-binary.tmp`;
+  const temporary = `${client.configPath}.rea.tmp`;
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(temporary, encoded, { encoding: "utf8", mode: 0o600 });
@@ -243,7 +245,7 @@ const installCanonicalSkill = async (
     PRODUCT_IDENTITY.skillName,
     "SKILL.md",
   );
-  const content = `---\nname: ${PRODUCT_IDENTITY.skillName}\ndescription: Analyze binaries with Better Binary and Hopper.\n---\n\nOpen a target with open_binary, begin with binary_overview, and close it when finished.\n`;
+  const content = `---\nname: ${PRODUCT_IDENTITY.skillName}\ndescription: Analyze binaries with REA and Hopper.\n---\n\nOpen a target with open_binary, begin with binary_overview, and close it when finished.\n`;
   try {
     if (
       (await readFile(destination, "utf8").catch(() => undefined)) === content

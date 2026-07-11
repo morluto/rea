@@ -119,7 +119,7 @@ def _assembly(procedure):
 def _dispatch(method, params):
     global _selected_document
     if method == "health":
-        return {"name": "betterBinaryMCP Hopper bridge", "version": "1.0.0"}
+        return {"name": "REA Hopper bridge", "version": "1.0.0"}
     if method == "shutdown":
         return {"shutdown": True}
     if method == "list_documents":
@@ -239,7 +239,7 @@ def _serve_connection(connection):
             if set(request) != {"id", "token", "method", "params"}:
                 raise ValueError("Invalid bridge request shape")
             request_id = request["id"]
-            if not isinstance(request["token"], str) or not hmac.compare_digest(request["token"], BETTER_BINARY_TOKEN):
+            if not isinstance(request["token"], str) or not hmac.compare_digest(request["token"], REA_TOKEN):
                 raise PermissionError("Invalid bridge capability")
             result = _dispatch(request["method"], request["params"])
             should_stop = request["method"] == "shutdown"
@@ -255,19 +255,19 @@ def _serve_connection(connection):
 
 
 def _run():
-    if os.path.exists(BETTER_BINARY_SOCKET):
-        os.unlink(BETTER_BINARY_SOCKET)
+    if os.path.exists(REA_SOCKET):
+        os.unlink(REA_SOCKET)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(BETTER_BINARY_SOCKET)
-    os.chmod(BETTER_BINARY_SOCKET, 0o600)
+    server.bind(REA_SOCKET)
+    os.chmod(REA_SOCKET, 0o600)
     server.listen(1)
     try:
         connection, _ = server.accept()
         _serve_connection(connection)
     finally:
         server.close()
-        if os.path.exists(BETTER_BINARY_SOCKET):
-            os.unlink(BETTER_BINARY_SOCKET)
+        if os.path.exists(REA_SOCKET):
+            os.unlink(REA_SOCKET)
 
 
 # Hopper's public objects are bound to its dedicated Python execution thread.
