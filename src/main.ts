@@ -2,6 +2,7 @@
 
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 
 import {
   serveStdio,
@@ -9,6 +10,7 @@ import {
 } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config.js";
+import { BinarySession } from "./application/BinarySession.js";
 import { HopperApplicationLauncher } from "./hopper/BridgeLauncher.js";
 import { HopperClient } from "./hopper/HopperClient.js";
 import { createServer } from "./server/createServer.js";
@@ -24,24 +26,37 @@ export const run = async (): Promise<number> => {
   const bridgeScriptPath = fileURLToPath(
     new URL("../bridge/hopper_bridge.py", import.meta.url),
   );
-  const hopper = new HopperClient({
-    launcher: new HopperApplicationLauncher({
-      launcherPath: config.value.hopperLauncherPath,
-      targetPath: config.value.hopperTargetPath,
-      targetKind: config.value.hopperTargetKind,
-      loaderArgs: config.value.hopperLoaderArgs,
-      bridgeScriptPath,
-    }),
-  });
+  const session = new BinarySession(
+    (target) =>
+      new HopperClient({
+        launcher: new HopperApplicationLauncher({
+          launcherPath: config.value.hopperLauncherPath,
+          targetPath: target.path,
+          targetKind: target.kind,
+          loaderArgs:
+            config.value.hopperLoaderArgs.length > 0
+              ? config.value.hopperLoaderArgs
+              : target.loaderArgs,
+          bridgeScriptPath,
+        }),
+      }),
+  );
+  if (config.value.hopperTargetPath !== undefined) {
+    const opened = await session.open(config.value.hopperTargetPath);
+    if (!opened.ok) {
+      process.stderr.write(`${opened.error._tag}: ${opened.error.message}\n`);
+      return 1;
+    }
+  }
   let handle: StdioServerHandle;
   try {
-    handle = serveStdio(() => createServer(hopper), {
+    handle = serveStdio(() => createServer(session, session), {
       onerror: () => {
         process.stderr.write("MCP stdio transport error\n");
       },
     });
   } catch {
-    await hopper.close();
+    await session.close();
     process.stderr.write("Failed to start MCP stdio transport\n");
     return 1;
   }
@@ -50,7 +65,7 @@ export const run = async (): Promise<number> => {
   const shutdown = (): Promise<void> => {
     shutdownPromise ??= (async () => {
       await handle.close();
-      await hopper.close();
+      await session.close();
     })();
     return shutdownPromise;
   };
@@ -71,7 +86,7 @@ export const run = async (): Promise<number> => {
 const entryPath = process.argv[1];
 if (
   entryPath !== undefined &&
-  pathToFileURL(entryPath).href === import.meta.url
+  pathToFileURL(realpathSync(entryPath)).href === import.meta.url
 ) {
   run()
     .then((exitCode) => {

@@ -71,3 +71,25 @@ export class HopperStartError extends HopperError {
 export class ConfigurationError extends HopperError {
   readonly _tag = "ConfigurationError";
 }
+
+/** No binary session exists for an analysis request. */
+export class NoBinaryOpenError extends HopperError {
+  readonly _tag = "NoBinaryOpenError";
+  constructor() {
+    super(
+      "No binary is open. Call open_binary with a readable local path first.",
+    );
+  }
+}
+
+/** A supplied target path could not be safely opened as a supported binary. */
+export class BinaryTargetError extends HopperError {
+  readonly _tag = "BinaryTargetError";
+  constructor(
+    readonly path: string,
+    reason: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Cannot open binary: ${reason}: ${path}`, options);
+  }
+}

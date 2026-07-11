@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -21,15 +21,27 @@ const textValue = (result) => {
 
 const jsonValue = (result) => JSON.parse(textValue(result));
 
-if (!process.env.HOPPER_TARGET_PATH) {
-  throw new Error("HOPPER_TARGET_PATH is required");
-}
+const targetPath = process.env.HOPPER_TARGET_PATH;
+const secondTargetPath = process.env.HOPPER_SECOND_TARGET_PATH;
+if (!targetPath || !secondTargetPath)
+  throw new Error(
+    "HOPPER_TARGET_PATH and HOPPER_SECOND_TARGET_PATH are required and must name distinct binaries",
+  );
+const [targetA, targetB] = await Promise.all([
+  realpath(targetPath),
+  realpath(secondTargetPath),
+]);
+if (targetA === targetB)
+  throw new Error("Real-Hopper verification requires two distinct targets");
+const serverEnvironment = { ...process.env };
+delete serverEnvironment.HOPPER_TARGET_PATH;
+delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
 
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
   cwd: process.cwd(),
-  env: process.env,
+  env: serverEnvironment,
   stderr: "pipe",
 });
 let stderrBytes = 0;
@@ -45,10 +57,21 @@ try {
   const expectedNames = TOOL_CONTRACTS.map(({ name }) => name).sort();
   const actualNames = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    throw new Error("The real server did not expose the intended 39 tools");
+    throw new Error("The real server did not expose the intended 42 tools");
   }
 
   const options = { timeout };
+  const initialSession = await client.callTool(
+    { name: "binary_session", arguments: {} },
+    options,
+  );
+  if (jsonValue(initialSession).open !== false)
+    throw new Error("The verifier did not start without a target");
+  const opened = await client.callTool(
+    { name: "open_binary", arguments: { path: targetA } },
+    options,
+  );
+  if (opened.isError === true) throw new Error(textValue(opened));
   const documents = await client.callTool(
     { name: "list_documents", arguments: {} },
     options,
@@ -74,6 +97,22 @@ try {
     { name: "batch_decompile", arguments: { addresses: [firstAddress] } },
     options,
   );
+  const switched = await client.callTool(
+    { name: "open_binary", arguments: { path: targetB } },
+    options,
+  );
+  if (switched.isError === true) throw new Error(textValue(switched));
+  const secondSession = jsonValue(
+    await client.callTool({ name: "binary_session", arguments: {} }, options),
+  );
+  if (secondSession.path !== targetB)
+    throw new Error("The real session did not switch to target B");
+  const secondOverview = await client.callTool(
+    { name: "binary_overview", arguments: {} },
+    options,
+  );
+  if (secondOverview.isError === true)
+    throw new Error(textValue(secondOverview));
 
   const processList = await execFileAsync("ps", ["-ax", "-o", "command="]);
   const bundledMcpRunning = processList.stdout
@@ -88,6 +127,12 @@ try {
     throw new Error("The MCP runtime emitted stderr during verification");
   }
 
+  const closed = await client.callTool(
+    { name: "close_binary", arguments: {} },
+    options,
+  );
+  if (closed.isError === true) throw new Error(textValue(closed));
+
   summary = {
     toolCount: actualNames.length,
     documentCount: jsonValue(documents).length,
@@ -98,6 +143,10 @@ try {
     boundedResultKeys: Object.keys(jsonValue(bounded)).length,
     bundledMcpRunning,
     stderrBytes,
+    dynamicSession: true,
+    targets: [targetA, targetB],
+    switched: true,
+    secondOverview: jsonValue(secondOverview),
   };
 } finally {
   const keepAlive = setInterval(() => undefined, 100);
@@ -130,6 +179,14 @@ if (
     "The TypeScript MCP server remained alive after client close",
   );
 }
-process.stdout.write(
-  `${JSON.stringify({ ...summary, cleanShutdown: true }, null, 2)}\n`,
-);
+if (summary === undefined)
+  throw new Error("Real-Hopper verification did not produce a summary");
+await new Promise((resolve, reject) => {
+  process.stdout.write(
+    `${JSON.stringify({ ...summary, cleanShutdown: true }, null, 2)}\n`,
+    (cause) => {
+      if (cause) reject(cause);
+      else resolve();
+    },
+  );
+});

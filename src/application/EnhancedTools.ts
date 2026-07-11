@@ -131,7 +131,7 @@ export class EnhancedTools {
     const relation = input.direction === "forward" ? "callees" : "callers";
     const tool =
       input.direction === "forward" ? "procedure_callees" : "procedure_callers";
-    const visited = new Set<string>();
+    const discovered = new Set([input.address]);
     const queue: Array<{ address: string; depth: number }> = [
       { address: input.address, depth: 0 },
     ];
@@ -140,14 +140,9 @@ export class EnhancedTools {
 
     while (queueIndex < queue.length) {
       const current = queue[queueIndex++];
-      if (
-        current === undefined ||
-        visited.has(current.address) ||
-        current.depth >= input.depth
-      ) {
+      if (current === undefined || current.depth >= input.depth) {
         continue;
       }
-      visited.add(current.address);
       const level = String(current.depth);
       graph[level] ??= [];
 
@@ -177,8 +172,10 @@ export class EnhancedTools {
       });
       if (current.depth + 1 < input.depth) {
         for (const address of related.value) {
-          if (!visited.has(address))
+          if (!discovered.has(address)) {
+            discovered.add(address);
             queue.push({ address, depth: current.depth + 1 });
+          }
         }
       }
     }

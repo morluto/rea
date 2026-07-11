@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 
 describe("runtime configuration", () => {
-  it("requires a target and defaults to Hopper's documented launcher", () => {
-    expect(parseConfig({}).ok).toBe(false);
+  it("allows target-free startup and defaults to Hopper's documented launcher", () => {
+    const empty = parseConfig({});
+    expect(empty.ok).toBe(true);
+    if (empty.ok) expect(empty.value.hopperTargetPath).toBeUndefined();
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {

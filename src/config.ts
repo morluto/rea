@@ -8,14 +8,14 @@ const DEFAULT_HOPPER_LAUNCHER_PATH =
 
 export interface AppConfig {
   readonly hopperLauncherPath: string;
-  readonly hopperTargetPath: string;
+  readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];
 }
 
 const environmentSchema = z.object({
   HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
-  HOPPER_TARGET_PATH: z.string().min(1),
+  HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
 });
@@ -27,7 +27,7 @@ export const parseConfig = (
   const parsedEnvironment = environmentSchema.safeParse(environment);
   if (!parsedEnvironment.success) {
     return err(
-      new ConfigurationError("HOPPER_TARGET_PATH is required", {
+      new ConfigurationError("Invalid Hopper environment configuration", {
         cause: parsedEnvironment.error,
       }),
     );

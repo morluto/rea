@@ -3,15 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   ENHANCED_TOOL_CONTRACTS,
   OFFICIAL_TOOL_CONTRACTS,
+  SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
 
 describe("tool contract inventory", () => {
-  it("preserves the complete 31 plus 8 tool surface", () => {
+  it("preserves the original 39 contracts and adds three session tools", () => {
     expect(OFFICIAL_TOOL_CONTRACTS).toHaveLength(31);
     expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(8);
-    expect(TOOL_CONTRACTS).toHaveLength(39);
-    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(39);
+    expect(SESSION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
+      "open_binary",
+      "close_binary",
+      "binary_session",
+    ]);
+    expect(TOOL_CONTRACTS).toHaveLength(42);
+    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(42);
   });
 
   it("retains documented enhanced-tool limits at the input boundary", () => {

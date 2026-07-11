@@ -132,19 +132,13 @@ def _dispatch(method, params):
         return _selected_document
 
     document = _document(params.get("document"))
-    address = _address(document, params.get("address")) if method not in (
-        "list_segments", "list_procedures", "list_strings", "list_names",
-        "search_procedures", "search_strings", "procedure_address",
-        "procedure_info", "procedure_assembly", "procedure_pseudo_code",
-        "procedure_callers", "procedure_callees", "set_addresses_names",
-        "list_bookmarks", "current_address", "current_procedure"
-    ) else None
 
     if method == "current_address":
         return _hex(document.getCurrentAddress())
     if method == "current_procedure":
         return _procedure_name(_procedure(document))
     if method == "goto_address":
+        address = _address(document, params.get("address"))
         document.moveCursorAtAddress(address)
         return _hex(address)
     if method in ("address_name", "comment", "inline_comment", "xrefs"):
@@ -208,10 +202,12 @@ def _dispatch(method, params):
             length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
             return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": procedure.getLocalVariableList()}
     if method == "set_address_name":
+        address = _address(document, params.get("address"))
         return document.setNameAtAddress(address, params["name"])
     if method == "set_addresses_names":
         return {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
     if method in ("set_comment", "set_inline_comment"):
+        address = _address(document, params.get("address"))
         segment = _segment(document, address)
         setter = segment.setCommentAtAddress if method == "set_comment" else segment.setInlineCommentAtAddress
         getter = segment.getCommentAtAddress if method == "set_comment" else segment.getInlineCommentAtAddress
@@ -220,9 +216,11 @@ def _dispatch(method, params):
     if method == "list_bookmarks":
         return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
     if method == "set_bookmark":
+        address = _address(document, params.get("address"))
         document.setBookmarkAtAddress(address, params.get("name"))
         return document.hasBookmarkAtAddress(address)
     if method == "unset_bookmark":
+        address = _address(document, params.get("address"))
         document.removeBookmarkAtAddress(address)
         return not document.hasBookmarkAtAddress(address)
     raise ValueError("Unknown bridge method")
