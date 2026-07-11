@@ -6,6 +6,7 @@ __pycache__/
 # Distribution
 dist/
 build/
+node_modules/
 *.egg-info/
 *.egg
 
@@ -25,6 +26,7 @@ env/
 .pytest_cache/
 htmlcov/
 .coverage
+coverage/
 
 # OS
 .DS_Store

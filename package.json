@@ -1,0 +1,39 @@
+{
+  "name": "better-binary-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "better-binary-mcp": "./dist/main.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint 'src/**/*.ts' 'tests/**/*.ts' vitest.config.ts",
+    "start": "node dist/main.js",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0-beta.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@modelcontextprotocol/client": "2.0.0-beta.3",
+    "@types/node": "24.10.1",
+    "eslint": "9.39.2",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.48.1",
+    "vitest": "4.1.10"
+  }
+}
