@@ -1,114 +1,104 @@
 # betterBinaryMCP
 
-An enhanced MCP (Model Context Protocol) server for [Hopper Disassembler](https://www.hopperapp.com/) that wraps the official Hopper 6 MCP server and adds reverse engineering–specific analysis tools.
+A TypeScript MCP server for [Hopper Disassembler](https://www.hopperapp.com/). It preserves 31 familiar Hopper operations and adds 8 reverse-engineering workflows for Swift, Objective-C, decompilation, call graphs, cross-references, and binary summaries.
 
-**No Python injection or plugins needed** — just Hopper open with a binary.
+The server uses the modular `@modelcontextprotocol/server@2.0.0-beta.3` SDK.
 
 ## Architecture
 
+```text
+MCP client ← stdio → TypeScript MCP server ← Unix socket → owned Python bridge → Hopper.app
 ```
-MCP Client ←STDIO→ betterBinaryMCP ←STDIO→ Official HopperMCPServer ←XPC→ Hopper.app
-```
 
-- Wraps the official `HopperMCPServer` binary as a subprocess
-- Proxies all 31 official tools unchanged
-- Adds 8 RE-specific tools built on top of official operations
-
-## Tools
-
-### 31 Official Tools (proxied)
-
-| Tool | Description |
-|------|-------------|
-| `address_name` | Get/set name (label) at an address |
-| `comment` / `inline_comment` | Get/set comments |
-| `current_address` / `current_procedure` / `current_document` | Cursor state |
-| `goto_address` / `next_address` / `prev_address` | Navigation |
-| `list_segments` / `list_procedures` / `list_strings` / `list_names` / `list_documents` / `list_bookmarks` | Listing |
-| `search_procedures` / `search_strings` | Regex search |
-| `procedure_pseudo_code` / `procedure_assembly` | Decompilation |
-| `procedure_callees` / `procedure_callers` | Call relationships |
-| `procedure_info` / `procedure_address` | Procedure metadata |
-| `set_address_name` / `set_addresses_names` | Rename labels |
-| `set_comment` / `set_inline_comment` | Write comments |
-| `set_bookmark` / `unset_bookmark` | Bookmarks |
-| `set_current_document` | Switch active document |
-| `xrefs` | Cross-references |
-
-### 8 RE-Specific Tools (added)
-
-| Tool | Description |
-|------|-------------|
-| `binary_overview()` | Segment layout, procedure/string counts, document info |
-| `swift_classes(pattern)` | Swift class hierarchy from mangled `_TtC` names |
-| `get_objc_classes(pattern)` | Objective-C class names from labels |
-| `get_objc_protocols()` | Objective-C protocol names from labels |
-| `batch_decompile(addresses)` | Decompile up to 20 procedures at once |
-| `get_call_graph(address, direction, depth)` | Recursive call graph traversal (forward/backward) |
-| `analyze_swift_types()` | Categorize all Swift mangled names by module/type/method |
-| `find_xrefs_to_name(name)` | Find references by name lookup |
+`src/main.ts` owns configuration and lifetimes. `src/hopper/` lazily launches Hopper on the first Hopper-dependent tool and correlates bounded bridge messages, so lengthy analysis does not block the MCP handshake. `bridge/hopper_bridge.py` runs inside Hopper and calls its public Python API. Hopper's bundled MCP server is not executed or required.
 
 ## Requirements
 
-- **Hopper Disassembler** v6+ (ships the official MCP server)
-- **Python** 3.10+
-- **Hopper open** with a binary loaded and analyzed
+- Node.js 20 or newer
+- Hopper Disassembler 6+ on macOS
+- A binary or Hopper database to analyze
 
-## Installation
+Accessibility permission is **not** required. Specify loader arguments for archives that would otherwise show an architecture chooser.
+
+## Install and Build
 
 ```bash
-pip install fastmcp
+npm ci
+npm run build
 ```
 
-## Usage
+## MCP Configuration
 
-### As an MCP Server (recommended)
-
-Add to your MCP client configuration (Claude Desktop, Cursor, etc.):
+Build the project, then configure your MCP client with an absolute path:
 
 ```json
 {
-    "mcpServers": {
-        "betterBinaryMCP": {
-            "command": "python3",
-            "args": ["/path/to/betterBinaryMCP/server.py"]
-        }
+  "mcpServers": {
+    "betterBinaryMCP": {
+      "command": "node",
+      "args": ["/absolute/path/to/betterBinaryMCP/dist/main.js"],
+      "env": {
+        "HOPPER_TARGET_PATH": "/absolute/path/to/binary"
+      }
     }
+  }
 }
 ```
 
-### Command Line
+Run it directly with `npm start` after building. Stdout is reserved for MCP protocol messages; diagnostics use stderr.
 
-```bash
-python3 server.py
+The Hopper launcher defaults to:
+
+```text
+/Applications/Hopper Disassembler.app/Contents/MacOS/hopper
 ```
 
-### Test Connection
+Override it with `HOPPER_LAUNCHER_PATH`. Set `HOPPER_TARGET_KIND=database` for `.hop` files. `HOPPER_LOADER_ARGS_JSON` accepts documented launcher arguments before the target; for an Apple FAT binary, for example:
 
-```bash
-python3 hopper_client.py
+```json
+["-l", "FAT", "--aarch64", "-l", "Mach-O"]
 ```
 
-## Testing
+## Enhanced Tools
+
+| Tool                  | Purpose                                                             |
+| --------------------- | ------------------------------------------------------------------- |
+| `binary_overview`     | Summarize documents, segments, procedures, and strings              |
+| `swift_classes`       | Find Swift `_TtC` class symbols                                     |
+| `get_objc_classes`    | Find Objective-C class labels                                       |
+| `get_objc_protocols`  | Find Objective-C and Swift protocol labels                          |
+| `batch_decompile`     | Decompile up to 20 procedures concurrently                          |
+| `get_call_graph`      | Traverse callers or callees to depth 1–5                            |
+| `analyze_swift_types` | Categorize Swift classes, structs, enums, protocols, and extensions |
+| `find_xrefs_to_name`  | Resolve a name and retrieve cross-references                        |
+
+## Development
 
 ```bash
-pip install pytest pytest-asyncio
-python -m pytest tests/ -v
+npm run typecheck
+npm run lint
+npm run format:check
+npm test
+npm run check
 ```
 
-## How It Works
+`npm test` builds first. Tests cover all 39 contracts, every handler through a beta.3 MCP client, bridge failures, concurrency, strict boundary parsing, and the compiled stdio runtime.
 
-1. On startup, the server launches the official `HopperMCPServer` binary as a subprocess
-2. Communicates via NDJSON (newline-delimited JSON) over STDIO — no HTTP, no Content-Length framing
-3. Proxied tools forward calls directly to the official server
-4. RE tools compose multiple official calls (e.g., `swift_classes` calls `list_procedures` and parses `_TtC` mangled names)
+Run the real-Hopper verifier with a representative binary and any required loader options:
 
-## Limitations
+```bash
+HOPPER_TARGET_PATH=/path/to/binary \
+HOPPER_LOADER_ARGS_JSON='["-l","Mach-O","--aarch64"]' \
+npm run verify:hopper
+```
 
-- Requires Hopper 6+ (the official MCP server binary must exist)
-- The official server connects to Hopper via XPC — Hopper must be running with a document open
-- `batch_decompile` is limited to 20 procedures per call
-- `get_call_graph` is limited to depth 5
+It asserts the exact 39-tool inventory, document access, `binary_overview`, segment reads, a one-procedure bounded decompile, clean protocol output, and absence of Hopper's bundled MCP process.
+
+## Troubleshooting
+
+If startup times out, verify the target path and reproduce the generated loader chain with Hopper's `hopper` launcher. A visible loader or save dialog prevents the post-analysis bridge from starting; supply explicit loader/CPU options or close the stale dialog. Granting Accessibility access will not fix this.
+
+`batch_decompile` accepts at most 20 addresses, and `get_call_graph` accepts depths from 1 through 5.
 
 ## License
 
