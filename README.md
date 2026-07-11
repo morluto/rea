@@ -1,21 +1,39 @@
 # betterBinaryMCP
 
-A TypeScript MCP server for [Hopper Disassembler](https://www.hopperapp.com/). It preserves 31 familiar Hopper operations and adds 8 reverse-engineering workflows for Swift, Objective-C, decompilation, call graphs, cross-references, and binary summaries.
+A TypeScript MCP server for [Hopper Disassembler](https://www.hopperapp.com/). It preserves 31 Hopper operations and adds 8 reverse-engineering workflows for Swift, Objective-C, decompilation, call graphs, cross-references, and binary summaries.
+
+## Prerequisites
+
+Check these before you start:
+
+- **Node.js 20+** (`node --version`)
+- **Hopper Disassembler 6+** on macOS, at `/Applications/Hopper Disassembler.app/`
+- **A binary to analyze** (Mach-O executable, `.dylib`, `.hop` database, etc.)
+
+Accessibility permission is not required.
 
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd betterBinaryMCP
+git clone https://github.com/morluto/betterBinaryMCP.git && cd betterBinaryMCP
 npm ci && npm run build
 ```
 
-Generate a ready-to-paste MCP config with absolute paths filled in:
+Generate an MCP config with absolute paths filled in:
 
 ```bash
 npm run config:print -- /path/to/your/binary
 ```
 
-Paste the output into your MCP client config (Claude Desktop, Cursor, etc.) and restart the client. That's it — the 39 tools are now available.
+Paste the output into your client's MCP config file:
+
+| Client            | Config path                                                               |
+| ----------------- | ------------------------------------------------------------------------- |
+| Claude Desktop    | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
+| Cursor            | `.cursor/mcp.json` in your project root                                   |
+| Other MCP clients | Check the client's docs for MCP server config                             |
+
+Restart the client. The 39 tools appear in the tool list.
 
 ```bash
 # For a .hop database:
@@ -25,24 +43,24 @@ npm run config:print -- /path/to/file.hop --kind database
 npm run config:print -- /path/to/binary --loader-args '["-l","Mach-O","--aarch64"]'
 ```
 
+### What happens on first tool call
+
+The server does not launch Hopper at startup. Hopper launches lazily on the first tool call that needs it, which means the first call can take 10-30 seconds while Hopper opens and analyzes the binary. Subsequent calls are fast. If the first call times out, see [Troubleshooting](#troubleshooting).
+
+### Try it
+
+Once connected, call `binary_overview` with no arguments. It returns segment layout, procedure count, and string count. If you get JSON back, the server is working.
+
 ### Set up with your agent
 
 Paste this prompt into Claude, Cursor, or any MCP-capable agent to have it do the setup for you:
 
 > I want to connect betterBinaryMCP (a Hopper Disassembler MCP server) to this client.
 >
-> 1. Clone the repo and run `npm ci && npm run build`.
+> 1. Clone `https://github.com/morluto/betterBinaryMCP.git` and run `npm ci && npm run build`.
 > 2. Run `npm run config:print -- /path/to/my/binary` to generate the MCP server config.
 > 3. Paste the output into this client's MCP config and restart.
-> 4. Verify the 39 tools are listed.
-
-## Prerequisites
-
-- **Node.js 20+** — `node --version`
-- **Hopper Disassembler 6+** on macOS — ships at `/Applications/Hopper Disassembler.app/`
-- **A binary or Hopper database** to analyze
-
-Accessibility permission is **not** required. Specify loader arguments for archives that would otherwise show an architecture chooser.
+> 4. Call `binary_overview` with no arguments to verify the server is working.
 
 ## Architecture
 
@@ -157,4 +175,4 @@ If startup times out, verify the target path and reproduce the generated loader 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
