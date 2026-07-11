@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { pathToFileURL } from "node:url";
-import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 
 import {
@@ -10,9 +9,7 @@ import {
 } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config.js";
-import { BinarySession } from "./application/BinarySession.js";
-import { HopperApplicationLauncher } from "./hopper/BridgeLauncher.js";
-import { HopperClient } from "./hopper/HopperClient.js";
+import { createBinarySession } from "./application/runtime.js";
 import { createServer } from "./server/createServer.js";
 
 /** Start the production stdio server and install owned shutdown handlers. */
@@ -23,27 +20,11 @@ export const run = async (): Promise<number> => {
     return 1;
   }
 
-  const bridgeScriptPath = fileURLToPath(
-    new URL("../bridge/hopper_bridge.py", import.meta.url),
-  );
-  const session = new BinarySession(
-    (target) =>
-      new HopperClient({
-        launcher: new HopperApplicationLauncher({
-          launcherPath: config.value.hopperLauncherPath,
-          targetPath: target.path,
-          targetKind: target.kind,
-          loaderArgs:
-            config.value.hopperLoaderArgs.length > 0
-              ? config.value.hopperLoaderArgs
-              : target.loaderArgs,
-          bridgeScriptPath,
-        }),
-      }),
-  );
+  const session = createBinarySession(config.value);
   if (config.value.hopperTargetPath !== undefined) {
     const opened = await session.open(config.value.hopperTargetPath);
     if (!opened.ok) {
+      await session.close();
       process.stderr.write(`${opened.error._tag}: ${opened.error.message}\n`);
       return 1;
     }
