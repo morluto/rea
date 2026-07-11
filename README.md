@@ -1,177 +1,70 @@
-# betterBinaryMCP
+# Better Binary
 
-A TypeScript MCP server for [Hopper Disassembler](https://www.hopperapp.com/). It preserves 31 Hopper operations and adds 8 reverse-engineering workflows for Swift, Objective-C, decompilation, call graphs, cross-references, and binary summaries.
+Agent-ready Hopper Disassembler tooling: a beta.3 MCP server with 31 official proxies, 8 enhanced reverse-engineering workflows, and 3 binary-session tools.
 
-## Prerequisites
+## Install from this checkout
 
-Check these before you start:
-
-- **Node.js 20+** (`node --version`)
-- **Hopper Disassembler 6+** on macOS, at `/Applications/Hopper Disassembler.app/`
-- **A binary to analyze** (Mach-O executable, `.dylib`, `.hop` database, etc.)
-
-Accessibility permission is not required.
-
-## Quick Start
+Requires macOS 12+ and Node.js 22+.
 
 ```bash
-git clone https://github.com/morluto/betterBinaryMCP.git && cd betterBinaryMCP
-npm ci && npm run build
+npm ci
+npm run build
+npm link
+better-binary setup --yes
 ```
 
-Generate an MCP config with absolute paths filled in:
+`setup` is safe to repeat. It checks the host, installs Homebrew when approved and absent, installs Hopper from the official `hopper-disassembler` cask, and finishes with structured diagnostics. It never bundles Hopper or publishes this private package.
+
+Useful onboarding commands:
 
 ```bash
-npm run config:print -- /path/to/your/binary
+better-binary --help
+better-binary --llms
+better-binary doctor --target /path/to/binary
+better-binary skills add
+better-binary mcp add
 ```
 
-Paste the output into your client's MCP config file:
+## MCP workflow
 
-| Client            | Config path                                                               |
-| ----------------- | ------------------------------------------------------------------------- |
-| Claude Desktop    | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
-| Cursor            | `.cursor/mcp.json` in your project root                                   |
-| Other MCP clients | Check the client's docs for MCP server config                             |
+Start `better-binary-mcp` with no target. In the connected agent:
 
-Restart the client. The 39 tools appear in the tool list.
+1. Call `open_binary` with any readable local binary or `.hop` path.
+2. Call `binary_overview`, then use decompilation, strings, symbols, and xrefs tools.
+3. Call `open_binary` again to switch targets; a failed switch preserves the current target.
+4. Call `close_binary` when finished. `binary_session` reports current state.
 
-```bash
-# For a .hop database:
-npm run config:print -- /path/to/file.hop --kind database
+Relative target paths resolve against the MCP server's working directory. Mach-O/FAT, ELF, PE, and Hopper databases are detected automatically. FAT loading selects the host-compatible architecture.
 
-# For a FAT binary that needs loader args:
-npm run config:print -- /path/to/binary --loader-args '["-l","Mach-O","--aarch64"]'
-```
+`HOPPER_TARGET_PATH` remains supported for older configurations but is optional. `HOPPER_LAUNCHER_PATH`, `HOPPER_TARGET_KIND`, and `HOPPER_LOADER_ARGS_JSON` retain their existing meanings for legacy startup configuration.
 
-### What happens on first tool call
-
-The server does not launch Hopper at startup. Hopper launches lazily on the first tool call that needs it, which means the first call can take 10-30 seconds while Hopper opens and analyzes the binary. Subsequent calls are fast. If the first call times out, see [Troubleshooting](#troubleshooting).
-
-### Try it
-
-Once connected, call `binary_overview` with no arguments. It returns segment layout, procedure count, and string count. If you get JSON back, the server is working.
-
-### Set up with your agent
-
-Paste this prompt into Claude, Cursor, or any MCP-capable agent to have it do the setup for you:
-
-> I want to connect betterBinaryMCP (a Hopper Disassembler MCP server) to this client.
->
-> 1. Clone `https://github.com/morluto/betterBinaryMCP.git` and run `npm ci && npm run build`.
-> 2. Run `npm run config:print -- /path/to/my/binary` to generate the MCP server config.
-> 3. Paste the output into this client's MCP config and restart.
-> 4. Call `binary_overview` with no arguments to verify the server is working.
-
-## Architecture
-
-```text
-MCP client ← stdio → TypeScript MCP server ← Unix socket → owned Python bridge → Hopper.app
-```
-
-The codebase is a layered ESM TypeScript application. Dependencies flow inward: `domain` ← `contracts` ← `hopper` ← `application` ← `server` ← `main`.
-
-- `src/main.ts` is the composition root: it parses config, wires the Hopper client, starts the stdio MCP transport, and owns process-lifetime shutdown.
-- `src/hopper/` lazily launches Hopper on the first Hopper-dependent tool and correlates bounded bridge messages, so lengthy analysis does not block the MCP handshake.
-- `bridge/hopper_bridge.py` runs inside Hopper and calls its public Python API. Hopper's bundled MCP server is not executed or required.
-- `src/application/` composes official operations into the 8 enhanced tools.
-- `src/domain/` holds pure parsers and the tagged error algebra; `src/contracts/` declares the caller-visible tool schemas.
-
-## Manual MCP Configuration
-
-If you prefer to write the config by hand, build the project and use absolute paths:
+Manual target-free MCP configuration:
 
 ```json
 {
   "mcpServers": {
-    "betterBinaryMCP": {
-      "command": "node",
-      "args": ["/absolute/path/to/betterBinaryMCP/dist/main.js"],
-      "env": {
-        "HOPPER_TARGET_PATH": "/absolute/path/to/binary"
-      }
+    "better-binary": {
+      "command": "better-binary-mcp"
     }
   }
 }
 ```
 
-Stdout is reserved for MCP protocol messages; diagnostics use stderr.
+The first `open_binary` can take time while Hopper analyzes the file. Analysis calls made without an open target return an actionable `NoBinaryOpenError`.
 
-### Environment Variables
-
-| Variable                  | Required | Default                                                       | Description                                                            |
-| ------------------------- | -------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `HOPPER_TARGET_PATH`      | yes      | —                                                             | Absolute path to the binary or `.hop` database to analyze.             |
-| `HOPPER_LAUNCHER_PATH`    | no       | `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` | Override the Hopper executable path.                                   |
-| `HOPPER_TARGET_KIND`      | no       | `executable`                                                  | `executable` or `database` (for `.hop` files).                         |
-| `HOPPER_LOADER_ARGS_JSON` | no       | `[]`                                                          | JSON array of strings passed to the Hopper launcher before the target. |
-
-For an Apple FAT binary, for example:
-
-```json
-["-l", "FAT", "--aarch64", "-l", "Mach-O"]
-```
-
-## Tools
-
-### 31 Official Tools (proxied)
-
-| Tool                                                                                                      | Description                        |
-| --------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `address_name`                                                                                            | Get the name (label) at an address |
-| `comment` / `inline_comment`                                                                              | Get comments at an address         |
-| `current_address` / `current_procedure` / `current_document`                                              | Cursor state                       |
-| `goto_address` / `next_address` / `prev_address`                                                          | Navigation                         |
-| `list_segments` / `list_procedures` / `list_strings` / `list_names` / `list_documents` / `list_bookmarks` | Listing                            |
-| `search_procedures` / `search_strings`                                                                    | Regex search                       |
-| `procedure_pseudo_code` / `procedure_assembly`                                                            | Decompilation                      |
-| `procedure_callees` / `procedure_callers`                                                                 | Call relationships                 |
-| `procedure_info` / `procedure_address`                                                                    | Procedure metadata                 |
-| `set_address_name` / `set_addresses_names`                                                                | Rename labels                      |
-| `set_comment` / `set_inline_comment`                                                                      | Write comments                     |
-| `set_bookmark` / `unset_bookmark`                                                                         | Bookmarks                          |
-| `set_current_document`                                                                                    | Switch active document             |
-| `xrefs`                                                                                                   | Cross-references                   |
-
-### 8 Enhanced Tools
-
-| Tool                  | Parameters                                                            | Purpose                                                             |
-| --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `binary_overview`     | —                                                                     | Summarize documents, segments, procedures, and strings              |
-| `swift_classes`       | `pattern?: string`                                                    | Find Swift `_TtC` class symbols                                     |
-| `get_objc_classes`    | `pattern?: string`                                                    | Find Objective-C class labels                                       |
-| `get_objc_protocols`  | —                                                                     | Find Objective-C and Swift protocol labels                          |
-| `batch_decompile`     | `addresses: string[]` (max 20)                                        | Decompile up to 20 procedures concurrently                          |
-| `get_call_graph`      | `address: string`, `direction?: "forward"\|"backward"`, `depth?: 1–5` | Traverse callers or callees to a bounded depth                      |
-| `analyze_swift_types` | —                                                                     | Categorize Swift classes, structs, enums, protocols, and extensions |
-| `find_xrefs_to_name`  | `name: string`                                                        | Resolve a name and retrieve cross-references                        |
-
-## Development
+## Development and verification
 
 ```bash
-npm run typecheck
-npm run lint
-npm run format:check
-npm test
 npm run check
-```
-
-`npm test` builds first. Tests cover all 39 contracts, every handler through a beta.3 MCP client, bridge failures, concurrency, strict boundary parsing, and the compiled stdio runtime.
-
-Run the real-Hopper verifier with a representative binary and any required loader options:
-
-```bash
-HOPPER_TARGET_PATH=/path/to/binary \
-HOPPER_LOADER_ARGS_JSON='["-l","Mach-O","--aarch64"]' \
+npm pack --dry-run
+HOPPER_TARGET_PATH=/path/to/target-a \
+HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
 npm run verify:hopper
 ```
 
-It asserts the exact 39-tool inventory, document access, `binary_overview`, segment reads, a one-procedure bounded decompile, clean protocol output (no stderr), absence of Hopper's bundled MCP process, and clean shutdown (no leaked bridge session directories or lingering processes).
+Real-Hopper verification requires Hopper and a representative target. The stdio server uses only the repository's authenticated Unix-socket bridge; Hopper's bundled MCP server is not used.
 
-## Troubleshooting
-
-If startup times out, verify the target path and reproduce the generated loader chain with Hopper's `hopper` launcher. A visible loader or save dialog prevents the post-analysis bridge from starting; supply explicit loader/CPU options or close the stale dialog. Granting Accessibility access will not fix this.
-
-`batch_decompile` accepts at most 20 addresses, and `get_call_graph` accepts depths from 1 through 5.
+The provisional package, executable, MCP, skill, and config names are centralized in `src/identity.ts` so release naming can change cleanly. The package remains private and is not ready for publication.
 
 ## License
 
