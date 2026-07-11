@@ -13,7 +13,7 @@ const caseSensitive = z
   .describe("Whether to match case");
 
 /** The architectural owner of a tool implementation. */
-export type ToolKind = "official-proxy" | "enhanced";
+export type ToolKind = "official-proxy" | "enhanced" | "session";
 
 /** Stable caller-visible contract retained across the Python-to-TypeScript migration. */
 export interface ToolContract {
@@ -34,6 +34,12 @@ const enhanced = (
   description: string,
   inputSchema: z.ZodObject,
 ): ToolContract => ({ name, description, kind: "enhanced", inputSchema });
+
+const session = (
+  name: string,
+  description: string,
+  inputSchema: z.ZodObject,
+): ToolContract => ({ name, description, kind: "session", inputSchema });
 
 /** All 31 tools forwarded unchanged to Hopper's official MCP server. */
 export const OFFICIAL_TOOL_CONTRACTS = [
@@ -218,8 +224,20 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
+/** Binary lifecycle tools available before Hopper is launched. */
+export const SESSION_TOOL_CONTRACTS = [
+  session(
+    "open_binary",
+    "Open or switch the active binary",
+    z.object({ path: z.string().min(1) }),
+  ),
+  session("close_binary", "Close the active binary", z.object({})),
+  session("binary_session", "Describe the active binary session", z.object({})),
+] as const satisfies readonly ToolContract[];
+
 /** Complete caller-visible tool inventory. */
 export const TOOL_CONTRACTS = [
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS,
+  ...SESSION_TOOL_CONTRACTS,
 ] as const;

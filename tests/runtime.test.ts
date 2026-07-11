@@ -10,7 +10,7 @@ const fixturePath = fileURLToPath(
 );
 
 describe("production stdio runtime", () => {
-  it("starts the built entrypoint, lists 39 tools, calls one, and shuts down", async () => {
+  it("starts the built entrypoint, lists 42 tools, calls one, and shuts down", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [mainPath],
@@ -18,7 +18,7 @@ describe("production stdio runtime", () => {
       env: {
         PATH: process.env.PATH ?? "",
         HOPPER_LAUNCHER_PATH: process.execPath,
-        HOPPER_TARGET_PATH: "/fixture/sample",
+        HOPPER_TARGET_PATH: process.execPath,
         HOPPER_LOADER_ARGS_JSON: JSON.stringify([fixturePath]),
       },
       stderr: "pipe",
@@ -32,7 +32,7 @@ describe("production stdio runtime", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(39);
+      expect(tools.tools).toHaveLength(42);
       const result = await client.callTool({
         name: "current_document",
         arguments: {},
