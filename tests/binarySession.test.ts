@@ -24,7 +24,7 @@ describe("binary session", () => {
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
-  it("rolls back a failed switch", async () => {
+  it("keeps the active client when a switch fails", async () => {
     directory = await mkdtemp(join(tmpdir(), "bb-session-"));
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
@@ -36,7 +36,7 @@ describe("binary session", () => {
     expect((await session.open(second)).ok).toBe(false);
     expect(session.status()).toMatchObject({ open: true });
     expect(JSON.stringify(session.status())).toContain("first.hop");
-    expect(created).toBe(3);
+    expect(created).toBe(2);
   });
 
   it("serializes concurrent opens and leaves the last target active", async () => {
@@ -130,11 +130,11 @@ describe("binary session", () => {
     await session.open(first);
     await session.open(second);
     expect(clients[1]?.closed).toBe(1);
-    expect(clients[0]?.closed).toBe(1);
+    expect(clients[0]?.closed).toBe(0);
     expect(JSON.stringify(session.status())).toContain("first.hop");
     await session.close();
     await session.close();
-    expect(clients[2]?.closed).toBe(1);
+    expect(clients[0]?.closed).toBe(1);
   });
 });
 

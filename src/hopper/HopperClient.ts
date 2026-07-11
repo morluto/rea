@@ -21,7 +21,6 @@ import {
 } from "./protocol.js";
 
 const MAX_LINE_BYTES = 10 * 1024 * 1024;
-const MAX_ABANDONED_REQUESTS = 1_024;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 export interface HopperClientOptions {
@@ -54,7 +53,6 @@ export class HopperClient {
   > &
     HopperClientOptions;
   readonly #pending = new Map<number, PendingRequest>();
-  readonly #abandoned = new Set<number>();
   #socket: Socket | undefined;
   #launch: BridgeLaunch | undefined;
   #directory: string | undefined;
@@ -63,6 +61,7 @@ export class HopperClient {
   #buffer = "";
   #closing = false;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
+  #closePromise: Promise<void> | undefined;
 
   constructor(options: HopperClientOptions) {
     this.#options = {
@@ -136,29 +135,37 @@ export class HopperClient {
   }
 
   /** Stop the bridge, settle outstanding requests, and remove session artifacts. */
-  async close(): Promise<void> {
-    if (this.#closing) return;
+  close(): Promise<void> {
+    this.#closePromise ??= Promise.resolve().then(() => this.#close());
+    return this.#closePromise;
+  }
+
+  async #close(): Promise<void> {
     this.#closing = true;
-    const socket = this.#socket;
-    if (socket !== undefined && !socket.destroyed) {
-      await this.#request("shutdown", {}, { timeoutMs: 500 }).catch(() =>
-        err(new HopperProcessError(null)),
-      );
+    try {
+      const socket = this.#socket;
+      if (socket !== undefined && !socket.destroyed) {
+        await this.#request("shutdown", {}, { timeoutMs: 500 }).catch(() =>
+          err(new HopperProcessError(null)),
+        );
+      }
+      this.#failAll(new HopperProcessError(null));
+      socket?.destroy();
+      this.#socket = undefined;
+      if (this.#launch?.ownsProcessLifetime === true) {
+        this.#launch.process.kill("SIGTERM");
+      }
+      this.#launch = undefined;
+      if (this.#directory !== undefined) {
+        await rm(this.#directory, { recursive: true, force: true });
+        this.#directory = undefined;
+      }
+      this.#token = undefined;
+      this.#startPromise = undefined;
+    } finally {
+      this.#closing = false;
+      this.#closePromise = undefined;
     }
-    this.#failAll(new HopperProcessError(null));
-    socket?.destroy();
-    this.#socket = undefined;
-    if (this.#launch?.ownsProcessLifetime === true) {
-      this.#launch.process.kill("SIGTERM");
-    }
-    this.#launch = undefined;
-    if (this.#directory !== undefined) {
-      await rm(this.#directory, { recursive: true, force: true });
-      this.#directory = undefined;
-    }
-    this.#token = undefined;
-    this.#startPromise = undefined;
-    this.#closing = false;
   }
 
   async #connect(socketPath: string): Promise<Result<undefined, HopperError>> {
@@ -256,16 +263,19 @@ export class HopperClient {
 
   #onData(chunk: string): void {
     this.#buffer += chunk;
-    if (Buffer.byteLength(this.#buffer) > MAX_LINE_BYTES) {
-      this.#abortProtocol("Hopper response exceeded the maximum line size");
-      return;
-    }
     let newline = this.#buffer.indexOf("\n");
     while (newline >= 0) {
       const line = this.#buffer.slice(0, newline).trim();
       this.#buffer = this.#buffer.slice(newline + 1);
+      if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
+        this.#abortProtocol("Hopper response exceeded the maximum line size");
+        return;
+      }
       if (line.length > 0) this.#onLine(line);
       newline = this.#buffer.indexOf("\n");
+    }
+    if (Buffer.byteLength(this.#buffer) > MAX_LINE_BYTES) {
+      this.#abortProtocol("Hopper response exceeded the maximum line size");
     }
   }
 
@@ -275,9 +285,10 @@ export class HopperClient {
       this.#abortProtocol(parsed.error.message, parsed.error);
       return;
     }
-    if (this.#abandoned.delete(parsed.value.id)) return;
     if (!this.#pending.has(parsed.value.id)) {
-      this.#abortProtocol("Hopper returned an unknown response id");
+      if (parsed.value.id >= this.#nextId) {
+        this.#abortProtocol("Hopper returned an unknown response id");
+      }
       return;
     }
     this.#settle(parsed.value.id, responseResult(parsed.value));
@@ -301,11 +312,6 @@ export class HopperClient {
 
   #abandon(id: number, result: Result<JsonValue, HopperError>): void {
     if (!this.#pending.has(id)) return;
-    this.#abandoned.add(id);
-    if (this.#abandoned.size > MAX_ABANDONED_REQUESTS) {
-      const oldest = this.#abandoned.values().next();
-      if (!oldest.done) this.#abandoned.delete(oldest.value);
-    }
     this.#settle(id, result);
   }
 

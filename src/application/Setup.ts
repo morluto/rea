@@ -15,6 +15,7 @@ import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
+import { probeHomebrew } from "./homebrew.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -271,13 +272,10 @@ const commandSucceeds = async (
   }
 };
 const brewSucceeds = async (args: readonly string[]): Promise<boolean> => {
-  for (const command of [
-    "brew",
-    "/opt/homebrew/bin/brew",
-    "/usr/local/bin/brew",
-  ])
-    if (await commandSucceeds(command, args)) return true;
-  return false;
+  const result = await probeHomebrew(async (command) =>
+    (await commandSucceeds(command, args)) ? true : undefined,
+  );
+  return result === true;
 };
 const major = (version: string): number =>
   Number.parseInt(version.split(".")[0] ?? "0", 10);

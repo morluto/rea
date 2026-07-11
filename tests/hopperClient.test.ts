@@ -135,4 +135,30 @@ describe("HopperClient", () => {
       value: { value: "alive" },
     });
   });
+
+  it("ignores more than 1,024 late responses without corrupting the session", async () => {
+    const client = await startClient();
+    const timedOut = await Promise.all(
+      Array.from({ length: 1_025 }, (_, index) =>
+        client.callTool("echo", { index, delay: 150 }, { timeoutMs: 5 }),
+      ),
+    );
+    expect(timedOut.every((result) => !result.ok)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await expect(client.callTool("echo", { value: "alive" })).resolves.toEqual({
+      ok: true,
+      value: { value: "alive" },
+    });
+  });
+
+  it("makes concurrent close callers await the same shutdown", async () => {
+    const client = await startClient();
+    let firstSettled = false;
+    const first = client.close().then(() => {
+      firstSettled = true;
+    });
+    await client.close();
+    expect(firstSettled).toBe(true);
+    await first;
+  });
 });

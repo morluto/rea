@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { probeHomebrew } from "./homebrew.js";
+
 const execFileAsync = promisify(execFile);
 const DEFAULT_HOPPER =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -119,11 +121,7 @@ export const systemDoctorHost = (): DoctorHost => ({
     }
   },
   async brewHopperPath() {
-    for (const command of [
-      "brew",
-      "/opt/homebrew/bin/brew",
-      "/usr/local/bin/brew",
-    ]) {
+    return probeHomebrew(async (command) => {
       try {
         const prefix = (
           await execFileAsync(command, [
@@ -134,10 +132,9 @@ export const systemDoctorHost = (): DoctorHost => ({
         ).stdout.trim();
         return `${prefix}/Hopper Disassembler.app/Contents/MacOS/hopper`;
       } catch {
-        // Try the next standard Homebrew executable location.
+        return undefined;
       }
-    }
-    return undefined;
+    });
   },
   async manualHopperPaths() {
     const roots = ["/Applications", join(homedir(), "Applications")];

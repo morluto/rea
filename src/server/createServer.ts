@@ -17,7 +17,9 @@ export const createServer = (
     {
       capabilities: { tools: {} },
       instructions:
-        "Reverse-engineering tools for Hopper Disassembler. Open a target with open_binary, then start with binary_overview.",
+        session === undefined
+          ? "Reverse-engineering tools for an active Hopper Disassembler target. Start with binary_overview."
+          : "Reverse-engineering tools for Hopper Disassembler. Open a target with open_binary, then start with binary_overview.",
     },
   );
   registerOfficialTools(server, hopper);
