@@ -2,7 +2,47 @@
 
 A TypeScript MCP server for [Hopper Disassembler](https://www.hopperapp.com/). It preserves 31 familiar Hopper operations and adds 8 reverse-engineering workflows for Swift, Objective-C, decompilation, call graphs, cross-references, and binary summaries.
 
-The server uses the modular `@modelcontextprotocol/server@2.0.0-beta.3` SDK.
+## Quick Start
+
+```bash
+git clone <repo-url> && cd betterBinaryMCP
+npm ci && npm run build
+```
+
+Generate a ready-to-paste MCP config with absolute paths filled in:
+
+```bash
+npm run config:print -- /path/to/your/binary
+```
+
+Paste the output into your MCP client config (Claude Desktop, Cursor, etc.) and restart the client. That's it — the 39 tools are now available.
+
+```bash
+# For a .hop database:
+npm run config:print -- /path/to/file.hop --kind database
+
+# For a FAT binary that needs loader args:
+npm run config:print -- /path/to/binary --loader-args '["-l","Mach-O","--aarch64"]'
+```
+
+### Set up with your agent
+
+Paste this prompt into Claude, Cursor, or any MCP-capable agent to have it do the setup for you:
+
+> I want to connect betterBinaryMCP (a Hopper Disassembler MCP server) to this client.
+>
+> 1. Clone the repo and run `npm ci && npm run build`.
+> 2. Run `npm run config:print -- /path/to/my/binary` to generate the MCP server config.
+> 3. Paste the output into this client's MCP config and restart.
+> 4. Verify the 39 tools are listed.
+
+## Prerequisites
+
+- **Node.js 20+** — `node --version`
+- **Hopper Disassembler 6+** on macOS — ships at `/Applications/Hopper Disassembler.app/`
+- **A binary or Hopper database** to analyze
+
+Accessibility permission is **not** required. Specify loader arguments for archives that would otherwise show an architecture chooser.
 
 ## Architecture
 
@@ -18,24 +58,9 @@ The codebase is a layered ESM TypeScript application. Dependencies flow inward: 
 - `src/application/` composes official operations into the 8 enhanced tools.
 - `src/domain/` holds pure parsers and the tagged error algebra; `src/contracts/` declares the caller-visible tool schemas.
 
-## Requirements
+## Manual MCP Configuration
 
-- Node.js 20 or newer
-- Hopper Disassembler 6+ on macOS
-- A binary or Hopper database to analyze
-
-Accessibility permission is **not** required. Specify loader arguments for archives that would otherwise show an architecture chooser.
-
-## Install and Build
-
-```bash
-npm ci
-npm run build
-```
-
-## MCP Configuration
-
-Build the project, then configure your MCP client with an absolute path:
+If you prefer to write the config by hand, build the project and use absolute paths:
 
 ```json
 {
@@ -51,7 +76,7 @@ Build the project, then configure your MCP client with an absolute path:
 }
 ```
 
-Run it directly with `npm start` after building. Stdout is reserved for MCP protocol messages; diagnostics use stderr.
+Stdout is reserved for MCP protocol messages; diagnostics use stderr.
 
 ### Environment Variables
 

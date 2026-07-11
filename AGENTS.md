@@ -14,6 +14,7 @@ The server is a layered ESM TypeScript application. Dependencies flow inward: `d
 - `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
 - `tests/`: Vitest suite. `tests/fixtures/` holds the fake launcher and fake Hopper bridge used as production seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
+- `scripts/print-mcp-config.mjs`: prints a ready-to-paste MCP server config with absolute paths filled in (`npm run config:print -- /path/to/binary`).
 
 ## Build, Test, and Development Commands
 
@@ -25,6 +26,7 @@ The server is a layered ESM TypeScript application. Dependencies flow inward: `d
 - `npm run format:check`: verify Prettier formatting.
 - `npm run check`: run typecheck, lint, format:check, and tests.
 - `npm run verify:hopper`: build and run the real-Hopper verifier (requires a binary).
+- `npm run config:print -- /path/to/binary`: print a ready-to-paste MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
 
 ## Configuration & Environment Variables
