@@ -1,6 +1,6 @@
 {
   "name": "@morluto/rea",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Reverse-engineering automation for Hopper Disassembler through one CLI and MCP server.",
   "license": "MIT",
   "repository": {
