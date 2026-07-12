@@ -5,9 +5,9 @@
  */
 export const PRODUCT_IDENTITY = {
   displayName: "REA",
-  packageName: "@morluto/rea",
+  packageName: "reaa",
   cliBinary: "rea",
-  mcpCommand: "npx -y @morluto/rea mcp",
+  mcpCommand: "npx -y reaa mcp",
   mcpServerKey: "rea",
   skillName: "rea-analysis",
   configFileName: "rea.json",

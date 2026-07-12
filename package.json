@@ -1,5 +1,5 @@
 {
-  "name": "@morluto/rea",
+  "name": "reaa",
   "version": "0.1.0",
   "description": "Reverse-engineering automation for Hopper Disassembler through one CLI and MCP server.",
   "license": "MIT",
