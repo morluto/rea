@@ -26,6 +26,19 @@ interface SampleProcessContext {
   readonly signal: AbortSignal;
 }
 
+const isExpectedProcReadFailure = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "ENOENT" ||
+    cause.code === "ESRCH" ||
+    cause.code === "EACCES" ||
+    cause.code === "EPERM");
+
+const handleProcReadFailure = (cause: unknown): undefined => {
+  if (isExpectedProcReadFailure(cause)) return undefined;
+  throw cause;
+};
+
 const parseProcStat = (
   identifier: string,
   stat: string,
@@ -66,8 +79,8 @@ const readProcessStat = async (
       signal,
     });
     return parseProcStat(String(pid), stat);
-  } catch {
-    return undefined;
+  } catch (cause: unknown) {
+    return handleProcReadFailure(cause);
   }
 };
 
@@ -77,8 +90,8 @@ const readProcessCommand = async (
 ): Promise<Buffer | undefined> => {
   try {
     return await readFile(`/proc/${String(pid)}/cmdline`, { signal });
-  } catch {
-    return undefined;
+  } catch (cause: unknown) {
+    return handleProcReadFailure(cause);
   }
 };
 
@@ -92,8 +105,8 @@ const readLinuxChildren = async (
       encoding: "utf8",
       signal,
     });
-  } catch {
-    return undefined;
+  } catch (cause: unknown) {
+    return handleProcReadFailure(cause);
   }
   return text
     .trim()
@@ -303,12 +316,13 @@ export const startProcessSampler = (
   started: number,
   limit: number,
   samples: ProcessSample[],
-): (() => Promise<void>) => {
+): (() => Promise<{ readonly partial: boolean }>) => {
   const identities = new Map<number, string>();
   const sampledPids = new Set<number>(samples.map(({ pid }) => pid));
   let pending: Promise<void> | undefined;
   let stopped = false;
   let abortCurrent: (() => void) | undefined;
+  let partial = false;
 
   const sample = (): void => {
     if (stopped || pending !== undefined || sampledPids.size >= limit) return;
@@ -331,7 +345,10 @@ export const startProcessSampler = (
           samples.push(value);
         }
       })
-      .catch(() => undefined)
+      .catch((cause: unknown) => {
+        if (!(cause instanceof Error && cause.name === "AbortError"))
+          partial = true;
+      })
       .then(() => {
         abortCurrent = undefined;
         pending = undefined;
@@ -346,5 +363,6 @@ export const startProcessSampler = (
     clearInterval(timer);
     abortCurrent?.();
     await pending;
+    return { partial };
   };
 };

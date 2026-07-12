@@ -97,4 +97,43 @@ describe("function comparison MCP integration", () => {
       ]);
     }
   });
+
+  it("rejects altered payloads that reuse session Evidence IDs", async () => {
+    const session = new BinarySession(() => ({
+      health: () => Promise.resolve(),
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.left);
+    session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right);
+    const server = createServer(session, session);
+    const client = new Client({
+      name: "function-authority-test",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "compare_functions",
+        arguments: {
+          left: {
+            ...FUNCTION_COMPARISON_EXAMPLE.left,
+            limitations: ["caller altered this record"],
+          },
+          right: FUNCTION_COMPARISON_EXAMPLE.right,
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(session.exportEvidenceBundle().records).toHaveLength(2);
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
 });

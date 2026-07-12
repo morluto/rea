@@ -12,6 +12,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 interface EvidenceToolRegistration {
   readonly logger: Logger;
@@ -29,12 +30,7 @@ export const registerEvidenceTools = (
   for (const contract of contracts) {
     server.registerTool(
       contract.name,
-      {
-        description: contract.description,
-        inputSchema: contract.inputSchema,
-        outputSchema: contract.outputSchema,
-        annotations: contract.annotations,
-      },
+      toolRegistrationOptions(contract),
       async (input, context) => {
         const parameters = jsonObject(contract.inputSchema.parse(input));
         const execution = await logToolExecution(

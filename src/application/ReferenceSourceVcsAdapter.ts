@@ -1,9 +1,15 @@
 import fs from "node:fs";
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
 
-import { log, statusMatrix } from "isomorphic-git";
+import { resolveRef } from "isomorphic-git";
 
 export type ReferenceSourceVcsInfo =
-  | { readonly kind: "git"; readonly head: string; readonly dirty: boolean }
+  | {
+      readonly kind: "git";
+      readonly head: string;
+      readonly dirty: boolean | null;
+    }
   | { readonly kind: "none"; readonly head: null; readonly dirty: null }
   | { readonly kind: "unknown"; readonly head: null; readonly dirty: null };
 
@@ -14,42 +20,28 @@ export type ReferenceSourceVcsInfo =
  */
 export const readReferenceSourceVcs = async (
   root: string,
+  signal?: AbortSignal,
 ): Promise<ReferenceSourceVcsInfo> => {
+  if (isAborted(signal)) return { kind: "unknown", head: null, dirty: null };
   try {
-    const commits = await log({
-      fs,
-      dir: root,
-      ref: "HEAD",
-      depth: 1,
-      cache: {},
-    });
-    if (commits.length === 0)
-      return { kind: "unknown", head: null, dirty: null };
-
-    const head = commits[0]?.oid;
-    if (head === undefined) return { kind: "unknown", head: null, dirty: null };
-
-    let dirty = false;
-    try {
-      const matrix = await statusMatrix({
-        fs,
-        dir: root,
-        ref: head,
-        cache: {},
-      });
-      for (const row of matrix) {
-        const [, headStatus, workdirStatus, stageStatus] = row;
-        if (headStatus !== 1 || workdirStatus !== 1 || stageStatus !== 1) {
-          dirty = true;
-          break;
-        }
-      }
-    } catch {
-      dirty = true;
-    }
-
-    return { kind: "git", head, dirty };
+    await lstat(join(root, ".git"));
+  } catch (cause: unknown) {
+    return errorCode(cause) === "ENOENT"
+      ? { kind: "none", head: null, dirty: null }
+      : { kind: "unknown", head: null, dirty: null };
+  }
+  try {
+    const head = await resolveRef({ fs, dir: root, ref: "HEAD" });
+    if (isAborted(signal)) return { kind: "unknown", head: null, dirty: null };
+    return { kind: "git", head, dirty: null };
   } catch {
-    return { kind: "none", head: null, dirty: null };
+    return { kind: "unknown", head: null, dirty: null };
   }
 };
+
+const errorCode = (cause: unknown): string | undefined =>
+  typeof cause === "object" && cause !== null && "code" in cause
+    ? String(cause.code)
+    : undefined;
+
+const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

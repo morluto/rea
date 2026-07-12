@@ -49,6 +49,19 @@ interface InventoryPageInput {
   readonly edgeLimit: number;
 }
 
+/** Immutable inventory produced by one complete artifact scan. */
+export interface ArtifactInventorySnapshot {
+  readonly manifest: ArtifactInventoryResult["manifest"];
+  readonly nodes: readonly ArtifactNode[];
+  readonly occurrences: ArtifactInventoryResult["occurrences"]["items"];
+  readonly edges: ArtifactInventoryResult["edges"]["items"];
+  readonly limits: ArtifactInventoryResult["limits"];
+  readonly provenance: ReadonlyArray<
+    ArtifactInventoryResult["provenance"][number]
+  >;
+  readonly limitations: readonly string[];
+}
+
 /** Inventory one local artifact without extracting or mounting it. */
 export const inventoryArtifact = async (
   inputPath: string,
@@ -56,6 +69,16 @@ export const inventoryArtifact = async (
   page: InventoryPageInput,
   signal?: AbortSignal,
 ): Promise<ArtifactInventoryResult> => {
+  const snapshot = await scanArtifactInventory(inputPath, limits, signal);
+  return paginateArtifactInventory(snapshot, page);
+};
+
+/** Scan an artifact once and retain the complete immutable graph for projection. */
+export const scanArtifactInventory = async (
+  inputPath: string,
+  limits: ArtifactLimits,
+  signal?: AbortSignal,
+): Promise<ArtifactInventorySnapshot> => {
   abortIfNeeded(signal);
   const path = await realpath(inputPath);
   const metadata = await lstat(path);
@@ -122,8 +145,8 @@ export const inventoryArtifact = async (
       root_artifact_id: rootNode.artifact_id,
       graph_sha256: graphSha256,
     })}`;
-    return artifactInventoryResultSchema.parse({
-      manifest: {
+    return {
+      manifest: artifactInventoryResultSchema.shape.manifest.parse({
         schema_version: 1,
         manifest_id: manifestId,
         root_artifact_id: rootNode.artifact_id,
@@ -133,22 +156,34 @@ export const inventoryArtifact = async (
         node_count: orderedNodes.length,
         occurrence_count: orderedOccurrences.length,
         edge_count: orderedEdges.length,
-      },
-      nodes: pageOf(orderedNodes, page.nodeOffset, page.nodeLimit),
-      occurrences: pageOf(
-        orderedOccurrences,
-        page.occurrenceOffset,
-        page.occurrenceLimit,
-      ),
-      edges: pageOf(orderedEdges, page.edgeOffset, page.edgeLimit),
+      }),
+      nodes: orderedNodes,
+      occurrences: orderedOccurrences,
+      edges: orderedEdges,
       limits: toOutputLimits(limits),
       provenance: reader?.provenance() ?? [],
       limitations: inventoryLimitations(rootFormat, reader),
-    });
+    };
   } finally {
     await reader?.close();
   }
 };
+
+/** Project independently paged graph collections from one inventory snapshot. */
+export const paginateArtifactInventory = (
+  snapshot: ArtifactInventorySnapshot,
+  page: InventoryPageInput,
+): ArtifactInventoryResult =>
+  artifactInventoryResultSchema.parse({
+    ...snapshot,
+    nodes: pageOf(snapshot.nodes, page.nodeOffset, page.nodeLimit),
+    occurrences: pageOf(
+      snapshot.occurrences,
+      page.occurrenceOffset,
+      page.occurrenceLimit,
+    ),
+    edges: pageOf(snapshot.edges, page.edgeOffset, page.edgeLimit),
+  });
 
 const inventoryLimitations = (
   format: ArtifactNode["format"],

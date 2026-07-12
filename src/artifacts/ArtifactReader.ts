@@ -29,7 +29,7 @@ export interface ArtifactReader {
   close(): Promise<void>;
 }
 
-/** Hard traversal limits shared by every reader and extraction transaction. */
+/** Hard traversal limits shared by every reader and extraction operation. */
 export interface ArtifactLimits {
   readonly maxEntries: number;
   readonly maxTotalBytes: number;

@@ -16,6 +16,45 @@ import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
 describe("artifact graph MCP integration", () => {
+  it("rejects altered payloads that reuse session Evidence IDs", async () => {
+    const session = new BinarySession(() => ({
+      health: () => Promise.resolve(),
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    session.recordEvidence(ARTIFACT_COMPARISON_EXAMPLE.left);
+    session.recordEvidence(ARTIFACT_COMPARISON_EXAMPLE.right);
+    const server = createServer(session, session);
+    const client = new Client({
+      name: "artifact-authority-test",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "compare_artifacts",
+        arguments: {
+          ...ARTIFACT_COMPARISON_EXAMPLE,
+          left: {
+            ...ARTIFACT_COMPARISON_EXAMPLE.left,
+            limitations: ["caller altered this record"],
+          },
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(session.exportEvidenceBundle().records).toHaveLength(2);
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
+
   it("rejects comparison Evidence that is not owned by the session", async () => {
     const session = new BinarySession(() => ({
       health: () => Promise.resolve(),

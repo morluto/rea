@@ -12,6 +12,8 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { BUNDLE_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
+import { isSessionEvidence } from "./sessionEvidence.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Register canonical Evidence bundle comparison. */
 export const registerBundleComparisonTool = (
@@ -21,12 +23,7 @@ export const registerBundleComparisonTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     (input) => {
       const parsed = bundleComparisonInputSchema.parse(input);
       const sourceIds = [
@@ -35,7 +32,11 @@ export const registerBundleComparisonTool = (
           ...parsed.right.records.map(({ evidence_id: id }) => id),
         ]),
       ].sort();
-      if (sourceIds.some((evidenceId) => !session.hasEvidence(evidenceId)))
+      if (
+        [...parsed.left.records, ...parsed.right.records].some(
+          (evidence) => !isSessionEvidence(session, evidence),
+        )
+      )
         return toCallToolResult(
           err(
             new EvidenceIntegrityError(

@@ -12,6 +12,7 @@ import {
   probeProcessCaptureCapability,
   ProcessCaptureError,
 } from "../src/application/ProcessHarness.js";
+import { snapshotRoots } from "../src/application/FilesystemSnapshot.js";
 import {
   authorizeProcessScenario,
   compareProcessCaptures,
@@ -30,6 +31,20 @@ describe("process capture domain", () => {
     executable: "/bin/sh",
     working_directory: "/tmp",
   };
+
+  it("cancels filesystem snapshots before traversing declared roots", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      snapshotRoots(
+        parseProcessScenario({
+          ...base,
+          filesystem_roots: ["/tmp"],
+        }),
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
 
   it("parses bounded scenarios and rejects unordered events", () => {
     expect(parseProcessScenario(base).timeout_ms).toBe(30_000);

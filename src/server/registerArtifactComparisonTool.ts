@@ -7,13 +7,13 @@ import {
   compareArtifacts,
 } from "../domain/artifactComparison.js";
 import { createEvidence } from "../domain/evidence.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
-import { err } from "../domain/result.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import { resolveSessionEvidence } from "./sessionEvidence.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
@@ -23,35 +23,21 @@ export const registerArtifactComparisonTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     (input) => {
       const parsed = artifactComparisonInputSchema.parse(input);
+      const left = resolveSessionEvidence(session, parsed.left);
+      if (!left.ok) return toCallToolResult(left, contract);
+      const right = resolveSessionEvidence(session, parsed.right);
+      if (!right.ok) return toCallToolResult(right, contract);
       const comparison = compareArtifacts(
-        parsed.left,
-        parsed.right,
+        left.value,
+        right.value,
         parsed.offset,
         parsed.limit,
       );
       const leftEvidenceIds = evidenceIds(parsed.left);
       const rightEvidenceIds = evidenceIds(parsed.right);
-      if (
-        [...leftEvidenceIds, ...rightEvidenceIds].some(
-          (evidenceId) => !session.hasEvidence(evidenceId),
-        )
-      )
-        return toCallToolResult(
-          err(
-            new EvidenceIntegrityError(
-              "Artifact comparison input Evidence is not present in this session",
-            ),
-          ),
-          contract,
-        );
       const evidence = createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
         predicateType: "rea.artifact-comparison/v1",
         operation: contract.name,

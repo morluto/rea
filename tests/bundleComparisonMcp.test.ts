@@ -23,6 +23,45 @@ const sourceEvidence = (label: string) =>
   );
 
 describe("bundle comparison MCP integration", () => {
+  it("rejects altered records that reuse session Evidence IDs", async () => {
+    const session = new BinarySession(() => ({
+      health: () => Promise.resolve(),
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const leftRecord = sourceEvidence("left-authority");
+    const rightRecord = sourceEvidence("right-authority");
+    session.recordEvidence(leftRecord);
+    session.recordEvidence(rightRecord);
+    const altered = {
+      ...leftRecord,
+      limitations: ["caller altered this record"],
+    };
+    const server = createServer(session, session);
+    const client = new Client({ name: "bundle-authority-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "compare_bundles",
+        arguments: {
+          left: createEvidenceBundle([altered]),
+          right: createEvidenceBundle([rightRecord]),
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(session.exportEvidenceBundle().records).toHaveLength(2);
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
+
   it("rejects unknown histories that are not owned by the session", async () => {
     const session = new BinarySession(() => ({
       health: () => Promise.resolve(),

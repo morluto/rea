@@ -175,7 +175,7 @@ export const importReferenceSource = async (
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       shouldExclude,
     }),
-    readReferenceSourceVcs(root),
+    readReferenceSourceVcs(root, options.signal),
   ]);
 
   if (!readResult.ok) {

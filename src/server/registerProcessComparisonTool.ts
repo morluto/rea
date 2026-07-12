@@ -16,6 +16,7 @@ import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { err } from "../domain/result.js";
 import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Register deterministic process-capture comparison and contradiction tracking. */
 export const registerProcessComparisonTool = (
@@ -25,12 +26,7 @@ export const registerProcessComparisonTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     (input) => {
       const parsed = z
         .object({

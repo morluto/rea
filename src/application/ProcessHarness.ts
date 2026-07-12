@@ -183,6 +183,7 @@ interface CaptureResultOptions {
   readonly truncated: boolean;
   readonly scenario: ProcessScenario;
   readonly rootPid: number;
+  readonly samplingPartial: boolean;
 }
 
 const classifyFilesystemEffects = (
@@ -236,6 +237,9 @@ const buildCaptureResult = (options: CaptureResultOptions): ProcessCapture => ({
   truncated: options.truncated,
   limitations: [
     "Process trees are sampled and may omit short-lived descendants.",
+    ...(options.samplingPartial
+      ? ["Process-tree sampling ended with an incomplete observation."]
+      : []),
     "Filesystem observations are before/after snapshots, not syscall traces.",
     "The harness does not enforce external network isolation.",
   ],
@@ -269,7 +273,14 @@ const awaitTerminalExit = async ({
 }> =>
   new Promise((resolveExit) => {
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
-    terminal.onExit((exit) => resolveExit({ ...exit, reason }));
+    terminal.onExit((exit) => {
+      for (const timer of timers) {
+        clearTimeout(timer);
+        clearInterval(timer);
+      }
+      timers.clear();
+      resolveExit({ ...exit, reason });
+    });
     const timeout = setInterval(() => {
       if (signal?.aborted === true) {
         reason = "cancelled";
@@ -361,16 +372,38 @@ const resolveProcessResult = (
   executionFailure: unknown,
   cleanupFailure: string | undefined,
 ): ProcessCapture => {
-  if (cleanupFailure !== undefined)
-    throw new ProcessCaptureError(cleanupFailure);
   if (executionFailure instanceof ProcessCaptureError) throw executionFailure;
   if (executionFailure !== undefined)
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
     });
+  if (cleanupFailure !== undefined)
+    throw new ProcessCaptureError(cleanupFailure);
   if (capture === undefined)
     throw new ProcessCaptureError("process capture produced no result");
   return capture;
+};
+
+const prepareProcessCapture = async (
+  scenario: ProcessScenario,
+  policy: ProcessExecutionPolicy,
+  signal: AbortSignal | undefined,
+): Promise<{
+  readonly temporaryRoot: string;
+  readonly runId: string;
+  readonly home: string;
+  readonly before: SnapshotResult;
+}> => {
+  const decision = authorizeProcessScenario(scenario, policy);
+  if (!decision.allowed) throw new ProcessCaptureError(decision.reason);
+  await assertRealPathAuthority(scenario, policy);
+  assertNotCancelled(signal);
+  const before = await snapshotRoots(scenario, signal);
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-process-"));
+  const runId = randomUUID();
+  const home = join(temporaryRoot, "home");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(home));
+  return { temporaryRoot, runId, home, before };
 };
 
 /** Execute one authorized scenario and return bounded observations. */
@@ -379,16 +412,11 @@ const runProcessScenario = async (
   policy: ProcessExecutionPolicy,
   signal?: AbortSignal,
 ): Promise<ProcessCapture> => {
-  const decision = authorizeProcessScenario(scenario, policy);
-  if (!decision.allowed) throw new ProcessCaptureError(decision.reason);
-  await assertRealPathAuthority(scenario, policy);
-  assertNotCancelled(signal);
-
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-process-"));
-  const runId = randomUUID();
-  const home = join(temporaryRoot, "home");
-  await import("node:fs/promises").then(({ mkdir }) => mkdir(home));
-  const before = await snapshotRoots(scenario);
+  const { temporaryRoot, runId, home, before } = await prepareProcessCapture(
+    scenario,
+    policy,
+    signal,
+  );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
   let truncated = before.truncated;
@@ -400,7 +428,8 @@ const runProcessScenario = async (
   let capture: ProcessCapture | undefined;
   let executionFailure: unknown;
   let framesTruncated = (): boolean => false;
-  let stopSampler: () => Promise<void> = async () => undefined;
+  let stopSampler = async () => ({ partial: false });
+  let samplingPartial = false;
 
   try {
     replay = await startLoopbackReplay(scenario);
@@ -439,18 +468,20 @@ const runProcessScenario = async (
       timers,
     });
     const exitReason = exit.reason;
-    await stopSampler();
+    samplingPartial = (await stopSampler()).partial;
     if (exitReason === "cancelled")
       throw new ProcessCaptureError("process capture was cancelled");
     await new Promise((resolveSettle) =>
       setTimeout(resolveSettle, scenario.settle_ms),
     );
-    const after = await snapshotRoots(scenario);
+    assertNotCancelled(signal);
+    const after = await snapshotRoots(scenario, signal);
     truncated ||=
       after.truncated ||
       replay.truncated ||
       framesTruncated() ||
       samples.length >= scenario.limits.processes;
+    truncated ||= samplingPartial;
     capture = buildCaptureResult({
       frames,
       exit: { ...exit, reason: exitReason },
@@ -461,12 +492,13 @@ const runProcessScenario = async (
       truncated,
       scenario,
       rootPid: terminal.pid,
+      samplingPartial,
     });
   } catch (cause: unknown) {
     terminal?.kill("SIGKILL");
     executionFailure = cause;
   }
-  await stopSampler();
+  samplingPartial ||= (await stopSampler()).partial;
   const cleanupFailure = await releaseProcessResources({
     timers,
     replay,
