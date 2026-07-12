@@ -1,12 +1,11 @@
-import type { HopperToolPort } from "./HopperToolPort.js";
+import type { AnalysisOperationPort } from "./AnalysisProvider.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { HopperProtocolError, type HopperError } from "../domain/errors.js";
+import { AnalysisProtocolError, type AnalysisError } from "../domain/errors.js";
 import {
   parseDocuments,
+  parseAddressedPage,
   parseListCount,
-  parseNames,
-  parseProcedures,
   parseRelatedAddresses,
   parseSegments,
 } from "../domain/hopperValues.js";
@@ -17,9 +16,15 @@ import {
   discoverObjcProtocols,
   discoverSwiftClasses,
 } from "../domain/symbolAnalysis.js";
-import type { JsonValue } from "../hopper/protocol.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 
-type EnhancedResult = Promise<Result<JsonValue, HopperError>>;
+type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
+type TraceMatch = { type: string; address: string; value: string };
+type TraceReference = {
+  target_address: string;
+  source_address: string;
+  containing_procedure: JsonValue;
+};
 
 /**
  * Composes official Hopper operations into bounded reverse-engineering tools.
@@ -27,7 +32,7 @@ type EnhancedResult = Promise<Result<JsonValue, HopperError>>;
  * validates them, allowing direct callers to use the same service safely.
  */
 export class EnhancedTools {
-  constructor(private readonly hopper: HopperToolPort) {}
+  constructor(private readonly analysis: AnalysisOperationPort) {}
 
   /** Parse inputs again at the direct-call boundary, then dispatch exhaustively. */
   execute(
@@ -70,31 +75,41 @@ export class EnhancedTools {
           ? this.#findXrefs(parsed.data.name, signal)
           : invalidInput(name, parsed.error);
       }
-      case "binary_overview":
-        return this.#binaryOverview(signal);
+      case "binary_overview": {
+        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
+        return parsed.success
+          ? this.#binaryOverview(parsed.data, signal)
+          : invalidInput(name, parsed.error);
+      }
+      case "analyze_function": {
+        const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
+        return parsed.success
+          ? this.#call("analyze_function", parsed.data, signal)
+          : invalidInput(name, parsed.error);
+      }
+      case "trace_feature": {
+        const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
+        return parsed.success
+          ? this.#traceFeature(parsed.data, signal)
+          : invalidInput(name, parsed.error);
+      }
     }
   }
 
   async #swiftClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_procedures", {}, signal);
-    if (!result.ok) return result;
-    const procedures = parseProcedures(result.value);
+    const procedures = await this.#allProcedures(signal);
     return procedures.ok
       ? ok(discoverSwiftClasses(procedures.value, pattern))
       : procedures;
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_names", {}, signal);
-    if (!result.ok) return result;
-    const names = parseNames(result.value);
+    const names = await this.#allAddressed("list_names", signal);
     return names.ok ? ok(discoverObjcClasses(names.value, pattern)) : names;
   }
 
   async #objcProtocols(signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_names", {}, signal);
-    if (!result.ok) return result;
-    const names = parseNames(result.value);
+    const names = await this.#allAddressed("list_names", signal);
     return names.ok ? ok(discoverObjcProtocols(names.value)) : names;
   }
 
@@ -187,9 +202,7 @@ export class EnhancedTools {
   }
 
   async #analyzeSwiftTypes(signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_procedures", {}, signal);
-    if (!result.ok) return result;
-    const procedures = parseProcedures(result.value);
+    const procedures = await this.#allProcedures(signal);
     return procedures.ok
       ? ok(categorizeSwiftTypes(procedures.value))
       : procedures;
@@ -213,45 +226,230 @@ export class EnhancedTools {
     );
   }
 
-  async #binaryOverview(signal?: AbortSignal): EnhancedResult {
-    const [segmentsResult, documentsResult, proceduresResult, stringsResult] =
+  async #binaryOverview(
+    input: { detail: "concise" | "detailed"; limit: number },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const [segmentsResult, documentsResult, procedures, stringsResult] =
       await Promise.all([
         this.#call("list_segments", {}, signal),
         this.#call("list_documents", {}, signal),
-        this.#call("list_procedures", {}, signal),
+        this.#allProcedures(signal),
         this.#call("list_strings", {}, signal),
       ]);
     if (!segmentsResult.ok) return segmentsResult;
     if (!documentsResult.ok) return documentsResult;
-    if (!proceduresResult.ok) return proceduresResult;
+    if (!procedures.ok) return procedures;
     if (!stringsResult.ok) return stringsResult;
 
     const segments = parseSegments(segmentsResult.value);
     if (!segments.ok) return segments;
     const documents = parseDocuments(documentsResult.value);
     if (!documents.ok) return documents;
-    const procedures = parseProcedures(proceduresResult.value);
-    if (!procedures.ok) return procedures;
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
     return ok({
       document: documents.value[0] ?? "unknown",
+      detail: input.detail,
       segments: segments.value
-        .slice(0, 10)
-        .map(({ name, start, end }) => ({ name, start, end })),
+        .slice(0, input.limit)
+        .map(({ name, start, end }) =>
+          input.detail === "detailed"
+            ? { name, start, end, length: addressDistance(start, end) }
+            : { name, start, end },
+        ),
       segment_count: segments.value.length,
       procedure_count: procedures.value.length,
       string_count: stringCount.value,
     });
   }
 
+  async #traceFeature(
+    input: {
+      readonly query: string;
+      readonly case_sensitive: boolean;
+      readonly limit: number;
+      readonly max_operations: number;
+    },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const searched = await this.#literalMatches(input, signal);
+    if (!searched.ok) return searched;
+    const residual = new Set<string>();
+    const traced = await this.#traceReferences(
+      searched.value.matches,
+      input.limit,
+      input.max_operations - searched.value.operations,
+      signal,
+    );
+    if (!traced.ok) return traced;
+    for (const reason of traced.value.residual) residual.add(reason);
+    const operations = searched.value.operations + traced.value.operations;
+    if (operations >= input.max_operations)
+      residual.add("Investigation reached the operation budget.");
+    if (searched.value.matches.length >= input.limit)
+      residual.add("Literal matches reached the configured limit.");
+    return ok({
+      query: input.query,
+      search_mode: "literal",
+      operations_used: operations,
+      operation_budget: input.max_operations,
+      matches: searched.value.matches,
+      references: traced.value.references,
+      truncated: residual.size > 0,
+      residual_unknowns: [...residual],
+    });
+  }
+
+  async #literalMatches(
+    input: {
+      readonly query: string;
+      readonly case_sensitive: boolean;
+      readonly limit: number;
+      readonly max_operations: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<
+    Result<{ matches: TraceMatch[]; operations: number }, AnalysisError>
+  > {
+    let operations = 0;
+    const matches: TraceMatch[] = [];
+    const needle = input.case_sensitive
+      ? input.query
+      : input.query.toLowerCase();
+    for (const [tool, type] of [
+      ["list_strings", "string"],
+      ["list_procedures", "procedure"],
+    ] as const) {
+      let offset = 0;
+      while (
+        operations < input.max_operations &&
+        matches.length < input.limit
+      ) {
+        operations += 1;
+        const result = await this.#call(tool, { offset, limit: 500 }, signal);
+        if (!result.ok) return result;
+        const page = parseAddressedPage(result.value);
+        if (!page.ok) return page;
+        for (const item of page.value.items) {
+          const haystack = input.case_sensitive
+            ? item.name
+            : item.name.toLowerCase();
+          if (haystack.includes(needle))
+            matches.push({ type, address: item.address, value: item.name });
+          if (matches.length >= input.limit) break;
+        }
+        if (!page.value.hasMore || page.value.nextOffset === null) break;
+        offset = page.value.nextOffset;
+      }
+    }
+    return ok({ matches, operations });
+  }
+
+  async #traceReferences(
+    matches: readonly TraceMatch[],
+    limit: number,
+    operationBudget: number,
+    signal?: AbortSignal,
+  ): Promise<
+    Result<
+      { references: TraceReference[]; operations: number; residual: string[] },
+      AnalysisError
+    >
+  > {
+    let operations = 0;
+    const references: TraceReference[] = [];
+    const residual = new Set<string>();
+    for (const match of matches) {
+      if (operations >= operationBudget) {
+        residual.add("Reference traversal stopped at the operation budget.");
+        break;
+      }
+      operations += 1;
+      const xrefs = await this.#call(
+        "xrefs",
+        { address: match.address },
+        signal,
+      );
+      if (!xrefs.ok) return xrefs;
+      if (!Array.isArray(xrefs.value))
+        return err(
+          new AnalysisProtocolError("xrefs returned a non-array result"),
+        );
+      for (const source of xrefs.value) {
+        if (typeof source !== "string")
+          return err(
+            new AnalysisProtocolError("xrefs returned a non-address value"),
+          );
+        if (operations >= operationBudget) {
+          residual.add(
+            "Containing-procedure resolution stopped at the operation budget.",
+          );
+          break;
+        }
+        operations += 1;
+        const resolved = await this.#call(
+          "resolve_containing_procedure",
+          { address: source },
+          signal,
+        );
+        if (!resolved.ok) return resolved;
+        references.push({
+          target_address: match.address,
+          source_address: source,
+          containing_procedure: resolved.value,
+        });
+        if (references.length >= limit) {
+          residual.add("Reference results reached the configured limit.");
+          break;
+        }
+      }
+      if (references.length >= limit) break;
+    }
+    return ok({
+      references,
+      operations,
+      residual: [...residual],
+    });
+  }
+
+  async #allProcedures(signal?: AbortSignal) {
+    return this.#allAddressed("list_procedures", signal);
+  }
+
+  async #allAddressed(
+    tool: "list_names" | "list_procedures",
+    signal?: AbortSignal,
+  ) {
+    const entries: Array<{ address: string; name: string }> = [];
+    let offset = 0;
+    while (true) {
+      const result = await this.#call(tool, { offset, limit: 500 }, signal);
+      if (!result.ok) return result;
+      const page = parseAddressedPage(result.value);
+      if (!page.ok) return page;
+      entries.push(...page.value.items);
+      if (!page.value.hasMore || page.value.nextOffset === null) {
+        return ok(entries);
+      }
+      if (page.value.nextOffset <= offset) {
+        return err(
+          new AnalysisProtocolError(
+            `${tool} returned a non-advancing pagination offset`,
+          ),
+        );
+      }
+      offset = page.value.nextOffset;
+    }
+  }
+
   #call(
     name: string,
     arguments_: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
-  ): Promise<Result<JsonValue, HopperError>> {
-    return this.hopper.callTool(
+  ): Promise<Result<JsonValue, AnalysisError>> {
+    return this.analysis.execute(
       name,
       arguments_,
       signal === undefined ? {} : { signal },
@@ -262,7 +460,7 @@ export class EnhancedTools {
 const invalidInput = (name: EnhancedToolName, cause: Error): EnhancedResult =>
   Promise.resolve(
     err(
-      new HopperProtocolError(`Invalid ${name} input after MCP validation`, {
+      new AnalysisProtocolError(`Invalid ${name} input after MCP validation`, {
         cause,
       }),
     ),
@@ -278,3 +476,6 @@ const resolveAddress = (value: JsonValue): string | undefined => {
     ? candidate
     : undefined;
 };
+
+const addressDistance = (start: string, end: string): number =>
+  Math.max(0, Number.parseInt(end, 16) - Number.parseInt(start, 16));

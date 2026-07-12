@@ -4,17 +4,17 @@ import { describe, expect, it } from "vitest";
 import { ok } from "../src/domain/result.js";
 import { createServer } from "../src/server/createServer.js";
 
-const hopper = {
-  callTool: () => Promise.resolve(ok(null)),
+const analysis = {
+  execute: () => Promise.resolve(ok(null)),
 };
 
 describe("beta.3 server composition", () => {
   it("constructs independent MCP server instances", () => {
-    expect(createServer(hopper)).not.toBe(createServer(hopper));
+    expect(createServer(analysis)).not.toBe(createServer(analysis));
   });
 
   it("does not advertise unavailable session tools", async () => {
-    const server = createServer(hopper);
+    const server = createServer(analysis);
     const client = new Client({ name: "composition-test", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

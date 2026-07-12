@@ -3,10 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  BinarySession,
-  type BinaryClient,
-} from "../src/application/BinarySession.js";
+import { BinarySession } from "../src/application/BinarySession.js";
+import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../src/domain/errors.js";
 import { err, ok } from "../src/domain/result.js";
 
@@ -18,9 +17,35 @@ afterEach(async () => {
 });
 
 describe("binary session", () => {
+  it("runs through a non-Hopper analysis provider", async () => {
+    const [first] = await targets();
+    const operations: string[] = [];
+    const provider: AnalysisProvider = {
+      identity: () => ({ id: "fixture", name: "Fixture", version: "1" }),
+      capabilities: () => ["fixture-analysis"],
+      createClient: () => ({
+        execute: (operation) => {
+          operations.push(operation);
+          return Promise.resolve(ok(operation));
+        },
+        close: () => Promise.resolve(),
+      }),
+    };
+    const session = new BinarySession(provider);
+    expect((await session.open(first)).ok).toBe(true);
+    expect(await session.execute("fixture_operation", {})).toEqual({
+      ok: true,
+      value: "fixture_operation",
+    });
+    expect(provider.identity().id).toBe("fixture");
+    expect(provider.capabilities()).toEqual(["fixture-analysis"]);
+    expect(operations).toEqual(["health", "fixture_operation"]);
+    await session.close();
+  });
+
   it("requires an open binary and closes idempotently", async () => {
     const session = new BinarySession(() => client());
-    expect((await session.callTool("binary_overview", {})).ok).toBe(false);
+    expect((await session.execute("binary_overview", {})).ok).toBe(false);
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
@@ -34,7 +59,12 @@ describe("binary session", () => {
     const session = new BinarySession(() => client(created++ === 1));
     expect((await session.open(first)).ok).toBe(true);
     expect((await session.open(second)).ok).toBe(false);
-    expect(session.status()).toMatchObject({ open: true });
+    expect(session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
     expect(JSON.stringify(session.status())).toContain("first.hop");
     expect(created).toBe(3);
   });
@@ -70,7 +100,7 @@ describe("binary session", () => {
       return value;
     });
     await session.open(first);
-    const call = session.callTool("long", {});
+    const call = session.execute("long", {});
     const switching = session.open(second);
     await Promise.resolve();
     expect(clients[0]?.closed).toBe(0);
@@ -106,11 +136,7 @@ describe("binary session", () => {
     const session = new BinarySession(() => new TestClient(health.promise));
     const opening = session.open(first);
     const controller = new AbortController();
-    const call = session.callTool(
-      "overview",
-      {},
-      { signal: controller.signal },
-    );
+    const call = session.execute("overview", {}, { signal: controller.signal });
     controller.abort();
     const result = await call;
     expect(result.ok).toBe(false);
@@ -143,7 +169,7 @@ describe("binary session", () => {
     let liveClients = 0;
     let overlapped = false;
     const session = new BinarySession(() => ({
-      callTool: () => {
+      execute: () => {
         if (liveClients > 0) overlapped = true;
         liveClients += 1;
         return Promise.resolve(ok(null));
@@ -160,20 +186,19 @@ describe("binary session", () => {
   });
 });
 
-const client = (fail = false): BinaryClient => ({
-  callTool: () =>
-    Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
+const client = (fail = false): AnalysisClient => ({
+  execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
   close: () => Promise.resolve(),
 });
 
-class TestClient implements BinaryClient {
+class TestClient implements AnalysisClient {
   closed = 0;
   constructor(
     readonly pendingHealth?: Promise<ReturnType<typeof ok<null>>>,
     readonly failHealth = false,
     readonly pendingCall?: Promise<ReturnType<typeof ok<null>>>,
   ) {}
-  callTool(name: string) {
+  execute(name: string) {
     if (name === "health")
       return this.failHealth
         ? Promise.resolve(err(new HopperStartError()))

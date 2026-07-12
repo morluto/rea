@@ -1,4 +1,4 @@
-import type { JsonValue } from "../hopper/protocol.js";
+import type { JsonValue } from "./jsonValue.js";
 import type { AddressedName } from "./hopperValues.js";
 
 const MAX_SCANNED_SYMBOLS = 5_000;

@@ -77,7 +77,10 @@ describe("binary target I/O", () => {
     directory = await mkdtemp(join(tmpdir(), "rea-target-"));
     await writeFile(join(directory, "sample.hop"), "database");
     await writeFile(join(directory, "text"), "hello");
-    expect((await parseBinaryTarget("sample.hop", directory)).ok).toBe(true);
+    const database = await parseBinaryTarget("sample.hop", directory);
+    expect(database.ok && database.value.sha256).toBe(
+      "3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8",
+    );
     expect((await parseBinaryTarget("text", directory)).ok).toBe(false);
     expect((await parseBinaryTarget("missing", directory)).ok).toBe(false);
   });

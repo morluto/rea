@@ -25,6 +25,99 @@ const textValue = (result) => {
 
 const jsonValue = (result) => JSON.parse(textValue(result));
 
+const requireSuccessfulTool = (result, operation) => {
+  if (result.isError === true) {
+    throw new Error(`${operation} failed: ${textValue(result)}`);
+  }
+  const value = jsonValue(result);
+  if (value === null || typeof value !== "object" || !("result" in value)) {
+    throw new Error(`${operation} omitted its evidence result`);
+  }
+  return value.result;
+};
+
+const firstProcedureAddress = (result) => {
+  const items = result.structuredContent?.result?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("The verifier target contains no analyzed procedure");
+  }
+  const address = items[0]?.address;
+  if (typeof address !== "string" || !/^0x[0-9a-f]+$/iu.test(address)) {
+    throw new Error("list_procedures returned an invalid procedure address");
+  }
+  return address;
+};
+
+const requirePseudocode = (value, operation) => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${operation} returned empty pseudocode`);
+  }
+  if (value === "No output" || value.startsWith("Error:")) {
+    throw new Error(`${operation} returned an embedded failure: ${value}`);
+  }
+  return value;
+};
+
+const requireFunctionDossier = (value, expectedAddress) => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("analyze_function returned no function dossier");
+  }
+  if (value.procedure?.address !== expectedAddress) {
+    throw new Error("analyze_function returned the wrong procedure");
+  }
+  if (
+    typeof value.procedure?.name !== "string" ||
+    value.procedure.name.trim().length === 0
+  ) {
+    throw new Error("analyze_function omitted the procedure name");
+  }
+  requirePseudocode(value.pseudocode?.text, "analyze_function");
+  for (const field of [
+    "comments",
+    "callers",
+    "callees",
+    "incoming_references",
+    "basic_blocks",
+  ]) {
+    const collection = value[field];
+    if (
+      collection === null ||
+      typeof collection !== "object" ||
+      !Array.isArray(collection.items) ||
+      !Number.isInteger(collection.total)
+    ) {
+      throw new Error(`analyze_function returned an invalid ${field} result`);
+    }
+  }
+  return value;
+};
+
+const requireSafeDiagnostics = (chunks) => {
+  const lines = chunks
+    .join("")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (const line of lines) {
+    let diagnostic;
+    try {
+      diagnostic = JSON.parse(line);
+    } catch {
+      throw new Error(`The MCP runtime emitted malformed stderr: ${line}`);
+    }
+    if (
+      diagnostic === null ||
+      typeof diagnostic !== "object" ||
+      diagnostic.application !== "rea" ||
+      typeof diagnostic.level !== "number" ||
+      diagnostic.level >= 40
+    ) {
+      throw new Error(`The MCP runtime emitted unsafe stderr: ${line}`);
+    }
+  }
+  return lines.length;
+};
+
 const targetPath = process.env.HOPPER_TARGET_PATH;
 const secondTargetPath = process.env.HOPPER_SECOND_TARGET_PATH;
 if (!targetPath || !secondTargetPath)
@@ -49,8 +142,10 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 let stderrBytes = 0;
+const stderrChunks = [];
 transport.stderr?.on("data", (chunk) => {
   stderrBytes += chunk.length;
+  if (stderrBytes <= 16_384) stderrChunks.push(chunk.toString("utf8"));
 });
 const client = new Client({ name: "real-hopper-verifier", version: "1.0.0" });
 let summary;
@@ -61,7 +156,7 @@ try {
   const expectedNames = TOOL_CONTRACTS.map(({ name }) => name).sort();
   const actualNames = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    throw new Error("The real server did not expose the intended 42 tools");
+    throw new Error("The real server did not expose the intended 46 tools");
   }
 
   const options = { timeout };
@@ -92,14 +187,72 @@ try {
     { name: "list_procedures", arguments: {} },
     options,
   );
-  const procedureMap = jsonValue(procedures);
-  const firstAddress = Object.keys(procedureMap)[0];
-  if (firstAddress === undefined) {
-    throw new Error("The verifier target contains no analyzed procedure");
+  requireSuccessfulTool(procedures, "list_procedures");
+  const firstAddress = firstProcedureAddress(procedures);
+  const containment = requireSuccessfulTool(
+    await client.callTool(
+      {
+        name: "resolve_containing_procedure",
+        arguments: { address: firstAddress },
+      },
+      options,
+    ),
+    "resolve_containing_procedure",
+  );
+  if (
+    containment?.found !== true ||
+    containment.procedure?.address !== firstAddress
+  ) {
+    throw new Error(
+      "resolve_containing_procedure returned the wrong procedure",
+    );
+  }
+  const references = requireSuccessfulTool(
+    await client.callTool(
+      {
+        name: "procedure_references",
+        arguments: {
+          procedure: firstAddress,
+          direction: "outgoing",
+          limit: 10,
+          max_instructions: 100,
+        },
+      },
+      options,
+    ),
+    "procedure_references",
+  );
+  if (!Array.isArray(references?.references?.items)) {
+    throw new Error("procedure_references returned an invalid bounded result");
   }
   const bounded = await client.callTool(
     { name: "batch_decompile", arguments: { addresses: [firstAddress] } },
     options,
+  );
+  const boundedResult = requireSuccessfulTool(bounded, "batch_decompile");
+  if (
+    boundedResult === null ||
+    typeof boundedResult !== "object" ||
+    Array.isArray(boundedResult)
+  ) {
+    throw new Error("batch_decompile returned an invalid result");
+  }
+  const boundedPseudocode = requirePseudocode(
+    boundedResult[firstAddress],
+    "batch_decompile",
+  );
+  const dossier = requireFunctionDossier(
+    requireSuccessfulTool(
+      await client.callTool(
+        {
+          name: "analyze_function",
+          arguments: { procedure: firstAddress },
+        },
+        options,
+      ),
+      "analyze_function",
+    ),
+    firstAddress,
   );
   const switched = await client.callTool(
     { name: "open_binary", arguments: { path: targetB } },
@@ -127,9 +280,7 @@ try {
       "Hopper's bundled MCP server was running during verification",
     );
   }
-  if (stderrBytes !== 0) {
-    throw new Error("The MCP runtime emitted stderr during verification");
-  }
+  const diagnosticCount = requireSafeDiagnostics(stderrChunks);
 
   const closed = await client.callTool(
     { name: "close_binary", arguments: {} },
@@ -144,9 +295,13 @@ try {
     segmentCount: jsonValue(segments).length,
     boundedTool: "batch_decompile",
     boundedInputCount: 1,
-    boundedResultKeys: Object.keys(jsonValue(bounded)).length,
+    boundedResultKeys: Object.keys(boundedResult).length,
+    boundedPseudocodeChars: boundedPseudocode.length,
+    analyzedProcedure: dossier.procedure,
+    analyzedPseudocodeChars: dossier.pseudocode.text.length,
     bundledMcpRunning,
     stderrBytes,
+    diagnosticCount,
     dynamicSession: true,
     targets: [targetA, targetB],
     switched: true,

@@ -1,7 +1,8 @@
 import { parseConfig } from "../config.js";
-import type { JsonValue } from "../hopper/protocol.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { createBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
+import { createEvidence } from "../domain/evidence.js";
 
 /**
  * Open one binary, execute one tool, and always release the bridge session.
@@ -22,9 +23,13 @@ export const runDirectAnalysis = async (
     const opened = await session.open(path);
     if (!opened.ok)
       return { error: opened.error._tag, message: opened.error.message };
-    const result = await session.callTool(tool, arguments_);
+    const result = await session.execute(tool, arguments_);
     return result.ok
-      ? result.value
+      ? createEvidence(opened.value, {
+          operation: tool,
+          parameters: arguments_,
+          result: result.value,
+        })
       : { error: result.error._tag, message: result.error.message };
   } finally {
     await session.close();

@@ -161,8 +161,8 @@ try {
   const client = new Client({ name: "package-smoke", version: "1.0.0" });
   try {
     await client.connect(transport);
-    if ((await client.listTools()).tools.length !== 42)
-      throw new Error("packaged MCP did not expose 42 tools");
+    if ((await client.listTools()).tools.length !== 46)
+      throw new Error("packaged MCP did not expose 46 tools");
     const result = await client.callTool({
       name: "current_document",
       arguments: {},
@@ -177,7 +177,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, incurMcpCommand: "npx -y @morluto/rea mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 42, targetFree: true })}\n`,
+    `${JSON.stringify({ cli: true, incurMcpCommand: "npx -y @morluto/rea mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 46, targetFree: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

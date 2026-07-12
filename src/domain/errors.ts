@@ -1,6 +1,14 @@
-/** Base class for expected Hopper integration failures. */
-export abstract class HopperError extends Error {
+/** Base class for expected analysis, provider, and session failures. */
+export abstract class AnalysisError extends Error {
   abstract readonly _tag: string;
+}
+
+/** Base class for failures produced specifically by the Hopper provider. */
+export abstract class HopperError extends AnalysisError {}
+
+/** Provider-neutral invalid analysis input or output at an application boundary. */
+export class AnalysisProtocolError extends AnalysisError {
+  readonly _tag = "HopperProtocolError";
 }
 
 /** Hopper did not respond within the configured operation deadline. */
@@ -57,12 +65,12 @@ export class HopperStartError extends HopperError {
 }
 
 /** Runtime configuration could not be parsed safely. */
-export class ConfigurationError extends HopperError {
+export class ConfigurationError extends AnalysisError {
   readonly _tag = "ConfigurationError";
 }
 
 /** No app or binary session exists for an analysis request. */
-export class NoBinaryOpenError extends HopperError {
+export class NoBinaryOpenError extends AnalysisError {
   readonly _tag = "NoBinaryOpenError";
   constructor() {
     super(
@@ -72,7 +80,7 @@ export class NoBinaryOpenError extends HopperError {
 }
 
 /** A supplied target path could not be safely opened as a supported app or binary. */
-export class BinaryTargetError extends HopperError {
+export class BinaryTargetError extends AnalysisError {
   readonly _tag = "BinaryTargetError";
   constructor(
     readonly path: string,

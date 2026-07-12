@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 
-import type { HopperToolPort } from "../application/HopperToolPort.js";
-import type { BinarySession } from "../application/BinarySession.js";
+import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { BinarySessionPort } from "../application/BinarySession.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
@@ -14,8 +14,8 @@ import { silentLogger, type Logger } from "../logger.js";
  * fixed-target seam used by focused tests and embedders.
  */
 export const createServer = (
-  hopper: HopperToolPort,
-  session?: BinarySession,
+  analysis: AnalysisOperationPort,
+  session?: BinarySessionPort,
   logger: Logger = silentLogger,
 ): McpServer => {
   const server = new McpServer(
@@ -24,13 +24,15 @@ export const createServer = (
       capabilities: { tools: {} },
       instructions:
         session === undefined
-          ? "Reverse-engineering tools for an active Hopper Disassembler target. Start with binary_overview."
-          : "Reverse-engineering tools for Hopper Disassembler. Open a target with open_binary, then start with binary_overview.",
+          ? "Reverse-engineering tools for an active analysis target. Start with binary_overview."
+          : "Reverse-engineering tools for configured analysis providers. Open a target with open_binary, then start with binary_overview.",
     },
   );
   const toolLogger = logger.child({ layer: "server" });
-  registerOfficialTools(server, hopper, toolLogger);
-  registerEnhancedTools(server, hopper, toolLogger);
+  const activeTarget =
+    session === undefined ? undefined : () => session.activeTarget();
+  registerOfficialTools(server, analysis, toolLogger, activeTarget);
+  registerEnhancedTools(server, analysis, toolLogger, activeTarget);
   if (session !== undefined) registerSessionTools(server, session, toolLogger);
   return server;
 };
