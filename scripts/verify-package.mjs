@@ -95,7 +95,7 @@ try {
     throw new Error("packaged CLI discovery or doctor failed");
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
-  if (!mcpRegistration.includes("add-mcp npx -y reaa mcp --name rea"))
+  if (!mcpRegistration.includes("add-mcp npx -y @morluto/rea mcp --name rea"))
     throw new Error("Incur mcp add did not register the floating npx command");
   const first = json(await run(cli, ["setup", "--yes", "--json"], environment));
   const second = json(
@@ -113,7 +113,7 @@ try {
       config.existing !== true ||
       config.mcpServers?.rea?.command !== "npx" ||
       JSON.stringify(config.mcpServers?.rea?.args) !==
-        JSON.stringify(["-y", "reaa", "mcp"])
+        JSON.stringify(["-y", "@morluto/rea", "mcp"])
     )
       throw new Error("packaged client readback failed");
     if (
@@ -173,7 +173,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, incurMcpCommand: "npx -y reaa mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 42, targetFree: true })}\n`,
+    `${JSON.stringify({ cli: true, incurMcpCommand: "npx -y @morluto/rea mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 42, targetFree: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
