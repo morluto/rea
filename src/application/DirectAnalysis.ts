@@ -1,9 +1,9 @@
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { EnhancedTools } from "./EnhancedTools.js";
 import { createBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
-import { EnhancedTools } from "./EnhancedTools.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
 
