@@ -50,6 +50,7 @@
     "start": "node dist/main.js",
     "pretest": "npm run build",
     "test": "vitest run",
+    "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage.enabled --coverage.provider=v8",
     "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest",
