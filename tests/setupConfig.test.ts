@@ -28,7 +28,7 @@ describe("JSON client configuration transaction", () => {
         other: { command: "other" },
         rea: {
           command: "npx",
-          args: ["-y", "reaa", "mcp"],
+          args: ["-y", "@morluto/rea", "mcp"],
         },
       },
     });
@@ -39,7 +39,7 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      '{"mcpServers":{"rea":{"command":"npx","args":["-y","reaa","mcp"]}}}\n',
+      '{"mcpServers":{"rea":{"command":"npx","args":["-y","@morluto/rea","mcp"]}}}\n',
     );
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
       status: "unchanged",
@@ -61,7 +61,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "reaa", "mcp"],
+          args: ["-y", "@morluto/rea", "mcp"],
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

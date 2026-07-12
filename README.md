@@ -17,8 +17,8 @@ REA does not bundle Hopper. `rea setup --yes` can install Homebrew when absent, 
 After publication:
 
 ```bash
-npx -y reaa setup --yes
-npx -y reaa doctor
+npx -y @morluto/rea setup --yes
+npx -y @morluto/rea doctor
 ```
 
 For source-checkout development:
@@ -59,7 +59,7 @@ Manual target-free MCP configuration:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "reaa", "mcp"]
+      "args": ["-y", "@morluto/rea", "mcp"]
     }
   }
 }
@@ -94,13 +94,13 @@ npm run verify:hopper
 
 Real-Hopper verification requires Hopper and two distinct binaries. It checks target-free startup, all 42 tools, analysis, bounded decompilation, target switching, bridge cleanup, and server shutdown. The verifier terminates only Hopper bundle processes that appeared during its run; it preserves Hopper processes that were already running.
 
-Before publishing a release, run `npm run check`, `npm run verify:package`, `npm pack --dry-run`, and the two-target real-Hopper verifier. After publication, repeat the CLI and MCP smoke tests through `npx -y reaa`.
+Before publishing a release, run `npm run check`, `npm run verify:package`, `npm pack --dry-run`, and the two-target real-Hopper verifier. After publication, repeat the CLI and MCP smoke tests through `npx -y @morluto/rea`.
 
-The npm package is named `reaa`, while the product and installed executable remain `REA` and `rea`. Setup writes a floating MCP registration using `npx -y reaa mcp`. A local tarball exercises the same package boundary before publication:
+The npm package is named `@morluto/rea`, while the product and installed executable remain `REA` and `rea`. Setup writes a floating MCP registration using `npx -y @morluto/rea mcp`. A local tarball exercises the same package boundary before publication:
 
 ```bash
 npm pack
-npm exec --yes --package ./reaa-0.1.0.tgz -- rea --help
+npm exec --yes --package ./morluto-rea-0.1.0.tgz -- rea --help
 ```
 
 ## License
