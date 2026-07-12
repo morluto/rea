@@ -1,8 +1,12 @@
 # REA
 
+[npm package](https://www.npmjs.com/package/@morluto/rea) · [Issues](https://github.com/morluto/rea/issues) · [Hopper Disassembler](https://www.hopperapp.com/)
+
 REA gives coding agents access to Hopper Disassembler through one `rea` command. It exposes 42 MCP tools: 31 direct Hopper operations, 8 composed analysis workflows, and 3 target-session tools.
 
 REA uses Hopper's public Python API through its own authenticated local bridge. It does not use Hopper's bundled MCP server.
+
+**REA is not a disassembler.** Hopper Disassembler is a separate macOS dependency that must be installed and licensed independently. REA launches and controls Hopper underneath through its public Python API.
 
 ## Requirements
 
@@ -14,12 +18,15 @@ REA does not bundle Hopper. `rea setup --yes` can install Homebrew when absent, 
 
 ## Install
 
-After publication:
+Quick start:
 
 ```bash
 npx -y @morluto/rea setup --yes
 npx -y @morluto/rea doctor
+npx -y @morluto/rea mcp
 ```
+
+The final command starts the stdio MCP server for clients that launch it directly. `setup` can write the equivalent persistent client registration automatically.
 
 For source-checkout development:
 
@@ -94,14 +101,9 @@ npm run verify:hopper
 
 Real-Hopper verification requires Hopper and two distinct binaries. It checks target-free startup, all 42 tools, analysis, bounded decompilation, target switching, bridge cleanup, and server shutdown. The verifier terminates only Hopper bundle processes that appeared during its run; it preserves Hopper processes that were already running.
 
-Before publishing a release, run `npm run check`, `npm run verify:package`, `npm pack --dry-run`, and the two-target real-Hopper verifier. After publication, repeat the CLI and MCP smoke tests through `npx -y @morluto/rea`.
+The npm package is named `@morluto/rea`, while the product and installed executable remain `REA` and `rea`. Setup writes a floating MCP registration using `npx -y @morluto/rea mcp`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the release checklist and local-tarball verification workflow.
 
-The npm package is named `@morluto/rea`, while the product and installed executable remain `REA` and `rea`. Setup writes a floating MCP registration using `npx -y @morluto/rea mcp`. A local tarball exercises the same package boundary before publication:
-
-```bash
-npm pack
-npm exec --yes --package ./morluto-rea-0.1.0.tgz -- rea --help
-```
+Security reports should follow [SECURITY.md](SECURITY.md).
 
 ## License
 
