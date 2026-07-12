@@ -1,0 +1,24 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "src/main.ts",
+    "src/cli.ts",
+    "src/config.ts",
+    "src/domain",
+    "src/contracts",
+    "src/hopper",
+    "src/application",
+    "src/server"
+  ],
+  "entryPointStrategy": "expand",
+  "out": "docs/api",
+  "tsconfig": "tsconfig.json",
+  "exclude": ["**/*.test.ts", "tests/**", "dist/**", "node_modules/**"],
+  "excludeExternals": true,
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "includeVersion": true,
+  "readme": "none",
+  "plugin": [],
+  "gitRevision": "main"
+}

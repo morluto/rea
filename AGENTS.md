@@ -4,6 +4,8 @@
 
 REA is a layered ESM TypeScript application. Dependencies flow inward: `domain` ← `contracts` ← `hopper` ← `application` ← `server` ← adapters.
 
+See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architecture diagram.
+
 - `scripts/rea.mjs`: executable dispatcher. Routes only bare `mcp` and `--mcp` to the production stdio server; Incur handles registration utilities and one-shot commands.
 - `src/main.ts`: MCP adapter. Parses config, wires the shared session runtime, starts stdio transport, and owns process-lifetime shutdown.
 - `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
@@ -24,13 +26,20 @@ REA is a layered ESM TypeScript application. Dependencies flow inward: `domain` 
 - `npm run build`: compile `src/` into `dist/`.
 - `npm test`: build, then run the Vitest suite once.
 - `npm run typecheck`: run strict TypeScript checks without emitting files.
-- `npm run lint`: apply type-aware ESLint rules.
+- `npm run lint`: apply oxlint rules (complexity, max-lines, unused vars, and TypeScript-specific checks).
+- `npm run lint:fix`: auto-fix oxlint violations where possible.
 - `npm run format:check`: verify Prettier formatting.
 - `npm run check`: run typecheck, lint, format:check, and tests.
+- `npm run knip`: detect unused files, dependencies, and exports.
+- `npm run jscpd`: detect duplicate code blocks.
+- `npm run scan:todos`: scan for TODO, FIXME, and HACK markers.
 - `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 42-tool target-free MCP server in an isolated environment.
+- `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
+
+Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use `npm run lint:fix` to auto-correct violations locally.
 
 ## Configuration & Environment Variables
 
