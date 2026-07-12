@@ -1,7 +1,7 @@
 {
   "name": "@morluto/rea",
   "version": "0.2.0",
-  "description": "Reverse-engineering automation for Hopper Disassembler through one CLI and MCP server.",
+  "description": "Reverse engineering CLI and MCP server for coding agents to understand apps and build features.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,10 +13,17 @@
   },
   "keywords": [
     "reverse-engineering",
-    "hopper",
+    "binary-analysis",
+    "coding-agents",
+    "agent-skills",
+    "cli",
+    "mcp-server",
+    "model-context-protocol",
+    "static-analysis",
     "disassembler",
     "decompiler",
-    "mcp"
+    "mcp",
+    "hopper"
   ],
   "publishConfig": {
     "access": "public"

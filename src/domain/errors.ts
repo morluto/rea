@@ -61,17 +61,17 @@ export class ConfigurationError extends HopperError {
   readonly _tag = "ConfigurationError";
 }
 
-/** No binary session exists for an analysis request. */
+/** No app or binary session exists for an analysis request. */
 export class NoBinaryOpenError extends HopperError {
   readonly _tag = "NoBinaryOpenError";
   constructor() {
     super(
-      "No binary is open. Call open_binary with a readable local path first.",
+      "No app is open. Ask the user which app to investigate, then call open_binary with its local path.",
     );
   }
 }
 
-/** A supplied target path could not be safely opened as a supported binary. */
+/** A supplied target path could not be safely opened as a supported app or binary. */
 export class BinaryTargetError extends HopperError {
   readonly _tag = "BinaryTargetError";
   constructor(
@@ -79,6 +79,6 @@ export class BinaryTargetError extends HopperError {
     reason: string,
     options?: ErrorOptions,
   ) {
-    super(`Cannot open binary: ${reason}: ${path}`, options);
+    super(`Cannot open app: ${reason}: ${path}`, options);
   }
 }

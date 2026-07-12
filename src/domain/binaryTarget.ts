@@ -2,14 +2,19 @@ import { constants } from "node:fs";
 import {
   access,
   open,
+  readFile,
   realpath,
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 
 import { BinaryTargetError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
+
+const execFileAsync = promisify(execFile);
 
 /** CPU families understood by the supported executable loaders. */
 type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
@@ -41,7 +46,10 @@ export const parseBinaryTarget = async (
   const candidate = isAbsolute(input) ? input : resolve(cwd, input);
   try {
     await access(candidate, constants.R_OK);
-    const path = await realpath(candidate);
+    const canonical = await realpath(candidate);
+    const resolved = await resolveAppBundle(canonical);
+    if (!resolved.ok) return err(resolved.error);
+    const path = resolved.value;
     if (!(await stat(path)).isFile())
       return err(new BinaryTargetError(path, "target is not a regular file"));
     if (
@@ -64,6 +72,93 @@ export const parseBinaryTarget = async (
     );
   }
 };
+
+const resolveAppBundle = async (
+  path: string,
+): Promise<Result<string, BinaryTargetError>> => {
+  const metadata = await stat(path);
+  if (!metadata.isDirectory()) return ok(path);
+  if (extname(path).toLowerCase() !== ".app")
+    return err(new BinaryTargetError(path, "target is not an app or file"));
+  const plistPath = join(path, "Contents", "Info.plist");
+  let name: string;
+  try {
+    const plist = await readFile(plistPath);
+    name =
+      plist.subarray(0, 6).toString("ascii") === "bplist"
+        ? await readBinaryPlistExecutable(plistPath)
+        : parseXmlPlistExecutable(plist.toString("utf8"));
+  } catch (cause: unknown) {
+    return err(
+      new BinaryTargetError(path, "app has no readable CFBundleExecutable", {
+        cause,
+      }),
+    );
+  }
+  if (!isSafeExecutableName(name))
+    return err(
+      new BinaryTargetError(path, "app has an unsafe CFBundleExecutable"),
+    );
+  const programs = join(path, "Contents", "MacOS");
+  const executable = join(programs, name);
+  try {
+    const [canonicalPrograms, canonicalExecutable] = await Promise.all([
+      realpath(programs),
+      realpath(executable),
+    ]);
+    const location = relative(canonicalPrograms, canonicalExecutable);
+    if (
+      location === ".." ||
+      location.startsWith(`..${sep}`) ||
+      isAbsolute(location)
+    )
+      return err(
+        new BinaryTargetError(path, "app program file leaves Contents/MacOS"),
+      );
+    return ok(canonicalExecutable);
+  } catch (cause: unknown) {
+    return err(
+      new BinaryTargetError(path, "app program file is missing", { cause }),
+    );
+  }
+};
+
+const parseXmlPlistExecutable = (plist: string): string => {
+  const match =
+    /<key>\s*CFBundleExecutable\s*<\/key>\s*<string>([^<]+)<\/string>/u.exec(
+      plist,
+    );
+  if (match?.[1] === undefined)
+    throw new Error("CFBundleExecutable is missing");
+  return decodeXml(match[1].trim());
+};
+
+const readBinaryPlistExecutable = async (plistPath: string): Promise<string> =>
+  (
+    await execFileAsync("/usr/bin/plutil", [
+      "-extract",
+      "CFBundleExecutable",
+      "raw",
+      "-o",
+      "-",
+      plistPath,
+    ])
+  ).stdout.trim();
+
+const isSafeExecutableName = (name: string): boolean =>
+  name.length > 0 &&
+  name !== "." &&
+  name !== ".." &&
+  !name.includes("\0") &&
+  !/[/\\]/u.test(name);
+
+const decodeXml = (value: string): string =>
+  value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'");
 
 type ExecutableMetadata = Pick<
   BinaryTarget,

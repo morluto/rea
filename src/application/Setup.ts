@@ -276,8 +276,14 @@ const installCanonicalSkill = async (
     PRODUCT_IDENTITY.skillName,
     "SKILL.md",
   );
-  const content = `---\nname: ${PRODUCT_IDENTITY.skillName}\ndescription: Analyze binaries with REA and Hopper.\n---\n\nOpen a target with open_binary, begin with binary_overview, and close it when finished.\n`;
   try {
+    const content = await readFile(
+      new URL(
+        `../../skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
+        import.meta.url,
+      ),
+      "utf8",
+    );
     if (
       (await readFile(destination, "utf8").catch(() => undefined)) === content
     )
