@@ -49,6 +49,8 @@
     "start": "node dist/main.js",
     "pretest": "npm run build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage.enabled --coverage.provider=v8",
+    "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs",
@@ -66,6 +68,7 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0-beta.3",
     "@types/node": "24.10.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "husky": "9.1.7",
     "jscpd": "5.0.12",
     "knip": "6.26.0",
