@@ -1,4 +1,6 @@
 import { constants } from "node:fs";
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import {
   access,
   open,
@@ -25,6 +27,7 @@ type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
  */
 export interface BinaryTarget {
   readonly path: string;
+  readonly sha256: string;
   readonly kind: "executable" | "database";
   readonly format: "hopper" | "mach-o" | "elf" | "pe";
   readonly architecture?: BinaryArchitecture;
@@ -56,7 +59,13 @@ export const parseBinaryTarget = async (
       targetKind === "database" ||
       (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
     )
-      return ok({ path, kind: "database", format: "hopper", loaderArgs: [] });
+      return ok({
+        path,
+        sha256: await sha256File(path),
+        kind: "database",
+        format: "hopper",
+        loaderArgs: [],
+      });
     const handle = await open(path, "r");
     let detected: Result<ExecutableMetadata, string>;
     try {
@@ -65,12 +74,23 @@ export const parseBinaryTarget = async (
       await handle.close();
     }
     if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
-    return ok({ path, kind: "executable", ...detected.value });
+    return ok({
+      path,
+      sha256: await sha256File(path),
+      kind: "executable",
+      ...detected.value,
+    });
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(candidate, "path is not readable", { cause }),
     );
   }
+};
+
+const sha256File = async (path: string): Promise<string> => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
 };
 
 const resolveAppBundle = async (

@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![43 MCP tools](https://img.shields.io/badge/MCP_tools-43-5c4ee5?style=flat-square)](#43-个工具组成的工作台)
+[![46 MCP tools](https://img.shields.io/badge/MCP_tools-46-5c4ee5?style=flat-square)](#46-个工具组成的工作台)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [43 个工具](#43-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
+[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [46 个工具](#46-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
 
 <br />
 
@@ -135,12 +135,12 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 - 分析 Swift 和 Objective-C 元数据。
 - 在 Hopper 中留下名称、注释与书签，使人与智能体的分析互相增强。
 
-## 43 个工具组成的工作台
+## 46 个工具组成的工作台
 
 | 工具类别   | 数量 | 示例                                                                                                                 |
 | ---------- | ---: | -------------------------------------------------------------------------------------------------------------------- |
-| 二进制检查 |   31 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                               |
-| 组合分析   |    9 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
+| 二进制检查 |   33 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                               |
+| 组合分析   |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
 | 二进制会话 |    3 | `open_binary`, `binary_session`, `close_binary`                                                                      |
 
 ## 与其他编程智能体一起使用

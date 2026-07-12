@@ -44,6 +44,34 @@ const server = createServer((socket) => {
           id: request.id,
           error: { code: -32001, message: "safe fake failure" },
         });
+      } else if (request.method === "current_document") {
+        send({ id: request.id, result: "fixture" });
+      } else if (request.method === "resolve_containing_procedure") {
+        send({
+          id: request.id,
+          result: {
+            query_address: request.params.address,
+            found: true,
+            procedure: { address: "0x1000", name: "fixture" },
+          },
+        });
+      } else if (request.method === "procedure_references") {
+        send({
+          id: request.id,
+          result: {
+            procedure: { address: "0x1000", name: "fixture" },
+            direction: request.params.direction ?? "outgoing",
+            references: {
+              items: [],
+              total: 0,
+              returned: 0,
+              truncated: false,
+              next_offset: null,
+            },
+            instructions_scanned: 1,
+            instruction_scan_truncated: false,
+          },
+        });
       } else {
         const delay = request.params?.delay ?? 0;
         setTimeout(

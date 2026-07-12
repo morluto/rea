@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { JsonValue } from "../hopper/protocol.js";
+import type { JsonValue } from "./jsonValue.js";
 import { HopperProtocolError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 

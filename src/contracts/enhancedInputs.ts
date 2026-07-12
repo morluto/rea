@@ -29,6 +29,12 @@ export const enhancedInputSchemas = {
     max_pseudocode_chars: z.number().int().min(1).max(100_000).default(20_000),
     max_instructions: z.number().int().min(1).max(5_000).default(500),
   }),
+  trace_feature: z.object({
+    query: z.string().min(1),
+    case_sensitive: z.boolean().default(false),
+    limit: z.number().int().min(1).max(100).default(20),
+    max_operations: z.number().int().min(1).max(100).default(20),
+  }),
 } as const;
 
 export type EnhancedToolName = keyof typeof enhancedInputSchemas;
@@ -44,4 +50,5 @@ export const enhancedToolNameSchema = z.enum([
   "find_xrefs_to_name",
   "binary_overview",
   "analyze_function",
+  "trace_feature",
 ]);

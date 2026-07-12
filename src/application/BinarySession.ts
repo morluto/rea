@@ -3,18 +3,30 @@ import { parseBinaryTarget } from "../domain/binaryTarget.js";
 import {
   HopperCancelledError,
   NoBinaryOpenError,
-  type HopperError,
+  type AnalysisError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { JsonValue } from "../hopper/protocol.js";
-import type { HopperToolPort } from "./HopperToolPort.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type {
+  AnalysisClient,
+  AnalysisClientFactory,
+  AnalysisOperationPort,
+  AnalysisProvider,
+} from "./AnalysisProvider.js";
 
-/** A closeable Hopper port created for exactly one parsed target. */
-export interface BinaryClient extends HopperToolPort {
-  close(): Promise<void>;
+/** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
+export interface BinarySessionPort extends AnalysisOperationPort {
+  open(
+    path: string,
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly targetKind?: BinaryTarget["kind"];
+    },
+  ): Promise<Result<BinaryTarget, AnalysisError>>;
+  close(): Promise<Result<null, AnalysisError>>;
+  status(): JsonValue;
+  activeTarget(): BinaryTarget | undefined;
 }
-/** Production seam for creating one unstarted client for a parsed target. */
-export type BinaryClientFactory = (target: BinaryTarget) => BinaryClient;
 
 /**
  * Owns the single active target shared by CLI and MCP adapters.
@@ -24,13 +36,20 @@ export type BinaryClientFactory = (target: BinaryTarget) => BinaryClient;
  * down. A failed switch recreates the previous target instead of retaining a
  * client whose bridge was already shut down.
  */
-export class BinarySession implements HopperToolPort {
+export class BinarySession implements BinarySessionPort {
   #active:
-    | { readonly target: BinaryTarget; readonly client: BinaryClient }
+    | { readonly target: BinaryTarget; readonly client: AnalysisClient }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
   readonly #calls = new Set<Promise<unknown>>();
-  constructor(readonly createClient: BinaryClientFactory) {}
+  readonly #createClient: AnalysisClientFactory;
+
+  constructor(readonly provider: AnalysisProvider | AnalysisClientFactory) {
+    this.#createClient =
+      typeof provider === "function"
+        ? provider
+        : (target) => provider.createClient(target);
+  }
 
   /**
    * Open or switch targets after draining calls against the current target.
@@ -42,7 +61,7 @@ export class BinarySession implements HopperToolPort {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
     } = {},
-  ): Promise<Result<BinaryTarget, HopperError>> {
+  ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async () => {
       if (isAborted(options.signal)) return err(new HopperCancelledError());
       const parsed = await parseBinaryTarget(
@@ -59,8 +78,8 @@ export class BinarySession implements HopperToolPort {
       const previous = this.#active;
       this.#active = undefined;
       await previous?.client.close();
-      const client = this.createClient(parsed.value);
-      const started = await client.callTool("health", {}, options);
+      const client = this.#createClient(parsed.value);
+      const started = await client.execute("health", {}, options);
       if (!started.ok) {
         await client.close();
         await this.#restore(previous);
@@ -77,7 +96,7 @@ export class BinarySession implements HopperToolPort {
   }
 
   /** Close the active target, if any. */
-  close(): Promise<Result<null, HopperError>> {
+  close(): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async () => {
       const previous = this.#active;
       this.#active = undefined;
@@ -95,9 +114,16 @@ export class BinarySession implements HopperToolPort {
       : {
           open: true,
           path: target.path,
+          sha256: target.sha256,
           format: target.format,
           kind: target.kind,
+          architecture: target.architecture ?? null,
         };
+  }
+
+  /** Return the immutable artifact identity captured before Hopper launched. */
+  activeTarget(): BinaryTarget | undefined {
+    return this.#active?.target;
   }
 
   /**
@@ -105,16 +131,16 @@ export class BinarySession implements HopperToolPort {
    * Calls may overlap, but a pending target transition prevents new calls from
    * entering until the transition has settled.
    */
-  async callTool(
+  async execute(
     name: string,
     arguments_: Readonly<Record<string, JsonValue>>,
     options?: { readonly signal?: AbortSignal },
-  ): Promise<Result<JsonValue, HopperError>> {
+  ): Promise<Result<JsonValue, AnalysisError>> {
     const transitioned = await this.#waitForTransition(options?.signal);
     if (!transitioned.ok) return transitioned;
     const active = this.#active;
     if (active === undefined) return err(new NoBinaryOpenError());
-    const call = active.client.callTool(name, arguments_, options);
+    const call = active.client.execute(name, arguments_, options);
     this.#calls.add(call);
     try {
       return await call;
@@ -138,12 +164,12 @@ export class BinarySession implements HopperToolPort {
 
   async #restore(
     previous:
-      | { readonly target: BinaryTarget; readonly client: BinaryClient }
+      | { readonly target: BinaryTarget; readonly client: AnalysisClient }
       | undefined,
   ): Promise<void> {
     if (previous === undefined) return;
-    const client = this.createClient(previous.target);
-    const started = await client.callTool("health", {});
+    const client = this.#createClient(previous.target);
+    const started = await client.execute("health", {});
     if (started.ok) this.#active = { target: previous.target, client };
     else await client.close();
   }

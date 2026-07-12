@@ -6,11 +6,16 @@ import {
   OFFICIAL_TOOL_CONTRACTS,
   SESSION_TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
+import {
+  enhancedOutputSchemas,
+  officialOutputSchemas,
+  sessionOutputSchemas,
+} from "../src/contracts/toolOutputSchemas.js";
 
 describe("tool contract surface", () => {
   it("advertises complete typed schemas and annotations for all analysis tools", () => {
     const contracts = [...OFFICIAL_TOOL_CONTRACTS, ...ENHANCED_TOOL_CONTRACTS];
-    expect(contracts).toHaveLength(40);
+    expect(contracts).toHaveLength(43);
     for (const contract of contracts) {
       const inputSchema = z.toJSONSchema(contract.inputSchema, {
         target: "draft-07",
@@ -39,5 +44,31 @@ describe("tool contract surface", () => {
       { name: "close_binary", kind: "session" },
       { name: "binary_session", kind: "session" },
     ]);
+  });
+
+  it("publishes a dedicated output schema and agent guidance for every tool", () => {
+    expect(Object.keys(officialOutputSchemas).sort()).toEqual(
+      OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+    expect(Object.keys(enhancedOutputSchemas).sort()).toEqual(
+      ENHANCED_TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+    expect(Object.keys(sessionOutputSchemas).sort()).toEqual(
+      SESSION_TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+
+    for (const contract of [
+      ...OFFICIAL_TOOL_CONTRACTS,
+      ...ENHANCED_TOOL_CONTRACTS,
+      ...SESSION_TOOL_CONTRACTS,
+    ]) {
+      const schema = z.toJSONSchema(contract.outputSchema, {
+        target: "draft-07",
+        unrepresentable: "any",
+      });
+      expect(JSON.stringify(schema)).not.toContain('"result":{}');
+      expect(contract.description.length).toBeGreaterThan(100);
+      expect(contract.description).toMatch(/[.;]/u);
+    }
   });
 });

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import type { BinarySession } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/BinarySession.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
@@ -10,7 +10,7 @@ import { logToolExecution } from "./toolLogging.js";
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export const registerSessionTools = (
   server: McpServer,
-  session: BinarySession,
+  session: BinarySessionPort,
   logger: Logger,
 ): void => {
   const [openContract, closeContract, statusContract] = SESSION_TOOL_CONTRACTS;
@@ -36,6 +36,8 @@ export const registerSessionTools = (
                 format: opened.value.format,
                 kind: opened.value.kind,
                 loaderArgs: [...opened.value.loaderArgs],
+                sha256: opened.value.sha256,
+                architecture: opened.value.architecture ?? null,
               },
             },
             openContract,

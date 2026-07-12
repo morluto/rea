@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import { HopperProtocolError, HopperRemoteError } from "../domain/errors.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-export const jsonValueSchema = z.json();
-export type JsonValue = z.infer<typeof jsonValueSchema>;
+export { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 const responseSchema = z.union([
   z.object({

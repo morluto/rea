@@ -5,10 +5,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  BinarySession,
-  type BinaryClient,
-} from "../src/application/BinarySession.js";
+import { BinarySession } from "../src/application/BinarySession.js";
+import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { ok } from "../src/domain/result.js";
 import { createServer } from "../src/server/createServer.js";
 
@@ -44,7 +42,7 @@ describe("target-free MCP lifecycle", () => {
     });
     expect(before.isError).toBe(true);
     expect(text(before)).toContain("NoBinaryOpenError");
-    expect((await mcp.listTools()).tools).toHaveLength(43);
+    expect((await mcp.listTools()).tools).toHaveLength(46);
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
         .isError,
@@ -64,9 +62,11 @@ describe("target-free MCP lifecycle", () => {
   });
 });
 
-const client = (path: string, closed: string[]): BinaryClient => ({
-  callTool: (name) =>
-    Promise.resolve(ok(name === "health" ? null : { path, name })),
+const client = (path: string, closed: string[]): AnalysisClient => ({
+  execute: (name) =>
+    Promise.resolve(
+      ok(name === "health" ? null : name === "current_document" ? path : null),
+    ),
   close: () => {
     closed.push(path);
     return Promise.resolve();

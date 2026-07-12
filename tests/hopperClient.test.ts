@@ -102,7 +102,7 @@ describe("HopperClient", () => {
     const results = await Promise.all(
       OFFICIAL_TOOL_CONTRACTS.map(({ name }) => client.callTool(name, {})),
     );
-    expect(results).toHaveLength(31);
+    expect(results).toHaveLength(33);
     expect(results.every((result) => result.ok)).toBe(true);
   });
 

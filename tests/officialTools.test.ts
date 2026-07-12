@@ -1,11 +1,11 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { HopperToolPort } from "../src/application/HopperToolPort.js";
+import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import { HopperRemoteError } from "../src/domain/errors.js";
 import { err, ok } from "../src/domain/result.js";
-import type { JsonValue } from "../src/hopper/protocol.js";
+import type { JsonValue } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
 
 const VALID_INPUTS: Readonly<
@@ -31,7 +31,9 @@ const VALID_INPUTS: Readonly<
   procedure_callees: { procedure: "main" },
   procedure_callers: { procedure: "main" },
   procedure_info: { procedure: "main" },
+  procedure_references: { procedure: "main" },
   procedure_pseudo_code: { procedure: "main" },
+  resolve_containing_procedure: { address: "0x1000" },
   search_procedures: { pattern: "main" },
   search_strings: { pattern: "hello" },
   set_address_name: { address: "0x1000", name: "entry" },
@@ -57,8 +59,8 @@ afterEach(async () => {
   );
 });
 
-const connect = async (hopper: HopperToolPort) => {
-  const server = createServer(hopper);
+const connect = async (analysis: AnalysisOperationPort) => {
+  const server = createServer(analysis);
   const client = new Client({ name: "contract-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -77,10 +79,62 @@ const page: JsonValue = {
   has_more: false,
 };
 
+const outputFor = (name: string): JsonValue => {
+  if (["list_procedures", "list_names", "list_strings"].includes(name))
+    return page;
+  if (["address_name", "comment", "inline_comment"].includes(name)) return null;
+  if (["procedure_callees", "procedure_callers", "xrefs"].includes(name))
+    return [];
+  if (["list_bookmarks", "list_documents", "list_segments"].includes(name))
+    return [];
+  if (
+    [
+      "set_address_name",
+      "set_bookmark",
+      "set_comment",
+      "set_inline_comment",
+      "unset_bookmark",
+    ].includes(name)
+  )
+    return true;
+  if (name === "set_addresses_names") return { "0x1000": true };
+  if (["search_procedures", "search_strings"].includes(name)) return {};
+  if (name === "procedure_info")
+    return {
+      name: "main",
+      entrypoint: "0x1000",
+      basicblock_count: 1,
+      length: 4,
+      signature: null,
+      locals: [],
+    };
+  if (name === "resolve_containing_procedure")
+    return {
+      query_address: "0x1000",
+      found: true,
+      procedure: { address: "0x1000", name: "main" },
+    };
+  if (name === "procedure_references")
+    return {
+      procedure: { address: "0x1000", name: "main" },
+      direction: "outgoing",
+      references: {
+        items: [],
+        total: 0,
+        returned: 0,
+        truncated: false,
+        next_offset: null,
+      },
+      instructions_scanned: 1,
+      instruction_scan_truncated: false,
+    };
+  return name.includes("address") ? "0x1000" : "fixture";
+};
+
 describe("official Hopper proxy tools", () => {
-  it("lists exactly the 31 official contracts", async () => {
+  it("lists every official contract", async () => {
     const client = await connect({
-      callTool: () => Promise.resolve(ok(null)),
+      execute: () => Promise.resolve(ok(null)),
     });
     const listed = await client.listTools();
     const officialNames = new Set(
@@ -97,15 +151,9 @@ describe("official Hopper proxy tools", () => {
   it("executes every handler and projects omitted Python optionals to null", async () => {
     const invocations: Invocation[] = [];
     const client = await connect({
-      callTool: (name, arguments_) => {
+      execute: (name, arguments_) => {
         invocations.push({ name, arguments_ });
-        return Promise.resolve(
-          ok(
-            ["list_procedures", "list_names", "list_strings"].includes(name)
-              ? page
-              : { name, arguments: arguments_ },
-          ),
-        );
+        return Promise.resolve(ok(outputFor(name)));
       },
     });
 
@@ -137,7 +185,7 @@ describe("official Hopper proxy tools", () => {
 
   it("returns stable safe MCP error content", async () => {
     const client = await connect({
-      callTool: () => Promise.resolve(err(new HopperRemoteError(-1, "denied"))),
+      execute: () => Promise.resolve(err(new HopperRemoteError(-1, "denied"))),
     });
     const result = await client.callTool({
       name: "list_documents",

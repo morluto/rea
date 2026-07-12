@@ -1,8 +1,8 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
-import type { HopperError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
-import type { JsonValue } from "../hopper/protocol.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 
 /**
@@ -11,7 +11,7 @@ import type { ToolContract } from "../contracts/toolContracts.js";
  * output, and other potentially sensitive details stay private.
  */
 export const toCallToolResult = (
-  result: Result<JsonValue, HopperError>,
+  result: Result<JsonValue, AnalysisError>,
   contract: ToolContract,
 ): CallToolResult =>
   result.ok
@@ -30,18 +30,14 @@ const successResult = (
   value: JsonValue,
   contract: ToolContract,
 ): CallToolResult => {
-  const candidate = ["list_procedures", "list_names", "list_strings"].includes(
-    contract.name,
-  )
-    ? value
-    : { result: value };
+  const candidate = contract.kind === "session" ? { result: value } : value;
   const parsed = contract.outputSchema.safeParse(candidate);
   if (!parsed.success) {
     return {
       content: [
         {
           type: "text",
-          text: "HopperProtocolError: Hopper returned output that does not match the tool contract",
+          text: "HopperProtocolError: Analysis output does not match the tool contract",
         },
       ],
       isError: true,

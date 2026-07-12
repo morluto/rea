@@ -1,31 +1,37 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import type { HopperToolPort } from "../application/HopperToolPort.js";
+import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import {
   OFFICIAL_TOOL_CONTRACTS,
   type ToolContract,
 } from "../contracts/toolContracts.js";
-import { jsonValueSchema, type JsonValue } from "../hopper/protocol.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
+import type { BinaryTarget } from "../domain/binaryTarget.js";
+import { createEvidence } from "../domain/evidence.js";
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
   server: McpServer,
-  hopper: HopperToolPort,
+  analysis: AnalysisOperationPort,
   logger: Logger,
+  activeTarget?: () => BinaryTarget | undefined,
 ): void => {
   for (const contract of OFFICIAL_TOOL_CONTRACTS) {
-    registerOfficialTool(server, hopper, contract, logger);
+    registerOfficialTool(server, analysis, contract, { logger, activeTarget });
   }
 };
 
 const registerOfficialTool = (
   server: McpServer,
-  hopper: HopperToolPort,
+  analysis: AnalysisOperationPort,
   contract: ToolContract,
-  logger: Logger,
+  registration: {
+    readonly logger: Logger;
+    readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+  },
 ): void => {
   server.registerTool(
     contract.name,
@@ -37,12 +43,27 @@ const registerOfficialTool = (
     },
     async (input, context) => {
       const arguments_ = projectOfficialArguments(contract, input);
-      const result = await logToolExecution(logger, contract.name, () =>
-        hopper.callTool(contract.name, arguments_, {
-          signal: context.mcpReq.signal,
-        }),
+      const result = await logToolExecution(
+        registration.logger,
+        contract.name,
+        () =>
+          analysis.execute(contract.name, arguments_, {
+            signal: context.mcpReq.signal,
+          }),
       );
-      return toCallToolResult(result, contract);
+      return toCallToolResult(
+        result.ok
+          ? {
+              ok: true,
+              value: createEvidence(registration.activeTarget?.(), {
+                operation: contract.name,
+                parameters: arguments_,
+                result: result.value,
+              }),
+            }
+          : result,
+        contract,
+      );
     },
   );
 };
