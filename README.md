@@ -127,6 +127,7 @@ npx -y rea-agents doctor
 | Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent     |
 | Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`               |
 | Validate or canonicalize an Evidence v2 bundle            | `rea evidence-import` or `rea evidence-export` |
+| Import source as historical reference                     | `rea import-reference-source`                  |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
@@ -134,6 +135,13 @@ Filesystem evidence commands and MCP file tools are disabled until the operator 
 export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
+```
+
+Historical source import requires a separate allowlist and never treats source as current behavioral authority:
+
+```bash
+export REA_REFERENCE_ROOTS_JSON='["/absolute/path/to/source"]'
+rea import-reference-source /absolute/path/to/source
 ```
 
 Exports never replace an existing file unless `--overwrite` is explicit. Imports are size/depth bounded, validate every Evidence v2 ID and manifest, and never execute bundle content.

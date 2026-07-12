@@ -14,6 +14,7 @@ import {
   exportEvidenceBundleCommand,
   importEvidenceBundleCommand,
 } from "./application/EvidenceBundleCommands.js";
+import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -96,7 +97,38 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerNativeCommands(cli, logger);
   registerArtifactCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
+  registerReferenceSourceCommand(cli, logger);
   return cli;
+};
+
+const registerReferenceSourceCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("import-reference-source", {
+    description: "Import a bounded source tree as historical reference only",
+    args: z.object({
+      root: z
+        .string()
+        .describe("Source root allowed by REA_REFERENCE_ROOTS_JSON"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "import-reference-source", async () => {
+        const config = parseConfig(process.env);
+        if (!config.ok)
+          return { error: config.error._tag, message: config.error.message };
+        const imported = await importReferenceSource({
+          root: args.root,
+          caller: "rea-cli",
+          policy: config.value.referenceSourcePolicy,
+          importer: PRODUCT_IDENTITY.packageName,
+          importerVersion: null,
+        });
+        return imported.ok
+          ? imported.value
+          : { error: imported.error.code, message: imported.error.message };
+      }),
+  });
 };
 
 const registerArtifactCommands = (
