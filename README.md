@@ -41,8 +41,8 @@ npx skills add morluto/rea
 Then ask:
 
 ```text
-Set up REA and reverse engineer the Notes app. Explain how search works,
-show me how you know, and build a similar feature for my project.
+Use REA to understand how search works in the Notes app, show me the
+evidence, and build a similar feature for my project.
 ```
 
 Notes is only an example. Name any app you want to understand, or ask the agent to start with an overview.
@@ -89,30 +89,35 @@ npx skills add morluto/rea
 
 Ask your agent to set up REA. It will check your Mac, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
 
-### From Terminal
+Approve installation if needed, complete the one-time activation when prompted, then describe the app or feature you want to understand. REA handles the binary-analysis tools behind the scenes.
+
+### From Terminal — no installation
 
 ```bash
 npx -y rea-agents setup --yes
+npx -y rea-agents doctor
+npx -y rea-agents analyze /Applications/Notes.app
 ```
 
 If macOS or an installer asks for confirmation, complete the prompt and run the same command again. Restart a configured coding agent so it loads REA.
 
-### What setup handles
+### From Terminal — install the `rea` command
+
+```bash
+npm install --global rea-agents
+rea setup --yes
+rea doctor
+rea analyze /Applications/Notes.app
+```
+
+Choose either the no-install commands or the global installation. You do not need both.
+
+### Requirements
 
 - macOS 12 or newer
-- Node.js 24.18.x with npm 11.16.x (`nvm use` selects the pinned version)
+- Node.js 24.18.x with npm 11.16.x
 
-If process capture reports that its native PTY backend is unavailable, install Xcode command-line tools and run `npm run rebuild:native`. Linux source builds require Python, `make`, and a C++ toolchain. Compatible packaged binaries do not require this rebuild.
-
-Process capture is disabled by default. Enabling it requires
-`REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
-`REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
-environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. The current PTY adapter
-uses host networking, so it additionally requires the explicit operator grant
-`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`. Without that grant the adapter
-refuses to launch; loopback replay alone does not constitute network isolation.
-
-You do not need to install the reverse-engineering tools manually. Setup installs Homebrew and [Hopper](https://www.hopperapp.com/) when needed, configures detected Claude Desktop and Cursor installations, and installs the REA skill. Hopper is separate software and requires its own license; setup installs it but does not provide a license.
+You do not need to choose or install binary-analysis tools yourself. REA setup handles them when needed. Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate Mac app with its own license. REA can install it, but you must approve the installation and complete its one-time activation.
 
 If something is not working, run:
 
@@ -293,6 +298,19 @@ REA starts Hopper when needed; Hopper does not need to be running first. Hopper'
 REA derives explicit format and architecture arguments to prevent common FAT and ARM selection dialogs. Other Hopper or macOS dialogs may still require a person. REA reports timeouts and remediation through CLI or MCP results instead of attempting to answer UI prompts.
 
 Closing a REA session shuts down its bridge and removes its private socket directory. It does not quit a Hopper application the user may be using.
+
+## Advanced process-capture setup
+
+Process capture is disabled by default. Enabling it requires
+`REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
+`REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
+environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
+adapter uses host networking, it also requires
+`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
+
+If the native PTY backend is unavailable, install Xcode command-line tools and
+run `npm run rebuild:native`. Linux source builds require Python, `make`, and a
+C++ toolchain. Compatible packaged binaries do not require this rebuild.
 
 ## Security model
 

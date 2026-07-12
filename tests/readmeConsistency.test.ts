@@ -43,4 +43,12 @@ describe("localized README product facts", () => {
         );
     },
   );
+
+  it("keeps both English CLI onboarding paths discoverable", async () => {
+    const content = await readFile(resolve("README.md"), "utf8");
+    expect(content).toContain("npx -y rea-agents analyze");
+    expect(content).toContain("npm install --global rea-agents");
+    expect(content).toContain("rea setup --yes");
+    expect(content).toContain("You do not need both");
+  });
 });

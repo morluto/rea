@@ -21,8 +21,8 @@ Notes is only a documentation example. Never select an app unless the user names
 ## Ensure REA is ready
 
 1. Run `npx -y rea-agents doctor`.
-2. If setup is needed, explain that REA may install Homebrew and Hopper. Hopper is separate software and requires its own license.
-3. Obtain approval before installing external software, then run `npx -y rea-agents setup --yes`.
+2. If setup is needed, tell the user REA needs to install its local binary-analysis tools. Do not lead with implementation details or assume the user knows reverse-engineering products.
+3. Before installing external software, obtain approval and identify what will be installed. If deeper analysis needs Hopper, describe it as REA's local analysis engine and note that it is a separate Mac app with its own license. Then run `npx -y rea-agents setup --yes`.
 4. If macOS or an installer requests human input, tell the user exactly what needs attention. After they finish, rerun setup and doctor.
 5. If setup registers a new MCP server, tell the user to restart their coding agent to load all REA tools. Direct CLI commands remain available before restart.
 
