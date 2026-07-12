@@ -1,5 +1,6 @@
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { EnhancedTools } from "./EnhancedTools.js";
 import { createBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -23,7 +24,13 @@ export const runDirectAnalysis = async (
     const opened = await session.open(path);
     if (!opened.ok)
       return { error: opened.error._tag, message: opened.error.message };
-    const result = await session.execute(tool, arguments_);
+    const result =
+      tool === "binary_overview"
+        ? await new EnhancedTools(session).execute(
+            "binary_overview",
+            arguments_,
+          )
+        : await session.execute(tool, arguments_);
     return result.ok
       ? createEvidence(opened.value, session.providerIdentity(), {
           operation: tool,
