@@ -6,7 +6,11 @@ import { runDirectAnalysis } from "./application/DirectAnalysis.js";
 import { runSetup } from "./application/Setup.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 
-/** Build the Incur command tree for the non-MCP CLI commands. */
+/**
+ * Build the one-shot Incur CLI without starting Hopper at import time.
+ * Analysis commands acquire and close their own sessions; bare `mcp` and
+ * `--mcp` are intercepted by the executable dispatcher before this module loads.
+ */
 export const createCli = (): ReturnType<typeof Cli.create> => {
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: "0.1.0",

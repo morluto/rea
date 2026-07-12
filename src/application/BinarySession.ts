@@ -13,10 +13,17 @@ import type { HopperToolPort } from "./HopperToolPort.js";
 export interface BinaryClient extends HopperToolPort {
   close(): Promise<void>;
 }
-/** Production seam for creating a target-scoped Hopper client. */
+/** Production seam for creating one unstarted client for a parsed target. */
 export type BinaryClientFactory = (target: BinaryTarget) => BinaryClient;
 
-/** Serializes target transitions while allowing calls within the active session. */
+/**
+ * Owns the single active target shared by CLI and MCP adapters.
+ *
+ * Target transitions are serialized because each client dispatches Hopper API
+ * work on its dedicated Python thread, and switching targets tears that bridge
+ * down. A failed switch recreates the previous target instead of retaining a
+ * client whose bridge was already shut down.
+ */
 export class BinarySession implements HopperToolPort {
   #active:
     | { readonly target: BinaryTarget; readonly client: BinaryClient }
@@ -25,7 +32,10 @@ export class BinarySession implements HopperToolPort {
   readonly #calls = new Set<Promise<unknown>>();
   constructor(readonly createClient: BinaryClientFactory) {}
 
-  /** Open or switch to a target, retaining the old session when the new one fails. */
+  /**
+   * Open or switch targets after draining calls against the current target.
+   * Returns the switch failure even if best-effort restoration also fails.
+   */
   open(
     path: string,
     options: { readonly signal?: AbortSignal } = {},
@@ -82,7 +92,11 @@ export class BinarySession implements HopperToolPort {
         };
   }
 
-  /** Invoke a Hopper tool against the active target. */
+  /**
+   * Invoke a Hopper tool against the active target.
+   * Calls may overlap, but a pending target transition prevents new calls from
+   * entering until the transition has settled.
+   */
   async callTool(
     name: string,
     arguments_: Readonly<Record<string, JsonValue>>,

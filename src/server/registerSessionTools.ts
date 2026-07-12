@@ -5,7 +5,7 @@ import type { BinarySession } from "../application/BinarySession.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { toCallToolResult } from "./toolResult.js";
 
-/** Register binary lifecycle management tools. */
+/** Register MCP-only target lifecycle operations on a long-lived session. */
 export const registerSessionTools = (
   server: McpServer,
   session: BinarySession,

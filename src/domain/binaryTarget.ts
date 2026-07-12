@@ -7,7 +7,11 @@ import { err, ok, type Result } from "./result.js";
 
 /** CPU families understood by the supported executable loaders. */
 export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
-/** A parsed binary target and the Hopper launcher arguments it requires. */
+/**
+ * A canonical local target plus deterministic Hopper loader arguments.
+ * Explicit loader and architecture flags prevent Hopper from presenting modal
+ * format or FAT-architecture selection dialogs during agent-driven analysis.
+ */
 export interface BinaryTarget {
   readonly path: string;
   readonly kind: "executable" | "database";
@@ -17,7 +21,11 @@ export interface BinaryTarget {
   readonly loaderArgs: readonly string[];
 }
 
-/** Resolve, read, and classify a local binary path, including its architecture metadata. */
+/**
+ * Resolve and classify a readable local target before Hopper is launched.
+ * FAT Mach-O inputs select only a host-compatible architecture so setup remains
+ * non-interactive; unsupported or ambiguous inputs are returned as typed errors.
+ */
 export const parseBinaryTarget = async (
   input: string,
   cwd = process.cwd(),
@@ -53,7 +61,11 @@ type ExecutableMetadata = Pick<
   "format" | "architecture" | "availableArchitectures" | "loaderArgs"
 >;
 
-/** Parse supported executable headers without performing I/O. */
+/**
+ * Parse supported executable headers without I/O and derive explicit Hopper
+ * loader arguments. The caller must supply the host architecture used for FAT
+ * Mach-O slice selection.
+ */
 export const parseExecutableHeader = (
   bytes: Buffer,
   hostArchitecture: NodeJS.Architecture,

@@ -34,7 +34,11 @@ export type ClientConfigurationResult =
       readonly status: "failed";
       readonly reason: "backup" | "write" | "readback";
     };
-/** Effects required by the idempotent setup workflow. */
+/**
+ * Effects required by the idempotent setup workflow.
+ * Implementations report interrupted installers as values: setup must not wait
+ * indefinitely for stdin or a GUI response in an unattended agent invocation.
+ */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
@@ -48,7 +52,11 @@ export interface SetupHost {
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
-/** Structured setup outcome with actionable partial progress. */
+/**
+ * Structured setup outcome intended to travel back through an agent to a human.
+ * `needs_human` carries remediation text instead of initiating an interactive
+ * prompt, avoiding deadlocks in stdio and other unattended environments.
+ */
 export interface SetupResult {
   readonly status: "ready" | "needs_human";
   readonly actions: readonly string[];
@@ -57,7 +65,11 @@ export interface SetupResult {
   readonly remediation?: string;
 }
 
-/** Install prerequisites and configure every detected supported client idempotently. */
+/**
+ * Install prerequisites and configure detected clients idempotently.
+ * With `yes` false, mutations requiring consent are reported as `needs_human`;
+ * with `yes` true, external installers still fail closed if they require UI.
+ */
 export const runSetup = async (
   yes: boolean,
   host: SetupHost = systemSetupHost(),

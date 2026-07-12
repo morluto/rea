@@ -1,4 +1,9 @@
-"""Repository-owned Hopper adapter. Executed inside Hopper by its documented -Y flag."""
+"""Authenticated REA adapter executed on Hopper's dedicated Python thread.
+
+The bootstrap injects ``REA_SOCKET`` and a random ``REA_TOKEN`` before executing
+this file with Hopper's supported ``--python`` launcher option. Keep all Hopper
+API access on this thread: moving dispatch to a worker can deadlock Hopper.
+"""
 
 import json
 import hmac
@@ -16,6 +21,7 @@ def _hex(value):
 
 
 def _json_safe(value):
+    """Project Hopper-specific Python values into the JSON protocol boundary."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, (list, tuple)):
@@ -26,6 +32,7 @@ def _json_safe(value):
 
 
 def _document(name=None):
+    """Resolve an explicit or session-selected document without changing Hopper UI."""
     global _selected_document
     documents = Document.getAllDocuments()
     if name is not None:
@@ -44,6 +51,7 @@ def _document(name=None):
 
 
 def _address(document, value=None):
+    """Resolve hexadecimal addresses first, then fall back to Hopper symbol names."""
     if value is None:
         return document.getCurrentAddress()
     if not isinstance(value, str):
@@ -95,6 +103,7 @@ def _strings(document):
 
 
 def _assembly(procedure):
+    """Render bounded assembly while guarding against malformed instruction cycles."""
     lines = []
     segment = procedure.getSegment()
     seen = set()
@@ -117,6 +126,7 @@ def _assembly(procedure):
 
 
 def _dispatch(method, params):
+    """Dispatch only the closed operation set implemented by REA's public tools."""
     global _selected_document
     if method == "health":
         return {"name": "REA Hopper bridge", "version": "1.0.0"}
@@ -227,6 +237,7 @@ def _dispatch(method, params):
 
 
 def _serve_connection(connection):
+    """Serve one size-bounded, capability-authenticated NDJSON connection."""
     file = connection.makefile("rwb")
     while True:
         line = file.readline(MAX_LINE_BYTES + 1)
@@ -255,6 +266,7 @@ def _serve_connection(connection):
 
 
 def _run():
+    """Own a permission-restricted, single-client Unix socket for this bridge."""
     if os.path.exists(REA_SOCKET):
         os.unlink(REA_SOCKET)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

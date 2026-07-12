@@ -9,7 +9,7 @@ import {
 } from "../contracts/toolContracts.js";
 import { toCallToolResult } from "./toolResult.js";
 
-/** Register all eight enhanced reverse-engineering tools. */
+/** Register composed workflows against the same port as direct bridge tools. */
 export const registerEnhancedTools = (
   server: McpServer,
   hopper: HopperToolPort,

@@ -2,7 +2,11 @@ import { parseConfig } from "../config.js";
 import type { JsonValue } from "../hopper/protocol.js";
 import { createBinarySession } from "./runtime.js";
 
-/** Open one binary, execute one tool, and always release the target session. */
+/**
+ * Open one binary, execute one tool, and always release the bridge session.
+ * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
+ * retain a target or bridge resources for a subsequent command.
+ */
 export const runDirectAnalysis = async (
   path: string,
   tool: "binary_overview" | "procedure_pseudo_code",

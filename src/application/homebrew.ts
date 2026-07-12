@@ -5,7 +5,11 @@ export const HOMEBREW_COMMANDS = [
   "/usr/local/bin/brew",
 ] as const;
 
-/** Return the first successful result from the standard Homebrew executables. */
+/**
+ * Return the first defined result from standard Homebrew executables.
+ * A probe returning `undefined` means that location was unavailable or failed;
+ * other falsy values are successful results and stop discovery.
+ */
 export const probeHomebrew = async <T>(
   probe: (command: string) => Promise<T | undefined>,
 ): Promise<T | undefined> => {

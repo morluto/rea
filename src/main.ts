@@ -12,7 +12,11 @@ import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
 import { createServer } from "./server/createServer.js";
 
-/** Start the production stdio server and install owned shutdown handlers. */
+/**
+ * Start the long-lived MCP adapter and install idempotent shutdown handlers.
+ * The adapter owns its BinarySession for the process lifetime; EOF and process
+ * signals close bridge resources without assuming ownership of the Hopper app.
+ */
 export const run = async (): Promise<number> => {
   const config = parseConfig(process.env);
   if (!config.ok) {

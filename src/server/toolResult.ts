@@ -4,7 +4,11 @@ import type { HopperError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
 import type { JsonValue } from "../hopper/protocol.js";
 
-/** Translate an application result into caller-visible MCP content. */
+/**
+ * Translate an application result into MCP text content.
+ * Error tags and safe messages remain visible while underlying causes, process
+ * output, and other potentially sensitive details stay private.
+ */
 export const toCallToolResult = (
   result: Result<JsonValue, HopperError>,
 ): CallToolResult =>

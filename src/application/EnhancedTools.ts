@@ -21,11 +21,15 @@ import type { JsonValue } from "../hopper/protocol.js";
 
 type EnhancedResult = Promise<Result<JsonValue, HopperError>>;
 
-/** Application services composing official Hopper operations into eight RE tools. */
+/**
+ * Composes official Hopper operations into bounded reverse-engineering tools.
+ * Inputs are parsed again at this application boundary even though MCP normally
+ * validates them, allowing direct callers to use the same service safely.
+ */
 export class EnhancedTools {
   constructor(private readonly hopper: HopperToolPort) {}
 
-  /** Parse and dispatch one enhanced tool call. */
+  /** Parse inputs again at the direct-call boundary, then dispatch exhaustively. */
   execute(
     name: EnhancedToolName,
     input: unknown,

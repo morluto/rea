@@ -19,7 +19,7 @@ export interface DoctorCheck {
   readonly detail?: string;
   readonly remediation?: string;
 }
-/** Host facts and effects required by diagnostics. */
+/** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
@@ -30,7 +30,11 @@ export interface DoctorHost {
   manualHopperPaths(): Promise<readonly string[]>;
 }
 
-/** Check requirements and an optional target without mutating the host. */
+/**
+ * Check requirements and an optional target without mutating the host.
+ * Every failed check includes remediation suitable for either the one-shot CLI
+ * or an agent consuming the structured result.
+ */
 export const runDoctor = async (
   target?: string,
   host: DoctorHost = systemDoctorHost(),

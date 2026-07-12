@@ -38,7 +38,19 @@ export interface HopperApplicationLauncherOptions {
   readonly bridgeScriptPath: string;
 }
 
-/** Launches Hopper through its documented CLI and injects only the owned bridge script. */
+/**
+ * Launches Hopper through its documented CLI and injects only REA's owned bridge.
+ *
+ * Hopper's `hopper` helper internally issues an AppleScript `activate` command.
+ * Consequently, opening a target may bring Hopper to the foreground even though
+ * REA first asks macOS to start the application hidden and in the background.
+ * REA cannot reliably suppress that activation without replacing Hopper's
+ * supported launcher; callers must treat possible foreground UI as an upstream
+ * Hopper constraint, not as evidence that analysis failed.
+ *
+ * The returned process is the short-lived launcher helper, not the Hopper app,
+ * so REA does not claim ownership of the application's lifetime.
+ */
 export class HopperApplicationLauncher implements BridgeLauncher {
   constructor(readonly options: HopperApplicationLauncherOptions) {}
 
@@ -103,6 +115,8 @@ const prepareHopperApplication = async (
   if (appBundle === undefined) return;
   const executablePath = join(appBundle, "Contents/MacOS/Hopper Disassembler");
   if (await processIsRunning(executablePath)) return;
+  // This reduces activation when Hopper is cold, but the vendor launcher that
+  // follows may still activate its window. See HopperApplicationLauncher.
   await execFileAsync("/usr/bin/open", [
     "--hide",
     "--background",

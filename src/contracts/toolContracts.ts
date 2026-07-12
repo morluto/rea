@@ -12,10 +12,10 @@ const caseSensitive = z
   .default(false)
   .describe("Whether to match case");
 
-/** The architectural owner of a tool implementation. */
+/** Adapter family responsible for implementing a public MCP tool. */
 export type ToolKind = "official-proxy" | "enhanced" | "session";
 
-/** Stable caller-visible contract retained across the Python-to-TypeScript migration. */
+/** Single source of truth for a public tool's name, description, and input. */
 export interface ToolContract {
   readonly name: string;
   readonly description: string;
@@ -41,7 +41,7 @@ const session = (
   inputSchema: z.ZodObject,
 ): ToolContract => ({ name, description, kind: "session", inputSchema });
 
-/** All 31 tools forwarded unchanged to Hopper's official MCP server. */
+/** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "address_name",
@@ -180,7 +180,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
-/** All 8 reverse-engineering tools implemented by REA. */
+/** Bounded workflows composed from one or more bridge operations. */
 export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
     "swift_classes",
@@ -224,7 +224,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
-/** Binary lifecycle tools available before Hopper is launched. */
+/** Target lifecycle tools available only on the long-lived MCP adapter. */
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
@@ -235,7 +235,11 @@ export const SESSION_TOOL_CONTRACTS = [
   session("binary_session", "Describe the active binary session", z.object({})),
 ] as const satisfies readonly ToolContract[];
 
-/** Complete caller-visible tool inventory. */
+/**
+ * Complete ordered public inventory used by registration and verification.
+ * Keep this collection at 42 tools unless a deliberate contract change updates
+ * snapshots, package verification, and real-Hopper verification together.
+ */
 export const TOOL_CONTRACTS = [
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS,
