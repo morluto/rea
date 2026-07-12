@@ -25,7 +25,11 @@ describe("configuration parsing integration", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.hopperTargetPath).toBe("/usr/bin/true");
     expect(result.value.hopperTargetKind).toBe("executable");
-    expect(result.value.hopperLoaderArgs).toEqual(["-l", "Mach-O", "--aarch64"]);
+    expect(result.value.hopperLoaderArgs).toEqual([
+      "-l",
+      "Mach-O",
+      "--aarch64",
+    ]);
   });
 
   it("rejects target kind values outside the enum", () => {

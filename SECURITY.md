@@ -8,7 +8,7 @@ Security fixes are provided for the latest published version of REA. Upgrade to 
 
 Do not disclose vulnerabilities, proof-of-concept exploits, credentials, private binaries, or Hopper documents in a public issue.
 
-If private vulnerability reporting is available in the repository's **Security** tab, use **Report a vulnerability**. Otherwise, open a minimal issue asking the maintainer to establish a private contact channel; include no sensitive technical details in that issue.
+Use **Report a vulnerability** in the repository's **Security** tab to submit the report privately. Do not open a public issue to request a private contact channel.
 
 Include the affected REA version, macOS and Hopper versions, impact, reproduction conditions, and any suggested mitigation in the private report. Remove credentials, proprietary binaries, Hopper documents, socket capability tokens, and unrelated local paths from logs or examples.
 

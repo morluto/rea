@@ -82,10 +82,13 @@ describe("full MCP integration with multi-tool sequences", () => {
   });
 
   it("preserves the complete 42-tool inventory with a session", async () => {
-    const session = new BinarySession((_path) => ({
-      callTool: () => Promise.resolve(ok(null)),
-      close: () => Promise.resolve(),
-    } satisfies BinaryClient));
+    const session = new BinarySession(
+      (_path) =>
+        ({
+          callTool: () => Promise.resolve(ok(null)),
+          close: () => Promise.resolve(),
+        }) satisfies BinaryClient,
+    );
     const server = createServer(
       { callTool: () => Promise.resolve(ok(null)) },
       session,
