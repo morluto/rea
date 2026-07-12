@@ -21,25 +21,25 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: "0.1.0",
-    description: "Install, diagnose, and automate Hopper binary analysis.",
+    description: "Reverse engineer apps from your terminal or coding agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
       instructions:
-        "Open a local target with open_binary, analyze it, and close the session when finished.",
+        "Ask which app and feature the user wants to understand, then open the app and investigate it.",
     },
     sync: {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
       include: ["skills/*"],
       suggestions: [
-        "open a binary and summarize it",
-        "decompile a procedure",
-        "diagnose my Hopper setup",
+        "understand how an app feature works",
+        "decompile part of an app",
+        "check my REA setup",
       ],
     },
   });
 
   cli.command("setup", {
-    description: "Install prerequisites and configure binary analysis",
+    description: "Install requirements and configure coding agents",
     options: z.object({
       yes: z
         .boolean()
@@ -51,17 +51,17 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
       logCliCommand(logger, "setup", () => runSetup(options.yes)),
   });
   cli.command("doctor", {
-    description: "Diagnose the local Hopper integration",
+    description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional binary path to check"),
+      target: z.string().optional().describe("Optional app path to check"),
     }),
     run: ({ options }) =>
       logCliCommand(logger, "doctor", () => runDoctor(options.target)),
   });
   cli.command("analyze", {
-    description: "Analyze a binary through the shared Hopper core",
+    description: "Get an overview of an app",
     args: z.object({
-      path: z.string().describe("Binary or Hopper database path"),
+      path: z.string().describe("App, program, or Hopper database path"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "analyze", () =>
@@ -69,9 +69,9 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
       ),
   });
   cli.command("decompile", {
-    description: "Decompile an address through the shared Hopper core",
+    description: "Read one part of an app as code",
     args: z.object({
-      path: z.string().describe("Binary path"),
+      path: z.string().describe("App or program path"),
       address: z.string().describe("Procedure address"),
     }),
     run: ({ args }) =>

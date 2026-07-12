@@ -5,7 +5,7 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   platform: "darwin",
   nodeVersion: "22.1.0",
   macosVersion: () => Promise.resolve("12.0"),
-  readable: (path) => Promise.resolve(path.includes("Hopper")),
+  validTarget: (path) => Promise.resolve(path.includes("Hopper")),
   executable: (path) => Promise.resolve(path.includes("Hopper")),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
@@ -61,13 +61,24 @@ describe("doctor", () => {
     expect(result.hopperPath).toBe(path);
   });
 
+  it("uses shared app target validation when a target is supplied", async () => {
+    const result = await runDoctor(
+      "/Applications/Notes.app",
+      host({
+        validTarget: (path) =>
+          Promise.resolve(path === "/Applications/Notes.app"),
+      }),
+    );
+    expect(result.checks.find(({ name }) => name === "target")?.ok).toBe(true);
+  });
+
   it("rejects a readable Hopper launcher without execute permission", async () => {
     const path = "/manual/Hopper";
     const result = await runDoctor(
       undefined,
       host({
         configuredHopperPath: path,
-        readable: () => Promise.resolve(true),
+        validTarget: () => Promise.resolve(true),
         executable: () => Promise.resolve(false),
       }),
     );

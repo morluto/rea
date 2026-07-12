@@ -10,15 +10,15 @@
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![42 MCP tools](https://img.shields.io/badge/MCP_tools-42-5c4ee5?style=flat-square)](#the-42-tool-workbench)
+[![42 MCP tools](https://img.shields.io/badge/MCP_tools-42-5c4ee5?style=flat-square)](#42-tools-for-deeper-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [See the workflow](#one-prompt-a-full-investigation) · [From binary to behavior](#from-binary-to-behavior) · [42 tools](#the-42-tool-workbench) · [How it works](#how-it-works) · [FAQ](#faq)
+[Quick start](#quick-start) · [See the workflow](#one-prompt-a-full-investigation) · [From app to feature](#from-app-to-feature) · [42 tools](#42-tools-for-deeper-investigation) · [How it works](#how-it-works) · [FAQ](#faq)
 
 <br />
 
-<code>npx -y @morluto/rea setup --yes</code>
+<code>npx skills add morluto/rea</code>
 
 </div>
 
@@ -26,19 +26,36 @@
 
 See a feature in an app that you want in your own product? Give the app to your coding agent—even without its source code. With REA, the agent can investigate the feature, understand how it works, and build a version adapted to your stack, design, and requirements.
 
-REA makes that possible through one CLI and MCP server. Your agent can recover pseudocode, trace behavior across functions, inspect strings and types, and carry the evidence directly into its normal coding workflow. REA handles the reverse-engineering toolchain, analysis session, and target lifecycle behind one interface.
+REA makes that possible through one CLI and MCP server. Your agent can inspect the compiled app, follow how features work, and use what it learns in its normal coding workflow. REA handles the reverse-engineering tools behind one interface.
 
-## From binary to behavior
+## Just ask your agent
+
+Install the REA skill:
+
+```bash
+npx skills add morluto/rea
+```
+
+Then ask:
+
+```text
+Set up REA and reverse engineer the Notes app. Explain how search works,
+show me how you know, and build a similar feature for my project.
+```
+
+Notes is only an example. Name any app you want to understand, or ask the agent to start with an overview.
+
+## From app to feature
 
 <table>
 <tr>
 <td width="33%" valign="top">
 <strong>Decompile</strong><br /><br />
-Open a native app or executable and recover procedures, pseudocode, assembly, strings, symbols, segments, and metadata.
+Open an app and recover readable code, strings, names, and other clues about how it works.
 </td>
 <td width="33%" valign="top">
 <strong>Understand</strong><br /><br />
-Follow callers, callees, cross-references, and call graphs until the agent can explain how a feature or algorithm actually works.
+Follow the code from one part of the app to another until the agent can explain how a feature actually works.
 </td>
 <td width="33%" valign="top">
 <strong>Recreate</strong><br /><br />
@@ -47,66 +64,65 @@ Turn what the agent learned into a feature for your own product, adapted to your
 </tr>
 </table>
 
-REA keeps the investigation grounded in binary evidence. It does not claim to recover original source code or automatically clone an application.
+REA shows how it reached its conclusions. It does not claim to recover original source code or automatically clone an application.
 
 ## Why REA
 
-|                          |                                                                                                          |
-| ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| **Built for agents**     | Ask what a compiled app does and let your agent gather evidence instead of guessing.                     |
-| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or coding agent.                        |
-| **Complexity handled**   | REA sets up the tools, opens the app, keeps the investigation running, and cleans up afterward.          |
-| **From insight to code** | Understand a feature, then use the evidence to build your own implementation in the same coding session. |
-| **Local by design**      | Analysis runs on your Mac. REA does not upload the binary to a hosted analysis service.                  |
-| **Keeps context**        | Investigate several binaries without starting the analysis over for every question.                      |
+|                          |                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.              |
+| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or coding agent.    |
+| **Complexity handled**   | REA installs and manages the reverse-engineering tools behind the scenes.            |
+| **From insight to code** | Understand a feature, then build your own version in the same coding session.        |
+| **Local by design**      | Analysis runs on your Mac. REA does not upload the app to a hosted analysis service. |
+| **Keeps context**        | Investigate several apps without starting over for every question.                   |
 
 ## Quick start
 
-### Requirements
+### With a coding agent — recommended
 
-- macOS 12 or newer
-- Node.js 22 or newer
-- [Hopper Disassembler](https://www.hopperapp.com/)
+```bash
+npx skills add morluto/rea
+```
 
-REA does not bundle Hopper. Setup can install Homebrew when absent, install the `hopper-disassembler` cask, configure detected Claude Desktop and Cursor MCP clients, and install the REA agent skill. Existing client configuration is backed up, updated atomically, and read back before setup reports success.
+Ask your agent to set up REA. It will check your Mac, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
 
-Hopper is the separate macOS analysis engine REA controls behind the scenes. Most users interact with REA through the CLI or their agent, but Hopper must be installed and licensed.
-
-### 1. Set up REA
+### From Terminal
 
 ```bash
 npx -y @morluto/rea setup --yes
 ```
 
-### 2. Check the integration
+If macOS or an installer asks for confirmation, complete the prompt and run the same command again. Restart a configured coding agent so it loads REA.
+
+### What setup handles
+
+- macOS 12 or newer
+- Node.js 22 or newer
+
+You do not need to install the reverse-engineering tools manually. Setup installs Homebrew and [Hopper](https://www.hopperapp.com/) when needed, configures detected Claude Desktop and Cursor installations, and installs the REA skill. Hopper is separate software and requires its own license; setup installs it but does not provide a license.
+
+If something is not working, run:
 
 ```bash
 npx -y @morluto/rea doctor
 ```
 
-### 3. Start the MCP server
+### CLI or coding agent?
 
-```bash
-npx -y @morluto/rea mcp
-```
-
-The MCP command speaks stdio, so it waits silently for a connected client. If setup detected your client, restart that client and use the registered `rea` server instead of running the command by hand.
-
-Then ask your agent:
-
-```text
-Open /path/to/MyApp, summarize the binary, find the authentication flow,
-decompile the relevant procedures, and show the evidence behind your conclusion.
-```
+| If you want to…                                           | Use                                        |
+| --------------------------------------------------------- | ------------------------------------------ |
+| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent |
+| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`           |
 
 ## One prompt, a full investigation
 
 ```text
-Open MyApp, find how its offline search feature works, explain the control flow,
+Reverse engineer the Notes app. Find how offline search works, explain it,
 and build a version for my project using TypeScript and SQLite.
 ```
 
-REA gives the agent a grounded path from that request to working code:
+REA gives the agent a clear path from that request to working code:
 
 | Step | What the agent does                     | REA tools                                                        |
 | ---: | --------------------------------------- | ---------------------------------------------------------------- |
@@ -114,10 +130,10 @@ REA gives the agent a grounded path from that request to working code:
 |    2 | Finds likely offline-search clues       | `search_strings`, `search_procedures`, `list_names`              |
 |    3 | Connects those clues to executable code | `find_xrefs_to_name`, `xrefs`, `procedure_callers`               |
 |    4 | Reconstructs the relevant control flow  | `get_call_graph`, `procedure_callees`, `procedure_info`          |
-|    5 | Recovers the implementation             | `procedure_pseudo_code`, `procedure_assembly`, `batch_decompile` |
+|    5 | Decompiles the relevant routines        | `procedure_pseudo_code`, `procedure_assembly`, `batch_decompile` |
 |    6 | Builds the feature in your project      | code adapted to your stack, product, and requirements            |
 
-REA handles the binary-analysis work in steps 1–5. The agent performs step 6 with its normal file-editing and test tools, keeping the recreated behavior tied to evidence from the binary.
+REA handles the app analysis in steps 1–5. The agent performs step 6 with its normal file-editing and test tools, using what it learned about the app.
 
 ## What agents can do
 
@@ -131,7 +147,7 @@ REA handles the binary-analysis work in steps 1–5. The agent performs step 6 w
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## The 42-tool workbench
+## 42 tools for deeper investigation
 
 | Tool family       | Count | Examples                                                                                               |
 | ----------------- | ----: | ------------------------------------------------------------------------------------------------------ |
@@ -139,16 +155,9 @@ REA handles the binary-analysis work in steps 1–5. The agent performs step 6 w
 | Composed analysis |     8 | `binary_overview`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift and ObjC discovery |
 | Binary session    |     3 | `open_binary`, `binary_session`, `close_binary`                                                        |
 
-The public inventory is contract-tested and verified through an isolated packaged MCP client. Real-Hopper verification separately checks the same 42-tool surface against two binaries.
+## Using REA with other coding agents
 
-## MCP workflow
-
-1. Call `open_binary` with a readable local binary or `.hop` path.
-2. Start with `binary_overview`, then narrow the investigation with strings, symbols, decompilation, callers, callees, and xrefs.
-3. Call `open_binary` again to switch targets. If the new target fails, REA attempts to reopen the previous target.
-4. Call `close_binary` when finished. `binary_session` reports the current state at any time.
-
-Relative paths resolve from the MCP server's working directory. REA detects Mach-O/FAT, ELF, PE, and Hopper databases automatically. FAT binaries select the host-compatible architecture without presenting Hopper's common architecture picker.
+Setup currently configures Claude Desktop and Cursor automatically. Any coding agent that supports local MCP servers can use REA with the configuration below.
 
 ### Manual MCP configuration
 
@@ -167,24 +176,23 @@ Relative paths resolve from the MCP server's working directory. REA detects Mach
 
 ```mermaid
 flowchart LR
-    Agent["Coding agent"] -->|stdio MCP| REA["REA server<br/>42 tools"]
-    REA --> Session["Binary session<br/>open · switch · close"]
-    Session -->|authenticated Unix socket| Bridge["REA Python bridge<br/>inside Hopper"]
-    Bridge --> API["Hopper public<br/>Python API"]
+    Agent["Coding agent"] --> REA["REA<br/>CLI + MCP"]
+    Terminal --> REA
+    REA --> Hopper["Analysis engine"]
+    Hopper --> App["Your app"]
 ```
 
-The CLI and MCP adapter call the same binary-session and analysis runtime directly; neither invokes the other. One-shot commands acquire and close their resources for each operation. MCP mode keeps one session alive across calls and target switches.
+The CLI and MCP server use the same analysis engine. Terminal commands close the app when they finish; an agent session keeps it open while the investigation continues.
 
 ## CLI
 
-Use the package without installing it globally:
+The agent workflow above is the easiest way to use REA. For a one-off overview from the Terminal:
 
 ```bash
-npx -y @morluto/rea --help
-npx -y @morluto/rea doctor --target /path/to/binary
-npx -y @morluto/rea analyze /path/to/binary
-npx -y @morluto/rea decompile /path/to/binary 0x100003f20
+npx -y @morluto/rea analyze /Applications/Notes.app
 ```
+
+Run `npx -y @morluto/rea --help` for direct decompilation and other options.
 
 Or install the `rea` command globally:
 
@@ -194,14 +202,7 @@ rea --help
 rea mcp
 ```
 
-## Configuration
-
-| Variable                  | Purpose                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------- |
-| `HOPPER_TARGET_PATH`      | Optional initial binary or `.hop` target. Target-free MCP sessions use `open_binary`. |
-| `HOPPER_LAUNCHER_PATH`    | Override the Hopper launcher path.                                                    |
-| `HOPPER_TARGET_KIND`      | Select `executable` or `database` for an initial target.                              |
-| `HOPPER_LOADER_ARGS_JSON` | Override REA's derived Hopper loader arguments with a JSON array of strings.          |
+REA accepts a Mac `.app` folder directly. If an agent cannot find an app by name, tell it where the app is installed.
 
 ## Hopper application behavior
 
@@ -213,9 +214,7 @@ Closing a REA session shuts down its bridge and removes its private socket direc
 
 ## Security model
 
-Each bridge session has a random capability token and a Unix socket restricted to the current user. Protocol messages are bounded, and caller-visible errors omit launcher stderr and internal exception causes.
-
-This boundary rejects unauthenticated connections and other local user accounts, but it is not a sandbox and does not defend against a malicious process already running as the same user. Opening an untrusted binary delegates parsing and analysis to Hopper with the current macOS user's permissions. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+REA communicates with Hopper over a private local connection and does not provide a hosted analysis service. This is not a sandbox: Hopper opens apps with your current macOS permissions. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 
@@ -236,12 +235,12 @@ Hopper's launcher internally activates the application. REA requests background 
 <details>
 <summary><strong>Does REA include Hopper?</strong></summary>
 
-No. Hopper is separately installed and licensed software. REA supplies the CLI, MCP server, session management, analysis workflows, and authenticated bridge that make Hopper usable by agents.
+No. Setup can install Hopper for you, but Hopper remains separate software with its own license. REA supplies the CLI, MCP server, and workflows that make it usable by agents.
 
 </details>
 
 <details>
-<summary><strong>Does REA upload my binary?</strong></summary>
+<summary><strong>Does REA upload the app?</strong></summary>
 
 REA has no hosted analysis service. It passes local operations to Hopper through a current-user Unix socket. Your coding agent or model provider may have its own data policy, so review that separately.
 
@@ -257,28 +256,13 @@ No decompiler can guarantee the original source. REA gives an agent pseudocode, 
 <details>
 <summary><strong>Which agents can use REA?</strong></summary>
 
-Any client that can launch a stdio MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
+Any coding agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
 
 </details>
 
 ## Development
 
-```bash
-npm ci
-npm run check
-npm run verify:package
-npm pack --dry-run
-```
-
-Real-Hopper verification requires two distinct binaries:
-
-```bash
-HOPPER_TARGET_PATH=/path/to/target-a \
-HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
-npm run verify:hopper
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture guidelines, pull-request expectations, and the maintainer release checklist. Generated API documentation is available under [`docs/api`](docs/api/index.html).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, architecture, tests, and release instructions. Generated API documentation is available under [`docs/api`](docs/api/index.html).
 
 ## Project links
 

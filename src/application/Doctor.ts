@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { parseBinaryTarget } from "../domain/binaryTarget.js";
 import { probeHomebrew } from "./homebrew.js";
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +26,7 @@ export interface DoctorHost {
   readonly nodeVersion: string;
   readonly configuredHopperPath?: string;
   macosVersion(): Promise<string | undefined>;
-  readable(path: string): Promise<boolean>;
+  validTarget(path: string): Promise<boolean>;
   executable(path: string): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
@@ -89,9 +90,9 @@ export const runDoctor = async (
     checks.push(
       check(
         "target",
-        await host.readable(target),
+        await host.validTarget(target),
         target,
-        "Supply a readable local binary path.",
+        "Supply a readable local app or program path.",
       ),
     );
   return {
@@ -117,13 +118,8 @@ export const systemDoctorHost = (): DoctorHost => ({
       return undefined;
     }
   },
-  async readable(path) {
-    try {
-      await access(path, constants.R_OK);
-      return true;
-    } catch {
-      return false;
-    }
+  async validTarget(path) {
+    return (await parseBinaryTarget(path)).ok;
   },
   async executable(path) {
     try {

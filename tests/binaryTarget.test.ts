@@ -1,4 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -78,6 +85,64 @@ describe("binary target I/O", () => {
   it("rejects non-regular targets before reading them", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-target-"));
     expect((await parseBinaryTarget(directory)).ok).toBe(false);
+  });
+
+  it("resolves a macOS app bundle to its declared program file", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    const app = join(directory, "Example App.app");
+    const contents = join(app, "Contents");
+    const programs = join(contents, "MacOS");
+    await mkdir(programs, { recursive: true });
+    await writeFile(
+      join(contents, "Info.plist"),
+      '<?xml version="1.0"?><plist><dict><key>CFBundleExecutable</key><string>Example &amp; Tool</string></dict></plist>',
+    );
+    await writeFile(
+      join(programs, "Example & Tool"),
+      thinMach(0xfeedfacf, 0x0100000c),
+    );
+    const result = await parseBinaryTarget(app, directory, "arm64");
+    expect(result.ok && result.value).toMatchObject({
+      path: await realpath(join(programs, "Example & Tool")),
+      format: "mach-o",
+    });
+  });
+
+  it.each([
+    ["missing plist", undefined],
+    ["missing executable name", "<plist><dict></dict></plist>"],
+    [
+      "unsafe executable name",
+      "<plist><dict><key>CFBundleExecutable</key><string>../escape</string></dict></plist>",
+    ],
+    [
+      "missing program file",
+      "<plist><dict><key>CFBundleExecutable</key><string>Missing</string></dict></plist>",
+    ],
+  ])("rejects an app bundle with %s", async (_case, plist) => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    const app = join(directory, "Broken.app");
+    const contents = join(app, "Contents");
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    if (plist !== undefined)
+      await writeFile(join(contents, "Info.plist"), plist);
+    expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
+  });
+
+  it("rejects an app program symlink that leaves the bundle", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    const app = join(directory, "Escaping.app");
+    const contents = join(app, "Contents");
+    const programs = join(contents, "MacOS");
+    const outside = join(directory, "outside");
+    await mkdir(programs, { recursive: true });
+    await writeFile(outside, thinMach(0xfeedfacf, 0x0100000c));
+    await writeFile(
+      join(contents, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>Escaping</string></dict></plist>",
+    );
+    await symlink(outside, join(programs, "Escaping"));
+    expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
   });
 
   it("honors an explicit database kind without relying on the file suffix", async () => {

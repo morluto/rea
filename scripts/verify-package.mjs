@@ -125,8 +125,12 @@ try {
     join(home, ".agents/skills/rea-analysis/SKILL.md"),
     "utf8",
   );
-  if (!skill.includes("open_binary"))
-    throw new Error("packaged skill readback failed");
+  const canonicalSkill = await readFile(
+    join(root, "skills/rea-analysis/SKILL.md"),
+    "utf8",
+  );
+  if (skill !== canonicalSkill)
+    throw new Error("packaged skill did not match its canonical source");
 
   await writeFile(cursorConfig, "malformed");
   const failed = json(
