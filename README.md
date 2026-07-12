@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-tools-for-investigation)
+[![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-tools-for-investigation)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [50 tools](#50-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [68 tools](#68-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -104,6 +104,14 @@ If macOS or an installer asks for confirmation, complete the prompt and run the 
 
 If process capture reports that its native PTY backend is unavailable, install Xcode command-line tools and run `npm run rebuild:native`. Linux source builds require Python, `make`, and a C++ toolchain. Compatible packaged binaries do not require this rebuild.
 
+Process capture is disabled by default. Enabling it requires
+`REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
+`REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
+environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. The current PTY adapter
+uses host networking, so it additionally requires the explicit operator grant
+`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`. Without that grant the adapter
+refuses to launch; loopback replay alone does not constitute network isolation.
+
 You do not need to install the reverse-engineering tools manually. Setup installs Homebrew and [Hopper](https://www.hopperapp.com/) when needed, configures detected Claude Desktop and Cursor installations, and installs the REA skill. Hopper is separate software and requires its own license; setup installs it but does not provide a license.
 
 If something is not working, run:
@@ -114,10 +122,23 @@ npx -y rea-agents doctor
 
 ### CLI or coding agent?
 
-| If you want to…                                           | Use                                        |
-| --------------------------------------------------------- | ------------------------------------------ |
-| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent |
-| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`           |
+| If you want to…                                           | Use                                            |
+| --------------------------------------------------------- | ---------------------------------------------- |
+| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent     |
+| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`               |
+| Validate or canonicalize an Evidence v2 bundle            | `rea evidence-import` or `rea evidence-export` |
+
+Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
+
+```bash
+export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
+rea evidence-import /absolute/path/to/evidence/bundle.json
+rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
+```
+
+Exports never replace an existing file unless `--overwrite` is explicit. Imports are size/depth bounded, validate every Evidence v2 ID and manifest, and never execute bundle content.
+
+Completion metadata is verifier-owned. Run `npm run completion:generate` after changing contracts, schemas, providers, scenarios, package metadata, verifier inputs, or the managed skill. CI runs `npm run completion:check`; it detects stale or tampered hashes and never rewrites a branch. Unsupported and unknown outcomes remain separate from passes, and a pass or failure requires indexed Evidence v2 IDs.
 
 ## One prompt, a full investigation
 
@@ -151,26 +172,38 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 50 tools for investigation
+## 68 tools for investigation
 
 | Tool family               | Count | Examples                                                                                                                |
 | ------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------- |
 | Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                        |
 | Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery |
-| Workspace and observation |     7 | target lifecycle, Evidence v2 bundle import/export, deterministic process capture and comparison                        |
+| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing           |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected transactional extraction                  |
+| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle |
 
-The public interface describes what the agent is trying to learn. Providers decide how to answer. Hopper currently implements the native-analysis capabilities; the process harness implements controlled behavioral capture. Future providers can satisfy the same capability without changing the agent's investigation workflow.
+The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
 ## Current status
 
 REA is already useful for native application investigation on macOS:
 
-- Open Mach-O, ELF, PE, `.app`, and Hopper database targets.
+- Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
+- Traverse content-addressed artifact graphs without extraction; materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
 - Capture approved PTY scenarios, child processes, filesystem changes, and loopback HTTP/WebSocket exchanges, then compare normalized captures.
+- Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
+- Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
+- Compare canonical Evidence bundles by exact membership, explicit observation pairs, and residual-unknown histories without turning omissions into behavioral absence.
+- Aggregate runtime comparisons into observed behavior changes while keeping static artifact/function differences labeled as candidates.
+- Build bounded, Evidence-cited direct call paths by exact address without treating missing dossiers as graph leaves.
+- Correlate exact static/runtime findings through explicit hypotheses without claiming causality from cochange.
+- Verify finite behavioral and structural reconstruction specifications with pass, fail, and unknown kept distinct.
+- Track residual unknowns through immutable CAS revisions, evidence-qualified resolution, contradictions, probes, and validated dependency relationships.
+- With explicit `unknown_registry_approved: true`, record bounded trace/capture residuals, typed provider unavailability, and capture disagreements automatically.
 
 Hopper is the first provider, not the boundary of the project. Some current workflows still require Hopper and macOS; every evidence record identifies the provider and limitations behind its result.
 
@@ -215,10 +248,14 @@ flowchart LR
     REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
     Workspace --> Router["Capability router"]
     Router --> Hopper["Hopper provider"]
+    Router --> Native["Native macOS provider"]
+    Router --> Artifact["Artifact graph provider"]
     Router --> Process["Process capture provider"]
-    Router -. roadmap .-> More["Artifact, browser, dynamic,<br/>and additional static providers"]
+    Router -. roadmap .-> More["Browser, dynamic,<br/>and additional static providers"]
     Hopper --> Target["Target software"]
     Process --> Target
+    Native --> Target
+    Artifact --> Target
 ```
 
 The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation.

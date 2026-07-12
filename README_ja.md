@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-ツールのワークベンチ)
+[![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-ツールのワークベンチ)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [50 ツール](#50-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
+[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [68 ツール](#68-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
 
 <br />
 
@@ -135,13 +135,15 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 - Swift / Objective-C のメタデータを解析する。
 - Hopper に名前、コメント、ブックマークを残し、人間とエージェントの調査を共有する。
 
-## 50 ツールのワークベンチ
+## 68 ツールのワークベンチ
 
-| ツール群           |  数 | 例                                                                                                                  |
-| ------------------ | --: | ------------------------------------------------------------------------------------------------------------------- |
-| バイナリ調査       |  33 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                       |
-| 合成解析           |  10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出 |
-| バイナリセッション |   7 | `open_binary`、`binary_session`、証拠バンドル、プロセス取得と比較                                                   |
+| ツール群               |  数 | 例                                                                                                                  |
+| ---------------------- | --: | ------------------------------------------------------------------------------------------------------------------- |
+| バイナリ調査           |  33 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                       |
+| 合成解析               |  10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出 |
+| macOS ネイティブ       |   5 | Mach-O メタデータ、署名、plist、アーキテクチャ、Swift デマングル。Hopper 起動不要                                   |
+| アーティファクトグラフ |   2 | ディレクトリ、ZIP/APK/IPA、ASAR の決定的一覧と明示選択されたトランザクション抽出                                    |
+| バイナリセッション     |  18 | `open_binary`、`binary_session`、証拠バンドル、プロセス／成果物／関数比較、残余未知レジストリ                       |
 
 ## 他のコーディングエージェントで使う
 
