@@ -30,7 +30,7 @@
   },
   "files": [
     "dist",
-    "bridge",
+    "bridge/hopper_bridge.py",
     "scripts/rea.mjs",
     "skills",
     "README.md",

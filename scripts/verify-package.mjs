@@ -14,6 +14,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+// Exercise the packed artifact in isolated HOME and prefix directories so the
+// verifier cannot mutate real MCP registrations or rely on checkout-only files.
 const exec = promisify(execFile);
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
@@ -23,6 +25,16 @@ try {
   tarball = (
     await exec("npm", ["pack", "--silent"], { cwd: root })
   ).stdout.trim();
+  const packedFiles = (
+    await exec("tar", ["-tf", join(root, tarball)])
+  ).stdout.split("\n");
+  if (
+    packedFiles.some(
+      (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
+    )
+  ) {
+    throw new Error("package contained generated Python bytecode");
+  }
   const prefix = join(workspace, "prefix");
   const home = join(workspace, "home");
   const fakeBin = join(workspace, "bin");

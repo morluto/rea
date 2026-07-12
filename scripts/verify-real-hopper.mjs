@@ -10,9 +10,11 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
 const hopperProcessPrefix = "/Applications/Hopper Disassembler.app/Contents/";
+// Snapshot bundle processes so cleanup terminates only Hopper processes this
+// verifier caused to appear, never an instance the user already had running.
 const hopperProcessesBefore = await hopperProcessIds();
 const sessionsBefore = new Set(
-  (await readdir("/tmp")).filter((name) => name.startsWith("bbm-")),
+  (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
 );
 
 const textValue = (result) => {
@@ -163,7 +165,7 @@ try {
 
 await new Promise((resolve) => setTimeout(resolve, 500));
 const sessionsAfter = (await readdir("/tmp")).filter(
-  (name) => name.startsWith("bbm-") && !sessionsBefore.has(name),
+  (name) => name.startsWith("rea-") && !sessionsBefore.has(name),
 );
 if (sessionsAfter.length > 0) {
   throw new Error("The MCP runtime leaked a bridge session directory");
