@@ -80,7 +80,7 @@ jobs:
       - run: npm run scan:todos
 
   test:
-    name: Test
+    name: Test (coverage + timing)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +89,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: npx vitest run --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.xml
+          retention-days: 30
 
   docs:
     name: Docs Generation
