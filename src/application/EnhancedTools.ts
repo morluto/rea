@@ -4,6 +4,7 @@ import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { AnalysisProtocolError, type AnalysisError } from "../domain/errors.js";
 import {
   parseDocuments,
+  parseFunctionDossier,
   parseAddressedPage,
   parseListCount,
   parseRelatedAddresses,
@@ -84,7 +85,7 @@ export class EnhancedTools {
       case "analyze_function": {
         const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
         return parsed.success
-          ? this.#call("analyze_function", parsed.data, signal)
+          ? this.#analyzeFunction(parsed.data, signal)
           : invalidInput(name, parsed.error);
       }
       case "trace_feature": {
@@ -94,6 +95,14 @@ export class EnhancedTools {
           : invalidInput(name, parsed.error);
       }
     }
+  }
+
+  async #analyzeFunction(
+    input: Readonly<Record<string, JsonValue>>,
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const result = await this.#call("analyze_function", input, signal);
+    return result.ok ? parseFunctionDossier(result.value) : result;
   }
 
   async #swiftClasses(pattern: string, signal?: AbortSignal): EnhancedResult {

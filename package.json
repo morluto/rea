@@ -33,12 +33,15 @@
     "rea": "scripts/rea.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.18.0 <25",
+    "npm": ">=11.16.0 <12"
   },
+  "packageManager": "npm@11.16.0",
   "files": [
     "dist",
     "bridge/hopper_bridge.py",
     "scripts/rea.mjs",
+    "scripts/rebuild-native.mjs",
     "skills",
     "README.md",
     "LICENSE"
@@ -69,7 +72,8 @@
     "config:print": "node scripts/print-mcp-config.mjs",
     "docs:generate": "typedoc",
     "prepack": "npm run build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "rebuild:native": "node scripts/rebuild-native.mjs"
   },
   "lint-staged": {
     "*.{ts,mjs,json,md,yml,yaml}": "prettier --write",
@@ -77,22 +81,29 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0-beta.3",
+    "canonicalize": "3.0.0",
     "incur": "0.4.13",
-    "pino": "^9.14.0",
+    "node-pty": "1.1.0",
+    "pino": "9.14.0",
+    "ws": "8.21.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0-beta.3",
     "@types/node": "24.10.1",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@types/ws": "8.18.1",
+    "@vitest/coverage-v8": "4.1.10",
     "husky": "9.1.7",
     "jscpd": "5.0.12",
     "knip": "6.26.0",
-    "lint-staged": "^16.4.0",
+    "lint-staged": "16.4.0",
     "oxlint": "1.73.0",
     "prettier": "3.6.2",
     "typedoc": "0.28.20",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   }
 }

@@ -13,13 +13,10 @@ import {
   HopperTimeoutError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { silentLogger, type Logger } from "../logger.js";
-import {
-  parseResponseLine,
-  responseResult,
-  type JsonValue,
-} from "./protocol.js";
+import { parseResponseLine, responseResult } from "./protocol.js";
 
 const MAX_LINE_BYTES = 10 * 1024 * 1024;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();

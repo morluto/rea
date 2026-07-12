@@ -22,7 +22,24 @@ describe("binary session", () => {
     const operations: string[] = [];
     const provider: AnalysisProvider = {
       identity: () => ({ id: "fixture", name: "Fixture", version: "1" }),
-      capabilities: () => ["fixture-analysis"],
+      capabilities: () => [
+        {
+          operation: "fixture-analysis",
+          version: 1,
+          available: true,
+          pagination: "none",
+          exhaustive: true,
+          effects: {
+            mutatesArtifact: false,
+            launchesProcess: false,
+            mayShowUi: false,
+            mayAccessNetwork: false,
+            mayWriteFilesystem: false,
+            requiresPrivileges: false,
+          },
+          limitations: [],
+        },
+      ],
       createClient: () => ({
         execute: (operation) => {
           operations.push(operation);
@@ -38,7 +55,7 @@ describe("binary session", () => {
       value: "fixture_operation",
     });
     expect(provider.identity().id).toBe("fixture");
-    expect(provider.capabilities()).toEqual(["fixture-analysis"]);
+    expect(provider.capabilities()[0]?.operation).toBe("fixture-analysis");
     expect(operations).toEqual(["health", "fixture_operation"]);
     await session.close();
   });

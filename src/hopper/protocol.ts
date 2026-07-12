@@ -4,8 +4,6 @@ import { HopperProtocolError, HopperRemoteError } from "../domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-export { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-
 const responseSchema = z.union([
   z.object({
     id: z.number().int().nonnegative(),

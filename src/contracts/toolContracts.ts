@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
+import {
+  processCaptureSchema,
+  processScenarioSchema,
+} from "../domain/processCapture.js";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import {
@@ -44,6 +49,7 @@ export interface ToolContract {
 const annotations = (name: string, kind: ToolKind): ToolAnnotations => ({
   readOnlyHint:
     kind === "enhanced" ||
+    name === "export_evidence_bundle" ||
     (!name.startsWith("set_") &&
       name !== "unset_bookmark" &&
       name !== "goto_address" &&
@@ -354,11 +360,36 @@ export const SESSION_TOOL_CONTRACTS = [
     "Report whether a target is open and, when open, its canonical path, format, and kind. Use before analysis calls or target switches; this performs no analysis.",
     z.object({}),
   ),
+  session(
+    "export_evidence_bundle",
+    "Return the session's deterministic Evidence v2 bundle without clearing it. Records are sorted by evidence ID, and array order carries no investigative meaning.",
+    z.object({}),
+  ),
+  session(
+    "import_evidence_bundle",
+    "Validate and atomically merge a local Evidence v2 bundle supplied as data. Semantic IDs are recomputed; tampering, unsupported versions, conflicts, and ledger overflow reject the entire import.",
+    z.object({ bundle: evidenceBundleSchema }),
+  ),
+  session(
+    "capture_process_scenario",
+    "Run one bounded process under a PTY using operator-approved executable and working roots. Requires approved: true on every call. Captures normalized terminal frames, sampled descendants, filesystem snapshots, and loopback HTTP/WebSocket replay. This launches a process and is disabled unless operator policy enables it; it is not a security sandbox.",
+    processScenarioSchema,
+  ),
+  session(
+    "compare_process_captures",
+    "Compare two bounded process captures across terminal, exit, sampled process, filesystem, HTTP, and WebSocket evidence. Missing or truncated observations are never treated as equivalent.",
+    z.object({
+      left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+      left: processCaptureSchema,
+      right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+      right: processCaptureSchema,
+    }),
+  ),
 ] as const satisfies readonly ToolContract[];
 
 /**
  * Complete ordered public inventory used by registration and verification.
- * Keep this collection at 46 tools unless a deliberate contract change updates
+ * Keep this collection at 50 tools unless a deliberate contract change updates
  * snapshots, package verification, and real-Hopper verification together.
  */
 export const TOOL_CONTRACTS = [

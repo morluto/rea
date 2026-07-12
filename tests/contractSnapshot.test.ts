@@ -36,13 +36,17 @@ describe("tool contract surface", () => {
     }
   });
 
-  it("keeps exactly three additive session contracts", () => {
+  it("keeps exactly seven additive session contracts", () => {
     expect(
       SESSION_TOOL_CONTRACTS.map(({ name, kind }) => ({ name, kind })),
     ).toEqual([
       { name: "open_binary", kind: "session" },
       { name: "close_binary", kind: "session" },
       { name: "binary_session", kind: "session" },
+      { name: "export_evidence_bundle", kind: "session" },
+      { name: "import_evidence_bundle", kind: "session" },
+      { name: "capture_process_scenario", kind: "session" },
+      { name: "compare_process_captures", kind: "session" },
     ]);
   });
 

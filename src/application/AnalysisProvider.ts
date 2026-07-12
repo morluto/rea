@@ -29,9 +29,30 @@ export interface ProviderIdentity {
   readonly version: string | null;
 }
 
+type AnalysisOperation = string;
+
+interface CapabilityEffects {
+  readonly mutatesArtifact: boolean;
+  readonly launchesProcess: boolean;
+  readonly mayShowUi: boolean;
+  readonly mayAccessNetwork: boolean;
+  readonly mayWriteFilesystem: boolean;
+  readonly requiresPrivileges: boolean;
+}
+
+export interface CapabilityDescriptor {
+  readonly operation: AnalysisOperation;
+  readonly version: number;
+  readonly available: boolean;
+  readonly pagination: "none" | "offset" | "cursor";
+  readonly exhaustive: boolean;
+  readonly effects: CapabilityEffects;
+  readonly limitations: readonly string[];
+}
+
 /** Factory and capability declaration for an analysis implementation. */
 export interface AnalysisProvider {
   identity(): ProviderIdentity;
-  capabilities(): readonly string[];
+  capabilities(): readonly CapabilityDescriptor[];
   createClient(target: BinaryTarget): AnalysisClient;
 }

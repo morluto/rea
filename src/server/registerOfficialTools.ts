@@ -11,6 +11,8 @@ import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
+import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { Evidence } from "../domain/evidence.js";
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
@@ -18,9 +20,20 @@ export const registerOfficialTools = (
   analysis: AnalysisOperationPort,
   logger: Logger,
   activeTarget?: () => BinaryTarget | undefined,
+  provider: ProviderIdentity = {
+    id: "unidentified",
+    name: "Unidentified provider",
+    version: null,
+  },
+  recordEvidence?: (evidence: Evidence) => void,
 ): void => {
   for (const contract of OFFICIAL_TOOL_CONTRACTS) {
-    registerOfficialTool(server, analysis, contract, { logger, activeTarget });
+    registerOfficialTool(server, analysis, contract, {
+      logger,
+      activeTarget,
+      provider,
+      recordEvidence,
+    });
   }
 };
 
@@ -31,6 +44,8 @@ const registerOfficialTool = (
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+    readonly provider: ProviderIdentity;
+    readonly recordEvidence: ((evidence: Evidence) => void) | undefined;
   },
 ): void => {
   server.registerTool(
@@ -51,19 +66,21 @@ const registerOfficialTool = (
             signal: context.mcpReq.signal,
           }),
       );
-      return toCallToolResult(
-        result.ok
-          ? {
-              ok: true,
-              value: createEvidence(registration.activeTarget?.(), {
-                operation: contract.name,
-                parameters: arguments_,
-                result: result.value,
-              }),
-            }
-          : result,
-        contract,
-      );
+      if (result.ok) {
+        const evidence = createEvidence(
+          registration.activeTarget?.(),
+          registration.provider,
+          {
+            operation: contract.name,
+            parameters: arguments_,
+            result: result.value,
+            redactedRawPayload: result.value,
+          },
+        );
+        registration.recordEvidence?.(evidence);
+        return toCallToolResult({ ok: true, value: evidence }, contract);
+      }
+      return toCallToolResult(result, contract);
     },
   );
 };

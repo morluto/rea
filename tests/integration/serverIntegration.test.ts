@@ -85,9 +85,9 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     expect(listResult.isError).not.toBe(true);
     expect(structured(listResult)).toMatchObject({
-      artifact: null,
+      subject: null,
       operation: "list_procedures",
-      provider: { id: "hopper", version: null },
+      provider: { id: "unidentified", version: null },
       result: {
         items: [
           { address: "0x1000", value: "main" },
@@ -118,7 +118,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
   });
 
-  it("preserves the complete 46-tool inventory with a session", async () => {
+  it("preserves the complete 50-tool inventory with a session", async () => {
     const session = new BinarySession(
       (_path) =>
         ({
@@ -141,7 +141,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(46);
+    expect(listed.tools).toHaveLength(50);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("open_binary");
     expect(names).toContain("close_binary");

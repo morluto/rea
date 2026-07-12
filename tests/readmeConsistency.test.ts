@@ -20,9 +20,9 @@ describe("localized README product facts", () => {
       expect(content).toContain("npx -y @morluto/rea setup --yes");
       expect(content).toContain("npx -y @morluto/rea doctor");
       expect(content).toContain('"args": ["-y", "@morluto/rea", "mcp"]');
-      expect(content).toContain("Node.js 22");
+      expect(content).toContain("Node.js 24");
       expect(content).toContain("macOS 12");
-      expect(content).toMatch(/\b46\b/u);
+      expect(content).toMatch(/\b50\b/u);
       expect(content).toMatch(/\b33\b/u);
       expect(content).toMatch(/\b10\b/u);
       expect(content).toMatch(/\b3\b/u);

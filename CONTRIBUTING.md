@@ -4,10 +4,11 @@ REA welcomes focused bug fixes, documentation improvements, tests, and reverse-e
 
 ## Development setup
 
-REA requires macOS 12 or newer, Node.js 22 or newer, and a separately installed Hopper Disassembler application for real-Hopper verification.
+REA requires macOS 12 or newer, Node.js 24.18.x, npm 11.16.x, and a separately installed Hopper Disassembler application for real-Hopper verification. Run `nvm use` before installing dependencies.
 
 ```bash
 npm ci
+npm run rebuild:native # only when the packaged PTY binary is incompatible
 npm run build
 npm test
 ```

@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![46 MCP tools](https://img.shields.io/badge/MCP_tools-46-5c4ee5?style=flat-square)](#منصة-من-46-أداة)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#منصة-من-50-أداة)
+[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[البدء السريع](#البدء-السريع) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [46 أداة](#منصة-من-46-أداة) · [كيف يعمل](#كيف-يعمل) · [الأسئلة الشائعة](#الأسئلة-الشائعة)
+[البدء السريع](#البدء-السريع) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [50 أداة](#منصة-من-50-أداة) · [كيف يعمل](#كيف-يعمل) · [الأسئلة الشائعة](#الأسئلة-الشائعة)
 
 <br />
 
@@ -73,7 +73,7 @@ npx skills add morluto/rea
 ### قبل البدء
 
 - macOS 12 أو أحدث
-- Node.js 22 أو أحدث
+- Node.js 24.18.x وnpm 11.16.x (شغّل `nvm use` لاختيار الإصدار المثبّت)
 
 لا تحتاج إلى تثبيت أدوات الهندسة العكسية يدويًا. يثبت Setup برنامج Homebrew و[Hopper](https://www.hopperapp.com/) عند الحاجة، ثم يهيئ وكلاء البرمجة المدعومين. Hopper برنامج منفصل يحتاج إلى ترخيص خاص به؛ يثبته Setup لكنه لا يوفر الترخيص.
 
@@ -145,13 +145,13 @@ npx -y @morluto/rea doctor
 
 افحص التحقق من الإدخال، والتشفير، والصلاحيات، والتخزين، ومسارات الأخطاء من دون رفع الملف التنفيذي إلى خدمة بعيدة.
 
-## منصة من 46 أداة
+## منصة من 50 أداة
 
 | عائلة الأدوات         | العدد | أمثلة                                                                               |
 | --------------------- | ----: | ----------------------------------------------------------------------------------- |
 | فحص الملفات التنفيذية |    33 | الدوال، والشيفرة شبه المصدرية، والتعليمات، والسلاسل، والأسماء، والمراجع، والتعليقات |
 | التحليل المركب        |    10 | النظرة العامة، وفك الترجمة الدفعي، ومخططات الاستدعاء، والمراجع، واكتشاف الأنواع     |
-| جلسة الملف التنفيذي   |     3 | `open_binary` و`binary_session` و`close_binary`                                     |
+| جلسة الملف التنفيذي   |     7 | فتح الأهداف وحزم الأدلة والتقاط العمليات ومقارنتها                                  |
 
 ## استخدام REA مع وكلاء برمجة آخرين
 
