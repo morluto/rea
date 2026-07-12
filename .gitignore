@@ -22,6 +22,12 @@ env/
 *.swo
 *~
 
+# Local agent tooling
+.codex/
+.devin/
+.factory/
+codedb.snapshot
+
 # Testing
 .pytest_cache/
 htmlcov/
