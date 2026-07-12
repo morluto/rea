@@ -1,6 +1,6 @@
 graph TD
     subgraph "Entry Points"
-        CLI["src/cli.ts<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation"]
+        CLI["src/cli.ts<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, inventory, extraction"]
         MAIN["src/main.ts<br/>MCP stdio server adapter<br/>config, session, process lifetime"]
         DISPATCH["scripts/rea.mjs<br/>Executable dispatcher<br/>routes mcp / one-shot"]
     end
@@ -18,12 +18,17 @@ graph TD
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
     end
 
+    subgraph "Provider Adapters"
+        ARTIFACTS["src/artifacts/<br/>Directory, ZIP/APK/IPA, ASAR, Mach-O slices<br/>safe transactional output"]
+        NATIVE["src/native/<br/>Bounded native macOS semantic inspection"]
+    end
+
     subgraph "Contracts Layer"
-        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>31 direct, 8 enhanced, 3 session tools"]
+        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>33 direct, 10 enhanced, 5 native, 2 artifact, 18 session"]
     end
 
     subgraph "Domain Layer"
-        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>errors, Result, hopperValues, symbolAnalysis"]
+        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>errors, Result, evidence, artifactGraph, residualUnknowns"]
     end
 
     subgraph "Configuration"
@@ -43,9 +48,14 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> HOPPER
+    APP --> ARTIFACTS
+    APP --> NATIVE
     HOPPER --> BRIDGE
     APP --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
+    ARTIFACTS --> DOMAIN
+    NATIVE --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
+    TESTS -.-> ARTIFACTS
