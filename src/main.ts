@@ -26,7 +26,9 @@ export const run = async (): Promise<number> => {
 
   const session = createBinarySession(config.value);
   if (config.value.hopperTargetPath !== undefined) {
-    const opened = await session.open(config.value.hopperTargetPath);
+    const opened = await session.open(config.value.hopperTargetPath, {
+      targetKind: config.value.hopperTargetKind,
+    });
     if (!opened.ok) {
       await session.close();
       process.stderr.write(`${opened.error._tag}: ${opened.error.message}\n`);

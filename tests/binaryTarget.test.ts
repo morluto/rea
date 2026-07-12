@@ -74,6 +74,22 @@ describe("binary target I/O", () => {
     expect((await parseBinaryTarget("text", directory)).ok).toBe(false);
     expect((await parseBinaryTarget("missing", directory)).ok).toBe(false);
   });
+
+  it("honors an explicit database kind without relying on the file suffix", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    await writeFile(join(directory, "saved-analysis"), "database");
+    const result = await parseBinaryTarget(
+      "saved-analysis",
+      directory,
+      "arm64",
+      "database",
+    );
+    expect(result.ok && result.value).toMatchObject({
+      kind: "database",
+      format: "hopper",
+      loaderArgs: [],
+    });
+  });
 });
 
 const elf = (class_: number, endian: number, machine: number): Buffer => {

@@ -38,11 +38,19 @@ export class BinarySession implements HopperToolPort {
    */
   open(
     path: string,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly targetKind?: BinaryTarget["kind"];
+    } = {},
   ): Promise<Result<BinaryTarget, HopperError>> {
     return this.#serialize(async () => {
       if (isAborted(options.signal)) return err(new HopperCancelledError());
-      const parsed = await parseBinaryTarget(path);
+      const parsed = await parseBinaryTarget(
+        path,
+        process.cwd(),
+        process.arch,
+        options.targetKind,
+      );
       if (!parsed.ok) return parsed;
       if (isAborted(options.signal)) return err(new HopperCancelledError());
       if (this.#active?.target.path === parsed.value.path)

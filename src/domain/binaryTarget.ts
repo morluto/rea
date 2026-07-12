@@ -30,12 +30,16 @@ export const parseBinaryTarget = async (
   input: string,
   cwd = process.cwd(),
   hostArchitecture: NodeJS.Architecture = process.arch,
+  targetKind?: BinaryTarget["kind"],
 ): Promise<Result<BinaryTarget, BinaryTargetError>> => {
   const candidate = isAbsolute(input) ? input : resolve(cwd, input);
   try {
     await access(candidate, constants.R_OK);
     const path = await realpath(candidate);
-    if (path.toLowerCase().endsWith(".hop"))
+    if (
+      targetKind === "database" ||
+      (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+    )
       return ok({ path, kind: "database", format: "hopper", loaderArgs: [] });
     const handle = await open(path, "r");
     let bytes: Buffer;

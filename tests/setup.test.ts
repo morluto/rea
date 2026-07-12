@@ -84,6 +84,15 @@ describe("setup workflow", () => {
     expect(result.remediation).toContain("--yes");
   });
 
+  it("requires --yes before installing Hopper", async () => {
+    const host = new FakeSetupHost();
+    host.brew = true;
+    const result = await runSetup(false, host);
+    expect(result.status).toBe("needs_human");
+    expect(host.hopperInstalls).toBe(0);
+    expect(result.remediation).toContain("--yes");
+  });
+
   it("accepts existing Homebrew and manually installed Hopper", async () => {
     const host = new FakeSetupHost();
     host.brew = true;

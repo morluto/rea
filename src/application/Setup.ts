@@ -98,6 +98,7 @@ export const runSetup = async (
     actions.push("installed_homebrew");
   }
   if ((await host.hopperPath()) === undefined) {
+    if (!yes) return fail("Re-run with --yes to install Hopper.");
     if (!(await host.installHopper()))
       return fail(
         "Hopper installation was interrupted; resolve the system prompt and re-run setup.",
