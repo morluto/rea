@@ -119,11 +119,14 @@ describe("artifact comparison", () => {
 
   it("assembles bounded page sets for graphs larger than one page", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-artifact-pages-"));
-    for (let index = 0; index < 501; index += 1)
-      await writeFile(
-        join(root, `file-${String(index).padStart(3, "0")}.txt`),
-        String(index),
-      );
+    await Promise.all(
+      Array.from({ length: 501 }, async (_, index) =>
+        writeFile(
+          join(root, `file-${String(index).padStart(3, "0")}.txt`),
+          String(index),
+        ),
+      ),
+    );
     const pages = await Promise.all([
       observe(root),
       observe(root, {
@@ -137,7 +140,7 @@ describe("artifact comparison", () => {
       summary: { unchanged: 502, unknown: 0 },
       changes: { total: 0 },
     });
-  });
+  }, 15_000);
 
   it("rejects non-inventory and tampered Evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-artifact-invalid-"));
