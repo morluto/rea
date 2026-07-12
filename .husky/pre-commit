@@ -1,1 +1,2 @@
-npx oxlint --fix
+npx lint-staged
+npm run typecheck
