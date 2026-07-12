@@ -118,7 +118,7 @@ describe("reference source import", () => {
       const result = await importTree(root, parent);
       expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
-      expect(result.value.vcs).toEqual({ kind: "git", head: oid, dirty: true });
+      expect(result.value.vcs).toEqual({ kind: "git", head: oid, dirty: null });
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

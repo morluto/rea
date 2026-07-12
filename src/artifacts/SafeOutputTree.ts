@@ -14,7 +14,7 @@ import {
   type ArtifactLimits,
 } from "./ArtifactReader.js";
 
-/** One file durably written to a transaction-owned output tree. */
+/** One file durably written to an operation-owned output tree. */
 export interface SafeOutputFile {
   readonly relativePath: string;
   readonly sha256: string;
@@ -28,7 +28,7 @@ export interface SafeOutputCleanup {
   readonly residualPaths: readonly string[];
 }
 
-/** Transactional, symlink-resistant materialization beneath an absent path. */
+/** Symlink-resistant materialization in an exclusively owned, initially absent tree. */
 export class SafeOutputTree {
   readonly #registry = new ArtifactPathRegistry();
   readonly #limits: ArtifactLimits;
@@ -52,7 +52,7 @@ export class SafeOutputTree {
     this.#limits = limits;
   }
 
-  /** Exclusively create the absent destination as this transaction's owned tree. */
+  /** Exclusively create the absent destination as this operation's owned tree. */
   static async create(
     outputRoot: string,
     limits: ArtifactLimits,
@@ -177,7 +177,7 @@ export class SafeOutputTree {
     }
   }
 
-  /** Durably commit the exclusively-created output tree. */
+  /** Sync the owned output tree and prevent further writes through this instance. */
   async commit(): Promise<void> {
     this.#assertWritable();
     const parent = await open(
@@ -195,7 +195,7 @@ export class SafeOutputTree {
     } catch (cause: unknown) {
       throw new ArtifactReaderFailure(
         "path",
-        "Could not durably commit extraction output",
+        "Could not durably sync extraction output",
         { cause },
       );
     } finally {
@@ -203,7 +203,7 @@ export class SafeOutputTree {
     }
   }
 
-  /** Remove only this transaction's uncommitted tree and verify absence. */
+  /** Remove only this operation's unsealed tree and verify absence. */
   async rollback(): Promise<SafeOutputCleanup> {
     if (this.#published) return this.#cleanup;
     await rm(this.#stagingRoot, { recursive: true, force: true });

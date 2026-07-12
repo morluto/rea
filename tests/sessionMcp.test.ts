@@ -170,7 +170,7 @@ describe("target-free MCP lifecycle", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open": false');
-  }, 20_000);
+  }, 10_000);
 
   it("records approved process residuals in the unknown registry", async () => {
     const session = new BinarySession(() => client("fixture", []));

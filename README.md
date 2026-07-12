@@ -146,8 +146,6 @@ rea import-reference-source /absolute/path/to/source
 
 Exports never replace an existing file unless `--overwrite` is explicit. Imports are size/depth bounded, validate every Evidence v2 ID and manifest, and never execute bundle content.
 
-Completion metadata is verifier-owned. Run `npm run completion:generate` after changing contracts, schemas, providers, scenarios, package metadata, verifier inputs, or the managed skill. CI runs `npm run completion:check`; it detects stale or tampered hashes and never rewrites a branch. Unsupported and unknown outcomes remain separate from passes, and a pass or failure requires indexed Evidence v2 IDs.
-
 ## One prompt, a full investigation
 
 ```text
@@ -187,7 +185,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                        |
 | Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery |
 | Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing           |
-| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected transactional extraction                  |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree      |
 | Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.

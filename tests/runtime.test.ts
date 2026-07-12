@@ -58,7 +58,7 @@ describe("production stdio runtime", () => {
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
     expect(stderr).not.toContain(fixturePath);
-  }, 20_000);
+  }, 15_000);
 
   it("honors the configured kind for an initial database target", async () => {
     const transport = new StdioClientTransport({

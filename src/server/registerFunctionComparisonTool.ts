@@ -7,13 +7,13 @@ import {
   functionComparisonInputSchema,
 } from "../domain/functionComparison.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
-import { err } from "../domain/result.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import { resolveSessionEvidence } from "./sessionEvidence.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
@@ -23,31 +23,18 @@ export const registerFunctionComparisonTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     (input) => {
       const parsed = functionComparisonInputSchema.parse(input);
-      const leftIds = evidenceIds(parsed.left);
-      const rightIds = evidenceIds(parsed.right);
-      const missing = [...leftIds, ...rightIds].filter(
-        (evidenceId) => !session.hasEvidence(evidenceId),
-      );
-      if (missing.length > 0)
-        return toCallToolResult(
-          err(
-            new EvidenceIntegrityError(
-              "Function comparison input Evidence is not present in this session",
-            ),
-          ),
-          contract,
-        );
+      const left = resolveSessionEvidence(session, parsed.left);
+      if (!left.ok) return toCallToolResult(left, contract);
+      const right = resolveSessionEvidence(session, parsed.right);
+      if (!right.ok) return toCallToolResult(right, contract);
+      const leftIds = evidenceIds(left.value);
+      const rightIds = evidenceIds(right.value);
       const comparison = compareFunctions(
-        parsed.left,
-        parsed.right,
+        left.value,
+        right.value,
         parsed.offset,
         parsed.limit,
       );

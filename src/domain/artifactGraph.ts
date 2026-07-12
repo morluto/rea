@@ -189,7 +189,7 @@ const extractedArtifactSchema = z.object({
   created: z.boolean(),
 });
 
-/** Path-independent commitment to one selected extraction transaction. */
+/** Path-independent commitment to one selected extraction operation. */
 const artifactExtractionManifestSchema = z.object({
   schema_version: z.literal(1),
   extraction_id: extractionIdSchema,

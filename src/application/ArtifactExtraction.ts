@@ -23,7 +23,7 @@ import {
   type ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { inventoryArtifact } from "./ArtifactInventory.js";
+import { scanArtifactInventory } from "./ArtifactInventory.js";
 import {
   digestCanonical,
   pageOf,
@@ -43,7 +43,7 @@ export interface ArtifactExtractionInput {
   readonly limits: ArtifactLimits;
 }
 
-/** Extract only explicitly selected inventory occurrences into an absent root. */
+/** Extract selected inventory occurrences into an exclusively owned absent root. */
 export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
@@ -172,13 +172,6 @@ const materializeSelection = async ({
       selected,
       extracted,
     );
-    const verifiedSource = await inventoryArtifact(
-      sourcePath,
-      input.limits,
-      pageInput(0, 0),
-      signal,
-    );
-    assertSameManifest(inventory.manifest, verifiedSource.manifest);
     await output.commit();
     return result;
   } catch (cause: unknown) {
@@ -233,61 +226,19 @@ const loadInventory = async (
   selectedIds: ReadonlySet<string>,
   signal?: AbortSignal,
 ): Promise<LoadedInventory> => {
-  const first = await inventoryArtifact(path, limits, pageInput(0, 0), signal);
+  const snapshot = await scanArtifactInventory(path, limits, signal);
   const occurrences = new Map<string, ArtifactOccurrence>();
   const neededNodes = new Set<string>();
   collectOccurrences(
-    first.occurrences.items,
+    snapshot.occurrences,
     selectedIds,
     occurrences,
     neededNodes,
   );
-  for (
-    let offset = first.occurrences.next_offset;
-    offset !== null && occurrences.size < selectedIds.size;
-    offset += PAGE_SIZE
-  ) {
-    const page = await inventoryArtifact(
-      path,
-      limits,
-      pageInput(0, offset),
-      signal,
-    );
-    assertSameManifest(first.manifest, page.manifest);
-    collectOccurrences(
-      page.occurrences.items,
-      selectedIds,
-      occurrences,
-      neededNodes,
-    );
-  }
   const nodes = new Map<string, ArtifactNode>();
-  collectNodes(first.nodes.items, neededNodes, nodes);
-  for (
-    let offset = first.nodes.next_offset;
-    offset !== null && nodes.size < neededNodes.size;
-    offset += PAGE_SIZE
-  ) {
-    const page = await inventoryArtifact(
-      path,
-      limits,
-      pageInput(offset, 0),
-      signal,
-    );
-    assertSameManifest(first.manifest, page.manifest);
-    collectNodes(page.nodes.items, neededNodes, nodes);
-  }
-  return { manifest: first.manifest, occurrences, nodes };
+  collectNodes(snapshot.nodes, neededNodes, nodes);
+  return { manifest: snapshot.manifest, occurrences, nodes };
 };
-
-const pageInput = (nodeOffset: number, occurrenceOffset: number) => ({
-  nodeOffset,
-  nodeLimit: PAGE_SIZE,
-  occurrenceOffset,
-  occurrenceLimit: PAGE_SIZE,
-  edgeOffset: 0,
-  edgeLimit: 1,
-});
 
 const collectOccurrences = (
   items: readonly ArtifactOccurrence[],
@@ -361,16 +312,5 @@ const preflight = (entry: ArtifactEntry, limits: ArtifactLimits): void => {
     throw new ArtifactReaderFailure(
       "limit",
       `Selected artifact exceeds compression ratio limit: ${entry.path}`,
-    );
-};
-
-const assertSameManifest = (
-  expected: ArtifactGraphManifest,
-  observed: ArtifactGraphManifest,
-): void => {
-  if (expected.manifest_id !== observed.manifest_id)
-    throw new ArtifactReaderFailure(
-      "integrity",
-      "Artifact changed while resolving extraction selection",
     );
 };

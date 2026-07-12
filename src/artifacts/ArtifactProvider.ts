@@ -33,7 +33,7 @@ const IDENTITY: ProviderIdentity = Object.freeze({
   version: "1",
 });
 
-/** Read-only inventory and transaction-owned extraction provider. */
+/** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[] = Object.freeze(
     ARTIFACT_TOOL_CONTRACTS.map((contract) =>

@@ -145,7 +145,7 @@ const vcsSchema = z
     z.strictObject({
       kind: z.literal("git"),
       head: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u),
-      dirty: z.boolean(),
+      dirty: z.boolean().nullable(),
     }),
     z.strictObject({
       kind: z.literal("none"),
