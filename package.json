@@ -39,6 +39,7 @@
   "packageManager": "npm@11.16.0",
   "files": [
     "dist",
+    "install.sh",
     "bridge/hopper_bridge.py",
     "scripts/rea.mjs",
     "scripts/rebuild-native.mjs",
@@ -66,6 +67,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs",
+    "verify:hopper:linux": "npm run build && node scripts/verify-real-hopper-linux.mjs",
     "build:fixtures": "node scripts/build-conformance-fixtures.mjs",
     "verify:fixtures": "npm run build:fixtures && node scripts/verify-conformance-fixtures.mjs",
     "verify:package": "npm run build && node scripts/verify-package.mjs",
@@ -96,6 +98,7 @@
     "node-pty": "1.1.0",
     "pino": "9.14.0",
     "plist": "5.0.0",
+    "smol-toml": "^1.7.0",
     "write-file-atomic": "8.0.0",
     "ws": "8.21.0",
     "zod": "4.4.3"

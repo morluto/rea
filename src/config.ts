@@ -9,6 +9,10 @@ import type { ReferenceSourcePolicy } from "./domain/referenceSourcePolicy.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
+const defaultHopperLauncherPath = (): string =>
+  process.platform === "linux"
+    ? "/opt/hopper/bin/Hopper"
+    : DEFAULT_HOPPER_LAUNCHER_PATH;
 
 export interface AppConfig {
   readonly hopperLauncherPath: string;
@@ -134,7 +138,7 @@ export const parseConfig = (
   return ok({
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
-      DEFAULT_HOPPER_LAUNCHER_PATH,
+      defaultHopperLauncherPath(),
     hopperTargetPath: parsedEnvironment.data.HOPPER_TARGET_PATH,
     hopperTargetKind: parsedEnvironment.data.HOPPER_TARGET_KIND,
     hopperLoaderArgs: parsedArgs.data,

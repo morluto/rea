@@ -10,7 +10,11 @@ describe("runtime configuration", () => {
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.hopperLauncherPath).toContain("/MacOS/hopper");
+      expect(result.value.hopperLauncherPath).toBe(
+        process.platform === "linux"
+          ? "/opt/hopper/bin/Hopper"
+          : "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+      );
       expect(result.value.hopperTargetKind).toBe("executable");
       expect(result.value.hopperLoaderArgs).toEqual([]);
       expect(result.value.logLevel).toBe("info");
@@ -36,7 +40,9 @@ describe("runtime configuration", () => {
       ok: true,
       value: {
         hopperLauncherPath:
-          "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+          process.platform === "linux"
+            ? "/opt/hopper/bin/Hopper"
+            : "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
         hopperTargetPath: "/fixture/sample.hop",
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],

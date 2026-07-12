@@ -7,10 +7,11 @@ import {
   type SetupHost,
 } from "../src/application/Setup.js";
 import type { DoctorCheck } from "../src/application/Doctor.js";
+import type { LinuxDistribution } from "../src/application/LinuxHopper.js";
 
 class FakeSetupHost implements SetupHost {
-  readonly platform = "darwin" as const;
-  readonly nodeVersion = "22.4.0";
+  readonly platform: NodeJS.Platform;
+  readonly nodeVersion = "24.18.0";
   version: string | undefined = "14.5";
   brew = false;
   hopper: string | undefined;
@@ -23,9 +24,16 @@ class FakeSetupHost implements SetupHost {
   hopperInstalls = 0;
   configurations = 0;
   configuredHopperPaths: string[] = [];
+  distribution: LinuxDistribution | undefined;
+
+  constructor(platform: NodeJS.Platform = "darwin") {
+    this.platform = platform;
+  }
 
   macosVersion = (): Promise<string | undefined> =>
     Promise.resolve(this.version);
+  linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
+    Promise.resolve(this.distribution);
   hasHomebrew = (): Promise<boolean> => Promise.resolve(this.brew);
   installHomebrew = (): Promise<boolean> => {
     this.homebrewInstalls += 1;
@@ -61,7 +69,8 @@ class FakeSetupHost implements SetupHost {
     checks: readonly DoctorCheck[];
   }> =>
     Promise.resolve({
-      healthy: this.brew && this.hopper !== undefined,
+      healthy:
+        (this.platform === "linux" || this.brew) && this.hopper !== undefined,
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
       checks: [],
     });
@@ -71,12 +80,40 @@ describe("setup workflow", () => {
   it("installs Homebrew and Hopper on a clean approved machine", async () => {
     const host = new FakeSetupHost();
     const result = await runSetup(true, host);
-    expect(result.status).toBe("ready");
+    expect(result.status).toBe("needs_human");
     expect(result.actions).toEqual([
       "installed_homebrew",
       "installed_hopper",
       "installed_skill",
     ]);
+  });
+
+  it("installs Hopper without Homebrew on supported Linux", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
+    const result = await runSetup(true, host);
+    expect(result.status).toBe("needs_human");
+    expect(result.actions).toEqual(["installed_hopper", "installed_skill"]);
+    expect(host.homebrewInstalls).toBe(0);
+  });
+
+  it("rejects unsupported Linux before mutation", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "debian",
+      versionId: "13",
+      packageFamily: "deb",
+      supported: false,
+    };
+    const result = await runSetup(true, host);
+    expect(result.status).toBe("needs_human");
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configurations).toBe(0);
   });
 
   it("requires --yes before installing Homebrew", async () => {

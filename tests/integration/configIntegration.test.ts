@@ -8,7 +8,9 @@ describe("configuration parsing integration", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.hopperLauncherPath).toBe(
-      "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+      process.platform === "linux"
+        ? "/opt/hopper/bin/Hopper"
+        : "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
     );
     expect(result.value.hopperTargetPath).toBeUndefined();
     expect(result.value.hopperTargetKind).toBe("executable");
