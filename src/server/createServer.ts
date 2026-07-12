@@ -7,7 +7,11 @@ import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 
-/** Construct one MCP server instance without acquiring subprocess resources. */
+/**
+ * Construct one MCP server without acquiring subprocess resources.
+ * Supplying a session adds target lifecycle tools; omitting it retains the
+ * fixed-target seam used by focused tests and embedders.
+ */
 export const createServer = (
   hopper: HopperToolPort,
   session?: BinarySession,

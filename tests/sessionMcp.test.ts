@@ -23,7 +23,7 @@ afterEach(async () => {
 
 describe("target-free MCP lifecycle", () => {
   it("reports no-target, opens, analyzes, switches, reports status, and closes", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-mcp-session-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-mcp-session-"));
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await writeFile(first, "one");

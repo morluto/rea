@@ -34,7 +34,11 @@ export type ClientConfigurationResult =
       readonly status: "failed";
       readonly reason: "backup" | "write" | "readback";
     };
-/** Effects required by the idempotent setup workflow. */
+/**
+ * Effects required by the idempotent setup workflow.
+ * Implementations report interrupted installers as values: setup must not wait
+ * indefinitely for stdin or a GUI response in an unattended agent invocation.
+ */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
@@ -44,11 +48,18 @@ export interface SetupHost {
   hopperPath(): Promise<string | undefined>;
   installHopper(): Promise<boolean>;
   detectedClients(): Promise<readonly SetupClient[]>;
-  configureClient(client: SetupClient): Promise<ClientConfigurationResult>;
+  configureClient(
+    client: SetupClient,
+    hopperPath: string,
+  ): Promise<ClientConfigurationResult>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
-/** Structured setup outcome with actionable partial progress. */
+/**
+ * Structured setup outcome intended to travel back through an agent to a human.
+ * `needs_human` carries remediation text instead of initiating an interactive
+ * prompt, avoiding deadlocks in stdio and other unattended environments.
+ */
 export interface SetupResult {
   readonly status: "ready" | "needs_human";
   readonly actions: readonly string[];
@@ -57,7 +68,11 @@ export interface SetupResult {
   readonly remediation?: string;
 }
 
-/** Install prerequisites and configure every detected supported client idempotently. */
+/**
+ * Install prerequisites and configure detected clients idempotently.
+ * With `yes` false, mutations requiring consent are reported as `needs_human`;
+ * with `yes` true, external installers still fail closed if they require UI.
+ */
 export const runSetup = async (
   yes: boolean,
   host: SetupHost = systemSetupHost(),
@@ -85,15 +100,22 @@ export const runSetup = async (
       );
     actions.push("installed_homebrew");
   }
-  if ((await host.hopperPath()) === undefined) {
+  let hopperPath = await host.hopperPath();
+  if (hopperPath === undefined) {
+    if (!yes) return fail("Re-run with --yes to install Hopper.");
     if (!(await host.installHopper()))
       return fail(
         "Hopper installation was interrupted; resolve the system prompt and re-run setup.",
       );
     actions.push("installed_hopper");
+    hopperPath = await host.hopperPath();
+    if (hopperPath === undefined)
+      return fail(
+        "Hopper installation completed but its launcher was not found.",
+      );
   }
   for (const client of await host.detectedClients()) {
-    const result = await host.configureClient(client);
+    const result = await host.configureClient(client, hopperPath);
     clients[client.name] = result;
     if (result.status === "failed")
       return fail(
@@ -115,8 +137,7 @@ export const runSetup = async (
     ...(doctor.healthy
       ? {}
       : {
-          remediation:
-            "Run better-binary doctor and apply each reported remediation.",
+          remediation: "Run rea doctor and apply each reported remediation.",
         }),
   };
 };
@@ -176,6 +197,7 @@ const detectJsonClients = async (
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
   client: SetupClient,
+  hopperPath?: string,
 ): Promise<ClientConfigurationResult> => {
   let document: Record<string, unknown> = {};
   let original: string | undefined;
@@ -185,8 +207,19 @@ export const configureJsonClient = async (
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
-  const servers = objectValue(document.mcpServers);
-  const desired = { command: PRODUCT_IDENTITY.mcpBinary };
+  let servers: Record<string, unknown>;
+  try {
+    servers = parseOptionalObject(document.mcpServers);
+  } catch {
+    return { status: "failed", reason: "readback" };
+  }
+  const desired = {
+    command: "npx",
+    args: ["-y", PRODUCT_IDENTITY.packageName, "mcp"],
+    ...(hopperPath === undefined
+      ? {}
+      : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
+  };
   if (
     JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
     JSON.stringify(desired)
@@ -194,7 +227,7 @@ export const configureJsonClient = async (
     return { status: "unchanged" };
   let backupPath: string | undefined;
   if (original !== undefined) {
-    backupPath = `${client.configPath}.better-binary.backup`;
+    backupPath = `${client.configPath}.rea.backup`;
     try {
       await copyFile(client.configPath, backupPath);
     } catch {
@@ -206,7 +239,7 @@ export const configureJsonClient = async (
     [PRODUCT_IDENTITY.mcpServerKey]: desired,
   };
   const encoded = `${JSON.stringify(document, null, 2)}\n`;
-  const temporary = `${client.configPath}.better-binary.tmp`;
+  const temporary = `${client.configPath}.rea.tmp`;
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(temporary, encoded, { encoding: "utf8", mode: 0o600 });
@@ -217,7 +250,7 @@ export const configureJsonClient = async (
   }
   try {
     const readback = parseObject(await readFile(client.configPath, "utf8"));
-    const value = objectValue(readback.mcpServers)[
+    const value = parseOptionalObject(readback.mcpServers)[
       PRODUCT_IDENTITY.mcpServerKey
     ];
     if (JSON.stringify(value) !== JSON.stringify(desired)) {
@@ -243,7 +276,7 @@ const installCanonicalSkill = async (
     PRODUCT_IDENTITY.skillName,
     "SKILL.md",
   );
-  const content = `---\nname: ${PRODUCT_IDENTITY.skillName}\ndescription: Analyze binaries with Better Binary and Hopper.\n---\n\nOpen a target with open_binary, begin with binary_overview, and close it when finished.\n`;
+  const content = `---\nname: ${PRODUCT_IDENTITY.skillName}\ndescription: Analyze binaries with REA and Hopper.\n---\n\nOpen a target with open_binary, begin with binary_overview, and close it when finished.\n`;
   try {
     if (
       (await readFile(destination, "utf8").catch(() => undefined)) === content
@@ -288,12 +321,10 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 const objectSchema = z.record(z.string(), z.unknown());
-const objectValue = (value: unknown): Record<string, unknown> => {
-  const parsed = objectSchema.safeParse(value);
-  return parsed.success ? parsed.data : {};
-};
+const parseOptionalObject = (value: unknown): Record<string, unknown> =>
+  value === undefined ? {} : objectSchema.parse(value);
 const parseObject = (text: string): Record<string, unknown> =>
-  objectValue(JSON.parse(text));
+  objectSchema.parse(JSON.parse(text));
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 const restoreConfig = async (

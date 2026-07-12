@@ -20,7 +20,12 @@ const environmentSchema = z.object({
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
 });
 
-/** Parse Hopper launcher configuration once at the composition root. */
+/**
+ * Parse Hopper launcher configuration once at the composition root.
+ * Explicit loader arguments override REA's header-derived defaults for a
+ * supported target, allowing callers to refine Hopper's loader behavior without
+ * bypassing REA's path and executable-header checks.
+ */
 export const parseConfig = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Result<AppConfig, ConfigurationError> => {

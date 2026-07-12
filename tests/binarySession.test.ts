@@ -36,7 +36,7 @@ describe("binary session", () => {
     expect((await session.open(second)).ok).toBe(false);
     expect(session.status()).toMatchObject({ open: true });
     expect(JSON.stringify(session.status())).toContain("first.hop");
-    expect(created).toBe(2);
+    expect(created).toBe(3);
   });
 
   it("serializes concurrent opens and leaves the last target active", async () => {
@@ -119,7 +119,7 @@ describe("binary session", () => {
     await opening;
   });
 
-  it("closes a failed candidate and preserves the previous target", async () => {
+  it("closes a failed candidate and reopens the previous target", async () => {
     const [first, second] = await targets();
     const clients: TestClient[] = [];
     const session = new BinarySession(() => {
@@ -130,11 +130,33 @@ describe("binary session", () => {
     await session.open(first);
     await session.open(second);
     expect(clients[1]?.closed).toBe(1);
-    expect(clients[0]?.closed).toBe(0);
+    expect(clients[0]?.closed).toBe(1);
+    expect(clients[2]?.closed).toBe(0);
     expect(JSON.stringify(session.status())).toContain("first.hop");
     await session.close();
     await session.close();
-    expect(clients[0]?.closed).toBe(1);
+    expect(clients[2]?.closed).toBe(1);
+  });
+
+  it("closes the active bridge before starting a replacement", async () => {
+    const [first, second] = await targets();
+    let liveClients = 0;
+    let overlapped = false;
+    const session = new BinarySession(() => ({
+      callTool: () => {
+        if (liveClients > 0) overlapped = true;
+        liveClients += 1;
+        return Promise.resolve(ok(null));
+      },
+      close: () => {
+        liveClients -= 1;
+        return Promise.resolve();
+      },
+    }));
+    await session.open(first);
+    await session.open(second);
+    expect(overlapped).toBe(false);
+    await session.close();
   });
 });
 

@@ -1,5 +1,11 @@
 import { constants } from "node:fs";
-import { access, open, realpath } from "node:fs/promises";
+import {
+  access,
+  open,
+  realpath,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { BinaryTargetError } from "./errors.js";
@@ -7,7 +13,11 @@ import { err, ok, type Result } from "./result.js";
 
 /** CPU families understood by the supported executable loaders. */
 export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
-/** A parsed binary target and the Hopper launcher arguments it requires. */
+/**
+ * A canonical local target plus deterministic Hopper loader arguments.
+ * Explicit loader and architecture flags prevent Hopper from presenting modal
+ * format or FAT-architecture selection dialogs during agent-driven analysis.
+ */
 export interface BinaryTarget {
   readonly path: string;
   readonly kind: "executable" | "database";
@@ -17,28 +27,35 @@ export interface BinaryTarget {
   readonly loaderArgs: readonly string[];
 }
 
-/** Resolve, read, and classify a local binary path, including its architecture metadata. */
+/**
+ * Resolve and classify a readable local target before Hopper is launched.
+ * FAT Mach-O inputs select only a host-compatible architecture so setup remains
+ * non-interactive; unsupported or ambiguous inputs are returned as typed errors.
+ */
 export const parseBinaryTarget = async (
   input: string,
   cwd = process.cwd(),
   hostArchitecture: NodeJS.Architecture = process.arch,
+  targetKind?: BinaryTarget["kind"],
 ): Promise<Result<BinaryTarget, BinaryTargetError>> => {
   const candidate = isAbsolute(input) ? input : resolve(cwd, input);
   try {
     await access(candidate, constants.R_OK);
     const path = await realpath(candidate);
-    if (path.toLowerCase().endsWith(".hop"))
+    if (!(await stat(path)).isFile())
+      return err(new BinaryTargetError(path, "target is not a regular file"));
+    if (
+      targetKind === "database" ||
+      (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+    )
       return ok({ path, kind: "database", format: "hopper", loaderArgs: [] });
     const handle = await open(path, "r");
-    let bytes: Buffer;
+    let detected: Result<ExecutableMetadata, string>;
     try {
-      bytes = Buffer.alloc(4096);
-      const read = await handle.read(bytes, 0, bytes.length, 0);
-      bytes = bytes.subarray(0, read.bytesRead);
+      detected = await readExecutableMetadata(handle, hostArchitecture);
     } finally {
       await handle.close();
     }
-    const detected = parseExecutableHeader(bytes, hostArchitecture);
     if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
     return ok({ path, kind: "executable", ...detected.value });
   } catch (cause: unknown) {
@@ -53,7 +70,47 @@ type ExecutableMetadata = Pick<
   "format" | "architecture" | "availableArchitectures" | "loaderArgs"
 >;
 
-/** Parse supported executable headers without performing I/O. */
+const readExecutableMetadata = async (
+  handle: FileHandle,
+  hostArchitecture: NodeJS.Architecture,
+): Promise<Result<ExecutableMetadata, string>> => {
+  const prefix = Buffer.alloc(4096);
+  const prefixRead = await handle.read(prefix, 0, prefix.length, 0);
+  const bytes = prefix.subarray(0, prefixRead.bytesRead);
+  if (bytes.length >= 64 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+    const offset = bytes.readUInt32LE(0x3c);
+    if (offset > bytes.length - 6) {
+      const record = Buffer.alloc(6);
+      const recordRead = await handle.read(record, 0, record.length, offset);
+      return recordRead.bytesRead === record.length
+        ? parsePeRecord(record)
+        : err("invalid or truncated PE header");
+    }
+  }
+  if (bytes.length >= 8) {
+    const magic = bytes.readUInt32BE(0);
+    if ([0xcafebabf, 0xbfbafeca].includes(magic)) {
+      const little = magic === 0xbfbafeca;
+      const count = little ? bytes.readUInt32LE(4) : bytes.readUInt32BE(4);
+      const required = 8 + count * 32;
+      if (count <= 128 && required > bytes.length) {
+        const header = Buffer.alloc(required);
+        const headerRead = await handle.read(header, 0, header.length, 0);
+        return parseExecutableHeader(
+          header.subarray(0, headerRead.bytesRead),
+          hostArchitecture,
+        );
+      }
+    }
+  }
+  return parseExecutableHeader(bytes, hostArchitecture);
+};
+
+/**
+ * Parse supported executable headers without I/O and derive explicit Hopper
+ * loader arguments. The caller must supply the host architecture used for FAT
+ * Mach-O slice selection.
+ */
 export const parseExecutableHeader = (
   bytes: Buffer,
   hostArchitecture: NodeJS.Architecture,
@@ -88,7 +145,7 @@ const parseThinMachO = (
     format: "mach-o",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "Mach-O"],
+    loaderArgs: ["-l", "Mach-O", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -124,19 +181,17 @@ const parseFatMachO = (
             : undefined;
   if (preferred === undefined || !architectures.includes(preferred))
     return err(`FAT binary has no host-compatible ${host} architecture`);
-  const flag =
-    preferred === "arm64"
-      ? "--aarch64"
-      : preferred === "x86_64"
-        ? "--x86_64"
-        : preferred === "arm"
-          ? "--arm"
-          : "--x86";
   return ok({
     format: "mach-o",
     architecture: preferred,
     availableArchitectures: architectures,
-    loaderArgs: ["-l", "FAT", flag, "-l", "Mach-O"],
+    loaderArgs: [
+      "-l",
+      "FAT",
+      hopperArchitectureFlag(preferred),
+      "-l",
+      "Mach-O",
+    ],
   });
 };
 
@@ -152,25 +207,27 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
     format: "elf",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "ELF"],
+    loaderArgs: ["-l", "ELF", hopperArchitectureFlag(architecture)],
   });
 };
 
 const parsePe = (bytes: Buffer): Result<ExecutableMetadata, string> => {
   if (bytes.length < 64) return err("truncated PE DOS header");
   const offset = bytes.readUInt32LE(0x3c);
-  if (
-    offset > bytes.length - 6 ||
-    bytes.toString("binary", offset, offset + 4) !== "PE\u0000\u0000"
-  )
+  if (offset > bytes.length - 6) return err("invalid or truncated PE header");
+  return parsePeRecord(bytes.subarray(offset, offset + 6));
+};
+
+const parsePeRecord = (record: Buffer): Result<ExecutableMetadata, string> => {
+  if (record.length < 6 || record.toString("binary", 0, 4) !== "PE\u0000\u0000")
     return err("invalid or truncated PE header");
-  const architecture = peArchitecture(bytes.readUInt16LE(offset + 4));
+  const architecture = peArchitecture(record.readUInt16LE(4));
   if (architecture === undefined) return err("unsupported PE architecture");
   return ok({
     format: "pe",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "PE"],
+    loaderArgs: ["-l", "WinPE", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -214,4 +271,17 @@ const peArchitecture = (machine: number): BinaryArchitecture | undefined => {
       return "arm64";
   }
   return undefined;
+};
+
+const hopperArchitectureFlag = (architecture: BinaryArchitecture): string => {
+  switch (architecture) {
+    case "x86":
+      return "--intel-32";
+    case "x86_64":
+      return "--intel-64";
+    case "arm":
+      return "--armv7";
+    case "arm64":
+      return "--aarch64";
+  }
 };

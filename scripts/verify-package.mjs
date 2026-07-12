@@ -14,15 +14,27 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+// Exercise the packed artifact in isolated HOME and prefix directories so the
+// verifier cannot mutate real MCP registrations or rely on checkout-only files.
 const exec = promisify(execFile);
 const root = process.cwd();
-const workspace = await mkdtemp(join(tmpdir(), "better-binary-package-"));
+const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
 let tarball;
 
 try {
   tarball = (
     await exec("npm", ["pack", "--silent"], { cwd: root })
   ).stdout.trim();
+  const packedFiles = (
+    await exec("tar", ["-tf", join(root, tarball)])
+  ).stdout.split("\n");
+  if (
+    packedFiles.some(
+      (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
+    )
+  ) {
+    throw new Error("package contained generated Python bytecode");
+  }
   const prefix = join(workspace, "prefix");
   const home = join(workspace, "home");
   const fakeBin = join(workspace, "bin");
@@ -39,7 +51,7 @@ try {
   await writeFile(swVers, "#!/bin/sh\necho 14.5\n");
   await writeFile(
     npx,
-    '#!/bin/sh\nprintf "%s\\n" "$*" > "$BETTER_BINARY_NPX_LOG"\necho "│ ✓ Cursor: isolated │"\n',
+    '#!/bin/sh\nprintf "%s\\n" "$*" > "$REA_NPX_LOG"\necho "│ ✓ Cursor: isolated │"\n',
   );
   await writeFile(hopper, "#!/bin/sh\nexit 0\n");
   await Promise.all([
@@ -64,15 +76,14 @@ try {
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     HOPPER_LAUNCHER_PATH: hopper,
-    BETTER_BINARY_NPX_LOG: npxLog,
+    REA_NPX_LOG: npxLog,
   };
   await exec(
     "npm",
     ["install", "--global", "--prefix", prefix, join(root, tarball)],
     { env: environment },
   );
-  const cli = join(prefix, "bin", "better-binary");
-  const mcp = join(prefix, "bin", "better-binary-mcp");
+  const cli = join(prefix, "bin", "rea");
   const help = await run(cli, ["--help"], environment);
   const llms = await run(cli, ["--llms"], environment);
   const doctor = json(await run(cli, ["doctor", "--json"], environment));
@@ -84,10 +95,8 @@ try {
     throw new Error("packaged CLI discovery or doctor failed");
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
-  if (
-    !mcpRegistration.includes("add-mcp better-binary-mcp --name better-binary")
-  )
-    throw new Error("Incur mcp add did not register the beta.3 executable");
+  if (!mcpRegistration.includes("add-mcp npx -y @morluto/rea mcp --name rea"))
+    throw new Error("Incur mcp add did not register the floating npx command");
   const first = json(await run(cli, ["setup", "--yes", "--json"], environment));
   const second = json(
     await run(cli, ["setup", "--yes", "--json"], environment),
@@ -102,18 +111,18 @@ try {
     const config = json(await readFile(configPath, "utf8"));
     if (
       config.existing !== true ||
-      config.mcpServers?.["better-binary"]?.command !== "better-binary-mcp"
+      config.mcpServers?.rea?.command !== "npx" ||
+      JSON.stringify(config.mcpServers?.rea?.args) !==
+        JSON.stringify(["-y", "@morluto/rea", "mcp"])
     )
       throw new Error("packaged client readback failed");
     if (
-      !(await readFile(`${configPath}.better-binary.backup`, "utf8")).includes(
-        "existing",
-      )
+      !(await readFile(`${configPath}.rea.backup`, "utf8")).includes("existing")
     )
       throw new Error("packaged client backup failed");
   }
   const skill = await readFile(
-    join(home, ".agents/skills/better-binary-analysis/SKILL.md"),
+    join(home, ".agents/skills/rea-analysis/SKILL.md"),
     "utf8",
   );
   if (!skill.includes("open_binary"))
@@ -136,7 +145,8 @@ try {
     throw new Error("packaged setup did not recover");
 
   const transport = new StdioClientTransport({
-    command: mcp,
+    command: cli,
+    args: ["mcp"],
     env: environment,
     stderr: "pipe",
   });
@@ -163,7 +173,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, incurMcpCommand: "better-binary-mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 42, targetFree: true })}\n`,
+    `${JSON.stringify({ cli: true, incurMcpCommand: "npx -y @morluto/rea mcp", doctor: true, setup: "idempotent", clients: 2, backupReadback: true, failureRecovery: true, skill: true, mcpTools: 42, targetFree: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

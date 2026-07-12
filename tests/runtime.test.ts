@@ -44,4 +44,29 @@ describe("production stdio runtime", () => {
     }
     expect(stderr).toBe("");
   });
+
+  it("honors the configured kind for an initial database target", async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [mainPath],
+      cwd: process.cwd(),
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOPPER_LAUNCHER_PATH: process.execPath,
+        HOPPER_TARGET_PATH: new URL(import.meta.url).pathname,
+        HOPPER_TARGET_KIND: "database",
+        HOPPER_LOADER_ARGS_JSON: JSON.stringify([fixturePath]),
+      },
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "database-runtime", version: "1.0.0" });
+
+    try {
+      await client.connect(transport);
+      expect((await client.listTools()).tools).toHaveLength(42);
+    } finally {
+      await client.close();
+      await transport.close();
+    }
+  });
 });

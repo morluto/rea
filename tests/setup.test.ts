@@ -22,6 +22,7 @@ class FakeSetupHost implements SetupHost {
   homebrewInstalls = 0;
   hopperInstalls = 0;
   configurations = 0;
+  configuredHopperPaths: string[] = [];
 
   macosVersion = (): Promise<string | undefined> =>
     Promise.resolve(this.version);
@@ -41,8 +42,10 @@ class FakeSetupHost implements SetupHost {
     Promise.resolve(this.clients);
   configureClient = (
     client: SetupClient,
+    hopperPath: string,
   ): Promise<ClientConfigurationResult> => {
     this.configurations += 1;
+    this.configuredHopperPaths.push(hopperPath);
     return Promise.resolve(
       this.clientResults.get(client.name) ?? {
         status: "configured",
@@ -84,12 +87,22 @@ describe("setup workflow", () => {
     expect(result.remediation).toContain("--yes");
   });
 
+  it("requires --yes before installing Hopper", async () => {
+    const host = new FakeSetupHost();
+    host.brew = true;
+    const result = await runSetup(false, host);
+    expect(result.status).toBe("needs_human");
+    expect(host.hopperInstalls).toBe(0);
+    expect(result.remediation).toContain("--yes");
+  });
+
   it("accepts existing Homebrew and manually installed Hopper", async () => {
     const host = new FakeSetupHost();
     host.brew = true;
     host.hopper = "/Applications/Manual Hopper";
     expect((await runSetup(true, host)).actions).toEqual(["installed_skill"]);
     expect(host.hopperInstalls).toBe(0);
+    expect(host.configuredHopperPaths).toEqual([]);
   });
 
   it.each(["homebrew", "hopper"] as const)(
@@ -118,6 +131,7 @@ describe("setup workflow", () => {
     const result = await runSetup(true, host);
     expect(Object.keys(result.clients)).toEqual(["claude", "cursor"]);
     expect(host.configurations).toBe(2);
+    expect(host.configuredHopperPaths).toEqual(["/Hopper", "/Hopper"]);
   });
 
   it.each(["backup", "write", "readback"] as const)(

@@ -1,12 +1,12 @@
-import { fileURLToPath } from "node:url";
-
 import { parseConfig } from "../config.js";
-import { HopperApplicationLauncher } from "../hopper/BridgeLauncher.js";
-import { HopperClient } from "../hopper/HopperClient.js";
 import type { JsonValue } from "../hopper/protocol.js";
-import { BinarySession } from "./BinarySession.js";
+import { createBinarySession } from "./runtime.js";
 
-/** Open one binary, execute one tool, and always release the target session. */
+/**
+ * Open one binary, execute one tool, and always release the bridge session.
+ * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
+ * retain a target or bridge resources for a subsequent command.
+ */
 export const runDirectAnalysis = async (
   path: string,
   tool: "binary_overview" | "procedure_pseudo_code",
@@ -15,24 +15,7 @@ export const runDirectAnalysis = async (
   const config = parseConfig(process.env);
   if (!config.ok)
     return { error: config.error._tag, message: config.error.message };
-  const bridgeScriptPath = fileURLToPath(
-    new URL("../../bridge/hopper_bridge.py", import.meta.url),
-  );
-  const session = new BinarySession(
-    (target) =>
-      new HopperClient({
-        launcher: new HopperApplicationLauncher({
-          launcherPath: config.value.hopperLauncherPath,
-          targetPath: target.path,
-          targetKind: target.kind,
-          loaderArgs:
-            config.value.hopperLoaderArgs.length > 0
-              ? config.value.hopperLoaderArgs
-              : target.loaderArgs,
-          bridgeScriptPath,
-        }),
-      }),
-  );
+  const session = createBinarySession(config.value);
   try {
     const opened = await session.open(path);
     if (!opened.ok)

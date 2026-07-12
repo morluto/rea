@@ -19,18 +19,23 @@ export interface DoctorCheck {
   readonly detail?: string;
   readonly remediation?: string;
 }
-/** Host facts and effects required by diagnostics. */
+/** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
   readonly configuredHopperPath?: string;
   macosVersion(): Promise<string | undefined>;
   readable(path: string): Promise<boolean>;
+  executable(path: string): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
 }
 
-/** Check requirements and an optional target without mutating the host. */
+/**
+ * Check requirements and an optional target without mutating the host.
+ * Every failed check includes remediation suitable for either the one-shot CLI
+ * or an agent consuming the structured result.
+ */
 export const runDoctor = async (
   target?: string,
   host: DoctorHost = systemDoctorHost(),
@@ -68,7 +73,7 @@ export const runDoctor = async (
   ].filter((value): value is string => value !== undefined);
   let hopperPath: string | undefined;
   for (const candidate of new Set(candidates))
-    if (await host.readable(candidate)) {
+    if (await host.executable(candidate)) {
       hopperPath = candidate;
       break;
     }
@@ -115,6 +120,14 @@ export const systemDoctorHost = (): DoctorHost => ({
   async readable(path) {
     try {
       await access(path, constants.R_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async executable(path) {
+    try {
+      await access(path, constants.X_OK);
       return true;
     } catch {
       return false;

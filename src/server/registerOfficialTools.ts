@@ -8,7 +8,7 @@ import {
 import { jsonValueSchema, type JsonValue } from "../hopper/protocol.js";
 import { toCallToolResult } from "./toolResult.js";
 
-/** Register every official Hopper proxy contract on one MCP server. */
+/** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
   server: McpServer,
   hopper: HopperToolPort,

@@ -23,6 +23,7 @@ import {
 const MAX_LINE_BYTES = 10 * 1024 * 1024;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
+/** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
 export interface HopperClientOptions {
   readonly launcher: BridgeLauncher;
   readonly requestTimeoutMs?: number;
@@ -30,6 +31,7 @@ export interface HopperClientOptions {
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
 }
 
+/** Safe launcher telemetry; stderr content is intentionally never exposed. */
 export type HopperDiagnostic =
   | { readonly type: "launcher-stderr"; readonly bytes: number }
   | { readonly type: "launcher-exit"; readonly code: number | null };
@@ -46,7 +48,14 @@ interface PendingRequest {
   readonly onAbort: (() => void) | undefined;
 }
 
-/** Owned client for the repository's authenticated in-Hopper bridge. */
+/**
+ * Owns one authenticated NDJSON-over-Unix-socket bridge session.
+ *
+ * Each instance creates a private directory and random bearer token, correlates
+ * concurrent requests by numeric id, and removes its artifacts on close. It
+ * only terminates launch processes explicitly marked as owned; the normal
+ * Hopper launcher does not confer ownership of the GUI application.
+ */
 export class HopperClient {
   readonly #options: Required<
     Pick<HopperClientOptions, "requestTimeoutMs" | "startupTimeoutMs">
@@ -71,35 +80,41 @@ export class HopperClient {
     };
   }
 
-  /** Launch Hopper's owned bridge and complete its health handshake. */
-  start(): Promise<Result<HopperServerInfo, HopperError>> {
-    this.#startPromise ??= this.#start();
+  /** Launch the bridge once and complete its authenticated health handshake. */
+  start(signal?: AbortSignal): Promise<Result<HopperServerInfo, HopperError>> {
+    this.#startPromise ??= this.#start(signal);
     return this.#startPromise;
   }
 
-  async #start(): Promise<Result<HopperServerInfo, HopperError>> {
+  async #start(
+    signal?: AbortSignal,
+  ): Promise<Result<HopperServerInfo, HopperError>> {
+    if (signal?.aborted === true) return err(new HopperCancelledError());
     if (this.#socket !== undefined || this.#directory !== undefined) {
       return err(new HopperProtocolError("Hopper client is already started"));
     }
     try {
-      this.#directory = await mkdtemp(join(SESSION_ROOT, "bbm-"));
+      this.#directory = await mkdtemp(join(SESSION_ROOT, "rea-"));
     } catch (cause: unknown) {
       return err(new HopperStartError({ cause }));
     }
     const socketPath = join(this.#directory, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
-    const launched = await this.#options.launcher.launch({
-      directory: this.#directory,
-      socketPath,
-      token: this.#token,
-    });
+    const launched = await this.#options.launcher.launch(
+      {
+        directory: this.#directory,
+        socketPath,
+        token: this.#token,
+      },
+      signal === undefined ? {} : { signal },
+    );
     if (!launched.ok) {
       await this.close();
       return launched;
     }
     this.#launch = launched.value;
     this.#attachLauncher(launched.value);
-    const connected = await this.#connect(socketPath);
+    const connected = await this.#connect(socketPath, signal);
     if (!connected.ok) {
       await this.close();
       return connected;
@@ -109,6 +124,7 @@ export class HopperClient {
       {},
       {
         timeoutMs: this.#options.startupTimeoutMs,
+        ...(signal === undefined ? {} : { signal }),
       },
     );
     if (!health.ok) {
@@ -120,7 +136,7 @@ export class HopperClient {
     return parsed;
   }
 
-  /** Invoke one declared Hopper operation through the bridge. */
+  /** Invoke one declared operation, returning timeout and cancellation as values. */
   async callTool(
     name: string,
     arguments_: Readonly<Record<string, JsonValue>> = {},
@@ -129,7 +145,7 @@ export class HopperClient {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<Result<JsonValue, HopperError>> {
-    const started = await this.start();
+    const started = await this.start(options.signal);
     if (!started.ok) return started;
     return this.#request(name, arguments_, options);
   }
@@ -168,14 +184,19 @@ export class HopperClient {
     }
   }
 
-  async #connect(socketPath: string): Promise<Result<undefined, HopperError>> {
+  async #connect(
+    socketPath: string,
+    signal?: AbortSignal,
+  ): Promise<Result<undefined, HopperError>> {
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (Date.now() < deadline) {
+      if (signal?.aborted === true) return err(new HopperCancelledError());
       if (this.#closing) return err(new HopperProcessError(null));
       try {
         await access(socketPath);
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!(await waitForDelay(50, signal)))
+          return err(new HopperCancelledError());
         continue;
       }
       const attempt = await connectOnce(socketPath);
@@ -184,7 +205,8 @@ export class HopperClient {
         this.#attachSocket(attempt.value);
         return ok(undefined);
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (!(await waitForDelay(50, signal)))
+        return err(new HopperCancelledError());
     }
     return err(new HopperTimeoutError(this.#options.startupTimeoutMs));
   }
@@ -320,6 +342,24 @@ export class HopperClient {
   }
 }
 
+const waitForDelay = (
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (signal?.aborted === true) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
 const connectOnce = async (
   socketPath: string,
 ): Promise<Result<Socket, HopperStartError>> =>
@@ -341,7 +381,7 @@ const parseServerInfo = (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    value.name === "betterBinaryMCP Hopper bridge" &&
+    value.name === "REA Hopper bridge" &&
     typeof value.version === "string"
   ) {
     return ok({ name: value.name, version: value.version });

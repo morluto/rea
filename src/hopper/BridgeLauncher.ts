@@ -1,8 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
+import { promisify } from "node:util";
 
-import { HopperStartError } from "../domain/errors.js";
+import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+
+const execFileAsync = promisify(execFile);
+const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
 
 /** Coordinates for one private bridge session. */
 export interface BridgeSession {
@@ -21,7 +27,8 @@ export interface BridgeLaunch {
 export interface BridgeLauncher {
   launch(
     session: BridgeSession,
-  ): Promise<Result<BridgeLaunch, HopperStartError>>;
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>>;
 }
 
 export interface HopperApplicationLauncherOptions {
@@ -32,17 +39,30 @@ export interface HopperApplicationLauncherOptions {
   readonly bridgeScriptPath: string;
 }
 
-/** Launches Hopper through its documented CLI and injects only the owned bridge script. */
+/**
+ * Launches Hopper through its documented CLI and injects only REA's owned bridge.
+ *
+ * Hopper's `hopper` helper internally issues an AppleScript `activate` command.
+ * Consequently, opening a target may bring Hopper to the foreground even though
+ * REA first asks macOS to start the application hidden and in the background.
+ * REA cannot reliably suppress that activation without replacing Hopper's
+ * supported launcher; callers must treat possible foreground UI as an upstream
+ * Hopper constraint, not as evidence that analysis failed.
+ *
+ * The returned process is the short-lived launcher helper, not the Hopper app,
+ * so REA does not claim ownership of the application's lifetime.
+ */
 export class HopperApplicationLauncher implements BridgeLauncher {
   constructor(readonly options: HopperApplicationLauncherOptions) {}
 
   async launch(
     session: BridgeSession,
-  ): Promise<Result<BridgeLaunch, HopperStartError>> {
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>> {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
     const source = [
-      `BETTER_BINARY_SOCKET = ${JSON.stringify(session.socketPath)}`,
-      `BETTER_BINARY_TOKEN = ${JSON.stringify(session.token)}`,
+      `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
+      `REA_TOKEN = ${JSON.stringify(session.token)}`,
       `exec(compile(open(${JSON.stringify(this.options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(this.options.bridgeScriptPath)}, 'exec'))`,
       "",
     ].join("\n");
@@ -64,6 +84,13 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       this.options.targetPath,
     ];
     try {
+      if (options.signal?.aborted === true)
+        return err(new HopperCancelledError());
+      const prepared = await prepareHopperApplication(
+        this.options.launcherPath,
+        options.signal,
+      );
+      if (!prepared) return err(new HopperCancelledError());
       const child = spawn(this.options.launcherPath, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -88,3 +115,57 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
   }
 }
+
+const prepareHopperApplication = async (
+  launcherPath: string,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  const appBundle = hopperApplicationBundle(launcherPath);
+  if (appBundle === undefined) return signal?.aborted !== true;
+  const executablePath = join(appBundle, "Contents/MacOS/Hopper Disassembler");
+  if (await processIsRunning(executablePath)) return signal?.aborted !== true;
+  // This reduces activation when Hopper is cold, but the vendor launcher that
+  // follows may still activate its window. See HopperApplicationLauncher.
+  await execFileAsync("/usr/bin/open", [
+    "--hide",
+    "--background",
+    "-a",
+    appBundle,
+  ]);
+  return waitForDelay(HOPPER_BACKGROUND_STARTUP_MS, signal);
+};
+
+const waitForDelay = (
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (signal?.aborted === true) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
+const hopperApplicationBundle = (launcherPath: string): string | undefined => {
+  if (basename(launcherPath) !== "hopper") return undefined;
+  const candidate = dirname(dirname(dirname(launcherPath)));
+  return extname(candidate) === ".app" ? candidate : undefined;
+};
+
+const processIsRunning = async (executablePath: string): Promise<boolean> => {
+  try {
+    const processes = await execFileAsync("/bin/ps", ["-ax", "-o", "command="]);
+    return processes.stdout
+      .split("\n")
+      .some((command) => command.trim() === executablePath);
+  } catch {
+    return false;
+  }
+};

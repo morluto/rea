@@ -9,6 +9,7 @@
  */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 
 const targetPath = process.argv[2];
 if (!targetPath) {
@@ -22,11 +23,6 @@ const flags = process.argv.slice(3);
 const kind = readFlag(flags, "--kind") ?? "executable";
 const loaderArgs = readFlag(flags, "--loader-args");
 
-const serverPath = resolve(
-  fileURLToPath(new URL("..", import.meta.url)),
-  "dist/main.js",
-);
-
 const env = {
   HOPPER_TARGET_PATH: resolve(targetPath),
   HOPPER_TARGET_KIND: kind,
@@ -35,9 +31,21 @@ if (loaderArgs) env.HOPPER_LOADER_ARGS_JSON = loaderArgs;
 
 const config = {
   mcpServers: {
-    betterBinaryMCP: {
-      command: "node",
-      args: [serverPath],
+    rea: {
+      command: "npx",
+      args: [
+        "-y",
+        JSON.parse(
+          await readFile(
+            resolve(
+              fileURLToPath(new URL("..", import.meta.url)),
+              "package.json",
+            ),
+            "utf8",
+          ),
+        ).name,
+        "mcp",
+      ],
       env,
     },
   },

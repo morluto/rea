@@ -41,6 +41,23 @@ class FixtureLauncher implements BridgeLauncher {
   }
 }
 
+class SilentLauncher implements BridgeLauncher {
+  launch() {
+    return Promise.resolve(
+      ok({
+        process: spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          {
+            stdio: ["ignore", "ignore", "pipe"],
+          },
+        ),
+        ownsProcessLifetime: true,
+      }),
+    );
+  }
+}
+
 const clients: HopperClient[] = [];
 const startClient = async () => {
   const client = new HopperClient({
@@ -51,7 +68,7 @@ const startClient = async () => {
   clients.push(client);
   await expect(client.start()).resolves.toEqual({
     ok: true,
-    value: { name: "betterBinaryMCP Hopper bridge", version: "1.0.0" },
+    value: { name: "REA Hopper bridge", version: "1.0.0" },
   });
   return client;
 };
@@ -134,6 +151,24 @@ describe("HopperClient", () => {
       ok: true,
       value: { value: "alive" },
     });
+  });
+
+  it("cancels bridge startup without waiting for the startup timeout", async () => {
+    const client = new HopperClient({
+      launcher: new SilentLauncher(),
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(client);
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const pending = client.callTool("echo", {}, { signal: controller.signal });
+    setTimeout(() => {
+      controller.abort();
+    }, 10);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
   it("ignores more than 1,024 late responses without corrupting the session", async () => {

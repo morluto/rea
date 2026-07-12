@@ -14,42 +14,65 @@ afterEach(async () => {
 
 describe("JSON client configuration transaction", () => {
   it("preserves existing keys, creates a backup, and reads back the MCP entry", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-setup-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");
     const original =
       '{"theme":"dark","mcpServers":{"other":{"command":"other"}}}\n';
     await writeFile(configPath, original);
     const result = await configureJsonClient({ name: "cursor", configPath });
     expect(result.status).toBe("configured");
-    expect(await readFile(`${configPath}.better-binary.backup`, "utf8")).toBe(
-      original,
-    );
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       theme: "dark",
       mcpServers: {
         other: { command: "other" },
-        "better-binary": { command: "better-binary-mcp" },
+        rea: {
+          command: "npx",
+          args: ["-y", "@morluto/rea", "mcp"],
+        },
       },
     });
   });
 
   it("performs no write or second backup when configuration already matches", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-setup-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      '{"mcpServers":{"better-binary":{"command":"better-binary-mcp"}}}\n',
+      '{"mcpServers":{"rea":{"command":"npx","args":["-y","@morluto/rea","mcp"]}}}\n',
     );
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
       status: "unchanged",
     });
     await expect(
-      readFile(`${configPath}.better-binary.backup`, "utf8"),
+      readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
   });
 
+  it("persists a custom Hopper launcher and remains idempotent", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const configPath = join(directory, "mcp.json");
+    const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
+    const client = { name: "cursor", configPath };
+    expect(await configureJsonClient(client, hopperPath)).toMatchObject({
+      status: "configured",
+    });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", "@morluto/rea", "mcp"],
+          env: { HOPPER_LAUNCHER_PATH: hopperPath },
+        },
+      },
+    });
+    expect(await configureJsonClient(client, hopperPath)).toEqual({
+      status: "unchanged",
+    });
+  });
+
   it("refuses malformed existing JSON without overwriting it", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-setup-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");
     await writeFile(configPath, "not-json");
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
@@ -58,4 +81,37 @@ describe("JSON client configuration transaction", () => {
     });
     expect(await readFile(configPath, "utf8")).toBe("not-json");
   });
+
+  it.each(["null", "[]", '"value"'])(
+    "refuses a non-object JSON root without overwriting %s",
+    async (original) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      const configPath = join(directory, "mcp.json");
+      await writeFile(configPath, original);
+      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+        { status: "failed", reason: "readback" },
+      );
+      expect(await readFile(configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${configPath}.rea.backup`, "utf8"),
+      ).rejects.toThrow();
+    },
+  );
+
+  it.each(["null", "[]", '"value"'])(
+    "preserves a non-object mcpServers value %s",
+    async (servers) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      const configPath = join(directory, "mcp.json");
+      const original = `{"mcpServers":${servers}}`;
+      await writeFile(configPath, original);
+      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+        { status: "failed", reason: "readback" },
+      );
+      expect(await readFile(configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${configPath}.rea.backup`, "utf8"),
+      ).rejects.toThrow();
+    },
+  );
 });

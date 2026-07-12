@@ -6,6 +6,7 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   nodeVersion: "22.1.0",
   macosVersion: () => Promise.resolve("12.0"),
   readable: (path) => Promise.resolve(path.includes("Hopper")),
+  executable: (path) => Promise.resolve(path.includes("Hopper")),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
   ...overrides,
@@ -29,7 +30,7 @@ describe("doctor", () => {
       undefined,
       host({
         configuredHopperPath: "/manual/Hopper",
-        readable: (path) => Promise.resolve(path === "/manual/Hopper"),
+        executable: (path) => Promise.resolve(path === "/manual/Hopper"),
       }),
     );
     expect(result.hopperPath).toBe("/manual/Hopper");
@@ -41,7 +42,7 @@ describe("doctor", () => {
     const result = await runDoctor(
       undefined,
       host({
-        readable: (candidate) => Promise.resolve(candidate === path),
+        executable: (candidate) => Promise.resolve(candidate === path),
         brewHopperPath: () => Promise.resolve(path),
       }),
     );
@@ -53,10 +54,24 @@ describe("doctor", () => {
     const result = await runDoctor(
       undefined,
       host({
-        readable: (candidate) => Promise.resolve(candidate === path),
+        executable: (candidate) => Promise.resolve(candidate === path),
         manualHopperPaths: () => Promise.resolve([path]),
       }),
     );
     expect(result.hopperPath).toBe(path);
+  });
+
+  it("rejects a readable Hopper launcher without execute permission", async () => {
+    const path = "/manual/Hopper";
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredHopperPath: path,
+        readable: () => Promise.resolve(true),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    expect(result.hopperPath).toBeUndefined();
+    expect(result.checks.find(({ name }) => name === "hopper")?.ok).toBe(false);
   });
 });

@@ -24,7 +24,7 @@ const server = createServer((socket) => {
         send(
           {
             id: request.id,
-            result: { name: "betterBinaryMCP Hopper bridge", version: "1.0.0" },
+            result: { name: "REA Hopper bridge", version: "1.0.0" },
           },
           true,
         );
