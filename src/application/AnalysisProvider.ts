@@ -3,7 +3,7 @@ import type { AnalysisError } from "../domain/errors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 
-export interface ExecutionOptions {
+interface ExecutionOptions {
   readonly signal?: AbortSignal;
 }
 
