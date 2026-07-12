@@ -210,17 +210,19 @@ async function hopperProcessIds() {
 async function terminateNewHopperProcesses(previous) {
   const current = await hopperProcessIds();
   const owned = [...current].filter((pid) => !previous.has(pid));
-  for (const pid of owned) process.kill(pid, "SIGTERM");
+  for (const pid of owned) signalProcess(pid, "SIGTERM");
   await new Promise((resolve) => setTimeout(resolve, 1_000));
-  for (const pid of owned) {
-    try {
-      process.kill(pid, 0);
-      process.kill(pid, "SIGKILL");
-    } catch (cause) {
-      if (
-        !(cause instanceof Error && "code" in cause && cause.code === "ESRCH")
-      )
-        throw cause;
-    }
+  for (const pid of owned)
+    if (signalProcess(pid, 0)) signalProcess(pid, "SIGKILL");
+}
+
+function signalProcess(pid, signal) {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+      return false;
+    throw cause;
   }
 }
