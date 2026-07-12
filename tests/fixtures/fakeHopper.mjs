@@ -1,6 +1,39 @@
 import { createServer } from "node:net";
 
 const [socketPath, token, runId] = process.argv.slice(2);
+const enhancedFixtureResult = (method) => {
+  switch (method) {
+    case "list_segments":
+      return [
+        {
+          name: "__TEXT",
+          start: "0x1000",
+          end: "0x2000",
+          readable: true,
+          writable: false,
+          executable: true,
+        },
+      ];
+    case "list_documents":
+      return ["fixture"];
+    case "list_procedures":
+      return {
+        items: [{ address: "0x1000", value: "fixture" }],
+        offset: 0,
+        limit: 500,
+        total: 1,
+        next_offset: null,
+        has_more: false,
+      };
+    case "list_strings":
+      return ["fixture"];
+    case "procedure_pseudo_code":
+      return "return 0;";
+    default:
+      return undefined;
+  }
+};
+
 const server = createServer((socket) => {
   socket.on("error", () => undefined);
   socket.setEncoding("utf8");
@@ -50,6 +83,8 @@ const server = createServer((socket) => {
         });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
+      } else if (enhancedFixtureResult(request.method) !== undefined) {
+        send({ id: request.id, result: enhancedFixtureResult(request.method) });
       } else if (request.method === "resolve_containing_procedure") {
         send({
           id: request.id,

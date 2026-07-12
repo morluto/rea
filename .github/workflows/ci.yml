@@ -7,6 +7,22 @@ on:
     branches: [main]
 
 jobs:
+  pr-title:
+    name: Conventional PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate title for Release Please
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: >-
+          node -e 'const title = process.env.PR_TITLE ?? "";
+          const conventional = /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u;
+          if (!conventional.test(title)) {
+            console.error("PR title must use Conventional Commits, for example: feat: add historical source import");
+            process.exit(1);
+          }'
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
@@ -97,6 +113,23 @@ jobs:
           name: test-results
           path: test-results.xml
           retention-days: 30
+
+  package-e2e:
+    name: Package E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run rebuild:native
+      - run: npm run verify:package
 
   docs:
     name: Docs Generation

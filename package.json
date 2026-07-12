@@ -69,6 +69,7 @@
     "build:fixtures": "node scripts/build-conformance-fixtures.mjs",
     "verify:fixtures": "npm run build:fixtures && node scripts/verify-conformance-fixtures.mjs",
     "verify:package": "npm run build && node scripts/verify-package.mjs",
+    "verify:published": "node scripts/verify-published-package.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
     "docs:generate": "typedoc",
     "prepack": "npm run build",

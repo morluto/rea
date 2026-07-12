@@ -15,6 +15,17 @@ import {
 
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
+
+const parseServerArgs = (encoded) => {
+  const parsed = JSON.parse(encoded);
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((value) => typeof value !== "string")
+  )
+    throw new Error("REA_VERIFY_SERVER_ARGS_JSON must encode string arguments");
+  return parsed;
+};
+
 const sessionsBefore = new Set(
   (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
 );
@@ -245,10 +256,17 @@ if (targetA === targetB)
 const serverEnvironment = { ...process.env };
 delete serverEnvironment.HOPPER_TARGET_PATH;
 delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
+delete serverEnvironment.REA_VERIFY_SERVER_COMMAND;
+delete serverEnvironment.REA_VERIFY_SERVER_ARGS_JSON;
+
+const serverCommand = process.env.REA_VERIFY_SERVER_COMMAND ?? process.execPath;
+const serverArgs = parseServerArgs(
+  process.env.REA_VERIFY_SERVER_ARGS_JSON ?? '["dist/main.js"]',
+);
 
 const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: ["dist/main.js"],
+  command: serverCommand,
+  args: serverArgs,
   cwd: process.cwd(),
   env: serverEnvironment,
   stderr: "pipe",
