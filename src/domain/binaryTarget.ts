@@ -12,7 +12,7 @@ import { BinaryTargetError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 
 /** CPU families understood by the supported executable loaders. */
-export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
+type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
 /**
  * A canonical local target plus deterministic Hopper loader arguments.
  * Explicit loader and architecture flags prevent Hopper from presenting modal

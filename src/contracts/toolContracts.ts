@@ -13,7 +13,7 @@ const caseSensitive = z
   .describe("Whether to match case");
 
 /** Adapter family responsible for implementing a public MCP tool. */
-export type ToolKind = "official-proxy" | "enhanced" | "session";
+type ToolKind = "official-proxy" | "enhanced" | "session";
 
 /** Single source of truth for a public tool's name, description, and input. */
 export interface ToolContract {

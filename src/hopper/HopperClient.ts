@@ -32,7 +32,7 @@ export interface HopperClientOptions {
 }
 
 /** Safe launcher telemetry; stderr content is intentionally never exposed. */
-export type HopperDiagnostic =
+type HopperDiagnostic =
   | { readonly type: "launcher-stderr"; readonly bytes: number }
   | { readonly type: "launcher-exit"; readonly code: number | null };
 

@@ -143,7 +143,7 @@ export const runSetup = async (
 };
 
 /** Production setup effects for macOS, Homebrew, JSON MCP clients, and the canonical skill directory. */
-export const systemSetupHost = (): SetupHost => {
+const systemSetupHost = (): SetupHost => {
   const doctorHost = systemDoctorHost();
   return {
     platform: process.platform,

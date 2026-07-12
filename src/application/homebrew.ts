@@ -1,5 +1,5 @@
 /** Standard executable names and locations used to discover Homebrew. */
-export const HOMEBREW_COMMANDS = [
+const HOMEBREW_COMMANDS = [
   "brew",
   "/opt/homebrew/bin/brew",
   "/usr/local/bin/brew",

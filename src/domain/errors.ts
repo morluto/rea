@@ -47,17 +47,6 @@ export class HopperProcessError extends HopperError {
   }
 }
 
-/** Hopper did not make the repository bridge available after launch. */
-export class HopperUnavailableError extends HopperError {
-  readonly _tag = "HopperUnavailableError";
-
-  constructor() {
-    super(
-      "Hopper did not start the analysis bridge. Check the target and loader architecture options, then retry.",
-    );
-  }
-}
-
 /** Hopper or the repository bridge could not be started. */
 export class HopperStartError extends HopperError {
   readonly _tag = "HopperStartError";
