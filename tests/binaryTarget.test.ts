@@ -67,12 +67,17 @@ describe("executable header parsing", () => {
 
 describe("binary target I/O", () => {
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-target-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
     await writeFile(join(directory, "sample.hop"), "database");
     await writeFile(join(directory, "text"), "hello");
     expect((await parseBinaryTarget("sample.hop", directory)).ok).toBe(true);
     expect((await parseBinaryTarget("text", directory)).ok).toBe(false);
     expect((await parseBinaryTarget("missing", directory)).ok).toBe(false);
+  });
+
+  it("rejects non-regular targets before reading them", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    expect((await parseBinaryTarget(directory)).ok).toBe(false);
   });
 
   it("honors an explicit database kind without relying on the file suffix", async () => {

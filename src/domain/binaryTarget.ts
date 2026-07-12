@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, open, realpath } from "node:fs/promises";
+import { access, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { BinaryTargetError } from "./errors.js";
@@ -36,6 +36,8 @@ export const parseBinaryTarget = async (
   try {
     await access(candidate, constants.R_OK);
     const path = await realpath(candidate);
+    if (!(await stat(path)).isFile())
+      return err(new BinaryTargetError(path, "target is not a regular file"));
     if (
       targetKind === "database" ||
       (targetKind === undefined && path.toLowerCase().endsWith(".hop"))

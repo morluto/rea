@@ -59,4 +59,20 @@ describe("JSON client configuration transaction", () => {
     });
     expect(await readFile(configPath, "utf8")).toBe("not-json");
   });
+
+  it.each(["null", "[]", '"value"'])(
+    "refuses a non-object JSON root without overwriting %s",
+    async (original) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      const configPath = join(directory, "mcp.json");
+      await writeFile(configPath, original);
+      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+        { status: "failed", reason: "readback" },
+      );
+      expect(await readFile(configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${configPath}.rea.backup`, "utf8"),
+      ).rejects.toThrow();
+    },
+  );
 });

@@ -308,7 +308,7 @@ const objectValue = (value: unknown): Record<string, unknown> => {
   return parsed.success ? parsed.data : {};
 };
 const parseObject = (text: string): Record<string, unknown> =>
-  objectValue(JSON.parse(text));
+  objectSchema.parse(JSON.parse(text));
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 const restoreConfig = async (
