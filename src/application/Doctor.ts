@@ -26,6 +26,7 @@ export interface DoctorHost {
   readonly configuredHopperPath?: string;
   macosVersion(): Promise<string | undefined>;
   readable(path: string): Promise<boolean>;
+  executable(path: string): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
 }
@@ -72,7 +73,7 @@ export const runDoctor = async (
   ].filter((value): value is string => value !== undefined);
   let hopperPath: string | undefined;
   for (const candidate of new Set(candidates))
-    if (await host.readable(candidate)) {
+    if (await host.executable(candidate)) {
       hopperPath = candidate;
       break;
     }
@@ -119,6 +120,14 @@ export const systemDoctorHost = (): DoctorHost => ({
   async readable(path) {
     try {
       await access(path, constants.R_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async executable(path) {
+    try {
+      await access(path, constants.X_OK);
       return true;
     } catch {
       return false;
