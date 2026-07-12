@@ -1,0 +1,32 @@
+## Description
+
+<!-- What does this change do? Why is it needed? -->
+
+## Type of Change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Documentation update
+- [ ] Performance improvement
+- [ ] Refactoring (no functional change)
+- [ ] Tool contract change (MCP schema modification)
+
+## Testing Performed
+
+<!-- Describe the testing you have done to verify this change. -->
+
+- [ ] Unit tests added or updated
+- [ ] TypeScript typecheck passes (`npm run typecheck`)
+- [ ] Linting passes (`npm run lint`)
+- [ ] Full test suite passes (`npm test`)
+- [ ] Real Hopper verification performed (`npm run verify:hopper`)
+- [ ] Package verification performed (`npm run verify:package`)
+
+## Tool Contract Impact
+
+<!-- If this PR adds, removes, or modifies MCP tools, list them here. -->
+<!-- The current inventory is 42 tools (31 direct + 8 enhanced + 3 session). -->
+
+## Related Issues
+
+<!-- Link issues this PR closes or relates to. Use "Closes #123" syntax. -->

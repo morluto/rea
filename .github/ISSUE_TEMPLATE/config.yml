@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: REA Documentation
+    url: https://github.com/morluto/rea#readme
+    about: Read the README and AGENTS.md for usage guides and configuration details.
+  - name: Question or Discussion
+    url: https://github.com/morluto/rea/discussions
+    about: Please ask questions and start discussions here.
