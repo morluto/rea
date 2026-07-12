@@ -22,9 +22,9 @@ describe("localized README product facts", () => {
       expect(content).toContain('"args": ["-y", "@morluto/rea", "mcp"]');
       expect(content).toContain("Node.js 22");
       expect(content).toContain("macOS 12");
-      expect(content).toMatch(/\b42\b/u);
+      expect(content).toMatch(/\b43\b/u);
       expect(content).toMatch(/\b31\b/u);
-      expect(content).toMatch(/\b8\b/u);
+      expect(content).toMatch(/\b9\b/u);
       expect(content).toMatch(/\b3\b/u);
     },
   );

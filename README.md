@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![42 MCP tools](https://img.shields.io/badge/MCP_tools-42-5c4ee5?style=flat-square)](#42-tools-for-deeper-investigation)
+[![43 MCP tools](https://img.shields.io/badge/MCP_tools-43-5c4ee5?style=flat-square)](#43-tools-for-deeper-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [See the workflow](#one-prompt-a-full-investigation) · [From app to feature](#from-app-to-feature) · [42 tools](#42-tools-for-deeper-investigation) · [How it works](#how-it-works) · [FAQ](#faq)
+[Quick start](#quick-start) · [See the workflow](#one-prompt-a-full-investigation) · [From app to feature](#from-app-to-feature) · [43 tools](#43-tools-for-deeper-investigation) · [How it works](#how-it-works) · [FAQ](#faq)
 
 <br />
 
@@ -147,13 +147,13 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 42 tools for deeper investigation
+## 43 tools for deeper investigation
 
-| Tool family       | Count | Examples                                                                                               |
-| ----------------- | ----: | ------------------------------------------------------------------------------------------------------ |
-| Binary inspection |    31 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations       |
-| Composed analysis |     8 | `binary_overview`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift and ObjC discovery |
-| Binary session    |     3 | `open_binary`, `binary_session`, `close_binary`                                                        |
+| Tool family       | Count | Examples                                                                                                                   |
+| ----------------- | ----: | -------------------------------------------------------------------------------------------------------------------------- |
+| Binary inspection |    31 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                           |
+| Composed analysis |     9 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift and ObjC discovery |
+| Binary session    |     3 | `open_binary`, `binary_session`, `close_binary`                                                                            |
 
 ## Using REA with other coding agents
 
