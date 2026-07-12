@@ -1,6 +1,6 @@
 {
   "name": "@morluto/rea",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Reverse engineering CLI and MCP server for coding agents to understand apps and build features.",
   "license": "MIT",
   "repository": {

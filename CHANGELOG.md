@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/morluto/rea/compare/rea-0.2.0...rea-0.2.1) (2026-07-12)
+
+
+### Documentation
+
+* redesign and localize README ([051b6db](https://github.com/morluto/rea/commit/051b6db65687fd14826b6462cd623feb2504f123))
+* redesign and localize README ([910eda6](https://github.com/morluto/rea/commit/910eda6f323ba1151b0771fe5de6c60a91e3d46d))
+
 ## [0.2.0](https://github.com/morluto/rea/compare/rea-0.1.0...rea-0.2.0) (2026-07-12)
 
 
