@@ -8,7 +8,7 @@
 
 **اعثر على ميزة تعجبك. افهم آلية عملها. ابنها بالطريقة التي تريدها.**
 
-[![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
+[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#منصة-من-50-أداة)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
@@ -80,7 +80,7 @@ npx skills add morluto/rea
 ### 1. إعداد REA
 
 ```bash
-npx -y @morluto/rea setup --yes
+npx -y rea-agents setup --yes
 ```
 
 إذا طلب macOS أو برنامج التثبيت تأكيدًا، فأكمل الخطوة ثم شغّل الأمر نفسه مرة أخرى.
@@ -101,7 +101,7 @@ npx -y @morluto/rea setup --yes
 إذا واجهت مشكلة، فشغّل:
 
 ```bash
-npx -y @morluto/rea doctor
+npx -y rea-agents doctor
 ```
 
 ## استقصاء كامل بطلب واحد
@@ -162,7 +162,7 @@ npx -y @morluto/rea doctor
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "@morluto/rea", "mcp"]
+      "args": ["-y", "rea-agents", "mcp"]
     }
   }
 }
@@ -186,10 +186,10 @@ flowchart LR
 سير عمل الوكيل أعلاه هو أسهل طريقة لاستخدام REA. للحصول على نظرة سريعة على تطبيق من الطرفية:
 
 ```bash
-npx -y @morluto/rea analyze /Applications/Notes.app
+npx -y rea-agents analyze /Applications/Notes.app
 ```
 
-شغّل `npx -y @morluto/rea --help` لمعرفة خيارات فك الترجمة المباشر والخيارات الأخرى.
+شغّل `npx -y rea-agents --help` لمعرفة خيارات فك الترجمة المباشر والخيارات الأخرى.
 
 يمكن لـ REA فتح مجلد `.app` على Mac مباشرة. إذا لم يعثر الوكيل على التطبيق، فأخبره بمكان تثبيته.
 
@@ -248,7 +248,7 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
 
 ## المشروع
 
-- [حزمة npm](https://www.npmjs.com/package/@morluto/rea)
+- [حزمة npm](https://www.npmjs.com/package/rea-agents)
 - [GitHub](https://github.com/morluto/rea)
 - [القضايا والطلبات](https://github.com/morluto/rea/issues)
 - [Hopper Disassembler](https://www.hopperapp.com/)

@@ -14,7 +14,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "@morluto/rea"
+      "package-name": "rea-agents"
     }
   }
 }

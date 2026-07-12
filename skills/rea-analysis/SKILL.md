@@ -17,9 +17,9 @@ Notes is only a documentation example. Never select an app unless the user names
 
 ## Ensure REA is ready
 
-1. Run `npx -y @morluto/rea doctor`.
+1. Run `npx -y rea-agents doctor`.
 2. If setup is needed, explain that REA may install Homebrew and Hopper. Hopper is separate software and requires its own license.
-3. Obtain approval before installing external software, then run `npx -y @morluto/rea setup --yes`.
+3. Obtain approval before installing external software, then run `npx -y rea-agents setup --yes`.
 4. If macOS or an installer requests human input, tell the user exactly what needs attention. After they finish, rerun setup and doctor.
 5. If setup registers a new MCP server, tell the user to restart their coding agent to load all REA tools. Direct CLI commands remain available before restart.
 

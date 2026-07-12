@@ -1,7 +1,7 @@
 {
-  "name": "@morluto/rea",
+  "name": "rea-agents",
   "version": "0.2.1",
-  "description": "Reverse engineering CLI and MCP server for coding agents to understand apps and build features.",
+  "description": "Reverse engineer anything from your terminal or coding agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
     "type": "git",
