@@ -1,0 +1,105 @@
+import type { McpServer } from "@modelcontextprotocol/server";
+
+import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { ToolContract } from "../contracts/toolContracts.js";
+import {
+  compareFunctions,
+  functionComparisonInputSchema,
+} from "../domain/functionComparison.js";
+import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
+import type { RecordUnknownInput } from "../domain/residualUnknown.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
+import { toCallToolResult } from "./toolResult.js";
+import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import { resolveSessionEvidence } from "./sessionEvidence.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+
+/** Register explicit Evidence-backed function comparison. */
+export const registerFunctionComparisonTool = (
+  server: McpServer,
+  session: BinarySessionPort,
+  contract: ToolContract<"compare_functions">,
+): void => {
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    (input) => {
+      const parsed = functionComparisonInputSchema.parse(input);
+      const left = resolveSessionEvidence(session, parsed.left);
+      if (!left.ok) return toCallToolResult(left, contract);
+      const right = resolveSessionEvidence(session, parsed.right);
+      if (!right.ok) return toCallToolResult(right, contract);
+      const leftIds = evidenceIds(left.value);
+      const rightIds = evidenceIds(right.value);
+      const comparison = compareFunctions(
+        left.value,
+        right.value,
+        parsed.offset,
+        parsed.limit,
+      );
+      const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
+        predicateType: "rea.function-comparison/v1",
+        operation: contract.name,
+        parameters: {
+          left_evidence_ids: leftIds,
+          right_evidence_ids: rightIds,
+          offset: parsed.offset,
+          limit: parsed.limit,
+        },
+        result: jsonValueSchema.parse(comparison),
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: comparison.limitations,
+        evidenceLinks: [...leftIds, ...rightIds],
+      });
+      const recorded = recordDerivedEvidence(
+        session,
+        evidence,
+        functionUnknownInput({
+          approved: parsed.unknown_registry_approved,
+          status: comparison.status,
+          leftIds,
+          rightIds,
+        }),
+      );
+      return toCallToolResult(recorded, contract);
+    },
+  );
+};
+
+const functionUnknownInput = ({
+  approved,
+  status,
+  leftIds,
+  rightIds,
+}: {
+  approved: true | undefined;
+  status: ReturnType<typeof compareFunctions>["status"];
+  leftIds: readonly string[];
+  rightIds: readonly string[];
+}): RecordUnknownInput | undefined => {
+  if (approved !== true || status === "unchanged") return undefined;
+  return {
+    approved: true,
+    question: `Function comparison is ${status}`,
+    severity: status === "changed" ? "medium" : "high",
+    domain: "function-comparison",
+    supporting_evidence_ids: [...leftIds],
+    contradicting_evidence_ids: [...rightIds],
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
+        operation: "analyze_function",
+        rationale:
+          "Capture complete dossiers with equal providers and analysis limits.",
+      },
+    ],
+    relationships: [],
+  };
+};
+
+const evidenceIds = (input: Evidence | readonly Evidence[]): string[] =>
+  (Array.isArray(input) ? input : [input]).map(({ evidence_id: id }) => id);

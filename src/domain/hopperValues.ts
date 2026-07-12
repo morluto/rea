@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { JsonValue } from "./jsonValue.js";
-import { AnalysisProtocolError, HopperProtocolError } from "./errors.js";
+import { AnalysisOutputError, HopperProtocolError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 
 export interface AddressedName {
@@ -13,6 +13,9 @@ export interface SegmentSummary {
   readonly name: string;
   readonly start: string;
   readonly end: string;
+  readonly readable: boolean | null;
+  readonly writable: boolean | null;
+  readonly executable: boolean | null;
 }
 
 export interface AddressedPage {
@@ -30,6 +33,9 @@ const segmentSchema = z.object({
   name: z.string().default(""),
   start: z.string().default(""),
   end: z.string().default(""),
+  readable: z.boolean().nullable().default(null),
+  writable: z.boolean().nullable().default(null),
+  executable: z.boolean().nullable().default(null),
 });
 const addressedPageSchema = z.object({
   items: z.array(z.object({ address: z.string(), value: z.string() })),
@@ -41,6 +47,12 @@ const unavailableSchema = z
   .strict();
 const procedureIdentitySchema = z
   .object({ address: z.string(), name: z.string() })
+  .strict();
+const localVariableSchema = z
+  .object({
+    description: z.string(),
+    provenance: z.literal("hopper-public-python-api"),
+  })
   .strict();
 const boundedSchema = <T extends z.ZodType>(item: T) =>
   z
@@ -84,14 +96,14 @@ const referenceEdgeSchema = z
     kind: unavailableSchema,
   })
   .strict();
-const functionDossierSchema = z
+export const functionDossierSchema = z
   .object({
     procedure: z
       .object({
         address: z.string(),
         name: z.string(),
         signature: z.string().nullable(),
-        locals: z.array(z.json()),
+        locals: z.array(localVariableSchema),
       })
       .strict(),
     pseudocode: z
@@ -104,7 +116,7 @@ const functionDossierSchema = z
       })
       .strict()
       .superRefine((value, context) => {
-        if (value.returned_chars !== value.text.length) {
+        if (value.returned_chars !== [...value.text].length) {
           context.addIssue({
             code: "custom",
             message: "returned_chars must equal the text length",
@@ -173,17 +185,22 @@ const functionDossierSchema = z
   })
   .strict();
 
+/** Strict analyzed-function dossier shared by provider and comparison boundaries. */
+export type FunctionDossier = z.infer<typeof functionDossierSchema>;
+
 /** Strictly parse a complete Hopper function dossier at the provider boundary. */
 export const parseFunctionDossier = (
   value: JsonValue,
-): Result<JsonValue, AnalysisProtocolError> => {
+): Result<JsonValue, AnalysisOutputError> => {
   const parsed = functionDossierSchema.safeParse(value);
   return parsed.success
     ? ok(parsed.data)
     : err(
-        new AnalysisProtocolError("Invalid analyze_function provider output", {
-          cause: parsed.error,
-        }),
+        new AnalysisOutputError(
+          "analyze_function",
+          "provider output did not match the dossier contract",
+          { cause: parsed.error },
+        ),
       );
 };
 

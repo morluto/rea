@@ -3,6 +3,26 @@ import { z } from "zod";
 
 const positiveBudget = z.number().int().positive();
 const timedEventBase = { at_ms: z.number().int().nonnegative() };
+const environmentName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+const reservedEnvironment = new Set([
+  "HOME",
+  "TERM",
+  "REA_PROCESS_RUN_ID",
+  "REA_REPLAY_HTTP_URL",
+  "REA_REPLAY_WEBSOCKET_URL",
+]);
+const normalizationSchema = z.object({
+  paths: z.boolean(),
+  pids: z.boolean(),
+  ports: z.boolean(),
+  time_bucket_ms: positiveBudget.max(60_000),
+  patterns: z.array(
+    z.object({
+      pattern: z.string().max(500),
+      replacement: z.string().max(100),
+    }),
+  ),
+});
 
 /** Exact boundary schema for bounded dynamic process scenarios. */
 export const processScenarioSchema = z
@@ -12,12 +32,17 @@ export const processScenarioSchema = z
       .describe(
         "Explicit per-call acknowledgement that this operation launches the target",
       ),
+    unknown_registry_approved: z
+      .literal(true)
+      .optional()
+      .describe("Explicit approval to record capture residuals durably"),
     executable: z.string().startsWith("/"),
     arguments: z.array(z.string()).max(256).default([]),
     working_directory: z.string().startsWith("/"),
-    environment: z.record(z.string(), z.string()).default({}),
-    inherit_environment: z.array(z.string()).max(64).default([]),
-    secret_aliases: z.array(z.string()).max(64).default([]),
+    environment: z.record(environmentName, z.string()).default({}),
+    inherit_environment: z.array(environmentName).max(64).default([]),
+    secret_aliases: z.array(environmentName).max(64).default([]),
+    network_access: z.literal("host").default("host"),
     filesystem_roots: z.array(z.string().startsWith("/")).max(16).default([]),
     events: z
       .array(
@@ -52,6 +77,10 @@ export const processScenarioSchema = z
         files: positiveBudget.max(100_000).default(10_000),
         file_bytes: positiveBudget.max(100_000_000).default(10_000_000),
         processes: positiveBudget.max(10_000).default(1_000),
+        protocol_events: positiveBudget.max(100_000).default(10_000),
+        protocol_body_bytes: positiveBudget.max(10_000_000).default(1_000_000),
+        connections: positiveBudget.max(1_000).default(100),
+        filesystem_depth: z.number().int().min(1).max(64).default(16),
       })
       .default({
         output_bytes: 1_000_000,
@@ -59,6 +88,10 @@ export const processScenarioSchema = z
         files: 10_000,
         file_bytes: 10_000_000,
         processes: 1_000,
+        protocol_events: 10_000,
+        protocol_body_bytes: 1_000_000,
+        connections: 100,
+        filesystem_depth: 16,
       }),
     normalization: z
       .object({
@@ -92,6 +125,12 @@ export const processScenarioSchema = z
               path: z.string().startsWith("/"),
               status: z.number().int().min(100).max(599),
               body: z.string().max(1_000_000),
+              request_headers: z.record(z.string(), z.string()).default({}),
+              request_body: z.string().max(1_000_000).optional(),
+              response_headers: z.record(z.string(), z.string()).default({}),
+              delay_ms: z.number().int().nonnegative().max(30_000).default(0),
+              disconnect: z.boolean().default(false),
+              max_calls: z.number().int().min(1).max(100).default(1),
             }),
           )
           .max(100)
@@ -100,8 +139,33 @@ export const processScenarioSchema = z
           .array(z.string().max(1_000_000))
           .max(100)
           .default([]),
+        websocket_connections: z
+          .array(
+            z.object({
+              messages: z
+                .array(
+                  z.object({
+                    data: z.string().max(1_000_000),
+                    delay_ms: z
+                      .number()
+                      .int()
+                      .nonnegative()
+                      .max(30_000)
+                      .default(0),
+                  }),
+                )
+                .max(100),
+              disconnect_after: z.boolean().default(false),
+            }),
+          )
+          .max(100)
+          .default([]),
       })
-      .default({ http: [], websocket_messages: [] }),
+      .default({
+        http: [],
+        websocket_messages: [],
+        websocket_connections: [],
+      }),
   })
   .strict()
   .superRefine((scenario, context) => {
@@ -124,6 +188,34 @@ export const processScenarioSchema = z
         });
       }
     }
+    const explicit = new Set(Object.keys(scenario.environment));
+    for (const name of [...explicit, ...scenario.inherit_environment]) {
+      if (reservedEnvironment.has(name)) {
+        context.addIssue({
+          code: "custom",
+          message: `${name} is reserved by the process adapter`,
+          path: ["environment", name],
+        });
+      }
+    }
+    for (const name of scenario.inherit_environment) {
+      if (explicit.has(name)) {
+        context.addIssue({
+          code: "custom",
+          message: "an environment name cannot be explicit and inherited",
+          path: ["inherit_environment"],
+        });
+      }
+    }
+    for (const event of scenario.events) {
+      if (event.at_ms > scenario.timeout_ms) {
+        context.addIssue({
+          code: "custom",
+          message: "event occurs after the scenario timeout",
+          path: ["events"],
+        });
+      }
+    }
   });
 
 /** A parsed, bounded dynamic process observation scenario. */
@@ -139,6 +231,7 @@ export interface ProcessExecutionPolicy {
   readonly executableRoots: readonly string[];
   readonly workingRoots: readonly string[];
   readonly allowedEnvironment: readonly string[];
+  readonly allowExternalNetwork: boolean;
 }
 
 /** A safe, caller-visible process-policy decision. */
@@ -159,6 +252,11 @@ export const authorizeProcessScenario = (
 ): ProcessPolicyDecision => {
   if (!policy.enabled)
     return { allowed: false, reason: "process capture is disabled" };
+  if (scenario.network_access === "host" && !policy.allowExternalNetwork)
+    return {
+      allowed: false,
+      reason: "host network access is not approved by operator policy",
+    };
   if (
     !policy.executableRoots.some((root) => isWithin(scenario.executable, root))
   ) {
@@ -216,6 +314,13 @@ export interface FileState {
   readonly symlink_target: string | null;
 }
 
+interface FileEffect {
+  readonly path: string;
+  readonly status: "created" | "modified" | "deleted" | "unchanged";
+  readonly before: FileState | null;
+  readonly after: FileState | null;
+}
+
 /** A sampled owned-process observation; sampling cannot prove syscall completeness. */
 export interface ProcessSample {
   readonly at_ms: number;
@@ -227,32 +332,57 @@ export interface ProcessSample {
 /** A bounded loopback replay observation. */
 export interface ProtocolEvent {
   readonly sequence: number;
+  readonly at_ms: number;
   readonly protocol: "http" | "websocket";
   readonly direction: "request" | "response" | "received" | "sent";
   readonly method: string | null;
   readonly path: string | null;
   readonly data: string;
+  readonly outcome:
+    | "matched"
+    | "unmatched"
+    | "script_exhausted"
+    | "disconnected";
 }
 
 /** A bounded process observation with explicit incompleteness metadata. */
 export interface ProcessCapture {
-  readonly schema_version: 1;
+  readonly schema_version: 2;
+  readonly normalization: z.infer<typeof normalizationSchema>;
   readonly frames: readonly TerminalFrame[];
   readonly exit: {
     readonly code: number | null;
     readonly signal: number | null;
+    readonly reason: "exited" | "timeout" | "idle_timeout";
   };
   readonly process_samples: readonly ProcessSample[];
   readonly protocol_events: readonly ProtocolEvent[];
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
+  readonly filesystem_effects: readonly FileEffect[];
   readonly truncated: boolean;
   readonly limitations: readonly string[];
+  readonly residual_unknowns: readonly {
+    readonly scope:
+      | "terminal"
+      | "exit"
+      | "process"
+      | "filesystem"
+      | "protocol"
+      | "cleanup"
+      | "network";
+    readonly reason: string;
+  }[];
+  readonly cleanup: {
+    readonly owned_process_group: "verified";
+    readonly temporary_root: "removed";
+  };
 }
 
 /** Exact serialized shape of a bounded process capture. */
 export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.literal(2),
+  normalization: normalizationSchema,
   frames: z.array(
     z.object({
       sequence: z.number().int().nonnegative(),
@@ -263,6 +393,7 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
   exit: z.object({
     code: z.number().int().nullable(),
     signal: z.number().int().nullable(),
+    reason: z.enum(["exited", "timeout", "idle_timeout"]),
   }),
   process_samples: z.array(
     z.object({
@@ -275,11 +406,18 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
   protocol_events: z.array(
     z.object({
       sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
       protocol: z.enum(["http", "websocket"]),
       direction: z.enum(["request", "response", "received", "sent"]),
       method: z.string().nullable(),
       path: z.string().nullable(),
       data: z.string(),
+      outcome: z.enum([
+        "matched",
+        "unmatched",
+        "script_exhausted",
+        "disconnected",
+      ]),
     }),
   ),
   files_before: z.array(
@@ -308,89 +446,62 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       symlink_target: z.string().nullable(),
     }),
   ),
+  filesystem_effects: z.array(
+    z.object({
+      path: z.string(),
+      status: z.enum(["created", "modified", "deleted", "unchanged"]),
+      before: z
+        .object({
+          path: z.string(),
+          type: z.enum(["file", "directory", "symlink", "other"]),
+          mode: z.number().int().nonnegative(),
+          size: z.number().int().nonnegative(),
+          sha256: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/u)
+            .nullable(),
+          symlink_target: z.string().nullable(),
+        })
+        .nullable(),
+      after: z
+        .object({
+          path: z.string(),
+          type: z.enum(["file", "directory", "symlink", "other"]),
+          mode: z.number().int().nonnegative(),
+          size: z.number().int().nonnegative(),
+          sha256: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/u)
+            .nullable(),
+          symlink_target: z.string().nullable(),
+        })
+        .nullable(),
+    }),
+  ),
   truncated: z.boolean(),
   limitations: z.array(z.string()),
+  residual_unknowns: z.array(
+    z.object({
+      scope: z.enum([
+        "terminal",
+        "exit",
+        "process",
+        "filesystem",
+        "protocol",
+        "cleanup",
+        "network",
+      ]),
+      reason: z.string(),
+    }),
+  ),
+  cleanup: z.object({
+    owned_process_group: z.literal("verified"),
+    temporary_root: z.literal("removed"),
+  }),
 });
 
-/** Comparison classification that never equates incomplete evidence. */
-type ComparisonStatus =
-  | "unchanged"
-  | "added"
-  | "removed"
-  | "changed"
-  | "truncated"
-  | "unknown";
-
-/** Pure normalized comparison between two captures. */
-export interface ProcessCaptureComparison {
-  readonly status: ComparisonStatus;
-  readonly terminal: ComparisonStatus;
-  readonly exit: ComparisonStatus;
-  readonly filesystem: ComparisonStatus;
-  readonly protocol: ComparisonStatus;
-  readonly process: ComparisonStatus;
-  readonly limitations: readonly string[];
-}
-
-const stableFiles = (files: readonly FileState[]): string =>
-  JSON.stringify(
-    [...files].sort((left, right) => left.path.localeCompare(right.path)),
-  );
-
-/** Compare bounded captures without claiming equality for incomplete observations. */
-export const compareProcessCaptures = (
-  left: ProcessCapture,
-  right: ProcessCapture,
-): ProcessCaptureComparison => {
-  if (left.truncated || right.truncated) {
-    return {
-      status: "truncated",
-      terminal: "truncated",
-      exit: "truncated",
-      filesystem: "truncated",
-      protocol: "truncated",
-      process: "truncated",
-      limitations: ["At least one capture is truncated."],
-    };
-  }
-  const terminal =
-    left.frames.map(({ data }) => data).join("") ===
-    right.frames.map(({ data }) => data).join("")
-      ? "unchanged"
-      : "changed";
-  const exit =
-    JSON.stringify(left.exit) === JSON.stringify(right.exit)
-      ? "unchanged"
-      : "changed";
-  const filesystem =
-    stableFiles(left.files_after) === stableFiles(right.files_after)
-      ? "unchanged"
-      : "changed";
-  const protocol =
-    JSON.stringify(left.protocol_events) ===
-    JSON.stringify(right.protocol_events)
-      ? "unchanged"
-      : "changed";
-  const process =
-    JSON.stringify(left.process_samples.map(({ command }) => command)) ===
-    JSON.stringify(right.process_samples.map(({ command }) => command))
-      ? "unchanged"
-      : "changed";
-  const status =
-    terminal === "unchanged" &&
-    exit === "unchanged" &&
-    filesystem === "unchanged" &&
-    protocol === "unchanged" &&
-    process === "unchanged"
-      ? "unchanged"
-      : "changed";
-  return {
-    status,
-    terminal,
-    exit,
-    filesystem,
-    protocol,
-    process,
-    limitations: [...left.limitations, ...right.limitations],
-  };
-};
+export {
+  compareProcessCaptures,
+  comparisonStatusSchema,
+  processCaptureComparisonSchema,
+} from "./processComparison.js";

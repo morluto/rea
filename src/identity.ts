@@ -10,5 +10,6 @@ export const PRODUCT_IDENTITY = {
   mcpCommand: "npx -y rea-agents mcp",
   mcpServerKey: "rea",
   skillName: "rea-analysis",
+  skillVersion: "10",
   configFileName: "rea.json",
 } as const;

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 
+import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
@@ -9,42 +10,66 @@ import type {
 import type { AppConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/errors.js";
+import { err } from "../domain/result.js";
+import {
+  ENHANCED_TOOL_CONTRACTS,
+  OFFICIAL_TOOL_CONTRACTS,
+} from "../contracts/toolContracts.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import { HopperClient } from "./HopperClient.js";
 
-const IDENTITY: ProviderIdentity = {
+const IDENTITY: ProviderIdentity = Object.freeze({
   id: "hopper",
   name: "Hopper Disassembler",
   version: null,
-};
+});
+const MUTATING_OPERATIONS = new Set([
+  "set_address_name",
+  "set_addresses_names",
+  "set_bookmark",
+  "set_comment",
+  "set_inline_comment",
+  "unset_bookmark",
+]);
 
-const OPERATIONS = [
-  "direct-analysis",
-  "decompilation",
-  "disassembly",
-  "cross-references",
-  "containing-procedure-resolution",
-  "procedure-references",
-  "analysis-metadata-mutation",
-] as const;
+const PROVIDER_TOOL_CONTRACTS = [
+  ...OFFICIAL_TOOL_CONTRACTS,
+  ...ENHANCED_TOOL_CONTRACTS.filter(
+    (contract) => contract.name === "analyze_function",
+  ),
+];
 
-const CAPABILITIES: readonly CapabilityDescriptor[] = OPERATIONS.map(
-  (operation) => ({
-    operation,
-    version: 1,
-    available: true,
-    pagination: "none",
-    exhaustive: false,
-    effects: {
-      mutatesArtifact: operation === "analysis-metadata-mutation",
-      launchesProcess: true,
-      mayShowUi: true,
-      mayAccessNetwork: false,
-      mayWriteFilesystem: operation === "analysis-metadata-mutation",
-      requiresPrivileges: false,
-    },
-    limitations: ["Results depend on Hopper's completed static analysis."],
-  }),
+const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
+  PROVIDER_TOOL_CONTRACTS.map((contract) =>
+    Object.freeze({
+      provider: IDENTITY,
+      operation: contract.name,
+      inputContractVersion: 1,
+      outputContractVersion: 1,
+      available: true,
+      reason: null,
+      pagination: "offset" in contract.inputSchema.shape ? "offset" : "none",
+      exhaustive: false,
+      effects: Object.freeze({
+        mutatesArtifact: MUTATING_OPERATIONS.has(contract.name),
+        launchesProcess: true,
+        mayShowUi: true,
+        mayAccessNetwork: false,
+        mayWriteFilesystem: MUTATING_OPERATIONS.has(contract.name),
+        changesPermissions: false,
+        requiresRoot: false,
+      }),
+      limits: Object.freeze({
+        maxResults: null,
+        maxPayloadBytes: null,
+        timeoutMs: null,
+      }),
+      limitations: Object.freeze([
+        "Results depend on Hopper's completed static analysis.",
+      ]),
+    }),
+  ),
 );
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
@@ -63,6 +88,20 @@ export class HopperProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
+    if (target.kind !== "executable" && target.kind !== "database")
+      return {
+        execute: (operation) =>
+          Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                IDENTITY.id,
+                operation,
+                `Hopper cannot open ${target.kind} targets directly. Inventory or extract the artifact first.`,
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(),
+      };
     const client = new HopperClient({
       launcher: new HopperApplicationLauncher({
         launcherPath: this.config.hopperLauncherPath,
@@ -79,8 +118,19 @@ export class HopperProvider implements AnalysisProvider {
       logger: this.logger.child({ layer: "bridge" }),
     });
     return {
-      execute: (operation, parameters, options) =>
-        client.callTool(operation, parameters, options),
+      execute: async (operation, parameters, options) => {
+        const result = await client.callTool(operation, parameters, options);
+        return result.ok
+          ? {
+              ok: true,
+              value: createAnalysisExecution(result.value, IDENTITY, {
+                limitations: [
+                  "Results depend on Hopper's completed static analysis.",
+                ],
+              }),
+            }
+          : result;
+      },
       close: () => client.close(),
     };
   }

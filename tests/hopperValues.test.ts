@@ -33,8 +33,29 @@ describe("Hopper boundary values", () => {
       value: ["0x3"],
     });
     expect(
-      parseSegments([{ name: "__TEXT", start: "0x1", end: "0x2" }]).ok,
-    ).toBe(true);
+      parseSegments([
+        {
+          name: "__TEXT",
+          start: "0x1",
+          end: "0x2",
+          readable: true,
+          writable: false,
+          executable: null,
+        },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          name: "__TEXT",
+          start: "0x1",
+          end: "0x2",
+          readable: true,
+          writable: false,
+          executable: null,
+        },
+      ],
+    });
     expect(parseDocuments(["fixture"])).toEqual({
       ok: true,
       value: ["fixture"],

@@ -6,8 +6,17 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerSessionTools } from "./registerSessionTools.js";
+import { registerNativeTools } from "./registerNativeTools.js";
+import { registerArtifactTools } from "./registerArtifactTools.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
+import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
+
+export interface CreateServerOptions {
+  readonly logger?: Logger;
+  readonly processPolicy?: ProcessExecutionPolicy;
+  readonly evidenceFilePolicy?: EvidenceFilePolicy;
+}
 
 /**
  * Construct one MCP server without acquiring subprocess resources.
@@ -17,9 +26,9 @@ import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 export const createServer = (
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
-  logger: Logger = silentLogger,
-  processPolicy?: ProcessExecutionPolicy,
+  options: CreateServerOptions = {},
 ): McpServer => {
+  const logger = options.logger ?? silentLogger;
   const server = new McpServer(
     { name: PRODUCT_IDENTITY.mcpServerKey, version: "0.1.0" },
     {
@@ -33,29 +42,40 @@ export const createServer = (
   const toolLogger = logger.child({ layer: "server" });
   const activeTarget =
     session === undefined ? undefined : () => session.activeTarget();
-  const provider = session?.providerIdentity();
   const recordEvidence =
     session === undefined
       ? undefined
       : (evidence: Parameters<typeof session.recordEvidence>[0]) =>
           session.recordEvidence(evidence);
-  registerOfficialTools(
-    server,
-    analysis,
-    toolLogger,
+  registerOfficialTools(server, analysis, {
+    logger: toolLogger,
     activeTarget,
-    provider,
     recordEvidence,
-  );
-  registerEnhancedTools(
-    server,
-    analysis,
-    toolLogger,
+    recordUnknown:
+      session === undefined
+        ? undefined
+        : (input) => session.recordUnknown(input),
+  });
+  registerEnhancedTools(server, analysis, {
+    logger: toolLogger,
     activeTarget,
-    provider,
     recordEvidence,
-  );
+    recordUnknown:
+      session === undefined
+        ? undefined
+        : (input) => session.recordUnknown(input),
+  });
+  registerNativeTools(server, analysis, {
+    logger: toolLogger,
+    activeTarget,
+    recordEvidence,
+  });
+  registerArtifactTools(server, analysis, {
+    logger: toolLogger,
+    activeTarget,
+    recordEvidence,
+  });
   if (session !== undefined)
-    registerSessionTools(server, session, toolLogger, processPolicy);
+    registerSessionTools(server, session, toolLogger, options);
   return server;
 };

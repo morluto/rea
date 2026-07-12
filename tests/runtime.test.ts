@@ -10,7 +10,7 @@ const fixturePath = fileURLToPath(
 );
 
 describe("production stdio runtime", () => {
-  it("starts the built entrypoint, lists 50 tools, calls one, and shuts down", async () => {
+  it("starts the built entrypoint, lists 68 tools, calls one, and shuts down", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [mainPath],
@@ -32,7 +32,7 @@ describe("production stdio runtime", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(50);
+      expect(tools.tools).toHaveLength(68);
       const result = await client.callTool({
         name: "current_document",
         arguments: {},
@@ -58,7 +58,7 @@ describe("production stdio runtime", () => {
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
     expect(stderr).not.toContain(fixturePath);
-  });
+  }, 15_000);
 
   it("honors the configured kind for an initial database target", async () => {
     const transport = new StdioClientTransport({
@@ -78,7 +78,7 @@ describe("production stdio runtime", () => {
 
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(50);
+      expect((await client.listTools()).tools).toHaveLength(68);
     } finally {
       await client.close();
       await transport.close();

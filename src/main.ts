@@ -46,12 +46,11 @@ export const run = async (): Promise<number> => {
   try {
     handle = serveStdio(
       () =>
-        createServer(
-          session,
-          session,
+        createServer(session, session, {
           logger,
-          config.value.processExecutionPolicy,
-        ),
+          processPolicy: config.value.processExecutionPolicy,
+          evidenceFilePolicy: config.value.evidenceFilePolicy,
+        }),
       {
         onerror: () => {
           serverLogger.error("MCP stdio transport error");

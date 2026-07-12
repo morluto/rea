@@ -73,6 +73,37 @@ describe("executable header parsing", () => {
 });
 
 describe("binary target I/O", () => {
+  it("classifies ZIP profiles and text artifacts without Hopper", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-artifact-target-"));
+    const zip = join(directory, "fixture.apk");
+    const script = join(directory, "bundle.js");
+    await writeFile(zip, Buffer.from([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0]));
+    await writeFile(script, "export default 1;\n");
+    const archive = await parseBinaryTarget(zip);
+    const javascript = await parseBinaryTarget(script);
+    expect(archive.ok && archive.value).toMatchObject({
+      kind: "archive",
+      format: "apk",
+      loaderArgs: [],
+    });
+    expect(javascript.ok && javascript.value).toMatchObject({
+      kind: "artifact",
+      format: "javascript",
+      loaderArgs: [],
+    });
+  });
+
+  it("does not trust a ZIP-family extension without ZIP magic", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-fake-archive-"));
+    const path = join(directory, "fake.zip");
+    await writeFile(path, "not a zip");
+    const result = await parseBinaryTarget(path);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "BinaryTargetError" },
+    });
+  });
+
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-target-"));
     await writeFile(join(directory, "sample.hop"), "database");

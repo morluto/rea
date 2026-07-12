@@ -6,6 +6,12 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import {
+  firstProcedureAddress,
+  requireAddressArray,
+  requireFunctionDossier,
+  requirePseudocode,
+} from "../dist/application/RealHopperAssertions.js";
 
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
@@ -26,90 +32,176 @@ const requireSuccessfulTool = (result, operation) => {
     throw new Error(`${operation} failed: ${textValue(result)}`);
   }
   const value = jsonValue(result);
-  if (value === null || typeof value !== "object" || !("result" in value)) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("normalized_result" in value)
+  ) {
     throw new Error(`${operation} omitted its evidence result`);
   }
-  return value.result;
+  return value.normalized_result;
 };
 
-const firstProcedureAddress = (result) => {
-  const items = result.structuredContent?.result?.items;
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("The verifier target contains no analyzed procedure");
-  }
-  const address = items[0]?.address;
-  if (typeof address !== "string" || !/^0x[0-9a-f]+$/iu.test(address)) {
-    throw new Error("list_procedures returned an invalid procedure address");
-  }
-  return address;
-};
-
-const requirePseudocode = (value, operation) => {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${operation} returned empty pseudocode`);
-  }
-  if (value === "No output" || value.startsWith("Error:")) {
-    throw new Error(`${operation} returned an embedded failure: ${value}`);
+const requireOverview = (value, operation) => {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    typeof value.document !== "string" ||
+    value.document.length === 0 ||
+    !Number.isInteger(value.procedure_count) ||
+    value.procedure_count < 1 ||
+    !Number.isInteger(value.segment_count) ||
+    value.segment_count < 1 ||
+    !Array.isArray(value.segments)
+  ) {
+    throw new Error(`${operation} returned no analyzed binary overview`);
   }
   return value;
 };
 
-const requireFunctionDossier = (value, expectedAddress) => {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("analyze_function returned no function dossier");
+const requireTruthfulMemoryRegions = (segments) => {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    throw new Error("list_segments returned no real memory regions");
   }
-  if (value.procedure?.address !== expectedAddress) {
-    throw new Error("analyze_function returned the wrong procedure");
-  }
-  if (
-    typeof value.procedure?.name !== "string" ||
-    value.procedure.name.trim().length === 0
-  ) {
-    throw new Error("analyze_function omitted the procedure name");
-  }
-  requirePseudocode(value.pseudocode?.text, "analyze_function");
-  for (const field of [
-    "comments",
-    "callers",
-    "callees",
-    "incoming_references",
-    "outgoing_references",
-    "referenced_strings",
-    "referenced_names",
-    "basic_blocks",
-  ]) {
-    const collection = value[field];
-    if (
-      collection === null ||
-      typeof collection !== "object" ||
-      !Array.isArray(collection.items) ||
-      !Number.isInteger(collection.total)
-    ) {
-      throw new Error(`analyze_function returned an invalid ${field} result`);
-    }
-  }
-  for (const field of ["callers", "callees"]) {
-    for (const identity of value[field].items) {
-      if (
-        typeof identity?.address !== "string" ||
-        typeof identity?.name !== "string"
-      ) {
-        throw new Error(`analyze_function returned an untyped ${field} item`);
+  const regions = segments.flatMap((segment) => [
+    segment,
+    ...(Array.isArray(segment.sections) ? segment.sections : []),
+  ]);
+  for (const region of regions) {
+    for (const permission of ["readable", "writable", "executable"]) {
+      if (![true, false, null].includes(region?.[permission])) {
+        throw new Error(`list_segments omitted tri-state ${permission}`);
       }
     }
-  }
-  for (const block of value.basic_blocks.items) {
-    if (!Array.isArray(block?.successors)) {
-      throw new Error("analyze_function omitted CFG successor evidence");
+    if (
+      region.provenance !== "hopper-public-python-api" ||
+      region.permissions?.available !== false ||
+      typeof region.permissions.reason !== "string"
+    ) {
+      throw new Error("list_segments omitted permission provenance");
     }
   }
-  if (
-    typeof value.instruction_scan?.scanned !== "number" ||
-    typeof value.instruction_scan?.truncated !== "boolean"
-  ) {
-    throw new Error("analyze_function omitted instruction scan limitations");
+};
+
+const verifyRelationships = async (client, options, procedure) => {
+  const related = {};
+  for (const operation of ["procedure_callers", "procedure_callees"]) {
+    related[operation] = requireAddressArray(
+      requireSuccessfulTool(
+        await client.callTool(
+          { name: operation, arguments: { procedure } },
+          options,
+        ),
+        operation,
+      ),
+      operation,
+    );
   }
-  return value;
+  related.xrefs = requireAddressArray(
+    requireSuccessfulTool(
+      await client.callTool(
+        { name: "xrefs", arguments: { address: procedure } },
+        options,
+      ),
+      "xrefs",
+    ),
+    "xrefs",
+  );
+  return related;
+};
+
+const verifyCurrentTarget = async (client, options) => {
+  const procedures = requireSuccessfulTool(
+    await client.callTool({ name: "list_procedures", arguments: {} }, options),
+    "list_procedures",
+  );
+  const firstAddress = firstProcedureAddress(procedures);
+  const containment = requireSuccessfulTool(
+    await client.callTool(
+      {
+        name: "resolve_containing_procedure",
+        arguments: { address: firstAddress },
+      },
+      options,
+    ),
+    "resolve_containing_procedure",
+  );
+  if (
+    containment?.found !== true ||
+    containment.procedure?.address !== firstAddress
+  ) {
+    throw new Error(
+      "resolve_containing_procedure returned the wrong procedure",
+    );
+  }
+  const references = requireSuccessfulTool(
+    await client.callTool(
+      {
+        name: "procedure_references",
+        arguments: {
+          procedure: firstAddress,
+          direction: "outgoing",
+          limit: 10,
+          max_instructions: 100,
+        },
+      },
+      options,
+    ),
+    "procedure_references",
+  );
+  if (!Array.isArray(references?.references?.items)) {
+    throw new Error("procedure_references returned an invalid bounded result");
+  }
+  const relationships = await verifyRelationships(
+    client,
+    options,
+    firstAddress,
+  );
+  const boundedResult = requireSuccessfulTool(
+    await client.callTool(
+      {
+        name: "batch_decompile",
+        arguments: { addresses: [firstAddress] },
+      },
+      options,
+    ),
+    "batch_decompile",
+  );
+  if (
+    boundedResult === null ||
+    typeof boundedResult !== "object" ||
+    Array.isArray(boundedResult) ||
+    Object.keys(boundedResult).length !== 1
+  ) {
+    throw new Error("batch_decompile returned an invalid result");
+  }
+  const boundedPseudocode = requirePseudocode(
+    boundedResult[firstAddress],
+    "batch_decompile",
+  );
+  const dossier = requireFunctionDossier(
+    requireSuccessfulTool(
+      await client.callTool(
+        {
+          name: "analyze_function",
+          arguments: { procedure: firstAddress },
+        },
+        options,
+      ),
+      "analyze_function",
+    ),
+    firstAddress,
+  );
+  return {
+    procedure: dossier.procedure,
+    procedureCount: procedures.total,
+    boundedPseudocodeChars: boundedPseudocode.length,
+    analyzedPseudocodeChars: [...dossier.pseudocode.text].length,
+    callerCount: relationships.procedure_callers.length,
+    calleeCount: relationships.procedure_callees.length,
+    xrefCount: relationships.xrefs.length,
+    outgoingReferenceCount: references.references.items.length,
+  };
 };
 
 const requireSafeDiagnostics = (chunks) => {
@@ -176,7 +268,7 @@ try {
   const expectedNames = TOOL_CONTRACTS.map(({ name }) => name).sort();
   const actualNames = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    throw new Error("The real server did not expose the intended 50 tools");
+    throw new Error("The real server did not expose the intended 68 tools");
   }
 
   const options = { timeout };
@@ -203,77 +295,17 @@ try {
     { name: "list_segments", arguments: {} },
     options,
   );
-  const procedures = await client.callTool(
-    { name: "list_procedures", arguments: {} },
-    options,
+  requireTruthfulMemoryRegions(
+    requireSuccessfulTool(segments, "list_segments"),
   );
-  requireSuccessfulTool(procedures, "list_procedures");
-  const firstAddress = firstProcedureAddress(procedures);
-  const containment = requireSuccessfulTool(
-    await client.callTool(
-      {
-        name: "resolve_containing_procedure",
-        arguments: { address: firstAddress },
-      },
-      options,
-    ),
-    "resolve_containing_procedure",
+  const firstDocuments = requireSuccessfulTool(documents, "list_documents");
+  if (!Array.isArray(firstDocuments) || firstDocuments.length === 0)
+    throw new Error("list_documents returned no real Hopper document");
+  const firstOverview = requireOverview(
+    requireSuccessfulTool(overview, "binary_overview"),
+    "binary_overview",
   );
-  if (
-    containment?.found !== true ||
-    containment.procedure?.address !== firstAddress
-  ) {
-    throw new Error(
-      "resolve_containing_procedure returned the wrong procedure",
-    );
-  }
-  const references = requireSuccessfulTool(
-    await client.callTool(
-      {
-        name: "procedure_references",
-        arguments: {
-          procedure: firstAddress,
-          direction: "outgoing",
-          limit: 10,
-          max_instructions: 100,
-        },
-      },
-      options,
-    ),
-    "procedure_references",
-  );
-  if (!Array.isArray(references?.references?.items)) {
-    throw new Error("procedure_references returned an invalid bounded result");
-  }
-  const bounded = await client.callTool(
-    { name: "batch_decompile", arguments: { addresses: [firstAddress] } },
-    options,
-  );
-  const boundedResult = requireSuccessfulTool(bounded, "batch_decompile");
-  if (
-    boundedResult === null ||
-    typeof boundedResult !== "object" ||
-    Array.isArray(boundedResult)
-  ) {
-    throw new Error("batch_decompile returned an invalid result");
-  }
-  const boundedPseudocode = requirePseudocode(
-    boundedResult[firstAddress],
-    "batch_decompile",
-  );
-  const dossier = requireFunctionDossier(
-    requireSuccessfulTool(
-      await client.callTool(
-        {
-          name: "analyze_function",
-          arguments: { procedure: firstAddress },
-        },
-        options,
-      ),
-      "analyze_function",
-    ),
-    firstAddress,
-  );
+  const firstAnalysis = await verifyCurrentTarget(client, options);
   const switched = await client.callTool(
     { name: "open_binary", arguments: { path: targetB } },
     options,
@@ -288,8 +320,11 @@ try {
     { name: "binary_overview", arguments: {} },
     options,
   );
-  if (secondOverview.isError === true)
-    throw new Error(textValue(secondOverview));
+  const verifiedSecondOverview = requireOverview(
+    requireSuccessfulTool(secondOverview, "binary_overview"),
+    "binary_overview after target switch",
+  );
+  const secondAnalysis = await verifyCurrentTarget(client, options);
 
   const processList = await execFileAsync("ps", ["-ax", "-o", "command="]);
   const bundledMcpRunning = processList.stdout
@@ -307,25 +342,25 @@ try {
     options,
   );
   if (closed.isError === true) throw new Error(textValue(closed));
+  const closedSession = jsonValue(
+    await client.callTool({ name: "binary_session", arguments: {} }, options),
+  );
+  if (closedSession.open !== false)
+    throw new Error("The real session remained open after close_binary");
 
   summary = {
     toolCount: actualNames.length,
-    documentCount: jsonValue(documents).length,
-    overview: jsonValue(overview),
-    segmentCount: jsonValue(segments).length,
-    boundedTool: "batch_decompile",
-    boundedInputCount: 1,
-    boundedResultKeys: Object.keys(boundedResult).length,
-    boundedPseudocodeChars: boundedPseudocode.length,
-    analyzedProcedure: dossier.procedure,
-    analyzedPseudocodeChars: dossier.pseudocode.text.length,
+    documentCount: firstDocuments.length,
+    overview: firstOverview,
+    segmentCount: firstOverview.segment_count,
+    analyses: [firstAnalysis, secondAnalysis],
     bundledMcpRunning,
     stderrBytes,
     diagnosticCount,
     dynamicSession: true,
     targets: [targetA, targetB],
     switched: true,
-    secondOverview: jsonValue(secondOverview),
+    secondOverview: verifiedSecondOverview,
   };
 } finally {
   const keepAlive = setInterval(() => undefined, 100);

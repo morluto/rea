@@ -1,38 +1,39 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import {
-  OFFICIAL_TOOL_CONTRACTS,
-  type ToolContract,
-} from "../contracts/toolContracts.js";
+import type { BinarySessionPort } from "../application/BinarySession.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
-import type { Evidence } from "../domain/evidence.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  UnknownRegistryError,
+} from "../domain/errors.js";
+
+/** Optional session services used by direct tool registration. */
+export interface OfficialToolRegistration {
+  readonly logger: Logger;
+  readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
+}
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
   server: McpServer,
   analysis: AnalysisOperationPort,
-  logger: Logger,
-  activeTarget?: () => BinaryTarget | undefined,
-  provider: ProviderIdentity = {
-    id: "unidentified",
-    name: "Unidentified provider",
-    version: null,
-  },
-  recordEvidence?: (evidence: Evidence) => void,
+  options: OfficialToolRegistration,
 ): void => {
   for (const contract of OFFICIAL_TOOL_CONTRACTS) {
     registerOfficialTool(server, analysis, contract, {
-      logger,
-      activeTarget,
-      provider,
-      recordEvidence,
+      logger: options.logger,
+      activeTarget: options.activeTarget,
+      recordEvidence: options.recordEvidence,
+      recordUnknown: options.recordUnknown,
     });
   }
 };
@@ -40,12 +41,12 @@ export const registerOfficialTools = (
 const registerOfficialTool = (
   server: McpServer,
   analysis: AnalysisOperationPort,
-  contract: ToolContract,
+  contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-    readonly provider: ProviderIdentity;
-    readonly recordEvidence: ((evidence: Evidence) => void) | undefined;
+    readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+    readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
   },
 ): void => {
   server.registerTool(
@@ -68,17 +69,54 @@ const registerOfficialTool = (
       );
       if (result.ok) {
         const evidence = createEvidence(
-          registration.activeTarget?.(),
-          registration.provider,
+          result.value.subject ?? registration.activeTarget?.(),
+          result.value.provider,
           {
             operation: contract.name,
             parameters: arguments_,
-            result: result.value,
-            redactedRawPayload: result.value,
+            result: result.value.result,
+            rawResult: result.value.rawResult,
+            limitations: result.value.limitations,
+            locations: result.value.locations,
           },
         );
-        registration.recordEvidence?.(evidence);
+        const recorded = registration.recordEvidence?.(evidence);
+        if (recorded !== undefined && !recorded.ok)
+          return toCallToolResult(recorded, contract);
         return toCallToolResult({ ok: true, value: evidence }, contract);
+      }
+      if (
+        result.error instanceof AnalysisCapabilityUnavailableError &&
+        approvedUnknownTracking(input) &&
+        registration.recordUnknown !== undefined
+      ) {
+        const unknown = registration.recordUnknown({
+          approved: true,
+          question: `${contract.name} is unavailable: ${result.error.reason}`,
+          severity: "medium",
+          domain: "provider-capability",
+          supporting_evidence_ids: [],
+          contradicting_evidence_ids: [],
+          required_authority: "shipped-artifact",
+          required_confidence: "observed",
+          required_environment: null,
+          recommended_probes: [
+            {
+              operation: contract.name,
+              rationale:
+                "Use a provider that declares this capability available.",
+            },
+          ],
+          relationships: [],
+        });
+        if (
+          !unknown.ok &&
+          !(
+            unknown.error instanceof UnknownRegistryError &&
+            unknown.error.reason === "already-exists"
+          )
+        )
+          return toCallToolResult(unknown, contract);
       }
       return toCallToolResult(result, contract);
     },
@@ -86,7 +124,7 @@ const registerOfficialTool = (
 };
 
 const projectOfficialArguments = (
-  contract: ToolContract,
+  contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   input: unknown,
 ): Readonly<Record<string, JsonValue>> => {
   const parsed = jsonValueSchema.safeParse(input);
@@ -102,7 +140,14 @@ const projectOfficialArguments = (
 
   const projected: Record<string, JsonValue> = {};
   for (const key of Object.keys(contract.inputSchema.shape)) {
+    if (key === "unknown_registry_approved") continue;
     projected[key] = parsed.data[key] ?? null;
   }
   return projected;
 };
+
+const approvedUnknownTracking = (input: unknown): boolean =>
+  typeof input === "object" &&
+  input !== null &&
+  "unknown_registry_approved" in input &&
+  input.unknown_registry_approved === true;

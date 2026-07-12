@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#منصة-من-50-أداة)
+[![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#منصة-من-68-أداة)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[البدء السريع](#البدء-السريع) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [50 أداة](#منصة-من-50-أداة) · [كيف يعمل](#كيف-يعمل) · [الأسئلة الشائعة](#الأسئلة-الشائعة)
+[البدء السريع](#البدء-السريع) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [68 أداة](#منصة-من-68-أداة) · [كيف يعمل](#كيف-يعمل) · [الأسئلة الشائعة](#الأسئلة-الشائعة)
 
 <br />
 
@@ -145,13 +145,15 @@ npx -y rea-agents doctor
 
 افحص التحقق من الإدخال، والتشفير، والصلاحيات، والتخزين، ومسارات الأخطاء من دون رفع الملف التنفيذي إلى خدمة بعيدة.
 
-## منصة من 50 أداة
+## منصة من 68 أداة
 
 | عائلة الأدوات         | العدد | أمثلة                                                                               |
 | --------------------- | ----: | ----------------------------------------------------------------------------------- |
 | فحص الملفات التنفيذية |    33 | الدوال، والشيفرة شبه المصدرية، والتعليمات، والسلاسل، والأسماء، والمراجع، والتعليقات |
 | التحليل المركب        |    10 | النظرة العامة، وفك الترجمة الدفعي، ومخططات الاستدعاء، والمراجع، واكتشاف الأنواع     |
-| جلسة الملف التنفيذي   |     7 | فتح الأهداف وحزم الأدلة والتقاط العمليات ومقارنتها                                  |
+| أدوات macOS الأصلية   |     5 | بيانات Mach-O والتوقيعات وملفات plist والمعماريات وفك رموز Swift دون تشغيل Hopper   |
+| رسم القطع الأثرية     |     2 | جرد حتمي للدلائل وZIP/APK/IPA وASAR واستخراج معاملاتي محدد صراحة                    |
+| جلسة الملف التنفيذي   |    18 | فتح الأهداف وحزم الأدلة ومقارنة العمليات والقطع والدوال وسجل المجهولات المتبقية     |
 
 ## استخدام REA مع وكلاء برمجة آخرين
 
@@ -200,7 +202,7 @@ npx -y rea-agents analyze /Applications/Notes.app
 لتجنب مربع اختيار معمارية ملف شامل، حدد معطيات المحمل مسبقًا:
 
 ```bash
-export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
+export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch68"]'
 ```
 
 يدير REA دورة حياة Hopper ويحاول إغلاق العمليات التي بدأها عند انتهاء الأمر أو جلسة MCP.

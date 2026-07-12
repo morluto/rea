@@ -2,10 +2,19 @@ import { Cli, z } from "incur";
 import { fileURLToPath } from "node:url";
 
 import { runDoctor } from "./application/Doctor.js";
-import { runDirectAnalysis } from "./application/DirectAnalysis.js";
+import {
+  runDirectAnalysis,
+  runProviderAnalysis,
+} from "./application/DirectAnalysis.js";
 import { runSetup } from "./application/Setup.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { createLogger, parseLogLevel, type Logger } from "./logger.js";
+import { parseConfig } from "./config.js";
+import {
+  exportEvidenceBundleCommand,
+  importEvidenceBundleCommand,
+} from "./application/EvidenceBundleCommands.js";
+import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -85,7 +94,201 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
         ),
       ),
   });
+  registerNativeCommands(cli, logger);
+  registerArtifactCommands(cli, logger);
+  registerEvidenceCommands(cli, logger);
+  registerReferenceSourceCommand(cli, logger);
   return cli;
+};
+
+const registerReferenceSourceCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("import-reference-source", {
+    description: "Import a bounded source tree as historical reference only",
+    args: z.object({
+      root: z
+        .string()
+        .describe("Source root allowed by REA_REFERENCE_ROOTS_JSON"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "import-reference-source", async () => {
+        const config = parseConfig(process.env);
+        if (!config.ok)
+          return { error: config.error._tag, message: config.error.message };
+        const imported = await importReferenceSource({
+          root: args.root,
+          caller: "rea-cli",
+          policy: config.value.referenceSourcePolicy,
+          importer: PRODUCT_IDENTITY.packageName,
+          importerVersion: null,
+        });
+        return imported.ok
+          ? imported.value
+          : { error: imported.error.code, message: imported.error.message };
+      }),
+  });
+};
+
+const registerArtifactCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("inventory-artifact", {
+    description: "Build a bounded deterministic artifact graph",
+    args: z.object({
+      path: z.string().describe("Application or package path"),
+    }),
+    options: z.object({
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(500).default(100),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inventory-artifact", () =>
+        runProviderAnalysis(
+          args.path,
+          "inventory_artifact",
+          {
+            node_offset: options.offset,
+            node_limit: options.limit,
+            occurrence_offset: options.offset,
+            occurrence_limit: options.limit,
+            edge_offset: options.offset,
+            edge_limit: options.limit,
+          },
+          logger,
+        ),
+      ),
+  });
+  cli.command("extract-artifact", {
+    description: "Extract explicitly selected artifact occurrences safely",
+    args: z.object({
+      path: z.string().describe("Application or package path"),
+      outputRoot: z.string().describe("Absent absolute output root"),
+      occurrenceIds: z
+        .array(z.string().regex(/^occ_[a-f0-9]{64}$/u))
+        .min(1)
+        .max(500),
+    }),
+    alias: { outputRoot: "output-root", occurrenceIds: "occurrence-ids" },
+    run: ({ args }) =>
+      logCliCommand(logger, "extract-artifact", () =>
+        runProviderAnalysis(
+          args.path,
+          "extract_artifact",
+          {
+            approved: true,
+            output_root: args.outputRoot,
+            occurrence_ids: args.occurrenceIds,
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerNativeCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  for (const [command, tool] of [
+    ["inspect-macho", "inspect_macho"],
+    ["inspect-signature", "inspect_signature"],
+    ["list-architectures", "list_architectures"],
+  ] as const) {
+    cli.command(command, {
+      description: `Run ${tool} without launching Hopper`,
+      args: z.object({ path: z.string().describe("Mach-O or app path") }),
+      run: ({ args }) =>
+        logCliCommand(logger, command, () =>
+          runProviderAnalysis(args.path, tool, {}, logger),
+        ),
+    });
+  }
+  cli.command("inspect-plist", {
+    description: "Parse app plist metadata without launching Hopper",
+    args: z.object({ path: z.string().describe("App or Mach-O path") }),
+    options: z.object({
+      relativePath: z.string().default("Contents/Info.plist"),
+    }),
+    alias: { relativePath: "relative-path" },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect-plist", () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_plist",
+          { relative_path: options.relativePath },
+          logger,
+        ),
+      ),
+  });
+  cli.command("demangle-swift", {
+    description: "Demangle a bounded Swift symbol batch without Hopper",
+    args: z.object({
+      path: z.string().describe("Artifact path used for evidence identity"),
+      symbols: z.array(z.string().min(1)).min(1).max(500),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "demangle-swift", () =>
+        runProviderAnalysis(
+          args.path,
+          "demangle_swift",
+          { symbols: args.symbols },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerEvidenceCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("evidence-import", {
+    description: "Validate and import a bounded local Evidence v2 bundle",
+    args: z.object({
+      path: z.string().describe("Evidence bundle JSON path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "evidence-import", async () => {
+        const config = parseConfig(process.env);
+        if (!config.ok)
+          return { error: config.error._tag, message: config.error.message };
+        const imported = await importEvidenceBundleCommand(
+          args.path,
+          config.value.evidenceFilePolicy,
+        );
+        return imported.ok
+          ? imported.value
+          : { error: imported.error._tag, message: imported.error.message };
+      }),
+  });
+  cli.command("evidence-export", {
+    description: "Validate and atomically export canonical Evidence v2 JSON",
+    args: z.object({
+      source: z.string().describe("Existing evidence bundle JSON path"),
+      output: z.string().describe("Canonical output JSON path"),
+    }),
+    options: z.object({
+      overwrite: z.boolean().default(false).describe("Replace output file"),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, "evidence-export", async () => {
+        const config = parseConfig(process.env);
+        if (!config.ok)
+          return { error: config.error._tag, message: config.error.message };
+        const exported = await exportEvidenceBundleCommand(
+          args.source,
+          args.output,
+          options.overwrite,
+          config.value.evidenceFilePolicy,
+        );
+        return exported.ok
+          ? exported.value
+          : { error: exported.error._tag, message: exported.error.message };
+      }),
+  });
 };
 
 const logCliCommand = async <Value>(

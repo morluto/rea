@@ -1,0 +1,3 @@
+imports:
+0x100001100 libSystem.B.dylib _malloc
+0x100001108 libobjc.A.dylib _objc_msgSend weak

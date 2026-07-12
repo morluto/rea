@@ -7,7 +7,8 @@ import { BinarySession } from "../src/application/BinarySession.js";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import type { AnalysisProvider } from "../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../src/domain/errors.js";
-import { err, ok } from "../src/domain/result.js";
+import { err } from "../src/domain/result.js";
+import { observed as ok } from "./fixtures/analysisExecution.js";
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -24,9 +25,12 @@ describe("binary session", () => {
       identity: () => ({ id: "fixture", name: "Fixture", version: "1" }),
       capabilities: () => [
         {
-          operation: "fixture-analysis",
-          version: 1,
+          provider: { id: "fixture", name: "Fixture", version: "1" },
+          operation: "address_name",
+          inputContractVersion: 1,
+          outputContractVersion: 1,
           available: true,
+          reason: null,
           pagination: "none",
           exhaustive: true,
           effects: {
@@ -35,7 +39,13 @@ describe("binary session", () => {
             mayShowUi: false,
             mayAccessNetwork: false,
             mayWriteFilesystem: false,
-            requiresPrivileges: false,
+            changesPermissions: false,
+            requiresRoot: false,
+          },
+          limits: {
+            maxResults: null,
+            maxPayloadBytes: null,
+            timeoutMs: null,
           },
           limitations: [],
         },
@@ -50,13 +60,94 @@ describe("binary session", () => {
     };
     const session = new BinarySession(provider);
     expect((await session.open(first)).ok).toBe(true);
-    expect(await session.execute("fixture_operation", {})).toEqual({
+    expect(await session.execute("address_name", {})).toEqual({
       ok: true,
-      value: "fixture_operation",
+      value: {
+        result: "address_name",
+        rawResult: "address_name",
+        provider: {
+          id: "fixture",
+          name: "Fixture analysis provider",
+          version: "1",
+        },
+        limitations: [],
+        locations: [],
+        subject: null,
+      },
     });
     expect(provider.identity().id).toBe("fixture");
-    expect(provider.capabilities()[0]?.operation).toBe("fixture-analysis");
-    expect(operations).toEqual(["health", "fixture_operation"]);
+    expect(provider.capabilities()[0]?.operation).toBe("address_name");
+    expect(session.status()).toMatchObject({
+      provider: { id: "fixture", name: "Fixture", version: "1" },
+      capabilities: [
+        {
+          operation: "address_name",
+          available: true,
+          reason: null,
+          effects: {
+            mutates_artifact: false,
+            launches_process: false,
+          },
+        },
+      ],
+    });
+    expect(operations).toEqual(["health", "address_name"]);
+    await session.close();
+  });
+
+  it("returns typed unavailability without dispatching a partial provider", async () => {
+    const [first] = await targets();
+    const operations: string[] = [];
+    const provider: AnalysisProvider = {
+      identity: () => ({ id: "partial", name: "Partial", version: "1" }),
+      capabilities: () => [
+        {
+          provider: { id: "partial", name: "Partial", version: "1" },
+          operation: "address_name",
+          inputContractVersion: 1,
+          outputContractVersion: 1,
+          available: false,
+          reason: "fixture intentionally omits symbol lookup",
+          pagination: "none",
+          exhaustive: false,
+          effects: {
+            mutatesArtifact: false,
+            launchesProcess: false,
+            mayShowUi: false,
+            mayAccessNetwork: false,
+            mayWriteFilesystem: false,
+            changesPermissions: false,
+            requiresRoot: false,
+          },
+          limits: {
+            maxResults: null,
+            maxPayloadBytes: null,
+            timeoutMs: null,
+          },
+          limitations: ["No symbol lookup implementation."],
+        },
+      ],
+      createClient: () => ({
+        execute: (operation) => {
+          operations.push(operation);
+          return Promise.resolve(ok(operation));
+        },
+        close: () => Promise.resolve(),
+      }),
+    };
+    const session = new BinarySession(provider);
+    expect((await session.open(first)).ok).toBe(true);
+    const result = await session.execute("address_name", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        providerId: "partial",
+        operation: "address_name",
+        reason: "fixture intentionally omits symbol lookup",
+      });
+    }
+    expect(operations).toEqual(["health"]);
     await session.close();
   });
 
@@ -105,7 +196,7 @@ describe("binary session", () => {
 
   it("waits for an active call before closing its client during a switch", async () => {
     const [first, second] = await targets();
-    const active = deferred<ReturnType<typeof ok<null>>>();
+    const active = deferred<ReturnType<typeof ok>>();
     const clients: TestClient[] = [];
     const session = new BinarySession(() => {
       const value = new TestClient(
@@ -117,7 +208,7 @@ describe("binary session", () => {
       return value;
     });
     await session.open(first);
-    const call = session.execute("long", {});
+    const call = session.execute("procedure_pseudo_code", {});
     const switching = session.open(second);
     await Promise.resolve();
     expect(clients[0]?.closed).toBe(0);
@@ -129,7 +220,7 @@ describe("binary session", () => {
 
   it("cancels an open queued behind another transition without creating a client", async () => {
     const [first, second] = await targets();
-    const health = deferred<ReturnType<typeof ok<null>>>();
+    const health = deferred<ReturnType<typeof ok>>();
     let created = 0;
     const session = new BinarySession(() => {
       created += 1;
@@ -143,21 +234,27 @@ describe("binary session", () => {
     await opening;
     const result = await queued;
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(created).toBe(1);
   });
 
   it("cancels a call while it waits for a transition", async () => {
     const [first] = await targets();
-    const health = deferred<ReturnType<typeof ok<null>>>();
+    const health = deferred<ReturnType<typeof ok>>();
     const session = new BinarySession(() => new TestClient(health.promise));
     const opening = session.open(first);
     const controller = new AbortController();
-    const call = session.execute("overview", {}, { signal: controller.signal });
+    const call = session.execute(
+      "binary_overview",
+      {},
+      {
+        signal: controller.signal,
+      },
+    );
     controller.abort();
     const result = await call;
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
     health.resolve(ok(null));
     await opening;
   });
@@ -211,9 +308,9 @@ const client = (fail = false): AnalysisClient => ({
 class TestClient implements AnalysisClient {
   closed = 0;
   constructor(
-    readonly pendingHealth?: Promise<ReturnType<typeof ok<null>>>,
+    readonly pendingHealth?: Promise<ReturnType<typeof ok>>,
     readonly failHealth = false,
-    readonly pendingCall?: Promise<ReturnType<typeof ok<null>>>,
+    readonly pendingCall?: Promise<ReturnType<typeof ok>>,
   ) {}
   execute(name: string) {
     if (name === "health")

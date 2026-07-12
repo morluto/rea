@@ -1,6 +1,9 @@
 import type { AppConfig } from "../config.js";
 import { BinarySession } from "./BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
+import { NativeMacOSProvider } from "../native/NativeMacOSProvider.js";
+import { ArtifactProvider } from "../artifacts/ArtifactProvider.js";
+import { CompositeProvider } from "./CompositeProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
 
 /**
@@ -12,5 +15,11 @@ export const createBinarySession = (
   config: AppConfig,
   logger: Logger = silentLogger,
 ): BinarySession => {
-  return new BinarySession(new HopperProvider(config, logger));
+  return new BinarySession(
+    new CompositeProvider([
+      new ArtifactProvider(),
+      new NativeMacOSProvider(),
+      new HopperProvider(config, logger),
+    ]),
+  );
 };

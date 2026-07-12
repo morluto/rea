@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -101,11 +101,13 @@ export class HopperClient {
     }
     const socketPath = join(this.#directory, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
+    const runId = randomUUID();
     const launched = await this.#options.launcher.launch(
       {
         directory: this.#directory,
         socketPath,
         token: this.#token,
+        runId,
       },
       signal === undefined ? {} : { signal },
     );
@@ -132,7 +134,7 @@ export class HopperClient {
       await this.close();
       return health;
     }
-    const parsed = parseServerInfo(health.value);
+    const parsed = parseServerInfo(health.value, runId);
     if (!parsed.ok) await this.close();
     return parsed;
   }
@@ -170,7 +172,14 @@ export class HopperClient {
       socket?.destroy();
       this.#socket = undefined;
       if (this.#launch?.ownsProcessLifetime === true) {
-        this.#launch.process.kill("SIGTERM");
+        if (this.#launch.cleanup !== undefined) {
+          const cleanup = await this.#launch.cleanup();
+          if (!cleanup.cleaned)
+            this.#logger.warn(
+              { reason: cleanup.reason },
+              "Owned launcher cleanup failed closed",
+            );
+        } else this.#launch.process.kill("SIGTERM");
       }
       this.#launch = undefined;
       if (this.#directory !== undefined) {
@@ -388,13 +397,15 @@ const connectOnce = async (
 
 const parseServerInfo = (
   value: JsonValue,
+  expectedRunId: string,
 ): Result<HopperServerInfo, HopperProtocolError> => {
   if (
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
     value.name === "REA Hopper bridge" &&
-    typeof value.version === "string"
+    typeof value.version === "string" &&
+    value.run_id === expectedRunId
   ) {
     return ok({ name: value.name, version: value.version });
   }

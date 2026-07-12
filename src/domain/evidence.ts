@@ -15,11 +15,32 @@ const providerSchema = z.object({
 const subjectSchema = z.object({
   name: z.string().min(1),
   digest: z.object({ sha256: digestSchema }),
-  format: z.enum(["hopper", "mach-o", "elf", "pe"]),
+  format: z.enum([
+    "hopper",
+    "mach-o",
+    "elf",
+    "pe",
+    "zip",
+    "ipa",
+    "apk",
+    "asar",
+    "dmg",
+    "pkg",
+    "plist",
+    "javascript",
+    "source-map",
+    "directory",
+    "file",
+    "unknown",
+    "mach-o-universal",
+    "javascript-bundle",
+    "entitlements",
+  ]),
   architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
   local_path: z.string(),
 });
-const locationSchema = z.discriminatedUnion("kind", [
+/** Source location attached to an evidence observation. */
+const evidenceLocationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("address"), address: z.string().min(1) }),
   z.object({
     kind: z.literal("address-range"),
@@ -27,6 +48,12 @@ const locationSchema = z.discriminatedUnion("kind", [
     end: z.string().min(1),
   }),
   z.object({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
+  z.object({ kind: z.literal("file-offset"), offset: z.number().int().min(0) }),
+  z.object({
+    kind: z.literal("file-offset-range"),
+    start: z.number().int().min(0),
+    end: z.number().int().min(0),
+  }),
 ]);
 
 const evidenceAuthoritySchema = z.enum([
@@ -53,18 +80,26 @@ export const evidenceSchema = z.object({
   predicate_type: z.string().min(1),
   operation: z.string().min(1),
   parameters: z.record(z.string(), jsonValueSchema),
-  result: jsonValueSchema,
-  raw_payload_sha256: digestSchema.nullable(),
+  raw_result: jsonValueSchema.nullable(),
+  normalized_result: jsonValueSchema,
   confidence: z.enum(["observed", "derived", "inferred"]),
   authority: evidenceAuthoritySchema,
   environment: executionEnvironmentSchema.nullable(),
   limitations: z.array(z.string()),
-  locations: z.array(locationSchema),
+  locations: z.array(evidenceLocationSchema),
   evidence_links: z.array(z.string().regex(/^ev_[a-f0-9]{64}$/u)),
 });
 
 export type Evidence = z.infer<typeof evidenceSchema>;
-type EvidenceLocation = z.infer<typeof locationSchema>;
+export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
+
+/** Minimal immutable local artifact identity accepted by Evidence v2. */
+export interface EvidenceSubjectTarget {
+  readonly path: string;
+  readonly sha256: string;
+  readonly format: z.infer<typeof subjectSchema>["format"];
+  readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
+}
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
@@ -79,7 +114,7 @@ export interface EvidenceObservation {
   readonly operation: string;
   readonly parameters: Readonly<Record<string, JsonValue>>;
   readonly result: JsonValue;
-  readonly redactedRawPayload?: JsonValue;
+  readonly rawResult?: JsonValue;
   readonly confidence?: "observed" | "derived" | "inferred";
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
@@ -115,7 +150,8 @@ const semanticProjection = (
   predicate_type: evidence.predicate_type,
   operation: evidence.operation,
   parameters: evidence.parameters,
-  result: evidence.result,
+  raw_result: evidence.raw_result,
+  normalized_result: evidence.normalized_result,
   confidence: evidence.confidence,
   authority: evidence.authority,
   environment: evidence.environment,
@@ -130,6 +166,15 @@ const computeEvidenceId = (evidence: Omit<Evidence, "evidence_id">): string =>
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "schema_version" in input &&
+    input.schema_version !== 2
+  )
+    throw new TypeError(
+      `Unsupported evidence schema_version ${String(input.schema_version)}; Evidence v1 is not accepted. Produce Evidence v2.`,
+    );
   const evidence = evidenceSchema.parse(input);
   const { evidence_id: evidenceId, ...withoutId } = evidence;
   if (computeEvidenceId(withoutId) !== evidenceId)
@@ -141,7 +186,7 @@ export const parseEvidence = (input: unknown): Evidence => {
 
 /** Build deterministic Evidence v2 from an immutable artifact subject. */
 export const createEvidence = (
-  target: BinaryTarget | undefined,
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
 ): Evidence => {
@@ -173,7 +218,8 @@ export const createEvidence = (
     predicate_type: observation.predicateType ?? "rea.analysis/v2",
     operation: observation.operation,
     parameters: observation.parameters,
-    result: observation.result,
+    raw_result: observation.rawResult ?? null,
+    normalized_result: observation.result,
     confidence: observation.confidence ?? "observed",
     authority: observation.authority ?? "shipped-artifact",
     environment: observation.environment ?? null,
@@ -190,9 +236,5 @@ export const createEvidence = (
     ...semantic,
     evidence_id: `ev_${sha256(canonicalJson(semantic))}`,
     subject,
-    raw_payload_sha256:
-      observation.redactedRawPayload === undefined
-        ? null
-        : sha256(canonicalJson(observation.redactedRawPayload)),
   });
 };

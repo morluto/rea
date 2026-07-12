@@ -2,6 +2,14 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import {
+  ENHANCED_TOOL_CONTRACTS,
+  OFFICIAL_TOOL_CONTRACTS,
+  SESSION_TOOL_CONTRACTS,
+  TOOL_CONTRACTS,
+} from "../src/contracts/toolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 
 const readmes = [
   "README.md",
@@ -22,10 +30,17 @@ describe("localized README product facts", () => {
       expect(content).toContain('"args": ["-y", "rea-agents", "mcp"]');
       expect(content).toContain("Node.js 24");
       expect(content).toContain("macOS 12");
-      expect(content).toMatch(/\b50\b/u);
-      expect(content).toMatch(/\b33\b/u);
-      expect(content).toMatch(/\b10\b/u);
-      expect(content).toMatch(/\b3\b/u);
+      expect(content).toContain(`MCP_tools-${String(TOOL_CONTRACTS.length)}`);
+      for (const count of [
+        OFFICIAL_TOOL_CONTRACTS.length,
+        ENHANCED_TOOL_CONTRACTS.length,
+        NATIVE_TOOL_CONTRACTS.length,
+        ARTIFACT_TOOL_CONTRACTS.length,
+        SESSION_TOOL_CONTRACTS.length,
+      ])
+        expect(content).toMatch(
+          new RegExp(`\\|\\s*${String(count)}\\s*\\|`, "u"),
+        );
     },
   );
 });

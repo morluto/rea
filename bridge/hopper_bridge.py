@@ -9,11 +9,15 @@ import json
 import hmac
 import os
 import re
+import sre_parse
 import socket
 
 MAX_LINE_BYTES = 10 * 1024 * 1024
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 _selected_document = None
+_search_inventory_cache = {}
+MAX_SEARCH_PATTERN_LENGTH = 256
+MAX_SEARCH_VALUE_LENGTH = 4096
 
 
 def _hex(value):
@@ -87,6 +91,17 @@ def _procedure_name(procedure):
 
 def _procedure_identity(procedure):
     return {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure)}
+
+
+def _procedure_locals(procedure):
+    """Project opaque Hopper local-variable objects into an exact public shape."""
+    return [
+        {
+            "description": str(local),
+            "provenance": "hopper-public-python-api",
+        }
+        for local in procedure.getLocalVariableList()
+    ]
 
 
 def _containing_procedure(document, address):
@@ -180,6 +195,105 @@ def _strings(document):
         for value, address in segment.getStringsList():
             result[_hex(address)] = value
     return result
+
+
+def _invalidate_search_inventory(document):
+    """Discard derived names after analysis metadata changes."""
+    document_id = id(document)
+    for key in list(_search_inventory_cache):
+        if key[0] == document_id:
+            del _search_inventory_cache[key]
+
+
+def _search_inventory(document, kind):
+    """Cache an immutable, address-sorted inventory for an unchanged document."""
+    key = (id(document), kind)
+    inventory = _search_inventory_cache.get(key)
+    if inventory is None:
+        values = _procedure_map(document) if kind == "procedure" else _strings(document)
+        inventory = tuple(sorted(values.items(), key=lambda item: int(item[0], 16)))
+        _search_inventory_cache[key] = inventory
+    return inventory
+
+
+def _validate_regex_node(node, inside_repeat=False):
+    """Reject regex structures with disproportionate or non-local evaluation cost."""
+    forbidden = {
+        sre_parse.ASSERT,
+        sre_parse.ASSERT_NOT,
+        sre_parse.GROUPREF,
+        sre_parse.GROUPREF_EXISTS,
+    }
+    repeat_tokens = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
+    possessive = getattr(sre_parse, "POSSESSIVE_REPEAT", None)
+    if possessive is not None:
+        repeat_tokens.add(possessive)
+    for operation, argument in node:
+        if operation in forbidden:
+            raise ValueError("Regex lookarounds and backreferences are not supported")
+        if operation in repeat_tokens:
+            if inside_repeat:
+                raise ValueError("Nested regex repetitions are not supported")
+            minimum, maximum, child = argument
+            if maximum == sre_parse.MAXREPEAT or maximum > 1000:
+                raise ValueError("Unbounded or excessive regex repetitions are not supported")
+            _validate_regex_node(child, True)
+        elif operation == sre_parse.SUBPATTERN:
+            _validate_regex_node(argument[-1], inside_repeat)
+        elif operation == sre_parse.BRANCH:
+            for branch in argument[1]:
+                _validate_regex_node(branch, inside_repeat)
+
+
+def _search_page(document, kind, params):
+    pattern = params.get("pattern")
+    if not isinstance(pattern, str) or not pattern or len(pattern) > MAX_SEARCH_PATTERN_LENGTH:
+        raise ValueError("pattern must contain between 1 and 256 characters")
+    mode = params.get("mode", "literal")
+    if mode not in ("literal", "regex"):
+        raise ValueError("mode must be literal or regex")
+    case_sensitive = params.get("case_sensitive", False)
+    if not isinstance(case_sensitive, bool):
+        raise ValueError("case_sensitive must be a boolean")
+    offset = params.get("offset", 0)
+    limit = params.get("limit", 100)
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 100:
+        raise ValueError("limit must be an integer between 1 and 100")
+
+    if mode == "literal":
+        needle = pattern if case_sensitive else pattern.casefold()
+        matches = lambda value: needle in (value if case_sensitive else value.casefold())
+    else:
+        try:
+            parsed = sre_parse.parse(pattern)
+            _validate_regex_node(parsed)
+            expression = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
+        except re.error as error:
+            raise ValueError("Invalid regex pattern") from error
+        matches = lambda value: expression.search(value) is not None
+
+    matching = [item for item in _search_inventory(document, kind) if matches(item[1])]
+    selected = matching[offset:offset + limit]
+    total = len(matching)
+    next_offset = offset + len(selected)
+    has_more = next_offset < total
+    return {
+        "items": [
+            {
+                "address": address,
+                "value": value[:MAX_SEARCH_VALUE_LENGTH],
+                "value_truncated": len(value) > MAX_SEARCH_VALUE_LENGTH,
+            }
+            for address, value in selected
+        ],
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "next_offset": next_offset if has_more else None,
+        "has_more": has_more,
+    }
 
 
 def _page(values, offset, limit):
@@ -354,7 +468,7 @@ def _analyze_function(document, params):
     def collection(name, items, scan_limited=False):
         return _bounded(items, _collection_offset(params, name), limit, None, scan_limited)
     return {
-        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "signature": procedure.signatureString(), "locals": _json_safe(procedure.getLocalVariableList())},
+        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)},
         "pseudocode": {"text": pseudo_text, "total_chars": len(pseudo), "returned_chars": len(pseudo_text), "truncated": pseudo_next < len(pseudo), "next_offset": pseudo_next if pseudo_next < len(pseudo) else None},
         "assembly": _bounded(assembly_lines, assembly_offset, max_instructions),
         "comments": collection("comments", comments, instruction_scan_truncated),
@@ -372,7 +486,7 @@ def _dispatch(method, params):
     """Dispatch only the closed operation set implemented by REA's public tools."""
     global _selected_document
     if method == "health":
-        return {"name": "REA Hopper bridge", "version": "1.0.0"}
+        return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
     if method == "shutdown":
         return {"shutdown": True}
     if method == "list_documents":
@@ -426,18 +540,30 @@ def _dispatch(method, params):
         return _hex(result)
     if method == "list_segments":
         result = []
+        permission_limitation = _unavailable(
+            "Hopper's public Python API does not expose segment or section permissions"
+        )
         for segment in document.getSegmentsList():
             start = segment.getStartingAddress()
-            sections = [{"name": section.getName(), "start": _hex(section.getStartingAddress()), "end": _hex(section.getStartingAddress() + section.getLength())} for section in segment.getSectionsList()]
+            sections = [{
+                "name": section.getName(),
+                "start": _hex(section.getStartingAddress()),
+                "end": _hex(section.getStartingAddress() + section.getLength()),
+                "readable": None,
+                "writable": None,
+                "executable": None,
+                "permissions": permission_limitation,
+                "provenance": "hopper-public-python-api",
+            } for section in segment.getSectionsList()]
             result.append({
                 "name": segment.getName(),
                 "start": _hex(start),
                 "end": _hex(start + segment.getLength()),
+                "readable": None,
                 "writable": None,
                 "executable": None,
-                "permissions": _unavailable(
-                    "Hopper's public Python API does not expose segment permissions"
-                ),
+                "permissions": permission_limitation,
+                "provenance": "hopper-public-python-api",
                 "sections": sections,
             })
         return result
@@ -461,10 +587,8 @@ def _dispatch(method, params):
             result = {key: result[key]} if key in result else {}
         return _page(result, params.get("offset", 0), params.get("limit", 100))
     if method in ("search_procedures", "search_strings"):
-        flags = 0 if params.get("case_sensitive", False) else re.IGNORECASE
-        expression = re.compile(params["pattern"], flags)
-        values = _procedure_map(document) if method == "search_procedures" else _strings(document)
-        return {key: value for key, value in values.items() if expression.search(value)}
+        kind = "procedure" if method == "search_procedures" else "string"
+        return _search_page(document, kind, params)
     if method.startswith("procedure_"):
         procedure = _procedure(document, params.get("procedure"))
         if method == "procedure_address":
@@ -480,12 +604,16 @@ def _dispatch(method, params):
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
             length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
-            return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": procedure.getLocalVariableList()}
+            return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)}
     if method == "set_address_name":
         address = _address(document, params.get("address"))
-        return document.setNameAtAddress(address, params["name"])
+        result = document.setNameAtAddress(address, params["name"])
+        _invalidate_search_inventory(document)
+        return result
     if method == "set_addresses_names":
-        return {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
+        result = {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
+        _invalidate_search_inventory(document)
+        return result
     if method in ("set_comment", "set_inline_comment"):
         address = _address(document, params.get("address"))
         segment = _segment(document, address)
