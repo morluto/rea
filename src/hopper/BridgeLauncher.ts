@@ -1,8 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
+import { promisify } from "node:util";
 
 import { HopperStartError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+
+const execFileAsync = promisify(execFile);
+const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
 
 /** Coordinates for one private bridge session. */
 export interface BridgeSession {
@@ -64,6 +70,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       this.options.targetPath,
     ];
     try {
+      await prepareHopperApplication(this.options.launcherPath);
       const child = spawn(this.options.launcherPath, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -88,3 +95,38 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
   }
 }
+
+const prepareHopperApplication = async (
+  launcherPath: string,
+): Promise<void> => {
+  const appBundle = hopperApplicationBundle(launcherPath);
+  if (appBundle === undefined) return;
+  const executablePath = join(appBundle, "Contents/MacOS/Hopper Disassembler");
+  if (await processIsRunning(executablePath)) return;
+  await execFileAsync("/usr/bin/open", [
+    "--hide",
+    "--background",
+    "-a",
+    appBundle,
+  ]);
+  await new Promise((resolve) =>
+    setTimeout(resolve, HOPPER_BACKGROUND_STARTUP_MS),
+  );
+};
+
+const hopperApplicationBundle = (launcherPath: string): string | undefined => {
+  if (basename(launcherPath) !== "hopper") return undefined;
+  const candidate = dirname(dirname(dirname(launcherPath)));
+  return extname(candidate) === ".app" ? candidate : undefined;
+};
+
+const processIsRunning = async (executablePath: string): Promise<boolean> => {
+  try {
+    const processes = await execFileAsync("/bin/ps", ["-ax", "-o", "command="]);
+    return processes.stdout
+      .split("\n")
+      .some((command) => command.trim() === executablePath);
+  } catch {
+    return false;
+  }
+};

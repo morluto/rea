@@ -9,6 +9,8 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
+const hopperProcessPrefix = "/Applications/Hopper Disassembler.app/Contents/";
+const hopperProcessesBefore = await hopperProcessIds();
 const sessionsBefore = new Set(
   (await readdir("/tmp")).filter((name) => name.startsWith("bbm-")),
 );
@@ -155,6 +157,7 @@ try {
     await transport.close();
   } finally {
     clearInterval(keepAlive);
+    await terminateNewHopperProcesses(hopperProcessesBefore);
   }
 }
 
@@ -190,3 +193,32 @@ await new Promise((resolve, reject) => {
     },
   );
 });
+
+async function hopperProcessIds() {
+  const result = await execFileAsync("ps", ["-ax", "-o", "pid=,command="]);
+  return new Set(
+    result.stdout
+      .split("\n")
+      .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+      .filter((match) => match?.[2]?.startsWith(hopperProcessPrefix) === true)
+      .map((match) => Number(match[1])),
+  );
+}
+
+async function terminateNewHopperProcesses(previous) {
+  const current = await hopperProcessIds();
+  const owned = [...current].filter((pid) => !previous.has(pid));
+  for (const pid of owned) process.kill(pid, "SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  for (const pid of owned) {
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch (cause) {
+      if (
+        !(cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+      )
+        throw cause;
+    }
+  }
+}

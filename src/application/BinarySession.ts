@@ -39,18 +39,21 @@ export class BinarySession implements HopperToolPort {
         return ok(parsed.value);
       await this.#drainCalls();
       const previous = this.#active;
+      this.#active = undefined;
+      await previous?.client.close();
       const client = this.createClient(parsed.value);
       const started = await client.callTool("health", {}, options);
       if (!started.ok) {
         await client.close();
+        await this.#restore(previous);
         return started;
       }
       if (isAborted(options.signal)) {
         await client.close();
+        await this.#restore(previous);
         return err(new HopperCancelledError());
       }
       this.#active = { target: parsed.value, client };
-      await previous?.client.close();
       return ok(parsed.value);
     });
   }
@@ -109,6 +112,18 @@ export class BinarySession implements HopperToolPort {
 
   async #drainCalls(): Promise<void> {
     await Promise.allSettled([...this.#calls]);
+  }
+
+  async #restore(
+    previous:
+      | { readonly target: BinaryTarget; readonly client: BinaryClient }
+      | undefined,
+  ): Promise<void> {
+    if (previous === undefined) return;
+    const client = this.createClient(previous.target);
+    const started = await client.callTool("health", {});
+    if (started.ok) this.#active = { target: previous.target, client };
+    else await client.close();
   }
 
   async #waitForTransition(
