@@ -24,7 +24,7 @@
       },
       {
         "path": "skills/rea-analysis/SKILL.md",
-        "sha256": "a33b0eeb8dad412249d11c696c712390e3da29b2f73d49dd94c424ac7438a8e7"
+        "sha256": "d5a3a5329e7db590a06f5b0b1af6551704579b78711d9c6a229715b5a832906e"
       },
       {
         "path": "src/application/AnalysisProvider.ts",
