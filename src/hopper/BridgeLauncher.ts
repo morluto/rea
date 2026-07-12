@@ -4,7 +4,7 @@ import { chmod, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
-import { HopperStartError } from "../domain/errors.js";
+import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const execFileAsync = promisify(execFile);
@@ -27,7 +27,8 @@ export interface BridgeLaunch {
 export interface BridgeLauncher {
   launch(
     session: BridgeSession,
-  ): Promise<Result<BridgeLaunch, HopperStartError>>;
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>>;
 }
 
 export interface HopperApplicationLauncherOptions {
@@ -56,7 +57,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
 
   async launch(
     session: BridgeSession,
-  ): Promise<Result<BridgeLaunch, HopperStartError>> {
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>> {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
     const source = [
       `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
@@ -82,7 +84,13 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       this.options.targetPath,
     ];
     try {
-      await prepareHopperApplication(this.options.launcherPath);
+      if (options.signal?.aborted === true)
+        return err(new HopperCancelledError());
+      const prepared = await prepareHopperApplication(
+        this.options.launcherPath,
+        options.signal,
+      );
+      if (!prepared) return err(new HopperCancelledError());
       const child = spawn(this.options.launcherPath, args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -110,11 +118,12 @@ export class HopperApplicationLauncher implements BridgeLauncher {
 
 const prepareHopperApplication = async (
   launcherPath: string,
-): Promise<void> => {
+  signal?: AbortSignal,
+): Promise<boolean> => {
   const appBundle = hopperApplicationBundle(launcherPath);
-  if (appBundle === undefined) return;
+  if (appBundle === undefined) return signal?.aborted !== true;
   const executablePath = join(appBundle, "Contents/MacOS/Hopper Disassembler");
-  if (await processIsRunning(executablePath)) return;
+  if (await processIsRunning(executablePath)) return signal?.aborted !== true;
   // This reduces activation when Hopper is cold, but the vendor launcher that
   // follows may still activate its window. See HopperApplicationLauncher.
   await execFileAsync("/usr/bin/open", [
@@ -123,9 +132,25 @@ const prepareHopperApplication = async (
     "-a",
     appBundle,
   ]);
-  await new Promise((resolve) =>
-    setTimeout(resolve, HOPPER_BACKGROUND_STARTUP_MS),
-  );
+  return waitForDelay(HOPPER_BACKGROUND_STARTUP_MS, signal);
+};
+
+const waitForDelay = (
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (signal?.aborted === true) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 };
 
 const hopperApplicationBundle = (launcherPath: string): string | undefined => {

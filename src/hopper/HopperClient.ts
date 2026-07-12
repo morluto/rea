@@ -81,12 +81,15 @@ export class HopperClient {
   }
 
   /** Launch the bridge once and complete its authenticated health handshake. */
-  start(): Promise<Result<HopperServerInfo, HopperError>> {
-    this.#startPromise ??= this.#start();
+  start(signal?: AbortSignal): Promise<Result<HopperServerInfo, HopperError>> {
+    this.#startPromise ??= this.#start(signal);
     return this.#startPromise;
   }
 
-  async #start(): Promise<Result<HopperServerInfo, HopperError>> {
+  async #start(
+    signal?: AbortSignal,
+  ): Promise<Result<HopperServerInfo, HopperError>> {
+    if (signal?.aborted === true) return err(new HopperCancelledError());
     if (this.#socket !== undefined || this.#directory !== undefined) {
       return err(new HopperProtocolError("Hopper client is already started"));
     }
@@ -97,18 +100,21 @@ export class HopperClient {
     }
     const socketPath = join(this.#directory, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
-    const launched = await this.#options.launcher.launch({
-      directory: this.#directory,
-      socketPath,
-      token: this.#token,
-    });
+    const launched = await this.#options.launcher.launch(
+      {
+        directory: this.#directory,
+        socketPath,
+        token: this.#token,
+      },
+      signal === undefined ? {} : { signal },
+    );
     if (!launched.ok) {
       await this.close();
       return launched;
     }
     this.#launch = launched.value;
     this.#attachLauncher(launched.value);
-    const connected = await this.#connect(socketPath);
+    const connected = await this.#connect(socketPath, signal);
     if (!connected.ok) {
       await this.close();
       return connected;
@@ -118,6 +124,7 @@ export class HopperClient {
       {},
       {
         timeoutMs: this.#options.startupTimeoutMs,
+        ...(signal === undefined ? {} : { signal }),
       },
     );
     if (!health.ok) {
@@ -138,7 +145,7 @@ export class HopperClient {
       readonly timeoutMs?: number;
     } = {},
   ): Promise<Result<JsonValue, HopperError>> {
-    const started = await this.start();
+    const started = await this.start(options.signal);
     if (!started.ok) return started;
     return this.#request(name, arguments_, options);
   }
@@ -177,14 +184,19 @@ export class HopperClient {
     }
   }
 
-  async #connect(socketPath: string): Promise<Result<undefined, HopperError>> {
+  async #connect(
+    socketPath: string,
+    signal?: AbortSignal,
+  ): Promise<Result<undefined, HopperError>> {
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (Date.now() < deadline) {
+      if (signal?.aborted === true) return err(new HopperCancelledError());
       if (this.#closing) return err(new HopperProcessError(null));
       try {
         await access(socketPath);
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!(await waitForDelay(50, signal)))
+          return err(new HopperCancelledError());
         continue;
       }
       const attempt = await connectOnce(socketPath);
@@ -193,7 +205,8 @@ export class HopperClient {
         this.#attachSocket(attempt.value);
         return ok(undefined);
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (!(await waitForDelay(50, signal)))
+        return err(new HopperCancelledError());
     }
     return err(new HopperTimeoutError(this.#options.startupTimeoutMs));
   }
@@ -328,6 +341,24 @@ export class HopperClient {
     for (const id of [...this.#pending.keys()]) this.#settle(id, err(error));
   }
 }
+
+const waitForDelay = (
+  milliseconds: number,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (signal?.aborted === true) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
 
 const connectOnce = async (
   socketPath: string,

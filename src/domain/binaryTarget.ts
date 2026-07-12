@@ -1,5 +1,11 @@
 import { constants } from "node:fs";
-import { access, open, realpath, stat } from "node:fs/promises";
+import {
+  access,
+  open,
+  realpath,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { BinaryTargetError } from "./errors.js";
@@ -44,15 +50,12 @@ export const parseBinaryTarget = async (
     )
       return ok({ path, kind: "database", format: "hopper", loaderArgs: [] });
     const handle = await open(path, "r");
-    let bytes: Buffer;
+    let detected: Result<ExecutableMetadata, string>;
     try {
-      bytes = Buffer.alloc(4096);
-      const read = await handle.read(bytes, 0, bytes.length, 0);
-      bytes = bytes.subarray(0, read.bytesRead);
+      detected = await readExecutableMetadata(handle, hostArchitecture);
     } finally {
       await handle.close();
     }
-    const detected = parseExecutableHeader(bytes, hostArchitecture);
     if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
     return ok({ path, kind: "executable", ...detected.value });
   } catch (cause: unknown) {
@@ -66,6 +69,42 @@ type ExecutableMetadata = Pick<
   BinaryTarget,
   "format" | "architecture" | "availableArchitectures" | "loaderArgs"
 >;
+
+const readExecutableMetadata = async (
+  handle: FileHandle,
+  hostArchitecture: NodeJS.Architecture,
+): Promise<Result<ExecutableMetadata, string>> => {
+  const prefix = Buffer.alloc(4096);
+  const prefixRead = await handle.read(prefix, 0, prefix.length, 0);
+  const bytes = prefix.subarray(0, prefixRead.bytesRead);
+  if (bytes.length >= 64 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+    const offset = bytes.readUInt32LE(0x3c);
+    if (offset > bytes.length - 6) {
+      const record = Buffer.alloc(6);
+      const recordRead = await handle.read(record, 0, record.length, offset);
+      return recordRead.bytesRead === record.length
+        ? parsePeRecord(record)
+        : err("invalid or truncated PE header");
+    }
+  }
+  if (bytes.length >= 8) {
+    const magic = bytes.readUInt32BE(0);
+    if ([0xcafebabf, 0xbfbafeca].includes(magic)) {
+      const little = magic === 0xbfbafeca;
+      const count = little ? bytes.readUInt32LE(4) : bytes.readUInt32BE(4);
+      const required = 8 + count * 32;
+      if (count <= 128 && required > bytes.length) {
+        const header = Buffer.alloc(required);
+        const headerRead = await handle.read(header, 0, header.length, 0);
+        return parseExecutableHeader(
+          header.subarray(0, headerRead.bytesRead),
+          hostArchitecture,
+        );
+      }
+    }
+  }
+  return parseExecutableHeader(bytes, hostArchitecture);
+};
 
 /**
  * Parse supported executable headers without I/O and derive explicit Hopper
@@ -175,12 +214,14 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
 const parsePe = (bytes: Buffer): Result<ExecutableMetadata, string> => {
   if (bytes.length < 64) return err("truncated PE DOS header");
   const offset = bytes.readUInt32LE(0x3c);
-  if (
-    offset > bytes.length - 6 ||
-    bytes.toString("binary", offset, offset + 4) !== "PE\u0000\u0000"
-  )
+  if (offset > bytes.length - 6) return err("invalid or truncated PE header");
+  return parsePeRecord(bytes.subarray(offset, offset + 6));
+};
+
+const parsePeRecord = (record: Buffer): Result<ExecutableMetadata, string> => {
+  if (record.length < 6 || record.toString("binary", 0, 4) !== "PE\u0000\u0000")
     return err("invalid or truncated PE header");
-  const architecture = peArchitecture(bytes.readUInt16LE(offset + 4));
+  const architecture = peArchitecture(record.readUInt16LE(4));
   if (architecture === undefined) return err("unsupported PE architecture");
   return ok({
     format: "pe",

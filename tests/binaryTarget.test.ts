@@ -95,6 +95,17 @@ describe("binary target I/O", () => {
       loaderArgs: [],
     });
   });
+
+  it("reads a PE header beyond the initial probe", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    const path = join(directory, "delayed.exe");
+    await writeFile(path, pe(0x8664, 8192));
+    const result = await parseBinaryTarget(path, directory, "x64");
+    expect(result.ok && result.value).toMatchObject({
+      format: "pe",
+      architecture: "x86_64",
+    });
+  });
 });
 
 const elf = (class_: number, endian: number, machine: number): Buffer => {
@@ -118,11 +129,11 @@ const fat = (cpus: readonly number[], declared = cpus.length): Buffer => {
   cpus.forEach((cpu, index) => bytes.writeUInt32BE(cpu, 8 + index * 20));
   return bytes;
 };
-const pe = (machine: number): Buffer => {
-  const bytes = Buffer.alloc(128);
+const pe = (machine: number, offset = 64): Buffer => {
+  const bytes = Buffer.alloc(Math.max(128, offset + 6));
   bytes.write("MZ", 0, "ascii");
-  bytes.writeUInt32LE(64, 0x3c);
-  bytes.write("PE\0\0", 64, "binary");
-  bytes.writeUInt16LE(machine, 68);
+  bytes.writeUInt32LE(offset, 0x3c);
+  bytes.write("PE\0\0", offset, "binary");
+  bytes.writeUInt16LE(machine, offset + 4);
   return bytes;
 };
