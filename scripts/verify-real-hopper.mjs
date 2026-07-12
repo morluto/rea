@@ -9,10 +9,6 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
-const hopperProcessPrefix = "/Applications/Hopper Disassembler.app/Contents/";
-// Snapshot bundle processes so cleanup terminates only Hopper processes this
-// verifier caused to appear, never an instance the user already had running.
-const hopperProcessesBefore = await hopperProcessIds();
 const sessionsBefore = new Set(
   (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
 );
@@ -77,6 +73,9 @@ const requireFunctionDossier = (value, expectedAddress) => {
     "callers",
     "callees",
     "incoming_references",
+    "outgoing_references",
+    "referenced_strings",
+    "referenced_names",
     "basic_blocks",
   ]) {
     const collection = value[field];
@@ -88,6 +87,27 @@ const requireFunctionDossier = (value, expectedAddress) => {
     ) {
       throw new Error(`analyze_function returned an invalid ${field} result`);
     }
+  }
+  for (const field of ["callers", "callees"]) {
+    for (const identity of value[field].items) {
+      if (
+        typeof identity?.address !== "string" ||
+        typeof identity?.name !== "string"
+      ) {
+        throw new Error(`analyze_function returned an untyped ${field} item`);
+      }
+    }
+  }
+  for (const block of value.basic_blocks.items) {
+    if (!Array.isArray(block?.successors)) {
+      throw new Error("analyze_function omitted CFG successor evidence");
+    }
+  }
+  if (
+    typeof value.instruction_scan?.scanned !== "number" ||
+    typeof value.instruction_scan?.truncated !== "boolean"
+  ) {
+    throw new Error("analyze_function omitted instruction scan limitations");
   }
   return value;
 };
@@ -156,7 +176,7 @@ try {
   const expectedNames = TOOL_CONTRACTS.map(({ name }) => name).sort();
   const actualNames = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    throw new Error("The real server did not expose the intended 46 tools");
+    throw new Error("The real server did not expose the intended 50 tools");
   }
 
   const options = { timeout };
@@ -314,7 +334,6 @@ try {
     await transport.close();
   } finally {
     clearInterval(keepAlive);
-    await terminateNewHopperProcesses(hopperProcessesBefore);
   }
 }
 
@@ -350,34 +369,3 @@ await new Promise((resolve, reject) => {
     },
   );
 });
-
-async function hopperProcessIds() {
-  const result = await execFileAsync("ps", ["-ax", "-o", "pid=,command="]);
-  return new Set(
-    result.stdout
-      .split("\n")
-      .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
-      .filter((match) => match?.[2]?.startsWith(hopperProcessPrefix) === true)
-      .map((match) => Number(match[1])),
-  );
-}
-
-async function terminateNewHopperProcesses(previous) {
-  const current = await hopperProcessIds();
-  const owned = [...current].filter((pid) => !previous.has(pid));
-  for (const pid of owned) signalProcess(pid, "SIGTERM");
-  await new Promise((resolve) => setTimeout(resolve, 1_000));
-  for (const pid of owned)
-    if (signalProcess(pid, 0)) signalProcess(pid, "SIGKILL");
-}
-
-function signalProcess(pid, signal) {
-  try {
-    process.kill(pid, signal);
-    return true;
-  } catch (cause) {
-    if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
-      return false;
-    throw cause;
-  }
-}

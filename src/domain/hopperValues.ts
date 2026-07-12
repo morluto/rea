@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { JsonValue } from "./jsonValue.js";
-import { HopperProtocolError } from "./errors.js";
+import { AnalysisProtocolError, HopperProtocolError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 
 export interface AddressedName {
@@ -36,6 +36,156 @@ const addressedPageSchema = z.object({
   next_offset: z.number().int().min(0).nullable(),
   has_more: z.boolean(),
 });
+const unavailableSchema = z
+  .object({ available: z.literal(false), reason: z.string() })
+  .strict();
+const procedureIdentitySchema = z
+  .object({ address: z.string(), name: z.string() })
+  .strict();
+const boundedSchema = <T extends z.ZodType>(item: T) =>
+  z
+    .object({
+      items: z.array(item),
+      total: z.number().int().min(0).nullable(),
+      returned: z.number().int().min(0),
+      truncated: z.boolean(),
+      next_offset: z.number().int().min(0).nullable(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.returned !== value.items.length) {
+        context.addIssue({
+          code: "custom",
+          message: "returned must equal the number of items",
+          path: ["returned"],
+        });
+      }
+      if (value.total !== null && value.total < value.returned) {
+        context.addIssue({
+          code: "custom",
+          message: "total cannot be smaller than returned",
+          path: ["total"],
+        });
+      }
+      if (value.next_offset !== null && !value.truncated) {
+        context.addIssue({
+          code: "custom",
+          message: "a continuation requires truncated output",
+          path: ["next_offset"],
+        });
+      }
+    });
+const referenceEdgeSchema = z
+  .object({
+    source_address: z.string(),
+    target_address: z.string(),
+    source_procedure: procedureIdentitySchema.nullable(),
+    target_procedure: procedureIdentitySchema.nullable(),
+    kind: unavailableSchema,
+  })
+  .strict();
+const functionDossierSchema = z
+  .object({
+    procedure: z
+      .object({
+        address: z.string(),
+        name: z.string(),
+        signature: z.string().nullable(),
+        locals: z.array(z.json()),
+      })
+      .strict(),
+    pseudocode: z
+      .object({
+        text: z.string(),
+        total_chars: z.number().int().min(0),
+        returned_chars: z.number().int().min(0),
+        truncated: z.boolean(),
+        next_offset: z.number().int().min(0).nullable(),
+      })
+      .strict()
+      .superRefine((value, context) => {
+        if (value.returned_chars !== value.text.length) {
+          context.addIssue({
+            code: "custom",
+            message: "returned_chars must equal the text length",
+            path: ["returned_chars"],
+          });
+        }
+        if (value.total_chars < value.returned_chars) {
+          context.addIssue({
+            code: "custom",
+            message: "total_chars cannot be smaller than returned_chars",
+            path: ["total_chars"],
+          });
+        }
+        if (value.next_offset !== null && !value.truncated) {
+          context.addIssue({
+            code: "custom",
+            message: "a continuation requires truncated pseudocode",
+            path: ["next_offset"],
+          });
+        }
+      }),
+    assembly: boundedSchema(z.string()),
+    comments: boundedSchema(
+      z
+        .object({
+          address: z.string(),
+          kind: z.enum(["comment", "inline"]),
+          text: z.string(),
+        })
+        .strict(),
+    ),
+    callers: boundedSchema(procedureIdentitySchema),
+    callees: boundedSchema(procedureIdentitySchema),
+    incoming_references: boundedSchema(referenceEdgeSchema),
+    outgoing_references: boundedSchema(referenceEdgeSchema),
+    referenced_strings: boundedSchema(
+      z
+        .object({
+          address: z.string(),
+          value: z.string(),
+          source_address: z.string(),
+        })
+        .strict(),
+    ),
+    referenced_names: boundedSchema(
+      z
+        .object({
+          address: z.string(),
+          value: z.string(),
+          source_address: z.string(),
+        })
+        .strict(),
+    ),
+    basic_blocks: boundedSchema(
+      z
+        .object({
+          start: z.string(),
+          end: z.string(),
+          successors: z.array(z.string()),
+        })
+        .strict(),
+    ),
+    instruction_scan: z
+      .object({ scanned: z.number().int().min(0), truncated: z.boolean() })
+      .strict(),
+  })
+  .strict();
+
+/** Strictly parse a complete Hopper function dossier at the provider boundary. */
+export const parseFunctionDossier = (
+  value: JsonValue,
+): Result<JsonValue, AnalysisProtocolError> => {
+  const parsed = functionDossierSchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        new AnalysisProtocolError("Invalid analyze_function provider output", {
+          cause: parsed.error,
+        }),
+      );
+};
 
 /** Parse page entries and continuation metadata returned by list operations. */
 export const parseAddressedPage = (

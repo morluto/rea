@@ -7,6 +7,7 @@ import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 import { silentLogger, type Logger } from "../logger.js";
+import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 
 /**
  * Construct one MCP server without acquiring subprocess resources.
@@ -17,6 +18,7 @@ export const createServer = (
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
   logger: Logger = silentLogger,
+  processPolicy?: ProcessExecutionPolicy,
 ): McpServer => {
   const server = new McpServer(
     { name: PRODUCT_IDENTITY.mcpServerKey, version: "0.1.0" },
@@ -31,8 +33,29 @@ export const createServer = (
   const toolLogger = logger.child({ layer: "server" });
   const activeTarget =
     session === undefined ? undefined : () => session.activeTarget();
-  registerOfficialTools(server, analysis, toolLogger, activeTarget);
-  registerEnhancedTools(server, analysis, toolLogger, activeTarget);
-  if (session !== undefined) registerSessionTools(server, session, toolLogger);
+  const provider = session?.providerIdentity();
+  const recordEvidence =
+    session === undefined
+      ? undefined
+      : (evidence: Parameters<typeof session.recordEvidence>[0]) =>
+          session.recordEvidence(evidence);
+  registerOfficialTools(
+    server,
+    analysis,
+    toolLogger,
+    activeTarget,
+    provider,
+    recordEvidence,
+  );
+  registerEnhancedTools(
+    server,
+    analysis,
+    toolLogger,
+    activeTarget,
+    provider,
+    recordEvidence,
+  );
+  if (session !== undefined)
+    registerSessionTools(server, session, toolLogger, processPolicy);
   return server;
 };

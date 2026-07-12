@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ConfigurationError } from "./domain/errors.js";
 import { err, ok, type Result } from "./domain/result.js";
 import type { LogLevel } from "./logger.js";
+import type { ProcessExecutionPolicy } from "./domain/processCapture.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -13,6 +14,7 @@ export interface AppConfig {
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];
   readonly logLevel: LogLevel;
+  readonly processExecutionPolicy: ProcessExecutionPolicy;
 }
 
 const environmentSchema = z.object({
@@ -23,7 +25,32 @@ const environmentSchema = z.object({
   REA_LOG_LEVEL: z
     .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
     .default("info"),
+  REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
+  REA_PROCESS_EXECUTABLE_ROOTS_JSON: z.string().default("[]"),
+  REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
+  REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
 });
+
+const parseStringArray = (
+  encoded: string,
+  name: string,
+): Result<readonly string[], ConfigurationError> => {
+  try {
+    const parsed = z
+      .array(z.string().min(1))
+      .max(128)
+      .safeParse(JSON.parse(encoded));
+    return parsed.success
+      ? ok(parsed.data)
+      : err(
+          new ConfigurationError(`${name} must encode an array of strings`, {
+            cause: parsed.error,
+          }),
+        );
+  } catch (cause: unknown) {
+    return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
+  }
+};
 
 /**
  * Parse Hopper launcher configuration once at the composition root.
@@ -64,6 +91,21 @@ export const parseConfig = (
       ),
     );
   }
+  const executableRoots = parseStringArray(
+    parsedEnvironment.data.REA_PROCESS_EXECUTABLE_ROOTS_JSON,
+    "REA_PROCESS_EXECUTABLE_ROOTS_JSON",
+  );
+  if (!executableRoots.ok) return executableRoots;
+  const workingRoots = parseStringArray(
+    parsedEnvironment.data.REA_PROCESS_WORKING_ROOTS_JSON,
+    "REA_PROCESS_WORKING_ROOTS_JSON",
+  );
+  if (!workingRoots.ok) return workingRoots;
+  const allowedEnvironment = parseStringArray(
+    parsedEnvironment.data.REA_PROCESS_ALLOWED_ENV_JSON,
+    "REA_PROCESS_ALLOWED_ENV_JSON",
+  );
+  if (!allowedEnvironment.ok) return allowedEnvironment;
   return ok({
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
@@ -72,5 +114,11 @@ export const parseConfig = (
     hopperTargetKind: parsedEnvironment.data.HOPPER_TARGET_KIND,
     hopperLoaderArgs: parsedArgs.data,
     logLevel: parsedEnvironment.data.REA_LOG_LEVEL,
+    processExecutionPolicy: {
+      enabled: parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true",
+      executableRoots: executableRoots.value,
+      workingRoots: workingRoots.value,
+      allowedEnvironment: allowedEnvironment.value,
+    },
   });
 };

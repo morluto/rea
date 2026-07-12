@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![46 MCP tools](https://img.shields.io/badge/MCP_tools-46-5c4ee5?style=flat-square)](#46-ツールのワークベンチ)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-ツールのワークベンチ)
+[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [46 ツール](#46-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
+[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [50 ツール](#50-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
 
 <br />
 
@@ -75,7 +75,7 @@ npx skills add morluto/rea
 ### 始める前に
 
 - macOS 12 以降
-- Node.js 22 以降
+- Node.js 24.18.x と npm 11.16.x（`nvm use` で固定バージョンを選択）
 
 リバースエンジニアリングツールを手動でインストールする必要はありません。Setup は必要に応じて Homebrew と [Hopper](https://www.hopperapp.com/) をインストールし、対応するコーディングエージェントを設定します。Hopper は別製品で、ライセンスは別途必要です。Setup はインストールしますが、ライセンスは提供しません。
 
@@ -135,13 +135,13 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 - Swift / Objective-C のメタデータを解析する。
 - Hopper に名前、コメント、ブックマークを残し、人間とエージェントの調査を共有する。
 
-## 46 ツールのワークベンチ
+## 50 ツールのワークベンチ
 
 | ツール群           |  数 | 例                                                                                                                  |
 | ------------------ | --: | ------------------------------------------------------------------------------------------------------------------- |
 | バイナリ調査       |  33 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                       |
 | 合成解析           |  10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出 |
-| バイナリセッション |   3 | `open_binary`, `binary_session`, `close_binary`                                                                     |
+| バイナリセッション |   7 | `open_binary`、`binary_session`、証拠バンドル、プロセス取得と比較                                                   |
 
 ## 他のコーディングエージェントで使う
 

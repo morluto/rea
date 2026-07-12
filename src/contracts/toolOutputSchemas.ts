@@ -1,24 +1,19 @@
 import { z } from "zod";
+import { evidenceSchema } from "../domain/evidence.js";
+import { processCaptureSchema } from "../domain/processCapture.js";
+import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 
-const evidenceMetadata = {
-  schema_version: z.literal(1),
-  artifact: z
-    .object({
-      path: z.string(),
-      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      format: z.enum(["hopper", "mach-o", "elf", "pe"]),
-      architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
-    })
-    .nullable(),
-  provider: z.object({ id: z.literal("hopper"), version: z.null() }),
-  operation: z.string().min(1),
-  parameters: z.record(z.string(), z.json()),
-  confidence: z.literal("observed"),
-  limitations: z.array(z.string()),
-};
 const resultOf = (schema: z.ZodType) =>
-  z.object({ ...evidenceMetadata, result: schema });
+  evidenceSchema.omit({ result: true }).extend({ result: schema });
 const lifecycleResultOf = (schema: z.ZodType) => z.object({ result: schema });
+const comparisonStatus = z.enum([
+  "unchanged",
+  "added",
+  "removed",
+  "changed",
+  "truncated",
+  "unknown",
+]);
 const nullableText = z.string().nullable();
 const addressList = z.array(z.string());
 const addressedEntry = z.object({ address: z.string(), name: z.string() });
@@ -92,7 +87,18 @@ const graphNode = z.union([
   z.object({ address: z.string(), calls: z.array(z.string()) }),
   z.object({ address: z.string(), error: z.string() }),
 ]);
-const unavailableOrBoundedStrings = z.union([unavailable, bounded(z.string())]);
+const referenceEdge = z.object({
+  source_address: z.string(),
+  target_address: z.string(),
+  source_procedure: procedureIdentity.nullable(),
+  target_procedure: procedureIdentity.nullable(),
+  kind: unavailable,
+});
+const referencedValue = z.object({
+  address: z.string(),
+  value: z.string(),
+  source_address: z.string(),
+});
 const functionDossierOutput = resultOf(
   z.object({
     procedure: z.object({
@@ -116,18 +122,23 @@ const functionDossierOutput = resultOf(
         text: z.string(),
       }),
     ),
-    callers: bounded(z.string()),
-    callees: bounded(z.string()),
-    incoming_references: bounded(z.string()),
-    referenced_strings: unavailableOrBoundedStrings,
-    referenced_names: unavailableOrBoundedStrings,
+    callers: bounded(procedureIdentity),
+    callees: bounded(procedureIdentity),
+    incoming_references: bounded(referenceEdge),
+    outgoing_references: bounded(referenceEdge),
+    referenced_strings: bounded(referencedValue),
+    referenced_names: bounded(referencedValue),
     basic_blocks: bounded(
       z.object({
         start: z.string(),
         end: z.string(),
-        successors: z.union([unavailable, z.array(z.string())]),
+        successors: z.array(z.string()),
       }),
     ),
+    instruction_scan: z.object({
+      scanned: z.number().int().min(0),
+      truncated: z.boolean(),
+    }),
   }),
 );
 
@@ -283,5 +294,30 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
         architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
       }),
     ]),
+  ),
+  export_evidence_bundle: lifecycleResultOf(evidenceBundleSchema),
+  import_evidence_bundle: lifecycleResultOf(
+    z.object({
+      imported: z.number().int().min(0),
+      total: z.number().int().min(0),
+    }),
+  ),
+  capture_process_scenario: lifecycleResultOf(
+    evidenceSchema
+      .omit({ result: true })
+      .extend({ result: processCaptureSchema }),
+  ),
+  compare_process_captures: lifecycleResultOf(
+    evidenceSchema.omit({ result: true }).extend({
+      result: z.object({
+        status: comparisonStatus,
+        terminal: comparisonStatus,
+        exit: comparisonStatus,
+        filesystem: comparisonStatus,
+        protocol: comparisonStatus,
+        process: comparisonStatus,
+        limitations: z.array(z.string()),
+      }),
+    }),
   ),
 };

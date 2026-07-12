@@ -208,6 +208,46 @@ def _unavailable(reason):
     return {"available": False, "reason": reason}
 
 
+def _offset(params, name):
+    value = params.get(name, 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("%s must be a non-negative integer" % name)
+    return value
+
+
+def _collection_offset(params, name):
+    values = params.get("collection_offset", {})
+    if not isinstance(values, dict):
+        raise ValueError("collection_offset must be an object")
+    value = values.get(name, 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("collection_offset.%s must be a non-negative integer" % name)
+    return value
+
+
+def _bounded(items, offset, limit, total=None, scan_truncated=False):
+    selected = items[offset:offset + limit]
+    known_total = len(items) if total is None and not scan_truncated else total
+    has_more = offset + len(selected) < len(items)
+    return {
+        "items": selected,
+        "total": known_total,
+        "returned": len(selected),
+        "truncated": scan_truncated or has_more,
+        "next_offset": offset + len(selected) if has_more else None,
+    }
+
+
+def _name_map(document):
+    result = {}
+    for segment in document.getSegmentsList():
+        for address in segment.getNamedAddresses():
+            name = segment.getNameAtAddress(address)
+            if name is not None:
+                result[address] = name
+    return result
+
+
 def _assembly(procedure, limit=None):
     """Render bounded assembly while guarding against malformed instruction cycles."""
     lines = []
@@ -239,52 +279,92 @@ def _analyze_function(document, params):
     limit = params.get("limit", 100)
     max_chars = params.get("max_pseudocode_chars", 20000)
     max_instructions = params.get("max_instructions", 500)
-    if not isinstance(limit, int) or limit < 1 or limit > 500:
+    pseudocode_offset = _offset(params, "pseudocode_offset")
+    assembly_offset = _offset(params, "assembly_offset")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 500:
         raise ValueError("limit must be an integer between 1 and 500")
-    if not isinstance(max_chars, int) or max_chars < 1 or max_chars > 100000:
+    if not isinstance(max_chars, int) or isinstance(max_chars, bool) or max_chars < 1 or max_chars > 100000:
         raise ValueError("max_pseudocode_chars must be between 1 and 100000")
-    if not isinstance(max_instructions, int) or max_instructions < 1 or max_instructions > 5000:
+    if not isinstance(max_instructions, int) or isinstance(max_instructions, bool) or max_instructions < 1 or max_instructions > 5000:
         raise ValueError("max_instructions must be between 1 and 5000")
+    addresses, instruction_scan_truncated = _instruction_addresses(procedure, max_instructions)
     blocks = []
     all_blocks = list(procedure.basicBlockIterator())
-    for block in all_blocks[:limit]:
+    for block in all_blocks:
+        successors = []
+        for index in range(block.getSuccessorCount()):
+            successor = block.getSuccessorAddressAtIndex(index)
+            if successor not in BAD_ADDRESSES:
+                successors.append(_hex(successor))
         blocks.append({
             "start": _hex(block.getStartingAddress()),
             "end": _hex(block.getEndingAddress()),
-            "successors": _unavailable(
-                "Hopper's public Python API does not expose CFG successor edges"
-            ),
+            "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
     pseudo = procedure.decompile() or ""
-    assembly_sample = _assembly(procedure, max_instructions + 1).splitlines() if params.get("include_assembly", False) else []
-    assembly_truncated = len(assembly_sample) > max_instructions
-    assembly = assembly_sample[:max_instructions]
-    callers = [_procedure_name(item) for item in procedure.getAllCallerProcedures()]
-    callees = [_procedure_name(item) for item in procedure.getAllCalleeProcedures()]
-    def bounded(items):
-        return {"items": items[:limit], "total": len(items), "returned": min(len(items), limit), "truncated": len(items) > limit, "next_offset": limit if len(items) > limit else None}
-    entry = procedure.getEntryPoint()
-    segment = procedure.getSegment()
+    assembly_lines = _assembly(procedure).splitlines() if params.get("include_assembly", False) else []
+    callers = sorted((_procedure_identity(item) for item in procedure.getAllCallerProcedures()), key=lambda item: int(item["address"], 16))
+    callees = sorted((_procedure_identity(item) for item in procedure.getAllCalleeProcedures()), key=lambda item: int(item["address"], 16))
     comments = []
-    comment = segment.getCommentAtAddress(entry)
-    inline_comment = segment.getInlineCommentAtAddress(entry)
-    if comment:
-        comments.append({"address": _hex(entry), "kind": "comment", "text": comment})
-    if inline_comment:
-        comments.append({"address": _hex(entry), "kind": "inline", "text": inline_comment})
+    edges = set()
+    for address in addresses:
+        segment = _segment(document, address)
+        comment = segment.getCommentAtAddress(address)
+        inline_comment = segment.getInlineCommentAtAddress(address)
+        if comment:
+            comments.append({"address": _hex(address), "kind": "comment", "text": comment})
+        if inline_comment:
+            comments.append({"address": _hex(address), "kind": "inline", "text": inline_comment})
+        for target in segment.getReferencesFromAddress(address):
+            edges.add((address, target))
+        for source in segment.getReferencesOfAddress(address):
+            edges.add((source, address))
     incoming = []
-    for candidate in document.getSegmentsList():
-        incoming.extend(_hex(value) for value in candidate.getReferencesOfAddress(entry))
-    incoming = sorted(set(incoming), key=lambda value: int(value, 16))
+    outgoing = []
+    procedure_addresses = set(addresses)
+    for source, target in sorted(edges):
+        source_procedure, _ = _containing_procedure(document, source)
+        target_procedure, _ = _containing_procedure(document, target)
+        item = {
+            "source_address": _hex(source),
+            "target_address": _hex(target),
+            "source_procedure": _procedure_identity(source_procedure) if source_procedure is not None else None,
+            "target_procedure": _procedure_identity(target_procedure) if target_procedure is not None else None,
+            "kind": _unavailable("Hopper's public Python API does not classify reference kinds"),
+        }
+        if target in procedure_addresses and source not in procedure_addresses:
+            incoming.append(item)
+        if source in procedure_addresses:
+            outgoing.append(item)
+    string_map = {int(address, 16): value for address, value in _strings(document).items()}
+    name_map = _name_map(document)
+    referenced_strings = []
+    referenced_names = []
+    for edge in outgoing:
+        target = int(edge["target_address"], 16)
+        if target in string_map:
+            referenced_strings.append({"address": edge["target_address"], "value": string_map[target], "source_address": edge["source_address"]})
+        if target in name_map:
+            referenced_names.append({"address": edge["target_address"], "value": name_map[target], "source_address": edge["source_address"]})
+    comments.sort(key=lambda item: (int(item["address"], 16), item["kind"]))
+    referenced_strings.sort(key=lambda item: (int(item["address"], 16), int(item["source_address"], 16)))
+    referenced_names.sort(key=lambda item: (int(item["address"], 16), int(item["source_address"], 16)))
+    pseudo_text = pseudo[pseudocode_offset:pseudocode_offset + max_chars]
+    pseudo_next = pseudocode_offset + len(pseudo_text)
+    def collection(name, items, scan_limited=False):
+        return _bounded(items, _collection_offset(params, name), limit, None, scan_limited)
     return {
         "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "signature": procedure.signatureString(), "locals": _json_safe(procedure.getLocalVariableList())},
-        "pseudocode": {"text": pseudo[:max_chars], "total_chars": len(pseudo), "returned_chars": min(len(pseudo), max_chars), "truncated": len(pseudo) > max_chars, "next_offset": max_chars if len(pseudo) > max_chars else None},
-        "assembly": {"items": assembly, "total": None if assembly_truncated else len(assembly), "returned": len(assembly), "truncated": assembly_truncated, "next_offset": len(assembly) if assembly_truncated else None},
-        "comments": bounded(comments), "callers": bounded(callers), "callees": bounded(callees),
-        "incoming_references": bounded(incoming),
-        "referenced_strings": _unavailable("Hopper's public API does not expose typed outgoing string references for this traversal"),
-        "referenced_names": _unavailable("Hopper's public API does not expose typed outgoing name references for this traversal"),
-        "basic_blocks": bounded(blocks),
+        "pseudocode": {"text": pseudo_text, "total_chars": len(pseudo), "returned_chars": len(pseudo_text), "truncated": pseudo_next < len(pseudo), "next_offset": pseudo_next if pseudo_next < len(pseudo) else None},
+        "assembly": _bounded(assembly_lines, assembly_offset, max_instructions),
+        "comments": collection("comments", comments, instruction_scan_truncated),
+        "callers": collection("callers", callers), "callees": collection("callees", callees),
+        "incoming_references": collection("incoming_references", incoming, instruction_scan_truncated),
+        "outgoing_references": collection("outgoing_references", outgoing, instruction_scan_truncated),
+        "referenced_strings": collection("referenced_strings", referenced_strings, instruction_scan_truncated),
+        "referenced_names": collection("referenced_names", referenced_names, instruction_scan_truncated),
+        "basic_blocks": collection("basic_blocks", blocks),
+        "instruction_scan": {"scanned": len(addresses), "truncated": instruction_scan_truncated},
     }
 
 

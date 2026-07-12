@@ -114,9 +114,11 @@ const fixturePort = (): AnalysisOperationPort => ({
             callers: emptyBounded(),
             callees: emptyBounded(),
             incoming_references: emptyBounded(),
-            referenced_strings: { available: false, reason: "unsupported" },
-            referenced_names: { available: false, reason: "unsupported" },
+            outgoing_references: emptyBounded(),
+            referenced_strings: emptyBounded(),
+            referenced_names: emptyBounded(),
             basic_blocks: emptyBounded(),
+            instruction_scan: { scanned: 0, truncated: false },
           }),
         );
       default:
@@ -473,6 +475,57 @@ describe("enhanced MCP tools", () => {
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toContain(
       "HopperProtocolError",
+    );
+  });
+
+  it("rejects incomplete function dossiers at the application boundary", async () => {
+    const client = await connect({
+      execute: () =>
+        Promise.resolve(
+          ok({
+            procedure: { address: "0x1", name: "entry" },
+            pseudocode: { text: "plausible but incomplete" },
+          }),
+        ),
+    });
+    const result = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "0x1" },
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content.find((item) => item.type === "text");
+    expect(text?.type === "text" ? text.text : "").toContain(
+      "AnalysisProtocolError",
+    );
+  });
+
+  it("rejects deceptive function dossier collection metadata", async () => {
+    const malformedPort = fixturePort();
+    const client = await connect({
+      execute: async (name, arguments_, options) => {
+        const result = await malformedPort.execute(name, arguments_, options);
+        if (!result.ok || name !== "analyze_function") return result;
+        const dossier = result.value as Record<string, JsonValue>;
+        return ok({
+          ...dossier,
+          comments: {
+            items: [],
+            total: 0,
+            returned: 1,
+            truncated: false,
+            next_offset: null,
+          },
+        });
+      },
+    });
+    const result = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "0x1" },
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content.find((item) => item.type === "text");
+    expect(text?.type === "text" ? text.text : "").toContain(
+      "AnalysisProtocolError",
     );
   });
 });

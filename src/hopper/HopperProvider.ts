@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type {
   AnalysisClient,
   AnalysisProvider,
+  CapabilityDescriptor,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config.js";
@@ -17,7 +18,7 @@ const IDENTITY: ProviderIdentity = {
   version: null,
 };
 
-const CAPABILITIES = [
+const OPERATIONS = [
   "direct-analysis",
   "decompilation",
   "disassembly",
@@ -26,6 +27,25 @@ const CAPABILITIES = [
   "procedure-references",
   "analysis-metadata-mutation",
 ] as const;
+
+const CAPABILITIES: readonly CapabilityDescriptor[] = OPERATIONS.map(
+  (operation) => ({
+    operation,
+    version: 1,
+    available: true,
+    pagination: "none",
+    exhaustive: false,
+    effects: {
+      mutatesArtifact: operation === "analysis-metadata-mutation",
+      launchesProcess: true,
+      mayShowUi: true,
+      mayAccessNetwork: false,
+      mayWriteFilesystem: operation === "analysis-metadata-mutation",
+      requiresPrivileges: false,
+    },
+    limitations: ["Results depend on Hopper's completed static analysis."],
+  }),
+);
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProvider {
@@ -38,7 +58,7 @@ export class HopperProvider implements AnalysisProvider {
     return IDENTITY;
   }
 
-  capabilities(): readonly string[] {
+  capabilities(): readonly CapabilityDescriptor[] {
     return CAPABILITIES;
   }
 

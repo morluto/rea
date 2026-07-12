@@ -25,7 +25,7 @@ export const runDirectAnalysis = async (
       return { error: opened.error._tag, message: opened.error.message };
     const result = await session.execute(tool, arguments_);
     return result.ok
-      ? createEvidence(opened.value, {
+      ? createEvidence(opened.value, session.providerIdentity(), {
           operation: tool,
           parameters: arguments_,
           result: result.value,

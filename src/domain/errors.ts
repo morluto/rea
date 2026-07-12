@@ -8,7 +8,12 @@ export abstract class HopperError extends AnalysisError {}
 
 /** Provider-neutral invalid analysis input or output at an application boundary. */
 export class AnalysisProtocolError extends AnalysisError {
-  readonly _tag = "HopperProtocolError";
+  readonly _tag = "AnalysisProtocolError";
+}
+
+/** An evidence bundle or bounded session ledger rejected caller-controlled data. */
+export class EvidenceLedgerError extends AnalysisError {
+  readonly _tag = "EvidenceLedgerError";
 }
 
 /** Hopper did not respond within the configured operation deadline. */

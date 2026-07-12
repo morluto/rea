@@ -6,15 +6,15 @@
 
 ### One CLI and MCP server for coding agents to reverse engineer anything
 
-**See a feature you like. Understand how it works. Build it your way.**
+**See a feature you like. Understand how it works, down to the binary level.**
 
 [![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![46 MCP tools](https://img.shields.io/badge/MCP_tools-46-5c4ee5?style=flat-square)](#46-tools-for-deeper-investigation)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-tools-for-investigation)
+[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [See the workflow](#one-prompt-a-full-investigation) · [From app to feature](#from-app-to-feature) · [46 tools](#46-tools-for-deeper-investigation) · [How it works](#how-it-works) · [FAQ](#faq)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [50 tools](#50-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -24,9 +24,11 @@
 
 ---
 
-See a feature in an app that you want in your own product? Give the app to your coding agent—even without its source code. With REA, the agent can investigate the feature, understand how it works, and build a version adapted to your stack, design, and requirements.
+See a feature in an app that you want in your own product? Give the app to your coding agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA makes that possible through one CLI and MCP server. Your agent can inspect the compiled app, follow how features work, and use what it learns in its normal coding workflow. REA handles the reverse-engineering tools behind one interface.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, and controlled process capture. The longer-term toolkit extends the same agent workflow to packaged apps, JavaScript bundles, websites, APIs, protocols, mobile artifacts, firmware, runtime behavior, and differences between versions.
+
+Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
 ## Just ask your agent
 
@@ -45,7 +47,7 @@ show me how you know, and build a similar feature for my project.
 
 Notes is only an example. Name any app you want to understand, or ask the agent to start with an overview.
 
-## From app to feature
+## The investigation model
 
 <table>
 <tr>
@@ -98,7 +100,9 @@ If macOS or an installer asks for confirmation, complete the prompt and run the 
 ### What setup handles
 
 - macOS 12 or newer
-- Node.js 22 or newer
+- Node.js 24.18.x with npm 11.16.x (`nvm use` selects the pinned version)
+
+If process capture reports that its native PTY backend is unavailable, install Xcode command-line tools and run `npm run rebuild:native`. Linux source builds require Python, `make`, and a C++ toolchain. Compatible packaged binaries do not require this rebuild.
 
 You do not need to install the reverse-engineering tools manually. Setup installs Homebrew and [Hopper](https://www.hopperapp.com/) when needed, configures detected Claude Desktop and Cursor installations, and installs the REA skill. Hopper is separate software and requires its own license; setup installs it but does not provide a license.
 
@@ -147,13 +151,43 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 46 tools for deeper investigation
+## 50 tools for investigation
 
-| Tool family       | Count | Examples                                                                                                                   |
-| ----------------- | ----: | -------------------------------------------------------------------------------------------------------------------------- |
-| Binary inspection |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                           |
-| Composed analysis |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift and ObjC discovery |
-| Binary session    |     3 | `open_binary`, `binary_session`, `close_binary`                                                                            |
+| Tool family               | Count | Examples                                                                                                                |
+| ------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                        |
+| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery |
+| Workspace and observation |     7 | target lifecycle, Evidence v2 bundle import/export, deterministic process capture and comparison                        |
+
+The public interface describes what the agent is trying to learn. Providers decide how to answer. Hopper currently implements the native-analysis capabilities; the process harness implements controlled behavioral capture. Future providers can satisfy the same capability without changing the agent's investigation workflow.
+
+## Current status
+
+REA is already useful for native application investigation on macOS:
+
+- Open Mach-O, ELF, PE, `.app`, and Hopper database targets.
+- Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
+- Search and trace features across symbols, strings, metadata, references, and call paths.
+- Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
+- Export and import evidence bundles across sessions.
+- Capture approved PTY scenarios, child processes, filesystem changes, and loopback HTTP/WebSocket exchanges, then compare normalized captures.
+
+Hopper is the first provider, not the boundary of the project. Some current workflows still require Hopper and macOS; every evidence record identifies the provider and limitations behind its result.
+
+## Roadmap
+
+REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The next capability families are:
+
+1. **Artifact decomposition** — DMG, ASAR, ZIP, packages, universal-binary slices, application resources, embedded frameworks, mobile packages, and artifact graphs.
+2. **Web and Electron investigation** — Playwright/CDP capture of DOM, accessibility trees, screenshots, storage, console, IPC, HTTP, WebSocket, routes, and visual or structural differences.
+3. **Deterministic behavior harnesses** — stronger process-tree ownership, protocol fixtures, network policy, filesystem tracing, signals, reconnects, and cross-version comparison.
+4. **JavaScript and source recovery** — bundle indexing, AST/module reconstruction, source-map discovery, historical-source matching, and CodeDB-backed cross-references.
+5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.
+6. **More static-analysis providers** — native platform utilities first, followed by Ghidra, IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, and other engines behind provider-neutral capabilities.
+7. **More targets and platforms** — Windows-native providers and ConPTY verification, Linux parity, websites and APIs, mobile artifacts, firmware, document formats, and other software-defined systems.
+8. **Differential reconstruction** — compare artifacts, functions, bundles, protocols, UIs, and process captures; track residual unknowns; verify a reconstruction against observed behavior.
+
+Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow.
 
 ## Using REA with other coding agents
 
@@ -178,11 +212,16 @@ Setup currently configures Claude Desktop and Cursor automatically. Any coding a
 flowchart LR
     Agent["Coding agent"] --> REA["REA<br/>CLI + MCP"]
     Terminal --> REA
-    REA --> Hopper["Analysis engine"]
-    Hopper --> App["Your app"]
+    REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
+    Workspace --> Router["Capability router"]
+    Router --> Hopper["Hopper provider"]
+    Router --> Process["Process capture provider"]
+    Router -. roadmap .-> More["Artifact, browser, dynamic,<br/>and additional static providers"]
+    Hopper --> Target["Target software"]
+    Process --> Target
 ```
 
-The CLI and MCP server use the same analysis engine. Terminal commands close the app when they finish; an agent session keeps it open while the investigation continues.
+The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation.
 
 ## CLI
 
@@ -204,7 +243,7 @@ rea mcp
 
 REA accepts a Mac `.app` folder directly. If an agent cannot find an app by name, tell it where the app is installed.
 
-## Hopper application behavior
+## Current Hopper provider
 
 REA starts Hopper when needed; Hopper does not need to be running first. Hopper's launcher internally activates the application, so opening a target may bring Hopper to the foreground. REA asks macOS to start Hopper hidden and in the background when possible, but cannot guarantee that it will remain behind the current application.
 
@@ -214,7 +253,7 @@ Closing a REA session shuts down its bridge and removes its private socket direc
 
 ## Security model
 
-REA communicates with Hopper over a private local connection and does not provide a hosted analysis service. This is not a sandbox: Hopper opens apps with your current macOS permissions. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+REA does not provide a hosted analysis service. Hopper communication uses an authenticated private local socket. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. REA is not a security sandbox: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 
@@ -242,7 +281,7 @@ No. Setup can install Hopper for you, but Hopper remains separate software with 
 <details>
 <summary><strong>Does REA upload the app?</strong></summary>
 
-REA has no hosted analysis service. It passes local operations to Hopper through a current-user Unix socket. Your coding agent or model provider may have its own data policy, so review that separately.
+REA has no hosted analysis service. Current providers analyze artifacts and capture behavior locally. Your coding agent or model provider may have its own data policy, so review that separately.
 
 </details>
 

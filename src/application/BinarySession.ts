@@ -7,12 +7,16 @@ import {
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type {
   AnalysisClient,
   AnalysisClientFactory,
   AnalysisOperationPort,
   AnalysisProvider,
+  ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { EvidenceLedger } from "./EvidenceLedger.js";
 
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort extends AnalysisOperationPort {
@@ -26,6 +30,10 @@ export interface BinarySessionPort extends AnalysisOperationPort {
   close(): Promise<Result<null, AnalysisError>>;
   status(): JsonValue;
   activeTarget(): BinaryTarget | undefined;
+  recordEvidence(evidence: Evidence): void;
+  exportEvidenceBundle(): EvidenceBundle;
+  importEvidenceBundle(bundle: unknown): number;
+  providerIdentity(): ProviderIdentity;
 }
 
 /**
@@ -43,12 +51,38 @@ export class BinarySession implements BinarySessionPort {
   #transition: Promise<void> = Promise.resolve();
   readonly #calls = new Set<Promise<unknown>>();
   readonly #createClient: AnalysisClientFactory;
+  readonly #providerIdentity: ProviderIdentity;
+  readonly #evidence = new EvidenceLedger({ maxRecords: 10_000 });
 
   constructor(readonly provider: AnalysisProvider | AnalysisClientFactory) {
     this.#createClient =
       typeof provider === "function"
         ? provider
         : (target) => provider.createClient(target);
+    this.#providerIdentity =
+      typeof provider === "function"
+        ? { id: "unidentified", name: "Unidentified provider", version: null }
+        : provider.identity();
+  }
+
+  /** Identify the provider producing evidence for this session. */
+  providerIdentity(): ProviderIdentity {
+    return this.#providerIdentity;
+  }
+
+  /** Add one successful public observation to the session ledger. */
+  recordEvidence(evidence: Evidence): void {
+    this.#evidence.record(evidence);
+  }
+
+  /** Return a deterministic snapshot without clearing session evidence. */
+  exportEvidenceBundle(): EvidenceBundle {
+    return this.#evidence.export();
+  }
+
+  /** Atomically merge a validated evidence bundle into this session. */
+  importEvidenceBundle(bundle: unknown): number {
+    return this.#evidence.import(bundle);
   }
 
   /**
@@ -102,6 +136,7 @@ export class BinarySession implements BinarySessionPort {
       this.#active = undefined;
       await this.#drainCalls();
       await previous?.client.close();
+      this.#evidence.clear();
       return ok(null);
     });
   }

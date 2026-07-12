@@ -33,6 +33,12 @@ describe("runtime configuration", () => {
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
         logLevel: "info",
+        processExecutionPolicy: {
+          enabled: false,
+          executableRoots: [],
+          workingRoots: [],
+          allowedEnvironment: [],
+        },
       },
     });
   });

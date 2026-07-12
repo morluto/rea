@@ -44,12 +44,21 @@ export const run = async (): Promise<number> => {
   }
   let handle: StdioServerHandle;
   try {
-    handle = serveStdio(() => createServer(session, session, logger), {
-      onerror: () => {
-        serverLogger.error("MCP stdio transport error");
-        process.stderr.write("MCP stdio transport error\n");
+    handle = serveStdio(
+      () =>
+        createServer(
+          session,
+          session,
+          logger,
+          config.value.processExecutionPolicy,
+        ),
+      {
+        onerror: () => {
+          serverLogger.error("MCP stdio transport error");
+          process.stderr.write("MCP stdio transport error\n");
+        },
       },
-    });
+    );
   } catch {
     await session.close();
     serverLogger.error("Failed to start MCP stdio transport");

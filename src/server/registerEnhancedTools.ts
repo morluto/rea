@@ -14,6 +14,8 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
+import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { Evidence } from "../domain/evidence.js";
 
 /** Register composed workflows against the same port as direct bridge tools. */
 export const registerEnhancedTools = (
@@ -21,10 +23,21 @@ export const registerEnhancedTools = (
   analysis: AnalysisOperationPort,
   logger: Logger,
   activeTarget?: () => BinaryTarget | undefined,
+  provider: ProviderIdentity = {
+    id: "unidentified",
+    name: "Unidentified provider",
+    version: null,
+  },
+  recordEvidence?: (evidence: Evidence) => void,
 ): void => {
   const services = new EnhancedTools(analysis);
   for (const contract of ENHANCED_TOOL_CONTRACTS) {
-    registerEnhancedTool(server, services, contract, { logger, activeTarget });
+    registerEnhancedTool(server, services, contract, {
+      logger,
+      activeTarget,
+      provider,
+      recordEvidence,
+    });
   }
 };
 
@@ -35,6 +48,8 @@ const registerEnhancedTool = (
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+    readonly provider: ProviderIdentity;
+    readonly recordEvidence: ((evidence: Evidence) => void) | undefined;
   },
 ): void => {
   const name = enhancedToolNameSchema.parse(contract.name);
@@ -60,19 +75,22 @@ const registerEnhancedTool = (
       const result = await logToolExecution(registration.logger, name, () =>
         services.execute(name, input, context.mcpReq.signal),
       );
-      return toCallToolResult(
-        result.ok
-          ? {
-              ok: true,
-              value: createEvidence(registration.activeTarget?.(), {
-                operation: name,
-                parameters,
-                result: result.value,
-              }),
-            }
-          : result,
-        contract,
-      );
+      if (result.ok) {
+        const evidence = createEvidence(
+          registration.activeTarget?.(),
+          registration.provider,
+          {
+            operation: name,
+            parameters,
+            result: result.value,
+            confidence: "derived",
+            redactedRawPayload: result.value,
+          },
+        );
+        registration.recordEvidence?.(evidence);
+        return toCallToolResult({ ok: true, value: evidence }, contract);
+      }
+      return toCallToolResult(result, contract);
     },
   );
 };
