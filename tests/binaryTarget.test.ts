@@ -33,8 +33,21 @@ describe("executable header parsing", () => {
     const arm = parseExecutableHeader(bytes, "arm64");
     const intel = parseExecutableHeader(bytes, "x64");
     expect(arm.ok && arm.value.loaderArgs).toContain("--aarch64");
-    expect(intel.ok && intel.value.loaderArgs).toContain("--x86_64");
+    expect(intel.ok && intel.value.loaderArgs).toContain("--intel-64");
   });
+
+  it.each([
+    [thinMach(0xfeedfacf, 0x0100000c), ["-l", "Mach-O", "--aarch64"]],
+    [thinMach(0xcefaedfe, 0x01000007), ["-l", "Mach-O", "--intel-64"]],
+    [elf(2, 2, 183), ["-l", "ELF", "--aarch64"]],
+    [pe(0x8664), ["-l", "WinPE", "--intel-64"]],
+  ] as const)(
+    "emits a complete non-interactive Hopper selection",
+    (bytes, args) => {
+      const result = parseExecutableHeader(bytes, "arm64");
+      expect(result.ok && result.value.loaderArgs).toEqual(args);
+    },
+  );
 
   it("rejects FAT files without a host-compatible slice", () => {
     expect(parseExecutableHeader(fat([0x01000007]), "arm64")).toMatchObject({

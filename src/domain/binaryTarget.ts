@@ -88,7 +88,7 @@ const parseThinMachO = (
     format: "mach-o",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "Mach-O"],
+    loaderArgs: ["-l", "Mach-O", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -124,19 +124,17 @@ const parseFatMachO = (
             : undefined;
   if (preferred === undefined || !architectures.includes(preferred))
     return err(`FAT binary has no host-compatible ${host} architecture`);
-  const flag =
-    preferred === "arm64"
-      ? "--aarch64"
-      : preferred === "x86_64"
-        ? "--x86_64"
-        : preferred === "arm"
-          ? "--arm"
-          : "--x86";
   return ok({
     format: "mach-o",
     architecture: preferred,
     availableArchitectures: architectures,
-    loaderArgs: ["-l", "FAT", flag, "-l", "Mach-O"],
+    loaderArgs: [
+      "-l",
+      "FAT",
+      hopperArchitectureFlag(preferred),
+      "-l",
+      "Mach-O",
+    ],
   });
 };
 
@@ -152,7 +150,7 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
     format: "elf",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "ELF"],
+    loaderArgs: ["-l", "ELF", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -170,7 +168,7 @@ const parsePe = (bytes: Buffer): Result<ExecutableMetadata, string> => {
     format: "pe",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "PE"],
+    loaderArgs: ["-l", "WinPE", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -214,4 +212,17 @@ const peArchitecture = (machine: number): BinaryArchitecture | undefined => {
       return "arm64";
   }
   return undefined;
+};
+
+const hopperArchitectureFlag = (architecture: BinaryArchitecture): string => {
+  switch (architecture) {
+    case "x86":
+      return "--intel-32";
+    case "x86_64":
+      return "--intel-64";
+    case "arm":
+      return "--armv7";
+    case "arm64":
+      return "--aarch64";
+  }
 };
