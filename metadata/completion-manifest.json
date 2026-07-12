@@ -16,7 +16,7 @@
       },
       {
         "path": "scripts/verify-package.mjs",
-        "sha256": "ffad65be3d5dde87c1e2d7b8886949066531e5b82933596b947507aab5f45b58"
+        "sha256": "b3809e3b7593fcaf16c9f962fbfaea105caca168c2ed8fd07336804ebb581174"
       },
       {
         "path": "scripts/verify-real-hopper.mjs",

@@ -24,6 +24,7 @@ const exec = promisify(execFile);
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
 const evidenceRoot = join(workspace, "evidence");
+const referenceRoot = join(workspace, "reference-source");
 let tarball;
 
 try {
@@ -44,7 +45,21 @@ try {
   const home = join(workspace, "home");
   const fakeBin = join(workspace, "bin");
   await mkdir(fakeBin, { recursive: true });
-  await mkdir(evidenceRoot, { recursive: true });
+  await Promise.all([
+    mkdir(evidenceRoot, { recursive: true }),
+    mkdir(join(referenceRoot, "src"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(
+      join(referenceRoot, "src", "main.ts"),
+      'import "./dependency";\n',
+    ),
+    writeFile(
+      join(referenceRoot, "src", "dependency.ts"),
+      "export const value = 1;\n",
+    ),
+    writeFile(join(referenceRoot, ".env"), "PACKAGE_SECRET_SENTINEL=1\n"),
+  ]);
   const brew = join(fakeBin, "brew");
   const swVers = join(fakeBin, "sw_vers");
   const npx = join(fakeBin, "npx");
@@ -84,6 +99,8 @@ try {
     HOPPER_LAUNCHER_PATH: hopper,
     REA_NPX_LOG: npxLog,
     REA_EVIDENCE_ROOTS_JSON: JSON.stringify([evidenceRoot]),
+    REA_REFERENCE_ROOTS_JSON: JSON.stringify([referenceRoot]),
+    REA_REFERENCE_SECRET_PATTERNS_JSON: JSON.stringify([".env"]),
   };
   await exec(
     "npm",
@@ -99,6 +116,7 @@ try {
     !help.includes("setup") ||
     !help.includes("inventory-artifact") ||
     !help.includes("extract-artifact") ||
+    !help.includes("import-reference-source") ||
     !llms.includes("decompile") ||
     !llms.includes("inventory-artifact") ||
     doctor.healthy !== expectedDoctorHealth ||
@@ -124,6 +142,20 @@ try {
     artifactInventory.normalized_result?.manifest?.root_format !== "zip"
   )
     throw new Error("packaged artifact inventory CLI failed");
+  const referenceImport = json(
+    await run(
+      cli,
+      ["import-reference-source", referenceRoot, "--json"],
+      environment,
+    ),
+  );
+  if (
+    referenceImport.authority !== "historical-reference" ||
+    referenceImport.root_alias !== "$REFERENCE_ROOT" ||
+    referenceImport.relationships?.[0]?.resolution !== "internal" ||
+    JSON.stringify(referenceImport).includes("PACKAGE_SECRET_SENTINEL")
+  )
+    throw new Error("packaged historical reference import CLI failed");
   const { createEvidence } = await import(
     new URL("../dist/domain/evidence.js", import.meta.url)
   );
