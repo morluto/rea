@@ -115,10 +115,6 @@
         "sha256": "68e52c7378b9b7da34cb31a93eebd44f6425ea40971b589f0399afefbc5709b3"
       },
       {
-        "path": "src/contracts/referenceSourceContracts.ts",
-        "sha256": "5f6a75bb335267a788b9977b253f788a42c3a5b65947f06b532096b1cfda1c27"
-      },
-      {
         "path": "src/contracts/enhancedInputs.ts",
         "sha256": "76bc9bc963a7a65800fe4ecbfec17c2f57410a42c116b6f5fe65a3b033fdb29e"
       },
@@ -184,7 +180,7 @@
       },
       {
         "path": "src/domain/reconstructionVerification.ts",
-        "sha256": "4ed0b8b06d5c8b3a10d56acef222fbe2a615b0277eed7997f158e16d8e108e8d"
+        "sha256": "b8dcc08f19e4bbcecda80a0ee92cd02add105052b93956026b25200049cc5ebd"
       },
       {
         "path": "src/domain/reconstructionVerificationSchemas.ts",
@@ -196,15 +192,15 @@
       },
       {
         "path": "src/domain/referenceSourceGraph.ts",
-        "sha256": "c736fd9d85c5ab145ea56d3b20442ec19f2477eb09563b9b6c3b287e88cd40a0"
+        "sha256": "394048ce022159ac67ca5811303b1e221e546d4364d5d0102230e5b69d88c166"
       },
       {
         "path": "src/domain/referenceSourceClassification.ts",
-        "sha256": "9ad269b9ba0a0abe13c157d40d219c7cc461aa2c8b99a71baad62b42f03e5741"
+        "sha256": "63e3cd3cb2856fe4c85c5e46160a417b9f9bf4a58997984fcfea1c898532d58e"
       },
       {
         "path": "src/domain/referenceSourceImportParsing.ts",
-        "sha256": "ef2a7246ecc75672324f745cba4dbe7f941d5186f7936d8724611590c9e014e9"
+        "sha256": "ebdfd576d9b1a151424c633c588309a8c1cc47d5247380b2a5956c636e147aa7"
       },
       {
         "path": "src/domain/referenceSourcePolicy.ts",
@@ -224,7 +220,7 @@
       },
       {
         "path": "src/domain/processCapture.ts",
-        "sha256": "ef003dfd187a7963e7e9a3362125a75b44cea3bbc2ba3fdc69ea23d4b46b05dd"
+        "sha256": "cfdbac456aa868d06c50a0b410c181ed19892521f2d53d8bb254fcc1b92bbb3f"
       },
       {
         "path": "src/domain/residualUnknown.ts",
@@ -372,11 +368,11 @@
       },
       {
         "path": "src/reference/ReferenceSourceReaderValidate.ts",
-        "sha256": "2deb2a5ea85a440c6aec5dd6b647086d9c5cdb98cf6628e8aefe214227ca1643"
+        "sha256": "e14a620a4e5fa350635158c584989707d877dc25f9da793cec1d82e7667f85fe"
       },
       {
         "path": "src/reference/ReferenceSourceReader.ts",
-        "sha256": "fad544b78324dcbb66dd9cd67bfd0050c8466f958ae4569377a74132bab5fdd3"
+        "sha256": "75c83b5c233a4ceda4233e33a19f7e421796623d337cf3ac737e6a94d0126bdc"
       }
     ],
     "package": {
