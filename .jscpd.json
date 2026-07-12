@@ -1,0 +1,16 @@
+{
+  "threshold": 3,
+  "reporters": ["consoleFull"],
+  "ignore": [
+    "node_modules/**",
+    "dist/**",
+    "docs/**",
+    ".codex/**",
+    ".devin/**",
+    "**/*.test.ts",
+    "tests/fixtures/**"
+  ],
+  "gitignore": true,
+  "minLines": 5,
+  "minTokens": 50
+}

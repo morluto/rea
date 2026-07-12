@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "import", "unicorn", "oxc"],
+  "rules": {
+    "complexity": ["warn", 20],
+    "max-depth": ["warn", 4],
+    "max-lines": [
+      "warn",
+      { "max": 500, "skipBlankLines": true, "skipComments": true }
+    ],
+    "max-lines-per-function": [
+      "warn",
+      { "max": 100, "skipBlankLines": true, "skipComments": true }
+    ],
+    "max-params": ["warn", 4],
+    "no-var": "warn",
+    "no-var-requires": "error"
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.ts"],
+      "rules": {
+        "max-lines-per-function": "off",
+        "max-lines": "off"
+      }
+    }
+  ],
+  "env": {
+    "node": true,
+    "es2023": true
+  },
+  "ignorePatterns": ["dist", "node_modules", "docs/api", ".codex", ".devin"]
+}

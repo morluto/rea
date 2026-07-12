@@ -133,7 +133,7 @@ export class BinarySession implements HopperToolPort {
   }
 
   async #drainCalls(): Promise<void> {
-    await Promise.allSettled([...this.#calls]);
+    await Promise.allSettled(this.#calls);
   }
 
   async #restore(

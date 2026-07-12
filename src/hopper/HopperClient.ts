@@ -338,7 +338,7 @@ export class HopperClient {
   }
 
   #failAll(error: HopperError): void {
-    for (const id of [...this.#pending.keys()]) this.#settle(id, err(error));
+    for (const id of this.#pending.keys()) this.#settle(id, err(error));
   }
 }
 
