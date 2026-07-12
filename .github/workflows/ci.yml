@@ -89,7 +89,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx vitest run --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
+      - run: npm test -- --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
