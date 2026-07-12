@@ -48,7 +48,10 @@ export interface SetupHost {
   hopperPath(): Promise<string | undefined>;
   installHopper(): Promise<boolean>;
   detectedClients(): Promise<readonly SetupClient[]>;
-  configureClient(client: SetupClient): Promise<ClientConfigurationResult>;
+  configureClient(
+    client: SetupClient,
+    hopperPath: string,
+  ): Promise<ClientConfigurationResult>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
@@ -97,16 +100,22 @@ export const runSetup = async (
       );
     actions.push("installed_homebrew");
   }
-  if ((await host.hopperPath()) === undefined) {
+  let hopperPath = await host.hopperPath();
+  if (hopperPath === undefined) {
     if (!yes) return fail("Re-run with --yes to install Hopper.");
     if (!(await host.installHopper()))
       return fail(
         "Hopper installation was interrupted; resolve the system prompt and re-run setup.",
       );
     actions.push("installed_hopper");
+    hopperPath = await host.hopperPath();
+    if (hopperPath === undefined)
+      return fail(
+        "Hopper installation completed but its launcher was not found.",
+      );
   }
   for (const client of await host.detectedClients()) {
-    const result = await host.configureClient(client);
+    const result = await host.configureClient(client, hopperPath);
     clients[client.name] = result;
     if (result.status === "failed")
       return fail(
@@ -188,6 +197,7 @@ const detectJsonClients = async (
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
   client: SetupClient,
+  hopperPath?: string,
 ): Promise<ClientConfigurationResult> => {
   let document: Record<string, unknown> = {};
   let original: string | undefined;
@@ -206,6 +216,9 @@ export const configureJsonClient = async (
   const desired = {
     command: "npx",
     args: ["-y", PRODUCT_IDENTITY.packageName, "mcp"],
+    ...(hopperPath === undefined
+      ? {}
+      : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
   };
   if (
     JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===

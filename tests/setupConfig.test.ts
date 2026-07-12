@@ -49,6 +49,28 @@ describe("JSON client configuration transaction", () => {
     ).rejects.toThrow();
   });
 
+  it("persists a custom Hopper launcher and remains idempotent", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const configPath = join(directory, "mcp.json");
+    const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
+    const client = { name: "cursor", configPath };
+    expect(await configureJsonClient(client, hopperPath)).toMatchObject({
+      status: "configured",
+    });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", "@morluto/rea", "mcp"],
+          env: { HOPPER_LAUNCHER_PATH: hopperPath },
+        },
+      },
+    });
+    expect(await configureJsonClient(client, hopperPath)).toEqual({
+      status: "unchanged",
+    });
+  });
+
   it("refuses malformed existing JSON without overwriting it", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");
