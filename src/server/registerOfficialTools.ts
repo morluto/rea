@@ -7,14 +7,17 @@ import {
 } from "../contracts/toolContracts.js";
 import { jsonValueSchema, type JsonValue } from "../hopper/protocol.js";
 import { toCallToolResult } from "./toolResult.js";
+import type { Logger } from "../logger.js";
+import { logToolExecution } from "./toolLogging.js";
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
   server: McpServer,
   hopper: HopperToolPort,
+  logger: Logger,
 ): void => {
   for (const contract of OFFICIAL_TOOL_CONTRACTS) {
-    registerOfficialTool(server, hopper, contract);
+    registerOfficialTool(server, hopper, contract, logger);
   }
 };
 
@@ -22,6 +25,7 @@ const registerOfficialTool = (
   server: McpServer,
   hopper: HopperToolPort,
   contract: ToolContract,
+  logger: Logger,
 ): void => {
   server.registerTool(
     contract.name,
@@ -31,9 +35,11 @@ const registerOfficialTool = (
     },
     async (input, context) => {
       const arguments_ = projectOfficialArguments(contract, input);
-      const result = await hopper.callTool(contract.name, arguments_, {
-        signal: context.mcpReq.signal,
-      });
+      const result = await logToolExecution(logger, contract.name, () =>
+        hopper.callTool(contract.name, arguments_, {
+          signal: context.mcpReq.signal,
+        }),
+      );
       return toCallToolResult(result);
     },
   );

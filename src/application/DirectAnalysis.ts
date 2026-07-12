@@ -1,6 +1,7 @@
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../hopper/protocol.js";
 import { createBinarySession } from "./runtime.js";
+import { silentLogger, type Logger } from "../logger.js";
 
 /**
  * Open one binary, execute one tool, and always release the bridge session.
@@ -11,11 +12,12 @@ export const runDirectAnalysis = async (
   path: string,
   tool: "binary_overview" | "procedure_pseudo_code",
   arguments_: Readonly<Record<string, JsonValue>>,
+  logger: Logger = silentLogger,
 ): Promise<JsonValue> => {
   const config = parseConfig(process.env);
   if (!config.ok)
     return { error: config.error._tag, message: config.error.message };
-  const session = createBinarySession(config.value);
+  const session = createBinarySession(config.value, logger);
   try {
     const opened = await session.open(path);
     if (!opened.ok)

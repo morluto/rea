@@ -22,6 +22,18 @@ npm run verify:package
 npm pack --dry-run
 ```
 
+`npm install` prepares the Husky pre-commit hook. Commits format and lint staged
+files with lint-staged, then typecheck the complete project. The normal test and
+CI coverage runs enforce the thresholds in `vitest.config.ts`; `npm run
+lint:dead` rejects unused files, exports, and dependencies.
+
+Set `REA_LOG_LEVEL` to `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
+`silent` to control structured JSON diagnostics. MCP mode defaults to `info` and
+always writes logs to stderr so the stdio protocol remains intact. One-shot CLI
+logging is opt-in and writes to stdout when a level is configured, preserving
+machine-readable command output by default. Request arguments, bridge
+authentication tokens, and environment data are redacted.
+
 Changes that claim real Hopper behavior must also be tested against two distinct binaries:
 
 ```bash
