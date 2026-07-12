@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
-import { ok } from "../src/domain/result.js";
+import { observed as ok } from "./fixtures/analysisExecution.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
 
@@ -164,9 +164,9 @@ const jsonResult = (result: CallToolResult): JsonValue => {
     typeof structured.data === "object" &&
     structured.data !== null &&
     !Array.isArray(structured.data) &&
-    "result" in structured.data
+    "normalized_result" in structured.data
   ) {
-    return structured.data.result ?? null;
+    return structured.data.normalized_result ?? null;
   }
   const text = result.content.find((item) => item.type === "text");
   if (text?.type !== "text")
@@ -181,7 +181,7 @@ describe("enhanced MCP tools", () => {
   it("lists the complete 33 plus 10 surface", async () => {
     const client = await connect();
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(43);
+    expect(listed.tools).toHaveLength(50);
     expect(
       listed.tools
         .map(({ name }) => name)
@@ -495,7 +495,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toContain(
-      "AnalysisProtocolError",
+      "AnalysisOutputError",
     );
   });
 
@@ -505,7 +505,13 @@ describe("enhanced MCP tools", () => {
       execute: async (name, arguments_, options) => {
         const result = await malformedPort.execute(name, arguments_, options);
         if (!result.ok || name !== "analyze_function") return result;
-        const dossier = result.value as Record<string, JsonValue>;
+        const dossier = result.value.result;
+        if (
+          typeof dossier !== "object" ||
+          dossier === null ||
+          Array.isArray(dossier)
+        )
+          return result;
         return ok({
           ...dossier,
           comments: {
@@ -525,7 +531,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toContain(
-      "AnalysisProtocolError",
+      "AnalysisOutputError",
     );
   });
 });

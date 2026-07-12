@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Route production MCP before importing Incur. Incur owns registration helpers
-// such as `mcp add`, while only dist/main.js may serve the 50-tool stdio server.
+// such as `mcp add`, while only dist/main.js may serve the 68-tool stdio server.
 const args = process.argv.slice(2);
 const isMcpMode =
   args[0] === "--mcp" || (args.length === 1 && args[0] === "mcp");

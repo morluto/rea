@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { ok } from "../src/domain/result.js";
+import { observed as ok } from "./fixtures/analysisExecution.js";
 import { createServer } from "../src/server/createServer.js";
 
 const analysis = {

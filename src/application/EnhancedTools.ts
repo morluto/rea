@@ -1,7 +1,14 @@
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import type {
+  AnalysisOperation,
+  AnalysisOperationPort,
+} from "./AnalysisProvider.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { AnalysisProtocolError, type AnalysisError } from "../domain/errors.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import {
   parseDocuments,
   parseFunctionDossier,
@@ -384,12 +391,18 @@ export class EnhancedTools {
       if (!xrefs.ok) return xrefs;
       if (!Array.isArray(xrefs.value))
         return err(
-          new AnalysisProtocolError("xrefs returned a non-array result"),
+          new AnalysisOutputError(
+            "xrefs",
+            "provider returned a non-array result",
+          ),
         );
       for (const source of xrefs.value) {
         if (typeof source !== "string")
           return err(
-            new AnalysisProtocolError("xrefs returned a non-address value"),
+            new AnalysisOutputError(
+              "xrefs",
+              "provider returned a non-address value",
+            ),
           );
         if (operations >= operationBudget) {
           residual.add(
@@ -444,8 +457,9 @@ export class EnhancedTools {
       }
       if (page.value.nextOffset <= offset) {
         return err(
-          new AnalysisProtocolError(
-            `${tool} returned a non-advancing pagination offset`,
+          new AnalysisOutputError(
+            tool,
+            "provider returned a non-advancing pagination offset",
           ),
         );
       }
@@ -453,23 +467,24 @@ export class EnhancedTools {
     }
   }
 
-  #call(
-    name: string,
+  async #call(
+    name: AnalysisOperation,
     arguments_: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
   ): Promise<Result<JsonValue, AnalysisError>> {
-    return this.analysis.execute(
+    const execution = await this.analysis.execute(
       name,
       arguments_,
       signal === undefined ? {} : { signal },
     );
+    return execution.ok ? ok(execution.value.result) : execution;
   }
 }
 
 const invalidInput = (name: EnhancedToolName, cause: Error): EnhancedResult =>
   Promise.resolve(
     err(
-      new AnalysisProtocolError(`Invalid ${name} input after MCP validation`, {
+      new AnalysisInputError(name, {
         cause,
       }),
     ),

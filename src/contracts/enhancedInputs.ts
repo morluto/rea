@@ -57,6 +57,10 @@ export const enhancedInputSchemas = {
     case_sensitive: z.boolean().default(false),
     limit: z.number().int().min(1).max(100).default(20),
     max_operations: z.number().int().min(1).max(100).default(20),
+    unknown_registry_approved: z
+      .literal(true)
+      .optional()
+      .describe("Explicit approval to record bounded residuals durably"),
   }),
 } as const;
 

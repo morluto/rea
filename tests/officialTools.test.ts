@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import { HopperRemoteError } from "../src/domain/errors.js";
-import { err, ok } from "../src/domain/result.js";
+import { err } from "../src/domain/result.js";
+import { observed as ok } from "./fixtures/analysisExecution.js";
 import type { JsonValue } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
 
@@ -98,7 +99,7 @@ const outputFor = (name: string): JsonValue => {
   )
     return true;
   if (name === "set_addresses_names") return { "0x1000": true };
-  if (["search_procedures", "search_strings"].includes(name)) return {};
+  if (["search_procedures", "search_strings"].includes(name)) return page;
   if (name === "procedure_info")
     return {
       name: "main",
@@ -137,7 +138,7 @@ describe("official Hopper proxy tools", () => {
       execute: () => Promise.resolve(ok(null)),
     });
     const listed = await client.listTools();
-    const officialNames = new Set(
+    const officialNames = new Set<string>(
       OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
     );
     expect(
@@ -178,7 +179,10 @@ describe("official Hopper proxy tools", () => {
       invocations.find(({ name }) => name === "search_procedures")?.arguments_,
     ).toEqual({
       pattern: "main",
+      mode: "literal",
       case_sensitive: false,
+      offset: 0,
+      limit: 100,
       document: null,
     });
   });

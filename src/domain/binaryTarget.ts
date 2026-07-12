@@ -27,9 +27,23 @@ type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
  */
 export interface BinaryTarget {
   readonly path: string;
+  readonly sourcePath?: string;
   readonly sha256: string;
-  readonly kind: "executable" | "database";
-  readonly format: "hopper" | "mach-o" | "elf" | "pe";
+  readonly kind: "executable" | "database" | "archive" | "artifact";
+  readonly format:
+    | "hopper"
+    | "mach-o"
+    | "elf"
+    | "pe"
+    | "zip"
+    | "ipa"
+    | "apk"
+    | "asar"
+    | "dmg"
+    | "pkg"
+    | "plist"
+    | "javascript"
+    | "source-map";
   readonly architecture?: BinaryArchitecture;
   readonly availableArchitectures?: readonly BinaryArchitecture[];
   readonly loaderArgs: readonly string[];
@@ -61,6 +75,7 @@ export const parseBinaryTarget = async (
     )
       return ok({
         path,
+        sourcePath: canonical,
         sha256: await sha256File(path),
         kind: "database",
         format: "hopper",
@@ -69,6 +84,16 @@ export const parseBinaryTarget = async (
     const handle = await open(path, "r");
     let detected: Result<ExecutableMetadata, string>;
     try {
+      const artifactFormat = await detectArtifactFormat(path, handle);
+      if (artifactFormat !== undefined)
+        return ok({
+          path,
+          sourcePath: canonical,
+          sha256: await sha256File(path),
+          kind: isArchiveFormat(artifactFormat) ? "archive" : "artifact",
+          format: artifactFormat,
+          loaderArgs: [],
+        });
       detected = await readExecutableMetadata(handle, hostArchitecture);
     } finally {
       await handle.close();
@@ -76,6 +101,7 @@ export const parseBinaryTarget = async (
     if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
     return ok({
       path,
+      sourcePath: canonical,
       sha256: await sha256File(path),
       kind: "executable",
       ...detected.value,
@@ -86,6 +112,61 @@ export const parseBinaryTarget = async (
     );
   }
 };
+
+const detectArtifactFormat = async (
+  path: string,
+  handle: FileHandle,
+): Promise<
+  | Exclude<BinaryTarget["format"], "hopper" | "mach-o" | "elf" | "pe">
+  | undefined
+> => {
+  const lower = path.toLowerCase();
+  const magic = Buffer.alloc(8);
+  const observed = await handle.read(magic, 0, magic.length, 0);
+  if (
+    observed.bytesRead >= 4 &&
+    magic[0] === 0x50 &&
+    magic[1] === 0x4b &&
+    [0x03, 0x05, 0x07].includes(magic[2] ?? -1) &&
+    [0x04, 0x06, 0x08].includes(magic[3] ?? -1)
+  ) {
+    return lower.endsWith(".ipa")
+      ? "ipa"
+      : lower.endsWith(".apk")
+        ? "apk"
+        : "zip";
+  }
+  const named = namedArtifactFormat(lower);
+  if (named !== undefined) return named;
+  if (
+    lower.endsWith(".pkg") &&
+    observed.bytesRead >= 4 &&
+    magic.subarray(0, 4).toString("ascii") === "xar!"
+  )
+    return "pkg";
+  if (lower.endsWith(".dmg")) {
+    const size = (await handle.stat()).size;
+    if (size >= 512) {
+      const trailer = Buffer.alloc(4);
+      const read = await handle.read(trailer, 0, trailer.length, size - 512);
+      if (read.bytesRead === 4 && trailer.toString("ascii") === "koly")
+        return "dmg";
+    }
+  }
+  return undefined;
+};
+
+const namedArtifactFormat = (
+  lowerPath: string,
+): "asar" | "plist" | "source-map" | "javascript" | undefined => {
+  if (lowerPath.endsWith(".asar")) return "asar";
+  if (lowerPath.endsWith(".plist")) return "plist";
+  if (lowerPath.endsWith(".map")) return "source-map";
+  return /\.(?:m?js|cjs)$/u.test(lowerPath) ? "javascript" : undefined;
+};
+
+const isArchiveFormat = (format: BinaryTarget["format"]): boolean =>
+  ["zip", "ipa", "apk", "asar", "dmg", "pkg"].includes(format);
 
 const sha256File = async (path: string): Promise<string> => {
   const hash = createHash("sha256");

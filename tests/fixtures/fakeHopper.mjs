@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 
-const [socketPath, token] = process.argv.slice(2);
+const [socketPath, token, runId] = process.argv.slice(2);
 const server = createServer((socket) => {
   socket.on("error", () => undefined);
   socket.setEncoding("utf8");
@@ -24,7 +24,11 @@ const server = createServer((socket) => {
         send(
           {
             id: request.id,
-            result: { name: "REA Hopper bridge", version: "1.0.0" },
+            result: {
+              name: "REA Hopper bridge",
+              version: "1.0.0",
+              run_id: runId,
+            },
           },
           true,
         );

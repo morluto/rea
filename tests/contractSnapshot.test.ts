@@ -6,6 +6,8 @@ import {
   OFFICIAL_TOOL_CONTRACTS,
   SESSION_TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import {
   enhancedOutputSchemas,
   officialOutputSchemas,
@@ -14,8 +16,13 @@ import {
 
 describe("tool contract surface", () => {
   it("advertises complete typed schemas and annotations for all analysis tools", () => {
-    const contracts = [...OFFICIAL_TOOL_CONTRACTS, ...ENHANCED_TOOL_CONTRACTS];
-    expect(contracts).toHaveLength(43);
+    const contracts = [
+      ...OFFICIAL_TOOL_CONTRACTS,
+      ...ENHANCED_TOOL_CONTRACTS,
+      ...NATIVE_TOOL_CONTRACTS,
+      ...ARTIFACT_TOOL_CONTRACTS,
+    ];
+    expect(contracts).toHaveLength(50);
     for (const contract of contracts) {
       const inputSchema = z.toJSONSchema(contract.inputSchema, {
         target: "draft-07",
@@ -29,14 +36,21 @@ describe("tool contract surface", () => {
       expect(outputSchema.type).toBe("object");
       expect(contract.annotations).toMatchObject({
         idempotentHint: true,
-        openWorldHint: false,
       });
+      expect(contract.annotations.openWorldHint).toBe(false);
       expect(typeof contract.annotations.readOnlyHint).toBe("boolean");
       expect(typeof contract.annotations.destructiveHint).toBe("boolean");
+      expect(contract.examples).toHaveLength(1);
+      for (const example of contract.examples) {
+        expect(example.title.length).toBeGreaterThan(10);
+        expect(contract.inputSchema.safeParse(example.input).success).toBe(
+          true,
+        );
+      }
     }
   });
 
-  it("keeps exactly seven additive session contracts", () => {
+  it("keeps exactly eighteen additive session contracts", () => {
     expect(
       SESSION_TOOL_CONTRACTS.map(({ name, kind }) => ({ name, kind })),
     ).toEqual([
@@ -47,7 +61,40 @@ describe("tool contract surface", () => {
       { name: "import_evidence_bundle", kind: "session" },
       { name: "capture_process_scenario", kind: "session" },
       { name: "compare_process_captures", kind: "session" },
+      { name: "compare_artifacts", kind: "session" },
+      { name: "compare_functions", kind: "session" },
+      { name: "compare_bundles", kind: "session" },
+      { name: "find_changed_behavior", kind: "session" },
+      { name: "build_call_path", kind: "session" },
+      { name: "correlate_static_and_runtime", kind: "session" },
+      { name: "verify_reconstruction", kind: "session" },
+      { name: "list_unknowns", kind: "session" },
+      { name: "record_unknown", kind: "session" },
+      { name: "update_unknown", kind: "session" },
+      { name: "verify_unknown_resolution", kind: "session" },
     ]);
+    expect(
+      SESSION_TOOL_CONTRACTS.find(
+        ({ name }) => name === "capture_process_scenario",
+      )?.annotations.openWorldHint,
+    ).toBe(true);
+  });
+
+  it("advertises evidence filesystem effects conservatively", () => {
+    const exported = SESSION_TOOL_CONTRACTS.find(
+      ({ name }) => name === "export_evidence_bundle",
+    );
+    const imported = SESSION_TOOL_CONTRACTS.find(
+      ({ name }) => name === "import_evidence_bundle",
+    );
+    expect(exported?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(imported?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
   });
 
   it("publishes a dedicated output schema and agent guidance for every tool", () => {

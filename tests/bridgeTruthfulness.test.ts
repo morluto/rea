@@ -19,7 +19,10 @@ describe("Hopper bridge truthfulness", () => {
   it("does not fabricate non-writable and non-executable segment permissions", () => {
     expect(bridgeSource).toContain('"writable": None');
     expect(bridgeSource).toContain('"executable": None');
-    expect(bridgeSource).toContain('"permissions": _unavailable(');
+    expect(bridgeSource).toContain('"readable": None');
+    expect(bridgeSource).toContain("permission_limitation = _unavailable(");
+    expect(bridgeSource).toContain('"permissions": permission_limitation');
+    expect(bridgeSource).toContain('"provenance": "hopper-public-python-api"');
     expect(bridgeSource).not.toContain('"writable": False');
     expect(bridgeSource).not.toContain('"executable": False');
   });
@@ -50,5 +53,31 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain('_offset(params, "pseudocode_offset")');
     expect(bridgeSource).toContain('_offset(params, "assembly_offset")');
     expect(bridgeSource).toContain('params.get("collection_offset", {})');
+  });
+
+  it("projects opaque Hopper locals into an exact provenance-bearing shape", () => {
+    expect(bridgeSource).toContain("def _procedure_locals(procedure):");
+    expect(bridgeSource).toContain('"description": str(local)');
+    expect(bridgeSource).not.toContain(
+      "_json_safe(procedure.getLocalVariableList())",
+    );
+  });
+
+  it("bounds search and makes regex an explicitly constrained opt-in", () => {
+    expect(bridgeSource).toContain('params.get("mode", "literal")');
+    expect(bridgeSource).toContain("pattern.casefold()");
+    expect(bridgeSource).toContain("_validate_regex_node(parsed)");
+    expect(bridgeSource).toContain(
+      "Nested regex repetitions are not supported",
+    );
+    expect(bridgeSource).toContain("MAX_SEARCH_PATTERN_LENGTH = 256");
+    expect(bridgeSource).toContain("MAX_SEARCH_VALUE_LENGTH = 4096");
+    expect(bridgeSource).toContain('"value_truncated"');
+  });
+
+  it("caches sorted search inventories and invalidates them after renames", () => {
+    expect(bridgeSource).toContain("_search_inventory_cache");
+    expect(bridgeSource).toContain("tuple(sorted(values.items()");
+    expect(bridgeSource).toContain("_invalidate_search_inventory(document)");
   });
 });

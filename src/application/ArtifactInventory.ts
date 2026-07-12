@@ -1,0 +1,380 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import type { Readable } from "node:stream";
+
+import { AsarArtifactReader } from "../artifacts/AsarArtifactReader.js";
+import {
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+} from "../artifacts/ArtifactPaths.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactLimits,
+  type ArtifactReader,
+} from "../artifacts/ArtifactReader.js";
+import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
+import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
+import { MachOSliceArtifactReader } from "../artifacts/MachOSliceArtifactReader.js";
+import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
+import {
+  artifactInventoryResultSchema,
+  type ArtifactInventoryResult,
+  type ArtifactNode,
+} from "../domain/artifactGraph.js";
+import {
+  classifyArtifactPath,
+  classifyArtifactContent,
+  createArtifactEdges,
+  createArtifactNode,
+  createOccurrence,
+  createRootNode,
+  digestCanonical,
+  materializeDirectoryNodes,
+  nearestParent,
+  pageOf,
+  rekeyOccurrences,
+  rootOccurrenceFor,
+  toOutputLimits,
+  type MutableOccurrence,
+} from "./ArtifactGraphConstruction.js";
+
+interface InventoryPageInput {
+  readonly nodeOffset: number;
+  readonly nodeLimit: number;
+  readonly occurrenceOffset: number;
+  readonly occurrenceLimit: number;
+  readonly edgeOffset: number;
+  readonly edgeLimit: number;
+}
+
+/** Inventory one local artifact without extracting or mounting it. */
+export const inventoryArtifact = async (
+  inputPath: string,
+  limits: ArtifactLimits,
+  page: InventoryPageInput,
+  signal?: AbortSignal,
+): Promise<ArtifactInventoryResult> => {
+  abortIfNeeded(signal);
+  const path = await realpath(inputPath);
+  const metadata = await lstat(path);
+  const rootFormat = await classifyRoot(path, metadata.isDirectory());
+  const rootDigest = metadata.isDirectory()
+    ? null
+    : await hashReadable(createReadStream(path), limits.maxTotalBytes, signal);
+  const reader = await createReader(path, rootFormat);
+
+  try {
+    const { nodes, occurrences } = await scanReader(reader, limits, signal);
+
+    materializeDirectoryNodes(occurrences, nodes);
+    const rootNode = createRootNode({
+      path,
+      format: rootFormat,
+      directory: metadata.isDirectory(),
+      digest: rootDigest,
+      occurrences,
+    });
+    nodes.set(rootNode.artifact_id, rootNode);
+    rekeyOccurrences(rootNode.artifact_id, occurrences);
+    const rootOccurrence = rootOccurrenceFor(rootNode, metadata.size);
+    for (const occurrence of occurrences)
+      if (occurrence.parent_occurrence_id === null)
+        occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
+    occurrences.unshift(rootOccurrence);
+    const edges = createArtifactEdges(
+      rootNode.artifact_id,
+      occurrences,
+      reader?.provenance()[0],
+    );
+    const orderedNodes = [...nodes.values()].sort((left, right) =>
+      left.artifact_id.localeCompare(right.artifact_id),
+    );
+    const orderedOccurrences = occurrences.sort((left, right) =>
+      left.logical_path.localeCompare(right.logical_path, "en"),
+    );
+    const orderedEdges = edges.sort((left, right) =>
+      left.edge_id.localeCompare(right.edge_id),
+    );
+    if (rootDigest !== null) {
+      const verified = await hashReadable(
+        createReadStream(path),
+        limits.maxTotalBytes,
+        signal,
+      );
+      if (
+        verified.sha256 !== rootDigest.sha256 ||
+        verified.bytes !== rootDigest.bytes
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          "Root artifact changed during inventory",
+        );
+    }
+    const graphSha256 = digestCanonical({
+      nodes: orderedNodes,
+      occurrences: orderedOccurrences,
+      edges: orderedEdges,
+    });
+    const manifestId = `agm_${digestCanonical({
+      schema_version: 1,
+      root_artifact_id: rootNode.artifact_id,
+      graph_sha256: graphSha256,
+    })}`;
+    return artifactInventoryResultSchema.parse({
+      manifest: {
+        schema_version: 1,
+        manifest_id: manifestId,
+        root_artifact_id: rootNode.artifact_id,
+        root_sha256: rootNode.sha256,
+        root_format: rootNode.format,
+        graph_sha256: graphSha256,
+        node_count: orderedNodes.length,
+        occurrence_count: orderedOccurrences.length,
+        edge_count: orderedEdges.length,
+      },
+      nodes: pageOf(orderedNodes, page.nodeOffset, page.nodeLimit),
+      occurrences: pageOf(
+        orderedOccurrences,
+        page.occurrenceOffset,
+        page.occurrenceLimit,
+      ),
+      edges: pageOf(orderedEdges, page.edgeOffset, page.edgeLimit),
+      limits: toOutputLimits(limits),
+      provenance: reader?.provenance() ?? [],
+      limitations: inventoryLimitations(rootFormat, reader),
+    });
+  } finally {
+    await reader?.close();
+  }
+};
+
+const inventoryLimitations = (
+  format: ArtifactNode["format"],
+  reader: ArtifactReader | undefined,
+): string[] => {
+  if (reader !== undefined) return [];
+  if (format === "dmg" || format === "pkg")
+    return [
+      `${format.toUpperCase()} root hash is observed; child inventory requires an approved native macOS adapter.`,
+    ];
+  if (format === "mach-o-universal" && process.platform !== "darwin")
+    return ["Universal Mach-O slices require the native macOS lipo adapter."];
+  return ["Artifact has no child container entries."];
+};
+
+const createReader = async (
+  path: string,
+  format: ArtifactNode["format"],
+): Promise<ArtifactReader | undefined> => {
+  switch (format) {
+    case "directory":
+      return new DirectoryArtifactReader(path);
+    case "zip":
+    case "ipa":
+    case "apk":
+      return new ZipArtifactReader(path, format);
+    case "asar":
+      return new AsarArtifactReader(path);
+    case "mach-o-universal":
+      return process.platform === "darwin"
+        ? new MachOSliceArtifactReader(path)
+        : undefined;
+    default:
+      return undefined;
+  }
+};
+
+const scanReader = async (
+  reader: ArtifactReader | undefined,
+  limits: ArtifactLimits,
+  signal?: AbortSignal,
+): Promise<{
+  readonly nodes: Map<string, ArtifactNode>;
+  readonly occurrences: MutableOccurrence[];
+}> => {
+  const nodes = new Map<string, ArtifactNode>();
+  const occurrences: MutableOccurrence[] = [];
+  if (reader === undefined) return { nodes, occurrences };
+  const occurrenceByPath = new Map<string, MutableOccurrence>();
+  const registry = new ArtifactPathRegistry();
+  let totalBytes = 0;
+  for await (const entry of reader.entries(signal)) {
+    if (occurrences.length >= limits.maxEntries)
+      throw new ArtifactReaderFailure("limit", "Artifact entry limit exceeded");
+    const logicalPath = normalizeArtifactPath(entry.path, limits);
+    registry.add(logicalPath, entry.kind);
+    preflightEntry(entry, limits);
+    const parent = nearestParent(logicalPath, occurrenceByPath);
+    const occurrence = createOccurrence(
+      entry,
+      logicalPath,
+      parent?.occurrence_id ?? null,
+    );
+    if ((entry.kind === "file" || entry.kind === "slice") && !entry.encrypted) {
+      const remainingBytes = limits.maxTotalBytes - totalBytes;
+      if (remainingBytes <= 0)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Artifact total byte limit exceeded",
+        );
+      if (entry.declaredSize !== null && entry.declaredSize > remainingBytes)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Declared artifact bytes exceed remaining cumulative limit",
+        );
+      const digest = await hashReadable(
+        await reader.open(entry, signal),
+        Math.min(limits.maxEntryBytes, remainingBytes),
+        signal,
+      );
+      totalBytes += digest.bytes;
+      if (
+        entry.declaredSha256 !== null &&
+        entry.declaredSha256 !== digest.sha256
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+        );
+      if (totalBytes > limits.maxTotalBytes)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Artifact total byte limit exceeded",
+        );
+      const classified =
+        entry.kind === "slice"
+          ? ({ kind: "universal-slice", format: "mach-o" } as const)
+          : classifyArtifactContent(logicalPath, digest.prefix);
+      const node = createArtifactNode({
+        sha256: digest.sha256,
+        size: digest.bytes,
+        kind: classified.kind,
+        format: classified.format,
+        executable: entry.executable,
+        contentState: "embedded",
+      });
+      nodes.set(node.artifact_id, node);
+      occurrence.artifact_id = node.artifact_id;
+      occurrence.hash_status = "verified";
+    }
+    occurrences.push(occurrence);
+    occurrenceByPath.set(logicalPath, occurrence);
+  }
+  return { nodes, occurrences };
+};
+
+const classifyRoot = async (
+  path: string,
+  directory: boolean,
+): Promise<ArtifactNode["format"]> => {
+  if (directory) return "directory";
+  const extensionFormat = classifyContainerExtension(path);
+  if (extensionFormat !== undefined) return extensionFormat;
+  const handle = await open(path, "r");
+  try {
+    const magic = Buffer.alloc(4);
+    const observed = await handle.read(magic, 0, magic.length, 0);
+    if (
+      observed.bytesRead === 4 &&
+      magic[0] === 0x50 &&
+      magic[1] === 0x4b &&
+      [0x03, 0x05, 0x07].includes(magic[2] ?? -1) &&
+      [0x04, 0x06, 0x08].includes(magic[3] ?? -1)
+    )
+      return "zip";
+    if (observed.bytesRead === 4) {
+      const header = magic.readUInt32BE(0);
+      if ([0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca].includes(header))
+        return "mach-o-universal";
+      if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(header))
+        return "mach-o";
+      if (magic.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) return "elf";
+    }
+    if (observed.bytesRead >= 2 && magic[0] === 0x4d && magic[1] === 0x5a)
+      return "pe";
+  } finally {
+    await handle.close();
+  }
+  return classifyArtifactPath(path).format;
+};
+
+const classifyContainerExtension = (
+  path: string,
+): ArtifactNode["format"] | undefined => {
+  const lower = path.toLowerCase();
+  for (const format of ["asar", "ipa", "apk", "zip", "dmg", "pkg"] as const)
+    if (lower.endsWith(`.${format}`)) return format;
+  return undefined;
+};
+
+const preflightEntry = (entry: ArtifactEntry, limits: ArtifactLimits): void => {
+  if (entry.declaredSize !== null && entry.declaredSize > limits.maxEntryBytes)
+    throw new ArtifactReaderFailure(
+      "limit",
+      `Entry exceeds byte limit: ${entry.path}`,
+    );
+  if (
+    entry.declaredSize !== null &&
+    entry.compressedSize !== null &&
+    entry.compressedSize === 0 &&
+    entry.declaredSize > 0
+  )
+    throw new ArtifactReaderFailure(
+      "limit",
+      `Invalid compression ratio: ${entry.path}`,
+    );
+  if (
+    entry.declaredSize !== null &&
+    entry.compressedSize !== null &&
+    entry.compressedSize > 0 &&
+    entry.declaredSize / entry.compressedSize > limits.maxCompressionRatio
+  )
+    throw new ArtifactReaderFailure(
+      "limit",
+      `Compression ratio exceeds limit: ${entry.path}`,
+    );
+};
+
+const hashReadable = async (
+  stream: Readable,
+  maximum: number,
+  signal?: AbortSignal,
+): Promise<{
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly prefix: Buffer;
+}> => {
+  const hash = createHash("sha256");
+  const prefixes: Buffer[] = [];
+  let prefixBytes = 0;
+  let bytes = 0;
+  for await (const raw of stream) {
+    abortIfNeeded(signal);
+    const chunk = streamChunkToBuffer(raw);
+    bytes += chunk.length;
+    if (bytes > maximum) {
+      stream.destroy();
+      throw new ArtifactReaderFailure(
+        "limit",
+        "Observed entry bytes exceed limit",
+      );
+    }
+    hash.update(chunk);
+    if (prefixBytes < 16) {
+      const selected = chunk.subarray(0, 16 - prefixBytes);
+      prefixes.push(selected);
+      prefixBytes += selected.length;
+    }
+  }
+  return { sha256: hash.digest("hex"), bytes, prefix: Buffer.concat(prefixes) };
+};
+
+const abortIfNeeded = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true)
+    throw new ArtifactReaderFailure(
+      "cancelled",
+      "Artifact inventory cancelled",
+    );
+};

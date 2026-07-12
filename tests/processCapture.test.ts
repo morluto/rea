@@ -1,8 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import WebSocket from "ws";
+import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { startLoopbackReplay } from "../src/application/LoopbackReplay.js";
 import {
   captureProcessScenario,
@@ -15,6 +18,11 @@ import {
   parseProcessScenario,
   type ProcessExecutionPolicy,
 } from "../src/domain/processCapture.js";
+
+const processFixture = fileURLToPath(
+  new URL("./fixtures/processFidelity.mjs", import.meta.url),
+);
+const execFileAsync = promisify(execFile);
 
 describe("process capture domain", () => {
   const base = {
@@ -34,6 +42,33 @@ describe("process capture domain", () => {
         ],
       }),
     ).toThrow(/ordered/);
+    expect(() =>
+      parseProcessScenario({
+        ...base,
+        environment: { HOME: "/unsafe" },
+      }),
+    ).toThrow(/reserved/);
+    expect(() =>
+      parseProcessScenario({
+        ...base,
+        events: [{ type: "input", at_ms: 31_000, data: "late" }],
+      }),
+    ).toThrow(/after the scenario timeout/);
+  });
+
+  it("requires explicit operator approval for host network access", () => {
+    expect(
+      authorizeProcessScenario(parseProcessScenario(base), {
+        enabled: true,
+        executableRoots: ["/bin"],
+        workingRoots: ["/tmp"],
+        allowedEnvironment: [],
+        allowExternalNetwork: false,
+      }),
+    ).toEqual({
+      allowed: false,
+      reason: "host network access is not approved by operator policy",
+    });
   });
 
   it("refuses paths and environment outside operator policy", () => {
@@ -47,6 +82,7 @@ describe("process capture domain", () => {
         executableRoots: ["/bin"],
         workingRoots: ["/tmp"],
         allowedEnvironment: [],
+        allowExternalNetwork: true,
       }),
     ).toEqual({
       allowed: false,
@@ -56,17 +92,141 @@ describe("process capture domain", () => {
 
   it("never considers truncated captures equivalent", () => {
     const capture = {
-      schema_version: 1 as const,
+      schema_version: 2 as const,
+      normalization: {
+        paths: true,
+        pids: true,
+        ports: true,
+        time_bucket_ms: 10,
+        patterns: [],
+      },
       frames: [],
-      exit: { code: 0, signal: null },
+      exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
       protocol_events: [],
       files_before: [],
       files_after: [],
+      filesystem_effects: [],
       truncated: true,
       limitations: [],
+      residual_unknowns: [],
+      cleanup: {
+        owned_process_group: "verified" as const,
+        temporary_root: "removed" as const,
+      },
     };
     expect(compareProcessCaptures(capture, capture).status).toBe("truncated");
+  });
+
+  it("classifies missing observations as unknown and one-sided evidence as added", () => {
+    const base = {
+      schema_version: 2 as const,
+      normalization: {
+        paths: true,
+        pids: true,
+        ports: true,
+        time_bucket_ms: 10,
+        patterns: [],
+      },
+      frames: [],
+      exit: { code: 0, signal: null, reason: "exited" as const },
+      process_samples: [],
+      protocol_events: [],
+      files_before: [],
+      files_after: [],
+      filesystem_effects: [],
+      truncated: false,
+      limitations: [],
+      residual_unknowns: [],
+      cleanup: {
+        owned_process_group: "verified" as const,
+        temporary_root: "removed" as const,
+      },
+    };
+    const added = compareProcessCaptures(base, {
+      ...base,
+      frames: [{ sequence: 0, at_ms: 0, data: "new" }],
+    });
+    expect(added.terminal).toBe("added");
+    expect(added.status).toBe("changed");
+    const unknown = compareProcessCaptures(
+      { ...base, residual_unknowns: [{ scope: "process", reason: "sampled" }] },
+      base,
+    );
+    expect(unknown.process).toBe("unknown");
+    expect(unknown.status).toBe("unknown");
+  });
+
+  it("keeps filesystem evidence unknown when stable snapshots match", () => {
+    const capture = {
+      schema_version: 2 as const,
+      normalization: {
+        paths: true,
+        pids: true,
+        ports: true,
+        time_bucket_ms: 10,
+        patterns: [],
+      },
+      frames: [],
+      exit: { code: 0, signal: null, reason: "exited" as const },
+      process_samples: [],
+      protocol_events: [],
+      files_before: [],
+      files_after: [],
+      filesystem_effects: [],
+      truncated: false,
+      limitations: [],
+      residual_unknowns: [
+        { scope: "filesystem" as const, reason: "watcher unavailable" },
+      ],
+      cleanup: {
+        owned_process_group: "verified" as const,
+        temporary_root: "removed" as const,
+      },
+    };
+
+    const comparison = compareProcessCaptures(capture, capture);
+    expect(comparison.filesystem).toBe("unknown");
+    expect(comparison.status).toBe("unknown");
+  });
+
+  it("detects changes in normalized process sample metadata", () => {
+    const capture = {
+      schema_version: 2 as const,
+      normalization: {
+        paths: true,
+        pids: true,
+        ports: true,
+        time_bucket_ms: 10,
+        patterns: [],
+      },
+      frames: [],
+      exit: { code: 0, signal: null, reason: "exited" as const },
+      process_samples: [
+        { at_ms: 10, pid: 1, parent_pid: 0, command: "worker" },
+      ],
+      protocol_events: [],
+      files_before: [],
+      files_after: [],
+      filesystem_effects: [],
+      truncated: false,
+      limitations: [],
+      residual_unknowns: [],
+      cleanup: {
+        owned_process_group: "verified" as const,
+        temporary_root: "removed" as const,
+      },
+    };
+    const changed = {
+      ...capture,
+      process_samples: [
+        { at_ms: 20, pid: 1, parent_pid: 2, command: "worker" },
+      ],
+    };
+
+    const comparison = compareProcessCaptures(capture, changed);
+    expect(comparison.process).toBe("changed");
+    expect(comparison.status).toBe("changed");
   });
 });
 
@@ -105,6 +265,102 @@ describe("process capture adapter", () => {
     }
   });
 
+  it("matches bounded HTTP scripts without persisting request secrets", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        http: [
+          {
+            method: "POST",
+            path: "/callback",
+            request_headers: { authorization: "Bearer fixture-secret" },
+            request_body: "credential-body",
+            status: 302,
+            response_headers: { location: "/done" },
+            body: "redirecting",
+            max_calls: 1,
+          },
+          {
+            method: "GET",
+            path: "/disconnect",
+            status: 200,
+            body: "",
+            disconnect: true,
+          },
+        ],
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    try {
+      const request = () =>
+        fetch(`${replay.httpUrl}/callback`, {
+          method: "POST",
+          headers: { authorization: "Bearer fixture-secret" },
+          body: "credential-body",
+          redirect: "manual",
+        });
+      const matched = await request();
+      expect(matched.status).toBe(302);
+      expect(matched.headers.get("location")).toBe("/done");
+      expect((await request()).status).toBe(409);
+      expect((await fetch(`${replay.httpUrl}/missing`)).status).toBe(404);
+      await expect(fetch(`${replay.httpUrl}/disconnect`)).rejects.toThrow();
+      expect(replay.events.map(({ outcome }) => outcome)).toEqual(
+        expect.arrayContaining([
+          "matched",
+          "script_exhausted",
+          "unmatched",
+          "disconnected",
+        ]),
+      );
+      expect(JSON.stringify(replay.events)).not.toContain("fixture-secret");
+      expect(JSON.stringify(replay.events)).not.toContain("credential-body");
+    } finally {
+      await replay.close();
+    }
+  });
+
+  it("consumes ordered WebSocket reconnect scripts and reports exhaustion", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        websocket_connections: [
+          {
+            messages: [{ data: "first", delay_ms: 1 }],
+            disconnect_after: true,
+          },
+          {
+            messages: [{ data: "second" }],
+            disconnect_after: true,
+          },
+        ],
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    const receive = () =>
+      new Promise<string>((resolveMessage, rejectMessage) => {
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.once("message", (value) => resolveMessage(value.toString()));
+        socket.once("error", rejectMessage);
+      });
+    try {
+      await expect(receive()).resolves.toBe("first");
+      await expect(receive()).resolves.toBe("second");
+      await new Promise<void>((resolveClose, rejectClose) => {
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.once("close", () => resolveClose());
+        socket.once("error", rejectClose);
+      });
+      expect(replay.events.at(-1)?.outcome).toBe("script_exhausted");
+    } finally {
+      await replay.close();
+    }
+  });
+
   it("captures PTY, filesystem, descendants, HTTP replay, and redacts environment", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-harness-test-"));
     const script = join(root, "fixture.mjs");
@@ -127,6 +383,7 @@ describe("process capture adapter", () => {
       executableRoots: [dirname(process.execPath)],
       workingRoots: [root],
       allowedEnvironment: ["SECRET"],
+      allowExternalNetwork: true,
     };
     const scenario = parseProcessScenario({
       approved: true,
@@ -161,12 +418,56 @@ describe("process capture adapter", () => {
         ),
       ).toBe(true);
       expect(
+        capture.value.filesystem_effects.some(
+          (effect) =>
+            effect.path.endsWith(":result.txt") && effect.status === "created",
+        ),
+      ).toBe(true);
+      expect(
         capture.value.protocol_events.some(
           (event) => event.protocol === "http" && event.path === "/probe",
         ),
       ).toBe(true);
       expect(JSON.stringify(capture.value)).not.toContain("do-not-record");
       expect(await readFile(join(root, "result.txt"), "utf8")).toBe("created");
+      expect(JSON.stringify(capture.value.files_after)).not.toContain(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not follow or disclose symlink targets outside declared roots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-symlink-test-"));
+    await symlink("/etc/passwd", join(root, "escape"));
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const result = await captureProcessScenario(
+        parseProcessScenario({
+          approved: true,
+          executable: "/bin/true",
+          working_directory: root,
+          filesystem_roots: [root],
+        }),
+        {
+          enabled: true,
+          executableRoots: ["/bin"],
+          workingRoots: [root],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      const escaped = result.value.files_after.find((file) =>
+        file.path.endsWith(":escape"),
+      );
+      expect(escaped?.symlink_target).toBe("<outside-declared-root>");
+      expect(result.value.truncated).toBe(true);
+      expect(JSON.stringify(result.value.files_after)).not.toContain(root);
+      expect(JSON.stringify(result.value.files_after)).not.toContain(
+        "/etc/passwd",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -183,9 +484,130 @@ describe("process capture adapter", () => {
       executableRoots: [],
       workingRoots: [],
       allowedEnvironment: [],
+      allowExternalNetwork: true,
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected policy refusal");
     expect(result.error).toBeInstanceOf(ProcessCaptureError);
+  });
+
+  it("distinguishes timeout from cancellation and cleans both runs", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const policy: ProcessExecutionPolicy = {
+      enabled: true,
+      executableRoots: ["/bin"],
+      workingRoots: ["/tmp"],
+      allowedEnvironment: [],
+      allowExternalNetwork: true,
+    };
+    const timedOut = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: "/bin/sh",
+        arguments: ["-c", "sleep 5"],
+        working_directory: "/tmp",
+        timeout_ms: 50,
+        idle_timeout_ms: 5_000,
+      }),
+      policy,
+    );
+    expect(timedOut.ok).toBe(true);
+    if (!timedOut.ok) throw timedOut.error;
+    expect(timedOut.value.exit.reason).toBe("timeout");
+    expect(timedOut.value.cleanup).toEqual({
+      owned_process_group: "verified",
+      temporary_root: "removed",
+    });
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    const cancelled = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: "/bin/sh",
+        arguments: ["-c", "sleep 5"],
+        working_directory: "/tmp",
+        timeout_ms: 5_000,
+        idle_timeout_ms: 5_000,
+      }),
+      policy,
+      controller.signal,
+    );
+    expect(cancelled.ok).toBe(false);
+    if (cancelled.ok) throw new Error("expected cancellation");
+    expect(cancelled.error.message).toContain("cancelled");
+  });
+
+  it("captures source-owned interactive, resize, Unicode, and signal behavior", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: process.execPath,
+        arguments: [processFixture, "interactive"],
+        working_directory: dirname(processFixture),
+        events: [
+          { type: "input", at_ms: 100, data: "answer" },
+          { type: "resize", at_ms: 300, columns: 100, rows: 40 },
+          { type: "signal", at_ms: 700, signal: "SIGINT" },
+        ],
+        timeout_ms: 2_000,
+        idle_timeout_ms: 2_000,
+      }),
+      {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [dirname(processFixture)],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    const output = result.value.frames.map(({ data }) => data).join("");
+    expect(output).toContain("prompt>");
+    expect(output).toContain("input:answer unicode:雪");
+    expect(output).toContain("resize:100x40");
+    expect(output).toContain("signal:SIGINT");
+    expect(result.value.exit.code).toBe(0);
+  });
+
+  it("samples and cleans a source-owned child and grandchild process tree", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: process.execPath,
+        arguments: [processFixture, "tree"],
+        working_directory: dirname(processFixture),
+        timeout_ms: 2_000,
+        idle_timeout_ms: 2_000,
+      }),
+      {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [dirname(processFixture)],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    const commands = result.value.process_samples.map(({ command }) => command);
+    expect(commands.some((command) => command.includes("tree-child"))).toBe(
+      true,
+    );
+    expect(
+      commands.some((command) => command.includes("tree-grandchild")),
+    ).toBe(true);
+    expect(JSON.stringify(result.value.process_samples)).not.toContain(
+      dirname(processFixture),
+    );
+    const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
+    expect(stdout).not.toContain(`${processFixture} tree-child`);
+    expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
   });
 });

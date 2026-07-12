@@ -1,0 +1,49 @@
+fixture:
+Mach header
+      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags
+ 0xfeedfacf 16777228          0  0x00     EXECUTE    4       512   NOUNDEFS DYLDLINK
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 152
+  segname __TEXT
+   vmaddr 0x100000000
+   vmsize 0x2000
+  fileoff 0
+ filesize 8192
+  maxprot 0x5
+ initprot 0x5
+   nsects 1
+    flags 0x0
+Section
+  sectname __text
+   segname __TEXT
+      addr 0x100001000
+      size 0x100
+    offset 4096
+     align 4
+     flags 0x80000400
+Load command 1
+      cmd LC_UUID
+  cmdsize 24
+     uuid 01234567-89AB-CDEF-0123-456789ABCDEF
+Load command 2
+      cmd LC_MAIN
+  cmdsize 24
+ entryoff 4096
+stacksize 0
+Load command 3
+      cmd LC_BUILD_VERSION
+  cmdsize 32
+ platform MACOS
+    minos 13.0
+      sdk 14.2
+   ntools 1
+     tool LD
+  version 1000.0
+Load command 4
+          cmd LC_LOAD_DYLIB
+      cmdsize 64
+         name /usr/lib/libSystem.B.dylib (offset 24)
+   time stamp 2 Thu Jan  1 00:00:02 1970
+      current version 1319.0.0
+compatibility version 1.0.0

@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
+import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
@@ -267,7 +268,8 @@ export const configureJsonClient = async (
   };
 };
 
-const installCanonicalSkill = async (
+/** Transactionally install or upgrade the versioned canonical REA skill. */
+export const installCanonicalSkill = async (
   home: string,
 ): Promise<"installed" | "unchanged" | "failed"> => {
   const destination = join(
@@ -276,6 +278,8 @@ const installCanonicalSkill = async (
     PRODUCT_IDENTITY.skillName,
     "SKILL.md",
   );
+  const backup = `${destination}.rea.backup`;
+  let original: string | undefined;
   try {
     const content = await readFile(
       new URL(
@@ -284,16 +288,32 @@ const installCanonicalSkill = async (
       ),
       "utf8",
     );
-    if (
-      (await readFile(destination, "utf8").catch(() => undefined)) === content
-    )
-      return "unchanged";
+    original = await readFile(destination, "utf8").catch(() => undefined);
+    if (original === content) return "unchanged";
     await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, content, { encoding: "utf8", mode: 0o600 });
-    return (await readFile(destination, "utf8")) === content
-      ? "installed"
-      : "failed";
+    if (original !== undefined)
+      await writeFileAtomic(backup, original, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    await writeFileAtomic(destination, content, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    if ((await readFile(destination, "utf8")) !== content)
+      throw new Error("skill readback mismatch");
+    return "installed";
   } catch {
+    try {
+      if (original === undefined) await rm(destination, { force: true });
+      else
+        await writeFileAtomic(destination, original, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+    } catch {
+      // The backup remains beside the skill for explicit operator recovery.
+    }
     return "failed";
   }
 };

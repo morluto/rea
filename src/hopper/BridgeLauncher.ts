@@ -6,6 +6,11 @@ import { promisify } from "node:util";
 
 import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  cleanupOwnedProcessGroup,
+  type ProcessCleanupResult,
+} from "../application/ProcessOwnership.js";
+import writeFileAtomic from "write-file-atomic";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
@@ -15,12 +20,14 @@ export interface BridgeSession {
   readonly directory: string;
   readonly socketPath: string;
   readonly token: string;
+  readonly runId: string;
 }
 
 /** Process handle returned by a bridge launcher. */
 export interface BridgeLaunch {
   readonly process: ChildProcess;
   readonly ownsProcessLifetime: boolean;
+  readonly cleanup?: () => Promise<ProcessCleanupResult>;
 }
 
 /** Application-owned capability that starts the in-Hopper bridge. */
@@ -49,8 +56,9 @@ export interface HopperApplicationLauncherOptions {
  * supported launcher; callers must treat possible foreground UI as an upstream
  * Hopper constraint, not as evidence that analysis failed.
  *
- * The returned process is the short-lived launcher helper, not the Hopper app,
- * so REA does not claim ownership of the application's lifetime.
+ * REA owns only the short-lived launcher helper's run-token-authenticated
+ * process group. It does not claim ownership of the Hopper GUI process that
+ * macOS LaunchServices may create or reuse.
  */
 export class HopperApplicationLauncher implements BridgeLauncher {
   constructor(readonly options: HopperApplicationLauncherOptions) {}
@@ -63,6 +71,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const source = [
       `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
       `REA_TOKEN = ${JSON.stringify(session.token)}`,
+      `REA_RUN_ID = ${JSON.stringify(session.runId)}`,
       `exec(compile(open(${JSON.stringify(this.options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(this.options.bridgeScriptPath)}, 'exec'))`,
       "",
     ].join("\n");
@@ -93,6 +102,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       if (!prepared) return err(new HopperCancelledError());
       const child = spawn(this.options.launcherPath, args, {
         stdio: ["ignore", "ignore", "pipe"],
+        detached: process.platform !== "win32",
+        env: { ...process.env, REA_PROCESS_RUN_ID: session.runId },
       });
       const started = await new Promise<Result<undefined, HopperStartError>>(
         (resolve) => {
@@ -109,7 +120,44 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         },
       );
       if (!started.ok) return started;
-      return ok({ process: child, ownsProcessLifetime: false });
+      const pid = child.pid;
+      if (pid === undefined)
+        return err(
+          new HopperStartError({ cause: new Error("missing launcher PID") }),
+        );
+      const ownership = {
+        schema_version: 1,
+        run_id: session.runId,
+        pid,
+        process_group_id: pid,
+        parent_pid: process.pid,
+        launcher: this.options.launcherPath,
+        created_at: new Date().toISOString(),
+      };
+      try {
+        await writeFileAtomic(
+          join(session.directory, "ownership.json"),
+          `${JSON.stringify(ownership)}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
+      } catch (cause: unknown) {
+        await cleanupOwnedProcessGroup({
+          runId: session.runId,
+          leaderPid: pid,
+          processGroupId: pid,
+        });
+        return err(new HopperStartError({ cause }));
+      }
+      return ok({
+        process: child,
+        ownsProcessLifetime: true,
+        cleanup: () =>
+          cleanupOwnedProcessGroup({
+            runId: session.runId,
+            leaderPid: pid,
+            processGroupId: pid,
+          }),
+      });
     } catch (cause: unknown) {
       return err(new HopperStartError({ cause }));
     }

@@ -1,6 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
-import type { AnalysisError } from "../domain/errors.js";
+import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
@@ -14,17 +14,20 @@ export const toCallToolResult = (
   result: Result<JsonValue, AnalysisError>,
   contract: ToolContract,
 ): CallToolResult =>
-  result.ok
-    ? successResult(result.value, contract)
-    : {
-        content: [
-          {
-            type: "text",
-            text: `${result.error._tag}: ${result.error.message}`,
-          },
-        ],
-        isError: true,
-      };
+  result.ok ? successResult(result.value, contract) : errorResult(result.error);
+
+const errorResult = (error: AnalysisError): CallToolResult => {
+  const projected = projectAnalysisError(error);
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${projected.tag}: ${projected.message}`,
+      },
+    ],
+    isError: true,
+  };
+};
 
 const successResult = (
   value: JsonValue,
@@ -37,7 +40,7 @@ const successResult = (
       content: [
         {
           type: "text",
-          text: "HopperProtocolError: Analysis output does not match the tool contract",
+          text: "AnalysisOutputError: Analysis output does not match the tool contract",
         },
       ],
       isError: true,

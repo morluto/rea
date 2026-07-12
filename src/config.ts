@@ -4,6 +4,8 @@ import { ConfigurationError } from "./domain/errors.js";
 import { err, ok, type Result } from "./domain/result.js";
 import type { LogLevel } from "./logger.js";
 import type { ProcessExecutionPolicy } from "./domain/processCapture.js";
+import type { EvidenceFilePolicy } from "./domain/evidenceBundle.js";
+import type { ReferenceSourcePolicy } from "./domain/referenceSourcePolicy.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -15,6 +17,8 @@ export interface AppConfig {
   readonly hopperLoaderArgs: readonly string[];
   readonly logLevel: LogLevel;
   readonly processExecutionPolicy: ProcessExecutionPolicy;
+  readonly evidenceFilePolicy: EvidenceFilePolicy;
+  readonly referenceSourcePolicy: ReferenceSourcePolicy;
 }
 
 const environmentSchema = z.object({
@@ -26,9 +30,15 @@ const environmentSchema = z.object({
     .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
     .default("info"),
   REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
+  REA_PROCESS_ALLOW_EXTERNAL_NETWORK: z
+    .enum(["true", "false"])
+    .default("false"),
   REA_PROCESS_EXECUTABLE_ROOTS_JSON: z.string().default("[]"),
   REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
   REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
+  REA_EVIDENCE_ROOTS_JSON: z.string().default("[]"),
+  REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
+  REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
 
 const parseStringArray = (
@@ -106,6 +116,21 @@ export const parseConfig = (
     "REA_PROCESS_ALLOWED_ENV_JSON",
   );
   if (!allowedEnvironment.ok) return allowedEnvironment;
+  const evidenceRoots = parseStringArray(
+    parsedEnvironment.data.REA_EVIDENCE_ROOTS_JSON,
+    "REA_EVIDENCE_ROOTS_JSON",
+  );
+  if (!evidenceRoots.ok) return evidenceRoots;
+  const referenceRoots = parseStringArray(
+    parsedEnvironment.data.REA_REFERENCE_ROOTS_JSON,
+    "REA_REFERENCE_ROOTS_JSON",
+  );
+  if (!referenceRoots.ok) return referenceRoots;
+  const secretPatterns = parseStringArray(
+    parsedEnvironment.data.REA_REFERENCE_SECRET_PATTERNS_JSON,
+    "REA_REFERENCE_SECRET_PATTERNS_JSON",
+  );
+  if (!secretPatterns.ok) return secretPatterns;
   return ok({
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
@@ -119,6 +144,23 @@ export const parseConfig = (
       executableRoots: executableRoots.value,
       workingRoots: workingRoots.value,
       allowedEnvironment: allowedEnvironment.value,
+      allowExternalNetwork:
+        parsedEnvironment.data.REA_PROCESS_ALLOW_EXTERNAL_NETWORK === "true",
+    },
+    evidenceFilePolicy: {
+      roots: evidenceRoots.value,
+      maxBytes: 64 * 1024 * 1024,
+      maxDepth: 64,
+      maxStringLength: 1024 * 1024,
+      maxNodes: 1_000_000,
+    },
+    referenceSourcePolicy: {
+      roots: referenceRoots.value,
+      secretPatterns: secretPatterns.value,
+      maxBytes: 16 * 1024 * 1024,
+      maxEntries: 10_000,
+      maxDepth: 32,
+      maxPathBytes: 4_096,
     },
   });
 };

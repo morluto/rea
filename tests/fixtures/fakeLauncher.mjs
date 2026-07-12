@@ -16,11 +16,12 @@ if (
   process.exit(2);
 }
 const source = readFileSync(process.argv[bootstrapIndex], "utf8");
-const [socketLine, tokenLine] = source.split("\n");
+const [socketLine, tokenLine, runIdLine] = source.split("\n");
 const socketPath = JSON.parse(socketLine.slice(socketLine.indexOf("=") + 1));
 const token = JSON.parse(tokenLine.slice(tokenLine.indexOf("=") + 1));
+const runId = JSON.parse(runIdLine.slice(runIdLine.indexOf("=") + 1));
 const bridge = fileURLToPath(new URL("./fakeHopper.mjs", import.meta.url));
-const child = spawn(process.execPath, [bridge, socketPath, token], {
+const child = spawn(process.execPath, [bridge, socketPath, token, runId], {
   stdio: "ignore",
 });
 child.on("exit", (code) => process.exit(code ?? 0));

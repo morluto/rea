@@ -7,9 +7,18 @@ import type {
   AnalysisClient,
   AnalysisOperationPort,
 } from "../../src/application/AnalysisProvider.js";
-import { HopperRemoteError } from "../../src/domain/errors.js";
-import { err, ok } from "../../src/domain/result.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  HopperRemoteError,
+} from "../../src/domain/errors.js";
+import { err } from "../../src/domain/result.js";
+import { observed as ok } from "../fixtures/analysisExecution.js";
 import { createServer } from "../../src/server/createServer.js";
+import { createEvidence } from "../../src/domain/evidence.js";
+import { processCaptureSchema } from "../../src/domain/processCapture.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../src/contracts/processCaptureExample.js";
+import { jsonValueSchema } from "../../src/domain/jsonValue.js";
+import { PROCESS_PROVIDER } from "../../src/server/sessionToolPolicies.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -87,8 +96,8 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(structured(listResult)).toMatchObject({
       subject: null,
       operation: "list_procedures",
-      provider: { id: "unidentified", version: null },
-      result: {
+      provider: { id: "fixture", version: "1" },
+      normalized_result: {
         items: [
           { address: "0x1000", value: "main" },
           { address: "0x2000", value: "helper" },
@@ -105,7 +114,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(structured(decompileResult)).toMatchObject({
       operation: "procedure_pseudo_code",
       parameters: { document: null, procedure: "0x1000" },
-      result: "pseudo for 0x1000",
+      normalized_result: "pseudo for 0x1000",
     });
 
     const xrefResult = await client.callTool({
@@ -114,11 +123,11 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     expect(structured(xrefResult)).toMatchObject({
       operation: "xrefs",
-      result: ["0x1000"],
+      normalized_result: ["0x1000"],
     });
   });
 
-  it("preserves the complete 50-tool inventory with a session", async () => {
+  it("preserves the complete 68-tool inventory with a session", async () => {
     const session = new BinarySession(
       (_path) =>
         ({
@@ -141,7 +150,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(50);
+    expect(listed.tools).toHaveLength(68);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("open_binary");
     expect(names).toContain("close_binary");
@@ -150,12 +159,195 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(names).toContain("batch_decompile");
   });
 
-  it("preserves the 43-tool inventory without a session", async () => {
+  it("records approved trace truncation as a deduplicated residual unknown", async () => {
+    const analysis: AnalysisOperationPort = {
+      execute: () =>
+        Promise.resolve(
+          ok({
+            items: [],
+            offset: 0,
+            limit: 500,
+            total: 0,
+            next_offset: null,
+            has_more: false,
+          }),
+        ),
+    };
+    const session = new BinarySession(
+      () =>
+        ({
+          execute: () => Promise.resolve(ok(null)),
+          close: () => Promise.resolve(),
+        }) satisfies AnalysisClient,
+    );
+    const server = createServer(analysis, session);
+    const client = new Client({ name: "unknown-workflow", version: "1.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const traced = await client.callTool({
+        name: "trace_feature",
+        arguments: {
+          query: "license",
+          max_operations: 1,
+          unknown_registry_approved: true,
+        },
+      });
+      expect(traced.isError).not.toBe(true);
+    }
+    const listed = structured(
+      await client.callTool({ name: "list_unknowns", arguments: {} }),
+    );
+    expect(listed).toMatchObject({
+      result: [
+        {
+          status: "open",
+          domain: "control-flow",
+          question: "Investigation reached the operation budget.",
+        },
+      ],
+    });
+  });
+
+  it("records approved typed capability unavailability without forwarding the flag", async () => {
+    const received: Array<Readonly<Record<string, unknown>>> = [];
+    const analysis: AnalysisOperationPort = {
+      execute: (name, arguments_) => {
+        received.push(arguments_);
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "partial",
+              name,
+              "Decompiler is not installed.",
+            ),
+          ),
+        );
+      },
+    };
+    const session = new BinarySession(
+      () =>
+        ({
+          execute: () => Promise.resolve(ok(null)),
+          close: () => Promise.resolve(),
+        }) satisfies AnalysisClient,
+    );
+    const server = createServer(analysis, session);
+    const client = new Client({ name: "unavailable-unknown", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const unavailable = await client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: {
+        procedure: "main",
+        unknown_registry_approved: true,
+      },
+    });
+    expect(unavailable.isError).toBe(true);
+    expect(received[0]).not.toHaveProperty("unknown_registry_approved");
+    expect(
+      structured(
+        await client.callTool({ name: "list_unknowns", arguments: {} }),
+      ),
+    ).toMatchObject({
+      result: [
+        {
+          domain: "provider-capability",
+          question:
+            "procedure_pseudo_code is unavailable: Decompiler is not installed.",
+        },
+      ],
+    });
+  });
+
+  it("records approved capture disagreement as a contradicted unknown", async () => {
+    const session = new BinarySession(
+      () =>
+        ({
+          execute: () => Promise.resolve(ok(null)),
+          close: () => Promise.resolve(),
+        }) satisfies AnalysisClient,
+    );
+    const left = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
+    const right = processCaptureSchema.parse({
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      exit: { code: 1, signal: null, reason: "exited" },
+    });
+    const captureEvidence = (capture: typeof left) =>
+      createEvidence(undefined, PROCESS_PROVIDER, {
+        predicateType: "rea.process-capture/v2",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: jsonValueSchema.parse(capture),
+        confidence: "observed",
+        authority: "controlled-replay",
+      });
+    const leftEvidence = captureEvidence(left);
+    const rightEvidence = captureEvidence(right);
+    expect(session.recordEvidence(leftEvidence).ok).toBe(true);
+    expect(session.recordEvidence(rightEvidence).ok).toBe(true);
+    const server = createServer(
+      { execute: () => Promise.resolve(ok(null)) },
+      session,
+    );
+    const client = new Client({ name: "comparison-unknown", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const mismatched = await client.callTool({
+      name: "compare_process_captures",
+      arguments: {
+        left_evidence_id: leftEvidence.evidence_id,
+        left: right,
+        right_evidence_id: rightEvidence.evidence_id,
+        right,
+      },
+    });
+    expect(mismatched.isError).toBe(true);
+
+    const compared = await client.callTool({
+      name: "compare_process_captures",
+      arguments: {
+        left_evidence_id: leftEvidence.evidence_id,
+        left,
+        right_evidence_id: rightEvidence.evidence_id,
+        right,
+        unknown_registry_approved: true,
+      },
+    });
+    expect(compared.isError).not.toBe(true);
+    expect(
+      structured(
+        await client.callTool({ name: "list_unknowns", arguments: {} }),
+      ),
+    ).toMatchObject({
+      result: [
+        {
+          status: "contradicted",
+          domain: "process-comparison",
+          contradicting_evidence_ids: [rightEvidence.evidence_id],
+        },
+      ],
+    });
+  });
+
+  it("preserves the 50-tool inventory without a session", async () => {
     const client = await connect({
       execute: () => Promise.resolve(ok(null)),
     });
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(43);
+    expect(listed.tools).toHaveLength(50);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("binary_overview");
     expect(names).toContain("batch_decompile");

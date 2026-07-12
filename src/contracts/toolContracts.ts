@@ -1,22 +1,41 @@
 import { z } from "zod";
-import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   processCaptureSchema,
   processScenarioSchema,
 } from "../domain/processCapture.js";
+import {
+  recordUnknownInputSchema,
+  updateUnknownInputSchema,
+} from "../domain/residualUnknown.js";
+import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
+import { functionComparisonInputSchema } from "../domain/functionComparison.js";
+import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
+import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
+import { callPathInputSchema } from "../domain/callPath.js";
+import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
+import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import {
   enhancedOutputSchemas,
   officialOutputSchemas,
+  requireOutputSchema,
   sessionOutputSchemas,
 } from "./toolOutputSchemas.js";
+import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
+import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 
 const document = z.string().optional().describe("The document name");
 const address = z.string().describe("A Hopper address");
 const optionalAddress = address.optional();
 const procedure = z.string().describe("The procedure name or address");
-const pattern = z.string().describe("The regex pattern to search for");
+const searchPattern = z
+  .string()
+  .min(1)
+  .max(256)
+  .describe("The literal text or bounded regex pattern to search for");
 const caseSensitive = z
   .boolean()
   .default(false)
@@ -25,93 +44,128 @@ const pagination = {
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(500).default(100),
 };
+const searchInput = {
+  pattern: searchPattern,
+  mode: z.enum(["literal", "regex"]).default("literal"),
+  case_sensitive: caseSensitive,
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(100).default(100),
+  document,
+};
 
 export interface ToolAnnotations {
   readonly readOnlyHint: boolean;
   readonly destructiveHint: boolean;
-  readonly idempotentHint: true;
-  readonly openWorldHint: false;
+  readonly idempotentHint: boolean;
+  readonly openWorldHint: boolean;
+}
+
+export interface ToolExample {
+  readonly title: string;
+  readonly input: Readonly<Record<string, JsonValue>>;
 }
 
 /** Adapter family responsible for implementing a public MCP tool. */
-type ToolKind = "official-proxy" | "enhanced" | "session";
+type ToolKind =
+  | "official-proxy"
+  | "enhanced"
+  | "native-provider"
+  | "artifact-provider"
+  | "session";
 
 /** Single source of truth for a public tool's name, description, and input. */
-export interface ToolContract {
-  readonly name: string;
+export interface ToolContract<Name extends string = string> {
+  readonly name: Name;
   readonly description: string;
   readonly kind: ToolKind;
   readonly inputSchema: z.ZodObject;
   readonly outputSchema: z.ZodObject;
   readonly annotations: ToolAnnotations;
+  readonly examples: readonly ToolExample[];
 }
+
+const exampleInputSchema = z.record(z.string(), jsonValueSchema);
+const examplesFor = (
+  name: string,
+  inputSchema: z.ZodObject,
+): readonly ToolExample[] => {
+  const parsed = inputSchema.parse(TOOL_EXAMPLE_OVERRIDES[name] ?? {});
+  return [
+    {
+      title: `Example ${name.replaceAll("_", " ")} request`,
+      input: exampleInputSchema.parse(parsed),
+    },
+  ];
+};
 
 const annotations = (name: string, kind: ToolKind): ToolAnnotations => ({
   readOnlyHint:
-    kind === "enhanced" ||
-    name === "export_evidence_bundle" ||
-    (!name.startsWith("set_") &&
-      name !== "unset_bookmark" &&
-      name !== "goto_address" &&
-      kind !== "session"),
+    (kind === "enhanced" && name !== "trace_feature") ||
+    name === "binary_session" ||
+    name === "list_unknowns" ||
+    name === "verify_unknown_resolution",
   destructiveHint:
+    name === "export_evidence_bundle" ||
     name === "unset_bookmark" ||
     name === "set_address_name" ||
     name === "set_addresses_names" ||
     name === "set_comment" ||
     name === "set_inline_comment",
-  idempotentHint: true,
-  openWorldHint: false,
+  idempotentHint: name !== "record_unknown" && name !== "update_unknown",
+  openWorldHint: name === "capture_process_scenario",
 });
 
-const official = (
-  name: string,
+const official = <Name extends string>(
+  name: Name,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({
-  name,
-  description,
-  kind: "official-proxy",
-  inputSchema,
-  outputSchema: requireOutputSchema(officialOutputSchemas, name),
-  annotations: annotations(name, "official-proxy"),
-});
+): ToolContract<Name> => {
+  const trackedInputSchema = inputSchema.extend({
+    unknown_registry_approved: z
+      .literal(true)
+      .optional()
+      .describe(
+        "Explicit approval to record typed capability unavailability as a residual unknown",
+      ),
+  });
+  return {
+    name,
+    description,
+    kind: "official-proxy",
+    inputSchema: trackedInputSchema,
+    outputSchema: requireOutputSchema(officialOutputSchemas, name),
+    annotations: annotations(name, "official-proxy"),
+    examples: examplesFor(name, trackedInputSchema),
+  };
+};
 
-const enhanced = (
-  name: string,
+const enhanced = <Name extends string>(
+  name: Name,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({
+): ToolContract<Name> => ({
   name,
   description,
   kind: "enhanced",
   inputSchema,
   outputSchema: requireOutputSchema(enhancedOutputSchemas, name),
   annotations: annotations(name, "enhanced"),
+  examples: examplesFor(name, inputSchema),
 });
 
-const session = (
-  name: string,
+const session = <Name extends string>(
+  name: Name,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({
+): ToolContract<Name> => ({
   name,
   description,
   kind: "session",
   inputSchema,
   outputSchema: requireOutputSchema(sessionOutputSchemas, name),
   annotations: annotations(name, "session"),
+  examples: examplesFor(name, inputSchema),
 });
-
-const requireOutputSchema = (
-  schemas: Readonly<Record<string, z.ZodObject>>,
-  name: string,
-): z.ZodObject => {
-  const schema = schemas[name];
-  if (schema === undefined)
-    throw new Error(`Missing output schema for ${name}`);
-  return schema;
-};
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
@@ -239,13 +293,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    "Regex-search all analyzed procedure names with optional case sensitivity. The current bridge returns an unpaginated address/name map, so constrain patterns and use list_procedures for controlled exhaustive traversal.",
-    z.object({ pattern, case_sensitive: caseSensitive, document }),
+    "Search analyzed procedure names using literal matching by default or a structurally bounded regex. Returns a deterministic, offset-paginated page; continue at next_offset while has_more is true.",
+    z.object(searchInput),
   ),
   official(
     "search_strings",
-    "Regex-search all analyzed strings with optional case sensitivity. The current bridge is unpaginated and evaluates Python regex, so use narrow patterns and follow matches with xrefs.",
-    z.object({ pattern, case_sensitive: caseSensitive, document }),
+    "Search analyzed strings using literal matching by default or a structurally bounded regex. Returns a deterministic, offset-paginated page with explicit value truncation; follow matches with xrefs.",
+    z.object(searchInput),
   ),
   official(
     "set_address_name",
@@ -288,6 +342,9 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     z.object({ document, address: optionalAddress }),
   ),
 ] as const satisfies readonly ToolContract[];
+
+/** Closed provider operation names exposed by direct analysis adapters. */
+export type OfficialToolName = (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"];
 
 /** Bounded workflows composed from one or more bridge operations. */
 export const ENHANCED_TOOL_CONTRACTS = [
@@ -338,7 +395,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_feature",
-    "Trace a bounded literal feature query through matching strings and procedures, xrefs, and truthful containing-procedure resolution. Returns the operation budget, truncation, and residual unknowns; it does not infer reference kinds.",
+    "Trace a bounded literal feature query through matching strings and procedures, xrefs, and truthful containing-procedure resolution. Returns the operation budget, truncation, and residual unknowns; unknown_registry_approved: true records them durably without inferring reference kinds.",
     enhancedInputSchemas.trace_feature,
   ),
 ] as const satisfies readonly ToolContract[];
@@ -347,32 +404,35 @@ export const ENHANCED_TOOL_CONTRACTS = [
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, or Hopper database, replacing the active target only after validation. This launches Hopper and may show UI; call binary_overview after success.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or Hopper database after validation. Providers start lazily: inventory_artifact does not launch Hopper; deep native operations may show Hopper UI.",
     z.object({ path: z.string().min(1) }),
   ),
   session(
     "close_binary",
-    "Close the active Hopper-backed target and release its provider process. The operation is idempotent; call binary_session to verify the session is closed.",
+    "Close the active target and every provider resource started for it. The operation is idempotent; call binary_session to verify the session is closed.",
     z.object({}),
   ),
   session(
     "binary_session",
-    "Report whether a target is open and, when open, its canonical path, format, and kind. Use before analysis calls or target switches; this performs no analysis.",
+    "Report provider identity, deterministic capability descriptors, and whether a target is open; open targets include canonical path, format, and kind. Use availability, effects, limits, and limitations before selecting analysis operations.",
     z.object({}),
   ),
   session(
     "export_evidence_bundle",
-    "Return the session's deterministic Evidence v2 bundle without clearing it. Records are sorted by evidence ID, and array order carries no investigative meaning.",
-    z.object({}),
+    "Return the session's deterministic Evidence v2 bundle, or atomically write it beneath an operator-approved root. Existing files require overwrite: true; records and manifests use canonical byte-stable ordering.",
+    z.object({
+      path: z.string().min(1).optional(),
+      overwrite: z.boolean().default(false),
+    }),
   ),
   session(
     "import_evidence_bundle",
-    "Validate and atomically merge a local Evidence v2 bundle supplied as data. Semantic IDs are recomputed; tampering, unsupported versions, conflicts, and ledger overflow reject the entire import.",
-    z.object({ bundle: evidenceBundleSchema }),
+    "Read a bounded local JSON bundle beneath an operator-approved root, validate every Evidence v2 ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed.",
+    z.object({ path: z.string().min(1) }),
   ),
   session(
     "capture_process_scenario",
-    "Run one bounded process under a PTY using operator-approved executable and working roots. Requires approved: true on every call. Captures normalized terminal frames, sampled descendants, filesystem snapshots, and loopback HTTP/WebSocket replay. This launches a process and is disabled unless operator policy enables it; it is not a security sandbox.",
+    "Run one bounded process under a PTY using operator-approved executable and working roots. Requires approved: true; unknown_registry_approved: true separately records capture residuals. Captures normalized terminal frames, descendants, filesystem snapshots, and loopback replay. Disabled unless operator policy enables it; not a security sandbox.",
     processScenarioSchema,
   ),
   session(
@@ -383,17 +443,84 @@ export const SESSION_TOOL_CONTRACTS = [
       left: processCaptureSchema,
       right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
       right: processCaptureSchema,
+      unknown_registry_approved: z
+        .literal(true)
+        .optional()
+        .describe("Explicit approval to record capture disagreement durably"),
     }),
+  ),
+  session(
+    "compare_artifacts",
+    "Compare two bounded sets of inventory_artifact Evidence pages by logical occurrence path, content identity, metadata, and graph relations. Pages must share and satisfy their graph commitment; every delta cites both sets, and gaps yield truncated or unknown, never equivalence.",
+    artifactComparisonInputSchema,
+  ),
+  session(
+    "compare_functions",
+    "Compare two explicit bounded sets of analyze_function Evidence pages across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    functionComparisonInputSchema,
+  ),
+  session(
+    "compare_bundles",
+    "Compare two canonical Evidence v2 bundles by exact record membership, explicit one-to-one observation pairs, and complete residual-unknown revision histories. Missing bundle members describe omission only, never behavioral equivalence; output is digest-anchored and deterministically paginated.",
+    bundleComparisonInputSchema,
+  ),
+  session(
+    "find_changed_behavior",
+    "Aggregate validated process, artifact, and function comparison Evidence into a deterministic change report. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims.",
+    changedBehaviorInputSchema,
+  ),
+  session(
+    "build_call_path",
+    "Build bounded shortest-first direct-callee paths from explicit analyze_function Evidence groups using exact canonical addresses. Missing dossiers, incomplete callee pages, provider mixing, and depth frontiers remain unknown; every node and edge cites source Evidence.",
+    callPathInputSchema,
+  ),
+  session(
+    "correlate_static_and_runtime",
+    "Evaluate explicit caller-declared hypotheses between exact static comparison findings and runtime comparison dimensions. Similar names or paths are never auto-matched, consistent cochange never proves causality, and unknown or truncated inputs remain unresolved.",
+    staticRuntimeCorrelationInputSchema,
+  ),
+  session(
+    "verify_reconstruction",
+    "Verify a finite typed behavioral and structural specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority—not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
+    reconstructionVerificationInputSchema,
+  ),
+  session(
+    "list_unknowns",
+    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
+    z.object({
+      status: z
+        .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
+        .optional(),
+      severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+      domain: z.string().trim().min(1).max(100).optional(),
+    }),
+  ),
+  session(
+    "record_unknown",
+    "Create one deterministic residual unknown and immutable mutation evidence. Requires approved: true, validates all evidence and relationship references, and rejects duplicate stable identity.",
+    recordUnknownInputSchema,
+  ),
+  session(
+    "update_unknown",
+    "Append one immutable full-state revision and mutation evidence. Requires approved: true and exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
+    updateUnknownInputSchema,
+  ),
+  session(
+    "verify_unknown_resolution",
+    "Revalidate the current residual-unknown head against live bundled evidence, exact authority/confidence/environment requirements, and revision integrity. Withdrawn and out-of-scope dispositions are not truth claims.",
+    z.object({ unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u) }),
   ),
 ] as const satisfies readonly ToolContract[];
 
 /**
  * Complete ordered public inventory used by registration and verification.
- * Keep this collection at 50 tools unless a deliberate contract change updates
+ * Keep this collection at 68 tools unless a deliberate contract change updates
  * snapshots, package verification, and real-Hopper verification together.
  */
 export const TOOL_CONTRACTS = [
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS,
+  ...NATIVE_TOOL_CONTRACTS,
+  ...ARTIFACT_TOOL_CONTRACTS,
   ...SESSION_TOOL_CONTRACTS,
 ] as const;

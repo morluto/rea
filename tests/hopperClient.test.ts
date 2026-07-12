@@ -30,6 +30,7 @@ class FixtureLauncher implements BridgeLauncher {
             fixturePath,
             session.socketPath,
             this.tokenOverride ?? session.token,
+            session.runId,
           ],
           {
             stdio: ["ignore", "ignore", "pipe"],
