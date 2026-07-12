@@ -18,7 +18,7 @@
 
 <br />
 
-<code>npx skills add morluto/rea</code>
+<code>curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code>
 
 </div>
 
@@ -75,12 +75,20 @@ npx skills add morluto/rea
 ### 시작하기 전에
 
 - macOS 12 이상
+- Ubuntu 24.04+, Fedora 41+ 또는 64비트 Arch Linux
 - Node.js 24.18.x 및 npm 11.16.x (`nvm use`로 고정 버전 선택)
 
 리버스 엔지니어링 도구를 직접 설치할 필요는 없습니다. Setup은 필요할 때 Homebrew와 [Hopper](https://www.hopperapp.com/)를 설치하고 지원되는 코딩 에이전트를 구성합니다. Hopper는 별도 소프트웨어이며 별도 라이선스가 필요합니다. Setup은 Hopper를 설치하지만 라이선스를 제공하지 않습니다.
 
+#### Linux 설치 및 문제 해결
+
+Ubuntu 24.04+, Fedora 41+, 64비트 Arch Linux에서 REA는 공식 DEB, RPM 또는 Arch 패키지를 내려받아 게시된 크기와 체크섬을 검증한 뒤 `apt-get`, `dnf` 또는 `pacman`으로 의존성을 설치합니다. root가 아니면 `pkexec`가 시스템 승인 창을 표시합니다. REA는 `sudo`를 호출하지 않습니다.
+
+기본 실행 파일은 `/opt/hopper/bin/Hopper`입니다. 다른 위치에 설치했다면 `HOPPER_LAUNCHER_PATH`를 설정하세요. Doctor가 분석 엔진 누락을 보고하면 `ldd /opt/hopper/bin/Hopper | grep 'not found'`를 실행하고 누락된 라이브러리를 설치한 다음 `rea setup --yes`를 다시 실행하세요. 실제 분석에는 `DISPLAY` 또는 `WAYLAND_DISPLAY`와 활성화된 Hopper 라이선스가 필요합니다. `~/.local/bin`도 `PATH`에 추가해야 합니다.
+
 ```bash
 # 1. REA 설정
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 npx -y rea-agents setup --yes
 ```
 
@@ -103,6 +111,8 @@ SQLite를 사용해 제 프로젝트에 비슷한 기능을 구현해 주세요.
 
 ```bash
 npx -y rea-agents doctor
+rea uninstall
+rea uninstall --purge-data
 ```
 
 ## 하나의 프롬프트로 전체 조사

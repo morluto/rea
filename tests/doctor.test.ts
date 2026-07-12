@@ -3,8 +3,9 @@ import { runDoctor, type DoctorHost } from "../src/application/Doctor.js";
 
 const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   platform: "darwin",
-  nodeVersion: "22.1.0",
+  nodeVersion: "24.18.0",
   macosVersion: () => Promise.resolve("12.0"),
+  linuxDistribution: () => Promise.resolve(undefined),
   validTarget: (path) => Promise.resolve(path.includes("Hopper")),
   executable: (path) => Promise.resolve(path.includes("Hopper")),
   brewHopperPath: () => Promise.resolve(undefined),
@@ -20,9 +21,7 @@ describe("doctor", () => {
         undefined,
         host({ macosVersion: () => Promise.resolve(version) }),
       );
-      expect(result.checks.find(({ name }) => name === "macos")?.ok).toBe(
-        false,
-      );
+      expect(result.checks.find(({ name }) => name === "host")?.ok).toBe(false);
     },
   );
   it("detects a manual configured Hopper before Homebrew", async () => {
@@ -35,6 +34,27 @@ describe("doctor", () => {
     );
     expect(result.hopperPath).toBe("/manual/Hopper");
     expect(result.healthy).toBe(true);
+  });
+  it("accepts an officially supported Linux distribution", async () => {
+    const path = "/home/user/.local/share/rea/hopper/bin/Hopper";
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        macosVersion: () => Promise.resolve(undefined),
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "ubuntu",
+            versionId: "24.04",
+            packageFamily: "deb",
+            supported: true,
+          }),
+        configuredHopperPath: path,
+        executable: (candidate) => Promise.resolve(candidate === path),
+      }),
+    );
+    expect(result.healthy).toBe(true);
+    expect(result.hopperPath).toBe(path);
   });
   it("detects a Homebrew cask installed outside /Applications", async () => {
     const path =

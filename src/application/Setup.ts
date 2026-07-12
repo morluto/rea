@@ -8,27 +8,40 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
 import { probeHomebrew } from "./homebrew.js";
+import {
+  installLinuxHopper,
+  readLinuxDistribution,
+  type LinuxDistribution,
+} from "./LinuxHopper.js";
 
 const execFileAsync = promisify(execFile);
+
+const registrationCommand = (): readonly string[] =>
+  process.env.npm_command === "exec"
+    ? ["npx", "-y", PRODUCT_IDENTITY.packageName, "mcp"]
+    : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
 
 /** A detected agent configuration owned by setup. */
 export interface SetupClient {
   readonly name: string;
   readonly configPath: string;
+  readonly markerPath?: string;
+  readonly format?: "json" | "toml" | "unsupported";
 }
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
   | {
-      readonly status: "unchanged" | "configured";
+      readonly status: "unchanged" | "configured" | "skipped";
       readonly backupPath?: string;
     }
   | {
@@ -44,6 +57,7 @@ export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
+  linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hasHomebrew(): Promise<boolean>;
   installHomebrew(): Promise<boolean>;
   hopperPath(): Promise<string | undefined>;
@@ -52,6 +66,7 @@ export interface SetupHost {
   configureClient(
     client: SetupClient,
     hopperPath: string,
+    command: readonly string[],
   ): Promise<ClientConfigurationResult>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
@@ -87,13 +102,9 @@ export const runSetup = async (
     doctor: await host.doctor(),
     remediation,
   });
-  if (host.platform !== "darwin")
-    return fail("Hopper requires macOS 12 or newer.");
-  const macosVersion = await host.macosVersion();
-  if (macosVersion === undefined || major(macosVersion) < 12)
-    return fail("Upgrade to macOS 12 or newer.");
-  if (major(host.nodeVersion) < 22) return fail("Install Node.js 22 or newer.");
-  if (!(await host.hasHomebrew())) {
+  const unsupported = await hostRemediation(host);
+  if (unsupported !== undefined) return fail(unsupported);
+  if (host.platform === "darwin" && !(await host.hasHomebrew())) {
     if (!yes) return fail("Re-run with --yes to install Homebrew.");
     if (!(await host.installHomebrew()))
       return fail(
@@ -116,7 +127,11 @@ export const runSetup = async (
       );
   }
   for (const client of await host.detectedClients()) {
-    const result = await host.configureClient(client, hopperPath);
+    const result = await host.configureClient(
+      client,
+      hopperPath,
+      registrationCommand(),
+    );
     clients[client.name] = result;
     if (result.status === "failed")
       return fail(
@@ -130,17 +145,38 @@ export const runSetup = async (
     return fail("Agent skill installation or readback failed.");
   if (skill === "installed") actions.push("installed_skill");
   const doctor = await host.doctor();
+  const activationRequired = actions.includes("installed_hopper");
+  const ready = doctor.healthy && !activationRequired;
   return {
-    status: doctor.healthy ? "ready" : "needs_human",
+    status: ready ? "ready" : "needs_human",
     actions,
     clients,
     doctor,
-    ...(doctor.healthy
+    ...(ready
       ? {}
       : {
-          remediation: "Run rea doctor and apply each reported remediation.",
+          remediation: activationRequired
+            ? "Open Hopper, complete its one-time activation, then rerun rea doctor --json."
+            : "Run rea doctor and apply each reported remediation.",
         }),
   };
+};
+
+const hostRemediation = async (
+  host: SetupHost,
+): Promise<string | undefined> => {
+  if (host.platform !== "darwin" && host.platform !== "linux")
+    return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
+  if (major(host.nodeVersion) < 24) return "Install Node.js 24.18 or newer.";
+  if (host.platform === "darwin") {
+    const version = await host.macosVersion();
+    return version === undefined || major(version) < 12
+      ? "Upgrade to macOS 12 or newer."
+      : undefined;
+  }
+  return (await host.linuxDistribution())?.supported === true
+    ? undefined
+    : "REA supports Hopper on Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.";
 };
 
 /** Production setup effects for macOS, Homebrew, JSON MCP clients, and the canonical skill directory. */
@@ -150,6 +186,7 @@ const systemSetupHost = (): SetupHost => {
     platform: process.platform,
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
+    linuxDistribution: readLinuxDistribution,
     hasHomebrew: () => brewSucceeds(["--version"]),
     installHomebrew: () =>
       commandSucceeds(
@@ -162,43 +199,86 @@ const systemSetupHost = (): SetupHost => {
       ),
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
     installHopper: () =>
-      brewSucceeds(["install", "--cask", "hopper-disassembler"]),
-    detectedClients: () => detectJsonClients(homedir()),
-    configureClient: configureJsonClient,
+      process.platform === "linux"
+        ? installLinuxHopper().then(({ status }) => status === "installed")
+        : brewSucceeds(["install", "--cask", "hopper-disassembler"]),
+    detectedClients: () => detectClients(homedir()),
+    configureClient: (client, hopperPath, command) =>
+      client.format === "unsupported"
+        ? Promise.resolve({ status: "skipped" })
+        : client.format === "toml"
+          ? configureTomlClient(client, hopperPath, command)
+          : configureJsonClient(client, hopperPath, command),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
   };
 };
 
-const detectJsonClients = async (
+/** Detect supported coding agents from stable per-user installation markers. */
+export const detectClients = async (
   home: string,
 ): Promise<readonly SetupClient[]> => {
-  const candidates = [
-    {
-      name: "claude_desktop",
-      configPath: join(
-        home,
-        "Library/Application Support/Claude/claude_desktop_config.json",
-      ),
-      marker: join(home, "Library/Application Support/Claude"),
-    },
-    {
-      name: "cursor",
-      configPath: join(home, ".cursor/mcp.json"),
-      marker: join(home, ".cursor"),
-    },
-  ];
   const detected: SetupClient[] = [];
-  for (const candidate of candidates)
-    if (await exists(candidate.marker))
-      detected.push({ name: candidate.name, configPath: candidate.configPath });
+  for (const candidate of supportedClients(home))
+    if (await exists(candidate.markerPath ?? candidate.configPath))
+      detected.push(candidate);
   return detected;
 };
+
+/** Describe every client location that setup or uninstall may own. */
+export const supportedClients = (home: string): readonly SetupClient[] => [
+  {
+    name: "claude_code",
+    configPath: join(home, ".claude.json"),
+    markerPath: join(home, ".claude"),
+  },
+  {
+    name: "claude_desktop",
+    configPath: join(
+      home,
+      "Library/Application Support/Claude/claude_desktop_config.json",
+    ),
+    markerPath: join(home, "Library/Application Support/Claude"),
+  },
+  {
+    name: "codex",
+    configPath: join(home, ".codex/config.toml"),
+    markerPath: join(home, ".codex"),
+    format: "toml" as const,
+  },
+  {
+    name: "cursor",
+    configPath: join(home, ".cursor/mcp.json"),
+    markerPath: join(home, ".cursor"),
+  },
+  {
+    name: "gemini_cli",
+    configPath: join(home, ".gemini/settings.json"),
+    markerPath: join(home, ".gemini"),
+  },
+  {
+    name: "windsurf",
+    configPath: join(home, ".codeium/windsurf/mcp_config.json"),
+    markerPath: join(home, ".codeium/windsurf"),
+  },
+  {
+    name: "devin",
+    configPath: join(home, ".devin"),
+    markerPath: join(home, ".devin"),
+    format: "unsupported" as const,
+  },
+];
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
   client: SetupClient,
   hopperPath?: string,
+  command: readonly string[] = [
+    "npx",
+    "-y",
+    PRODUCT_IDENTITY.packageName,
+    "mcp",
+  ],
 ): Promise<ClientConfigurationResult> => {
   let document: Record<string, unknown> = {};
   let original: string | undefined;
@@ -215,8 +295,8 @@ export const configureJsonClient = async (
     return { status: "failed", reason: "readback" };
   }
   const desired = {
-    command: "npx",
-    args: ["-y", PRODUCT_IDENTITY.packageName, "mcp"],
+    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
+    args: command.slice(1),
     ...(hopperPath === undefined
       ? {}
       : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
@@ -258,6 +338,81 @@ export const configureJsonClient = async (
       await restoreConfig(client.configPath, original);
       return { status: "failed", reason: "readback" };
     }
+  } catch {
+    await restoreConfig(client.configPath, original);
+    return { status: "failed", reason: "readback" };
+  }
+  return {
+    status: "configured",
+    ...(backupPath === undefined ? {} : { backupPath }),
+  };
+};
+
+/** Back up, atomically update, and semantically read back Codex TOML configuration. */
+export const configureTomlClient = async (
+  client: SetupClient,
+  hopperPath?: string,
+  command: readonly string[] = [
+    "npx",
+    "-y",
+    PRODUCT_IDENTITY.packageName,
+    "mcp",
+  ],
+): Promise<ClientConfigurationResult> => {
+  let document: Record<string, unknown> = {};
+  let original: string | undefined;
+  try {
+    original = await readFile(client.configPath, "utf8");
+    document = objectSchema.parse(parseToml(original));
+  } catch (cause: unknown) {
+    if (!isMissing(cause)) return { status: "failed", reason: "readback" };
+  }
+  let servers: Record<string, unknown>;
+  try {
+    servers = parseOptionalObject(document.mcp_servers);
+  } catch {
+    return { status: "failed", reason: "readback" };
+  }
+  const desired = {
+    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
+    args: command.slice(1),
+    ...(hopperPath === undefined
+      ? {}
+      : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
+  };
+  if (
+    JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+    JSON.stringify(desired)
+  )
+    return { status: "unchanged" };
+  const backupPath =
+    original === undefined ? undefined : `${client.configPath}.rea.backup`;
+  try {
+    if (backupPath !== undefined) await copyFile(client.configPath, backupPath);
+  } catch {
+    return { status: "failed", reason: "backup" };
+  }
+  document.mcp_servers = {
+    ...servers,
+    [PRODUCT_IDENTITY.mcpServerKey]: desired,
+  };
+  try {
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await writeFileAtomic(client.configPath, stringifyToml(document), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    const readback = objectSchema.parse(
+      parseToml(await readFile(client.configPath, "utf8")),
+    );
+    if (
+      JSON.stringify(
+        parseOptionalObject(readback.mcp_servers)[
+          PRODUCT_IDENTITY.mcpServerKey
+        ],
+      ) !== JSON.stringify(desired)
+    )
+      throw new Error("TOML readback mismatch");
   } catch {
     await restoreConfig(client.configPath, original);
     return { status: "failed", reason: "readback" };

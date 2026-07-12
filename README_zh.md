@@ -18,7 +18,7 @@
 
 <br />
 
-<code>npx skills add morluto/rea</code>
+<code>curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code>
 
 </div>
 
@@ -75,12 +75,20 @@ npx skills add morluto/rea
 ### 开始之前
 
 - macOS 12 或更高版本
+- Ubuntu 24.04+、Fedora 41+ 或 64 位 Arch Linux
 - Node.js 24.18.x 和 npm 11.16.x（运行 `nvm use` 选择固定版本）
 
 你不需要手动安装逆向工程工具。Setup 会在需要时安装 Homebrew 和 [Hopper](https://www.hopperapp.com/)，然后配置支持的编程智能体。Hopper 是独立软件，需要单独授权；Setup 可以安装它，但不提供许可证。
 
+#### Linux 安装与故障排除
+
+在 Ubuntu 24.04+、Fedora 41+ 和 64 位 Arch Linux 上，REA 会下载 Hopper 官方的 DEB、RPM 或 Arch 软件包，验证发布方提供的大小和校验和，然后通过 `apt-get`、`dnf` 或 `pacman` 安装依赖。非 root 运行时，`pkexec` 会显示系统授权提示；REA 不调用 `sudo`。
+
+默认启动器是 `/opt/hopper/bin/Hopper`。自定义安装可设置 `HOPPER_LAUNCHER_PATH`。如果 Doctor 报告缺少分析引擎，请运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'`，安装缺少的系统库后重新运行 `rea setup --yes`。真实分析需要 `DISPLAY` 或 `WAYLAND_DISPLAY` 以及已激活的 Hopper 许可证。Linux 上还应确保 `~/.local/bin` 位于 `PATH` 中。
+
 ```bash
 # 1. 安装和配置 REA
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 npx -y rea-agents setup --yes
 ```
 
@@ -103,6 +111,8 @@ Setup 会自动配置检测到的 Claude Desktop 和 Cursor。重启应用，让
 
 ```bash
 npx -y rea-agents doctor
+rea uninstall
+rea uninstall --purge-data
 ```
 
 ## 一个提示词，完成一次完整调查

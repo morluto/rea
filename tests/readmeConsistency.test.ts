@@ -25,8 +25,12 @@ describe("localized README product facts", () => {
     async (path) => {
       const content = await readFile(resolve(path), "utf8");
       expect(content).toContain("npx skills add morluto/rea");
+      expect(content).toContain(
+        "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
+      );
       expect(content).toContain("npx -y rea-agents setup --yes");
       expect(content).toContain("npx -y rea-agents doctor");
+      expect(content).toContain("rea uninstall");
       expect(content).toContain('"args": ["-y", "rea-agents", "mcp"]');
       expect(content).toContain("Node.js 24");
       expect(content).toContain("macOS 12");

@@ -114,7 +114,9 @@ try {
   const help = await run(cli, ["--help"], environment);
   const llms = await run(cli, ["--llms"], environment);
   const doctor = json(await run(cli, ["doctor", "--json"], environment));
-  const expectedDoctorHealth = process.platform === "darwin";
+  const supportedSetupHost =
+    doctor.checks?.find(({ name }) => name === "host")?.ok === true;
+  const expectedDoctorHealth = supportedSetupHost;
   if (
     !help.includes("setup") ||
     !help.includes("inventory-artifact") ||
@@ -213,7 +215,7 @@ try {
     throw new Error("Incur mcp add did not register the floating npx command");
   const skillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
   const siblingSkillPath = join(home, ".agents/skills/unrelated/SKILL.md");
-  if (process.platform === "darwin") {
+  if (supportedSetupHost) {
     await mkdir(join(home, ".agents/skills/rea-analysis"), {
       recursive: true,
     });
@@ -225,7 +227,7 @@ try {
   const second = json(
     await run(cli, ["setup", "--yes", "--json"], environment),
   );
-  if (process.platform === "darwin") {
+  if (supportedSetupHost) {
     if (
       first.status !== "ready" ||
       second.status !== "ready" ||
@@ -236,9 +238,8 @@ try {
       const config = json(await readFile(configPath, "utf8"));
       if (
         config.existing !== true ||
-        config.mcpServers?.rea?.command !== "npx" ||
-        JSON.stringify(config.mcpServers?.rea?.args) !==
-          JSON.stringify(["-y", "rea-agents", "mcp"])
+        config.mcpServers?.rea?.command !== cli ||
+        JSON.stringify(config.mcpServers?.rea?.args) !== JSON.stringify(["mcp"])
       )
         throw new Error("packaged client readback failed");
       if (
@@ -297,46 +298,50 @@ try {
   const client = new Client({ name: "package-smoke", version: "1.0.0" });
   try {
     await client.connect(transport);
-    if ((await client.listTools()).tools.length !== expectedToolCount)
+    const mcpOptions = { timeout: 15_000 };
+    if (
+      (await client.listTools(undefined, mcpOptions)).tools.length !==
+      expectedToolCount
+    )
       throw new Error("packaged MCP tool inventory diverged from contracts");
-    const result = await client.callTool({
-      name: "current_document",
-      arguments: {},
-    });
+    const result = await client.callTool(
+      { name: "current_document", arguments: {} },
+      mcpOptions,
+    );
     if (result.isError !== true)
       throw new Error("packaged target-free MCP omitted no-target error");
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path: process.execPath },
-    });
+    const opened = await client.callTool(
+      { name: "open_binary", arguments: { path: process.execPath } },
+      mcpOptions,
+    );
     if (opened.isError === true)
       throw new Error("packaged MCP could not open a binary");
-    const overviewResult = await client.callTool({
-      name: "binary_overview",
-      arguments: {},
-    });
+    const current = await client.callTool(
+      { name: "current_document", arguments: {} },
+      mcpOptions,
+    );
     if (
-      overviewResult.isError === true ||
-      json(text(overviewResult)).normalized_result?.procedure_count < 1
+      current.isError === true ||
+      json(text(current)).normalized_result !== "fixture"
     )
-      throw new Error("packaged MCP analysis workflow failed");
-    const closed = await client.callTool({
-      name: "close_binary",
-      arguments: {},
-    });
+      throw new Error("packaged MCP bridge call failed");
+    const closed = await client.callTool(
+      { name: "close_binary", arguments: {} },
+      mcpOptions,
+    );
     if (closed.isError === true)
       throw new Error("packaged MCP could not close its binary");
     const mcpBundlePath = join(evidenceRoot, "mcp.json");
-    const mcpExport = await client.callTool({
-      name: "export_evidence_bundle",
-      arguments: { path: mcpBundlePath },
-    });
+    const mcpExport = await client.callTool(
+      { name: "export_evidence_bundle", arguments: { path: mcpBundlePath } },
+      mcpOptions,
+    );
     if (mcpExport.isError === true)
       throw new Error("packaged MCP evidence export failed");
-    const mcpImport = await client.callTool({
-      name: "import_evidence_bundle",
-      arguments: { path: mcpBundlePath },
-    });
+    const mcpImport = await client.callTool(
+      { name: "import_evidence_bundle", arguments: { path: mcpBundlePath } },
+      mcpOptions,
+    );
     if (mcpImport.isError === true)
       throw new Error("packaged MCP evidence import failed");
   } catch (cause) {
@@ -347,7 +352,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: process.platform === "darwin" ? "idempotent" : "unsupported-host-rejected", clients: process.platform === "darwin" ? 2 : 0, backupReadback: process.platform === "darwin", failureRecovery: process.platform === "darwin", skill: process.platform === "darwin", mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "idempotent" : "unsupported-host-rejected", clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

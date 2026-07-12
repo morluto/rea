@@ -20,6 +20,7 @@
 - [ ] Linting passes (`npm run lint`)
 - [ ] Full test suite passes (`npm test`)
 - [ ] Real Hopper verification performed (`npm run verify:hopper`)
+- [ ] Linux real Hopper verification performed (`npm run verify:hopper:linux`) or unavailability explained
 - [ ] Package verification performed (`npm run verify:package`)
 
 ## Tool Contract Impact

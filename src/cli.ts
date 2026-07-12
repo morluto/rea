@@ -7,6 +7,7 @@ import {
   runProviderAnalysis,
 } from "./application/DirectAnalysis.js";
 import { runSetup } from "./application/Setup.js";
+import { runUninstall } from "./application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { createLogger, parseLogLevel, type Logger } from "./logger.js";
 import { parseConfig } from "./config.js";
@@ -29,7 +30,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
       : parseLogLevel(process.env.REA_LOG_LEVEL),
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
-    version: "0.1.0",
+    version: process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
     description:
       "Reverse engineer anything from your terminal or coding agent.",
     mcp: {
@@ -67,6 +68,18 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
     }),
     run: ({ options }) =>
       logCliCommand(logger, "doctor", () => runDoctor(options.target)),
+  });
+  cli.command("uninstall", {
+    description: "Remove REA-owned agent configuration and skill files",
+    options: z.object({
+      purgeData: z
+        .boolean()
+        .default(false)
+        .describe("Also remove REA caches and state"),
+    }),
+    alias: { purgeData: "purge-data" },
+    run: ({ options }) =>
+      logCliCommand(logger, "uninstall", () => runUninstall(options.purgeData)),
   });
   cli.command("analyze", {
     description: "Get an overview of an app",
