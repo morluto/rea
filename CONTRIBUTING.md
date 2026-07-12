@@ -4,7 +4,7 @@ REA welcomes focused bug fixes, documentation improvements, tests, and reverse-e
 
 ## Development setup
 
-REA requires macOS 12 or newer, Node.js 24.18.x, npm 11.16.x, and a separately installed Hopper Disassembler application for real-Hopper verification. Run `nvm use` before installing dependencies.
+REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verification additionally requires either macOS 12+ or an officially supported Linux host (Ubuntu 24.04+, Fedora 41+, or 64-bit Arch), an installed and activated Hopper application, and a desktop session. Run `nvm use` before installing dependencies.
 
 ```bash
 npm ci
@@ -13,7 +13,7 @@ npm run build
 npm test
 ```
 
-Keep dependencies flowing inward through the existing domain, Hopper, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 31 direct, 8 enhanced, and 3 session tools unless a deliberate contract change updates every verifier and snapshot.
+Keep dependencies flowing inward through the existing domain, contracts, Hopper, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, and 18 session tools (68 total) unless a deliberate contract change updates every verifier and snapshot.
 
 Before submitting a pull request, run:
 
@@ -43,6 +43,16 @@ HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
 npm run verify:hopper
 ```
 
+On a self-hosted Linux runner with `DISPLAY` or `WAYLAND_DISPLAY`, use:
+
+```bash
+HOPPER_TARGET_PATH=/path/to/target-a \
+HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
+npm run verify:hopper:linux
+```
+
+The macOS and Linux real-Hopper workflows remain separate so a successful mock or package test cannot be reported as platform-runtime proof. Pull requests changing setup, launch, bridge, or Hopper behavior must state which real workflows ran and why either workflow was unavailable.
+
 Describe the behavior change and verification performed in the pull request. Never commit binaries, Hopper documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
 
 ## Maintainer release checklist
@@ -54,13 +64,13 @@ npm pack
 npm exec --yes --package ./morluto-rea-0.1.0.tgz -- rea --help
 ```
 
-Publish the public scoped package:
+Publish the public package:
 
 ```bash
 npm publish --access public
 ```
 
-After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 42 tools:
+After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 68 tools:
 
 ```bash
 npx -y rea-agents --help

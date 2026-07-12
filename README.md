@@ -18,7 +18,7 @@
 
 <br />
 
-<code>npx skills add morluto/rea</code>
+<code>curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code>
 
 </div>
 
@@ -81,6 +81,16 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 
 ## Quick start
 
+### One-command install — recommended
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
+```
+
+The installer supports macOS 12+, Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux. It installs compatible Node.js 24/npm 11 prerequisites, the exact latest `rea-agents-*` release, the official Hopper package, detected client registrations, and the bundled skill, then verifies the result. macOS uses Homebrew; Linux uses the native package manager and may show a system authorization prompt. Pin a reproducible release with `REA_VERSION=0.3.0`; `REA_VERSION` is the only supported installer environment override.
+
+REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It configures detected clients with documented local MCP files; Devin is reported as skipped because its public documentation does not define a local configuration file. You can safely rerun the installer or `rea setup --yes`. If REA's local analysis engine needs one-time activation, installation remains intact and setup reports the exact remaining action rather than claiming full readiness.
+
 ### With a coding agent — recommended
 
 ```bash
@@ -115,15 +125,48 @@ Choose either the no-install commands or the global installation. You do not nee
 ### Requirements
 
 - macOS 12 or newer
+- Ubuntu 24.04+, Fedora 41+, or 64-bit Arch Linux
 - Node.js 24.18.x with npm 11.16.x
 
-You do not need to choose or install binary-analysis tools yourself. REA setup handles them when needed. Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate Mac app with its own license. REA can install it, but you must approve the installation and complete its one-time activation.
+You do not need to choose or install binary-analysis tools yourself. REA setup handles them when needed. Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. REA can install the official macOS or Linux package, but you must approve installation and complete its one-time activation.
 
 If something is not working, run:
 
 ```bash
 npx -y rea-agents doctor
 ```
+
+`rea doctor --json` is read-only and distinguishes unsupported hosts, missing dependencies, a missing local analysis engine, configuration drift, and healthy checks. Fresh-install activation is reported by setup because Hopper does not expose a reliable noninteractive activation probe.
+
+### Linux installation and troubleshooting
+
+On Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux, setup downloads the matching official Hopper package, restricts downloads to Hopper's public origin, verifies the published size and checksum, and invokes `apt-get`, `dnf`, or `pacman`. When REA is not already running as root, `pkexec` presents the system authorization prompt. REA never invokes `sudo`.
+
+The normal Linux launcher is `/opt/hopper/bin/Hopper`. If Hopper was installed elsewhere:
+
+```bash
+export HOPPER_LAUNCHER_PATH=/absolute/path/to/Hopper
+rea doctor --json
+```
+
+If doctor reports a missing analysis engine even though the file exists, inspect shared-library resolution with:
+
+```bash
+ldd /opt/hopper/bin/Hopper | grep 'not found'
+```
+
+Install the missing distribution packages and rerun `rea setup --yes`. Hopper is a desktop application: real analysis requires an active `DISPLAY` or `WAYLAND_DISPLAY`, plus one-time license activation. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
+
+REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
+
+To remove only REA-owned MCP registrations and the managed skill:
+
+```bash
+rea uninstall
+rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
+```
+
+Uninstall preserves Hopper, Homebrew, Node.js, evidence, captures, external evidence roots, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
 
 ### CLI or coding agent?
 

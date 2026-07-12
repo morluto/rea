@@ -8,10 +8,11 @@ graph TD
     subgraph "Adapters"
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
         BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
+        INSTALL["Host installation adapters<br/>macOS: Homebrew cask<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
     subgraph "Application Layer"
-        APP["src/application/<br/>Shared CLI/MCP session composition<br/>setup, diagnostics, 8 enhanced workflows"]
+        APP["src/application/<br/>Shared CLI/MCP session composition<br/>setup, diagnostics, lifecycle, enhanced workflows"]
     end
 
     subgraph "Hopper Layer"
@@ -19,7 +20,7 @@ graph TD
     end
 
     subgraph "Contracts Layer"
-        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>31 direct, 8 enhanced, 3 session tools"]
+        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>68 direct, enhanced, native, artifact, and session tools"]
     end
 
     subgraph "Domain Layer"
@@ -40,6 +41,7 @@ graph TD
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    APP --> INSTALL
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> HOPPER
