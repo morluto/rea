@@ -8,7 +8,7 @@
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
-[![npm version](https://img.shields.io/npm/v/%40morluto%2Frea?style=flat-square&color=cb3837)](https://www.npmjs.com/package/@morluto/rea)
+[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-tools-for-investigation)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
@@ -92,7 +92,7 @@ Ask your agent to set up REA. It will check your Mac, explain anything it needs 
 ### From Terminal
 
 ```bash
-npx -y @morluto/rea setup --yes
+npx -y rea-agents setup --yes
 ```
 
 If macOS or an installer asks for confirmation, complete the prompt and run the same command again. Restart a configured coding agent so it loads REA.
@@ -109,7 +109,7 @@ You do not need to install the reverse-engineering tools manually. Setup install
 If something is not working, run:
 
 ```bash
-npx -y @morluto/rea doctor
+npx -y rea-agents doctor
 ```
 
 ### CLI or coding agent?
@@ -200,7 +200,7 @@ Setup currently configures Claude Desktop and Cursor automatically. Any coding a
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "@morluto/rea", "mcp"]
+      "args": ["-y", "rea-agents", "mcp"]
     }
   }
 }
@@ -228,15 +228,15 @@ The CLI and MCP server use the same application workflows and evidence contracts
 The agent workflow above is the easiest way to use REA. For a one-off overview from the Terminal:
 
 ```bash
-npx -y @morluto/rea analyze /Applications/Notes.app
+npx -y rea-agents analyze /Applications/Notes.app
 ```
 
-Run `npx -y @morluto/rea --help` for direct decompilation and other options.
+Run `npx -y rea-agents --help` for direct decompilation and other options.
 
 Or install the `rea` command globally:
 
 ```bash
-npm install --global @morluto/rea
+npm install --global rea-agents
 rea --help
 rea mcp
 ```
@@ -305,7 +305,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, architecture, tests, and relea
 
 ## Project links
 
-[npm](https://www.npmjs.com/package/@morluto/rea) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/)
+[npm](https://www.npmjs.com/package/rea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/)
 
 ## License
 

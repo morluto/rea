@@ -21,18 +21,19 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: "0.1.0",
-    description: "Reverse engineer apps from your terminal or coding agent.",
+    description:
+      "Reverse engineer anything from your terminal or coding agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
       instructions:
-        "Ask which app and feature the user wants to understand, then open the app and investigate it.",
+        "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
     },
     sync: {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
       include: ["skills/*"],
       suggestions: [
-        "understand how an app feature works",
-        "decompile part of an app",
+        "understand how a software feature works",
+        "investigate an artifact or observed behavior",
         "check my REA setup",
       ],
     },

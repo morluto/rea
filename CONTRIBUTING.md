@@ -63,8 +63,8 @@ npm publish --access public
 After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 42 tools:
 
 ```bash
-npx -y @morluto/rea --help
-npx -y @morluto/rea doctor
-npx -y @morluto/rea setup --yes
-npx -y @morluto/rea mcp
+npx -y rea-agents --help
+npx -y rea-agents doctor
+npx -y rea-agents setup --yes
+npx -y rea-agents mcp
 ```
