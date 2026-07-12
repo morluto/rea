@@ -197,7 +197,12 @@ export const configureJsonClient = async (
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
-  const servers = objectValue(document.mcpServers);
+  let servers: Record<string, unknown>;
+  try {
+    servers = parseOptionalObject(document.mcpServers);
+  } catch {
+    return { status: "failed", reason: "readback" };
+  }
   const desired = {
     command: "npx",
     args: ["-y", PRODUCT_IDENTITY.packageName, "mcp"],
@@ -232,7 +237,7 @@ export const configureJsonClient = async (
   }
   try {
     const readback = parseObject(await readFile(client.configPath, "utf8"));
-    const value = objectValue(readback.mcpServers)[
+    const value = parseOptionalObject(readback.mcpServers)[
       PRODUCT_IDENTITY.mcpServerKey
     ];
     if (JSON.stringify(value) !== JSON.stringify(desired)) {
@@ -303,10 +308,8 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 const objectSchema = z.record(z.string(), z.unknown());
-const objectValue = (value: unknown): Record<string, unknown> => {
-  const parsed = objectSchema.safeParse(value);
-  return parsed.success ? parsed.data : {};
-};
+const parseOptionalObject = (value: unknown): Record<string, unknown> =>
+  value === undefined ? {} : objectSchema.parse(value);
 const parseObject = (text: string): Record<string, unknown> =>
   objectSchema.parse(JSON.parse(text));
 const isMissing = (cause: unknown): boolean =>

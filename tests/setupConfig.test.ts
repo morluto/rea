@@ -75,4 +75,21 @@ describe("JSON client configuration transaction", () => {
       ).rejects.toThrow();
     },
   );
+
+  it.each(["null", "[]", '"value"'])(
+    "preserves a non-object mcpServers value %s",
+    async (servers) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      const configPath = join(directory, "mcp.json");
+      const original = `{"mcpServers":${servers}}`;
+      await writeFile(configPath, original);
+      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+        { status: "failed", reason: "readback" },
+      );
+      expect(await readFile(configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${configPath}.rea.backup`, "utf8"),
+      ).rejects.toThrow();
+    },
+  );
 });
