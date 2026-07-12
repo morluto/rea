@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ConfigurationError } from "./domain/errors.js";
 import { err, ok, type Result } from "./domain/result.js";
+import type { LogLevel } from "./logger.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -11,6 +12,7 @@ export interface AppConfig {
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
   readonly hopperLoaderArgs: readonly string[];
+  readonly logLevel: LogLevel;
 }
 
 const environmentSchema = z.object({
@@ -18,6 +20,9 @@ const environmentSchema = z.object({
   HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
   HOPPER_LOADER_ARGS_JSON: z.string().optional(),
+  REA_LOG_LEVEL: z
+    .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
+    .default("info"),
 });
 
 /**
@@ -66,5 +71,6 @@ export const parseConfig = (
     hopperTargetPath: parsedEnvironment.data.HOPPER_TARGET_PATH,
     hopperTargetKind: parsedEnvironment.data.HOPPER_TARGET_KIND,
     hopperLoaderArgs: parsedArgs.data,
+    logLevel: parsedEnvironment.data.REA_LOG_LEVEL,
   });
 };

@@ -53,7 +53,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run knip
+      - run: npm run lint:dead
 
   duplicates:
     name: Duplicate Code (jscpd)
@@ -89,7 +89,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test -- --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
+      - run: npm run test:coverage -- --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

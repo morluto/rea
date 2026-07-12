@@ -15,15 +15,15 @@
   "ignore": ["dist/**", "docs/**", ".codex/**", ".devin/**"],
   "ignoreDependencies": [],
   "rules": {
-    "files": "warn",
-    "dependencies": "warn",
-    "devDependencies": "warn",
+    "files": "error",
+    "dependencies": "error",
+    "devDependencies": "error",
     "unlisted": "error",
-    "exports": "warn",
-    "nsExports": "warn",
-    "types": "warn",
-    "nsTypes": "warn",
-    "enumMembers": "warn",
+    "exports": "error",
+    "nsExports": "error",
+    "types": "error",
+    "nsTypes": "error",
+    "enumMembers": "error",
     "duplicates": "error"
   }
 }
