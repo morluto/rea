@@ -96,7 +96,10 @@ try {
     HOME: home,
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-    HOPPER_LAUNCHER_PATH: hopper,
+    HOPPER_LAUNCHER_PATH: process.execPath,
+    HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+      join(root, "tests/fixtures/fakeLauncher.mjs"),
+    ]),
     REA_NPX_LOG: npxLog,
     REA_EVIDENCE_ROOTS_JSON: JSON.stringify([evidenceRoot]),
     REA_REFERENCE_ROOTS_JSON: JSON.stringify([referenceRoot]),
@@ -142,6 +145,16 @@ try {
     artifactInventory.normalized_result?.manifest?.root_format !== "zip"
   )
     throw new Error("packaged artifact inventory CLI failed");
+  const overview = json(
+    await run(cli, ["analyze", process.execPath, "--json"], environment),
+  );
+  if (
+    overview.operation !== "binary_overview" ||
+    overview.normalized_result?.procedure_count < 1
+  )
+    throw new Error(
+      `packaged Hopper-backed analyze CLI failed: ${JSON.stringify(overview)}`,
+    );
   const referenceImport = json(
     await run(
       cli,
@@ -292,6 +305,27 @@ try {
     });
     if (result.isError !== true)
       throw new Error("packaged target-free MCP omitted no-target error");
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: process.execPath },
+    });
+    if (opened.isError === true)
+      throw new Error("packaged MCP could not open a binary");
+    const overviewResult = await client.callTool({
+      name: "binary_overview",
+      arguments: {},
+    });
+    if (
+      overviewResult.isError === true ||
+      json(text(overviewResult)).normalized_result?.procedure_count < 1
+    )
+      throw new Error("packaged MCP analysis workflow failed");
+    const closed = await client.callTool({
+      name: "close_binary",
+      arguments: {},
+    });
+    if (closed.isError === true)
+      throw new Error("packaged MCP could not close its binary");
     const mcpBundlePath = join(evidenceRoot, "mcp.json");
     const mcpExport = await client.callTool({
       name: "export_evidence_bundle",
@@ -313,7 +347,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: process.platform === "darwin" ? "idempotent" : "unsupported-host-rejected", clients: process.platform === "darwin" ? 2 : 0, backupReadback: process.platform === "darwin", failureRecovery: process.platform === "darwin", skill: process.platform === "darwin", mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: process.platform === "darwin" ? "idempotent" : "unsupported-host-rejected", clients: process.platform === "darwin" ? 2 : 0, backupReadback: process.platform === "darwin", failureRecovery: process.platform === "darwin", skill: process.platform === "darwin", mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
@@ -325,4 +359,10 @@ async function run(command, args, env) {
 }
 function json(text) {
   return JSON.parse(text);
+}
+
+function text(result) {
+  const value = result.content?.find((item) => item.type === "text")?.text;
+  if (typeof value !== "string") throw new Error("MCP result omitted text");
+  return value;
 }

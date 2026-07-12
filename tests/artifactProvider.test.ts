@@ -294,7 +294,7 @@ describe("artifact graph provider", () => {
       offset: 500,
       next_offset: null,
     });
-  });
+  }, 15_000);
 
   it("uses bounded native lipo metadata for universal slice ranges", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-slices-"));

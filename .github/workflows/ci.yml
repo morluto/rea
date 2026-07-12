@@ -114,6 +114,23 @@ jobs:
           path: test-results.xml
           retention-days: 30
 
+  package-e2e:
+    name: Package E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run rebuild:native
+      - run: npm run verify:package
+
   docs:
     name: Docs Generation
     runs-on: ubuntu-latest
