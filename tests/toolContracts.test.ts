@@ -8,16 +8,16 @@ import {
 } from "../src/contracts/toolContracts.js";
 
 describe("tool contract inventory", () => {
-  it("preserves the original 39 contracts and adds three session tools", () => {
+  it("publishes 40 analysis contracts and three session tools", () => {
     expect(OFFICIAL_TOOL_CONTRACTS).toHaveLength(31);
-    expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(8);
+    expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(9);
     expect(SESSION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "open_binary",
       "close_binary",
       "binary_session",
     ]);
-    expect(TOOL_CONTRACTS).toHaveLength(42);
-    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(42);
+    expect(TOOL_CONTRACTS).toHaveLength(43);
+    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(43);
   });
 
   it("retains documented enhanced-tool limits at the input boundary", () => {

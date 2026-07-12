@@ -11,6 +11,33 @@ const caseSensitive = z
   .boolean()
   .default(false)
   .describe("Whether to match case");
+const pagination = {
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(500).default(100),
+};
+const jsonScalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const jsonOutput = z.object({
+  result: z.union([
+    jsonScalar,
+    z.array(z.unknown()),
+    z.record(z.string(), z.unknown()),
+  ]),
+});
+const pageOutput = z.object({
+  items: z.array(z.object({ address: z.string(), value: z.string() })),
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1),
+  total: z.number().int().min(0),
+  next_offset: z.number().int().min(0).nullable(),
+  has_more: z.boolean(),
+});
+
+export interface ToolAnnotations {
+  readonly readOnlyHint: boolean;
+  readonly destructiveHint: boolean;
+  readonly idempotentHint: true;
+  readonly openWorldHint: false;
+}
 
 /** Adapter family responsible for implementing a public MCP tool. */
 type ToolKind = "official-proxy" | "enhanced" | "session";
@@ -21,25 +48,67 @@ export interface ToolContract {
   readonly description: string;
   readonly kind: ToolKind;
   readonly inputSchema: z.ZodObject;
+  readonly outputSchema: z.ZodObject;
+  readonly annotations: ToolAnnotations;
 }
+
+const annotations = (name: string, kind: ToolKind): ToolAnnotations => ({
+  readOnlyHint:
+    kind === "enhanced" ||
+    (!name.startsWith("set_") &&
+      name !== "unset_bookmark" &&
+      name !== "goto_address" &&
+      kind !== "session"),
+  destructiveHint:
+    name === "unset_bookmark" ||
+    name === "set_address_name" ||
+    name === "set_addresses_names" ||
+    name === "set_comment" ||
+    name === "set_inline_comment",
+  idempotentHint: true,
+  openWorldHint: false,
+});
 
 const official = (
   name: string,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({ name, description, kind: "official-proxy", inputSchema });
+): ToolContract => ({
+  name,
+  description,
+  kind: "official-proxy",
+  inputSchema,
+  outputSchema: ["list_procedures", "list_names", "list_strings"].includes(name)
+    ? pageOutput
+    : jsonOutput,
+  annotations: annotations(name, "official-proxy"),
+});
 
 const enhanced = (
   name: string,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({ name, description, kind: "enhanced", inputSchema });
+): ToolContract => ({
+  name,
+  description,
+  kind: "enhanced",
+  inputSchema,
+  outputSchema: jsonOutput,
+  annotations: annotations(name, "enhanced"),
+});
 
 const session = (
   name: string,
   description: string,
   inputSchema: z.ZodObject,
-): ToolContract => ({ name, description, kind: "session", inputSchema });
+): ToolContract => ({
+  name,
+  description,
+  kind: "session",
+  inputSchema,
+  outputSchema: jsonOutput,
+  annotations: annotations(name, "session"),
+});
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
@@ -79,14 +148,18 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_names",
     "List names",
-    z.object({ document, address: optionalAddress }),
+    z.object({ document, address: optionalAddress, ...pagination }),
   ),
-  official("list_procedures", "List procedures", z.object({ document })),
+  official(
+    "list_procedures",
+    "List procedures",
+    z.object({ document, ...pagination }),
+  ),
   official("list_segments", "List segments", z.object({ document })),
   official(
     "list_strings",
     "List strings",
-    z.object({ document, address: optionalAddress }),
+    z.object({ document, address: optionalAddress, ...pagination }),
   ),
   official(
     "next_address",
@@ -219,8 +292,13 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "binary_overview",
-    "Summarize the loaded binary",
+    "First call after opening an app: summarize the loaded binary",
     enhancedInputSchemas.binary_overview,
+  ),
+  enhanced(
+    "analyze_function",
+    "Preferred bounded function analysis; combines metadata, pseudocode, assembly, references, calls, strings, names, and blocks",
+    enhancedInputSchemas.analyze_function,
   ),
 ] as const satisfies readonly ToolContract[];
 
@@ -237,7 +315,7 @@ export const SESSION_TOOL_CONTRACTS = [
 
 /**
  * Complete ordered public inventory used by registration and verification.
- * Keep this collection at 42 tools unless a deliberate contract change updates
+ * Keep this collection at 43 tools unless a deliberate contract change updates
  * snapshots, package verification, and real-Hopper verification together.
  */
 export const TOOL_CONTRACTS = [

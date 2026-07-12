@@ -15,6 +15,12 @@ export interface SegmentSummary {
   readonly end: string;
 }
 
+export interface AddressedPage {
+  readonly items: readonly AddressedName[];
+  readonly nextOffset: number | null;
+  readonly hasMore: boolean;
+}
+
 const procedureMapSchema = z.record(z.string(), z.string());
 const addressedNamesSchema = z.array(
   z.object({ address: z.string(), name: z.string() }),
@@ -25,11 +31,35 @@ const segmentSchema = z.object({
   start: z.string().default(""),
   end: z.string().default(""),
 });
+const addressedPageSchema = z.object({
+  items: z.array(z.object({ address: z.string(), value: z.string() })),
+  next_offset: z.number().int().min(0).nullable(),
+  has_more: z.boolean(),
+});
+
+/** Parse page entries and continuation metadata returned by list operations. */
+export const parseAddressedPage = (
+  value: JsonValue,
+): Result<AddressedPage, HopperProtocolError> => {
+  const parsed = addressedPageSchema.safeParse(value);
+  return parsed.success
+    ? ok({
+        items: parsed.data.items.map(({ address, value: name }) => ({
+          address,
+          name,
+        })),
+        nextOffset: parsed.data.next_offset,
+        hasMore: parsed.data.has_more,
+      })
+    : invalid("addressed page", parsed.error);
+};
 
 /** Parse Hopper's direct or wrapped procedure map into stable entries. */
 export const parseProcedures = (
   value: JsonValue,
 ): Result<readonly AddressedName[], HopperProtocolError> => {
+  const page = parseAddressedPage(value);
+  if (page.ok) return ok(page.value.items);
   const parsed = procedureMapSchema.safeParse(
     unwrapProperty(value, "procedures"),
   );
@@ -40,7 +70,7 @@ export const parseProcedures = (
           name,
         })),
       )
-    : invalid("procedure map", parsed.error);
+    : page;
 };
 
 /** Parse Hopper's direct or wrapped list of address/name records. */
@@ -48,6 +78,15 @@ export const parseNames = (
   value: JsonValue,
 ): Result<readonly AddressedName[], HopperProtocolError> => {
   const unwrapped = unwrapProperty(value, "names");
+  const page = z
+    .object({
+      items: z.array(z.object({ address: z.string(), value: z.string() })),
+    })
+    .safeParse(unwrapped);
+  if (page.success)
+    return ok(
+      page.data.items.map(({ address, value: name }) => ({ address, name })),
+    );
   const records = addressedNamesSchema.safeParse(unwrapped);
   if (records.success) return ok(records.data);
   const map = addressedNameMapSchema.safeParse(unwrapped);
@@ -97,6 +136,12 @@ export const parseListCount = (
   property: string,
 ): Result<number, HopperProtocolError> => {
   const unwrapped = unwrapProperty(value, property);
+  const pageTotal = z
+    .object({ total: z.number().int().min(0) })
+    .safeParse(unwrapped);
+  if (pageTotal.success) return ok(pageTotal.data.total);
+  const page = z.object({ items: z.array(z.unknown()) }).safeParse(unwrapped);
+  if (page.success) return ok(page.data.items.length);
   const list = z.array(z.unknown()).safeParse(unwrapped);
   if (list.success) return ok(list.data.length);
   const map = z.record(z.string(), z.unknown()).safeParse(unwrapped);

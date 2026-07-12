@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { HopperError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
 import type { JsonValue } from "../hopper/protocol.js";
+import type { ToolContract } from "../contracts/toolContracts.js";
 
 /**
  * Translate an application result into MCP text content.
@@ -11,9 +12,10 @@ import type { JsonValue } from "../hopper/protocol.js";
  */
 export const toCallToolResult = (
   result: Result<JsonValue, HopperError>,
+  contract: ToolContract,
 ): CallToolResult =>
   result.ok
-    ? { content: [{ type: "text", text: formatValue(result.value) }] }
+    ? successResult(result.value, contract)
     : {
         content: [
           {
@@ -23,6 +25,33 @@ export const toCallToolResult = (
         ],
         isError: true,
       };
+
+const successResult = (
+  value: JsonValue,
+  contract: ToolContract,
+): CallToolResult => {
+  const candidate = ["list_procedures", "list_names", "list_strings"].includes(
+    contract.name,
+  )
+    ? value
+    : { result: value };
+  const parsed = contract.outputSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "HopperProtocolError: Hopper returned output that does not match the tool contract",
+        },
+      ],
+      isError: true,
+    };
+  }
+  return {
+    content: [{ type: "text", text: formatValue(value) }],
+    structuredContent: candidate,
+  };
+};
 
 const formatValue = (value: JsonValue): string => {
   if (value === null) return "OK";

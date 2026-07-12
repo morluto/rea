@@ -44,7 +44,7 @@ describe("target-free MCP lifecycle", () => {
     });
     expect(before.isError).toBe(true);
     expect(text(before)).toContain("NoBinaryOpenError");
-    expect((await mcp.listTools()).tools).toHaveLength(42);
+    expect((await mcp.listTools()).tools).toHaveLength(43);
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
         .isError,

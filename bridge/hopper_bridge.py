@@ -102,7 +102,28 @@ def _strings(document):
     return result
 
 
-def _assembly(procedure):
+def _page(values, offset, limit):
+    """Return one deterministically address-sorted page without crossing an unbounded map."""
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 500:
+        raise ValueError("limit must be an integer between 1 and 500")
+    ordered = sorted(values.items(), key=lambda item: int(item[0], 16))
+    selected = ordered[offset:offset + limit]
+    total = len(ordered)
+    next_offset = offset + len(selected)
+    has_more = next_offset < total
+    return {
+        "items": [{"address": address, "value": value} for address, value in selected],
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "next_offset": next_offset if has_more else None,
+        "has_more": has_more,
+    }
+
+
+def _assembly(procedure, limit=None):
     """Render bounded assembly while guarding against malformed instruction cycles."""
     lines = []
     segment = procedure.getSegment()
@@ -118,11 +139,64 @@ def _assembly(procedure):
             arguments = [instruction.getFormattedArgument(index) for index in range(instruction.getArgumentCount())]
             suffix = ", ".join(value for value in arguments if value is not None)
             lines.append("%s: %s%s" % (_hex(address), instruction.getInstructionString(), (" " + suffix) if suffix else ""))
+            if limit is not None and len(lines) >= limit:
+                return "\n".join(lines)
             length = instruction.getInstructionLength()
             if length <= 0:
                 break
             address += length
     return "\n".join(lines)
+
+
+def _analyze_function(document, params):
+    """Collect a bounded, single-pass function dossier for agent callers."""
+    procedure = _procedure(document, params.get("procedure"))
+    limit = params.get("limit", 100)
+    max_chars = params.get("max_pseudocode_chars", 20000)
+    max_instructions = params.get("max_instructions", 500)
+    if not isinstance(limit, int) or limit < 1 or limit > 500:
+        raise ValueError("limit must be an integer between 1 and 500")
+    if not isinstance(max_chars, int) or max_chars < 1 or max_chars > 100000:
+        raise ValueError("max_pseudocode_chars must be between 1 and 100000")
+    if not isinstance(max_instructions, int) or max_instructions < 1 or max_instructions > 5000:
+        raise ValueError("max_instructions must be between 1 and 5000")
+    blocks = []
+    all_blocks = list(procedure.basicBlockIterator())
+    for block in all_blocks[:limit]:
+        blocks.append({"start": _hex(block.getStartingAddress()), "end": _hex(block.getEndingAddress()), "successors": []})
+    pseudo = procedure.decompile() or ""
+    assembly_sample = _assembly(procedure, max_instructions + 1).splitlines() if params.get("include_assembly", False) else []
+    assembly_truncated = len(assembly_sample) > max_instructions
+    assembly = assembly_sample[:max_instructions]
+    callers = [_procedure_name(item) for item in procedure.getAllCallerProcedures()]
+    callees = [_procedure_name(item) for item in procedure.getAllCalleeProcedures()]
+    def bounded(items):
+        return {"items": items[:limit], "total": len(items), "returned": min(len(items), limit), "truncated": len(items) > limit, "next_offset": limit if len(items) > limit else None}
+    def unavailable(reason):
+        return {"available": False, "reason": reason}
+    entry = procedure.getEntryPoint()
+    segment = procedure.getSegment()
+    comments = []
+    comment = segment.getCommentAtAddress(entry)
+    inline_comment = segment.getInlineCommentAtAddress(entry)
+    if comment:
+        comments.append({"address": _hex(entry), "kind": "comment", "text": comment})
+    if inline_comment:
+        comments.append({"address": _hex(entry), "kind": "inline", "text": inline_comment})
+    incoming = []
+    for candidate in document.getSegmentsList():
+        incoming.extend(_hex(value) for value in candidate.getReferencesOfAddress(entry))
+    incoming = sorted(set(incoming), key=lambda value: int(value, 16))
+    return {
+        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "signature": procedure.signatureString(), "locals": _json_safe(procedure.getLocalVariableList())},
+        "pseudocode": {"text": pseudo[:max_chars], "total_chars": len(pseudo), "returned_chars": min(len(pseudo), max_chars), "truncated": len(pseudo) > max_chars, "next_offset": max_chars if len(pseudo) > max_chars else None},
+        "assembly": {"items": assembly, "total": None if assembly_truncated else len(assembly), "returned": len(assembly), "truncated": assembly_truncated, "next_offset": len(assembly) if assembly_truncated else None},
+        "comments": bounded(comments), "callers": bounded(callers), "callees": bounded(callees),
+        "incoming_references": bounded(incoming),
+        "referenced_strings": unavailable("Hopper's public API does not expose typed outgoing string references for this traversal"),
+        "referenced_names": unavailable("Hopper's public API does not expose typed outgoing name references for this traversal"),
+        "basic_blocks": bounded(blocks),
+    }
 
 
 def _dispatch(method, params):
@@ -142,6 +216,9 @@ def _dispatch(method, params):
         return _selected_document
 
     document = _document(params.get("document"))
+
+    if method == "analyze_function":
+        return _analyze_function(document, params)
 
     if method == "current_address":
         return _hex(document.getCurrentAddress())
@@ -178,18 +255,24 @@ def _dispatch(method, params):
             result.append({"name": segment.getName(), "start": _hex(start), "end": _hex(start + segment.getLength()), "writable": False, "executable": False, "sections": sections})
         return result
     if method == "list_procedures":
-        return _procedure_map(document)
+        return _page(_procedure_map(document), params.get("offset", 0), params.get("limit", 100))
     if method == "list_strings":
         values = _strings(document)
         requested = params.get("address")
-        return values if requested is None else values.get(_hex(_address(document, requested)))
+        if requested is not None:
+            key = _hex(_address(document, requested))
+            values = {key: values[key]} if key in values else {}
+        return _page(values, params.get("offset", 0), params.get("limit", 100))
     if method == "list_names":
         result = {}
         for segment in document.getSegmentsList():
             for item in segment.getNamedAddresses():
                 result[_hex(item)] = segment.getNameAtAddress(item)
         requested = params.get("address")
-        return result if requested is None else result.get(_hex(_address(document, requested)))
+        if requested is not None:
+            key = _hex(_address(document, requested))
+            result = {key: result[key]} if key in result else {}
+        return _page(result, params.get("offset", 0), params.get("limit", 100))
     if method in ("search_procedures", "search_strings"):
         flags = 0 if params.get("case_sensitive", False) else re.IGNORECASE
         expression = re.compile(params["pattern"], flags)

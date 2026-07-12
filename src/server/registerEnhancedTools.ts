@@ -32,12 +32,18 @@ const registerEnhancedTool = (
   const name = enhancedToolNameSchema.parse(contract.name);
   server.registerTool(
     name,
-    { description: contract.description, inputSchema: contract.inputSchema },
+    {
+      description: contract.description,
+      inputSchema: contract.inputSchema,
+      outputSchema: contract.outputSchema,
+      annotations: contract.annotations,
+    },
     async (input, context) =>
       toCallToolResult(
         await logToolExecution(logger, name, () =>
           services.execute(name, input, context.mcpReq.signal),
         ),
+        contract,
       ),
   );
 };

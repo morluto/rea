@@ -17,18 +17,29 @@ const PROCEDURES = {
   "0x6": "prefix_TtOther",
 };
 
+const page = (values: Readonly<Record<string, string>>) => ({
+  items: Object.entries(values).map(([address, value]) => ({ address, value })),
+  offset: 0,
+  limit: 100,
+  total: Object.keys(values).length,
+  next_offset: null,
+  has_more: false,
+});
+
 const fixturePort = (): HopperToolPort => ({
   callTool: (name, arguments_) => {
     switch (name) {
       case "list_procedures":
-        return Promise.resolve(ok(PROCEDURES));
+        return Promise.resolve(ok(page(PROCEDURES)));
       case "list_names":
         return Promise.resolve(
-          ok([
-            { address: "0x10", name: "_OBJC_CLASS_$_Fixture" },
-            { address: "0x11", name: "_OBJC_CLASS_$_Fixture" },
-            { address: "0x12", name: "_OBJC_PROTOCOL_$_FixtureDelegate" },
-          ]),
+          ok(
+            page({
+              "0x10": "_OBJC_CLASS_$_Fixture",
+              "0x11": "_OBJC_CLASS_$_Fixture",
+              "0x12": "_OBJC_PROTOCOL_$_FixtureDelegate",
+            }),
+          ),
         );
       case "procedure_pseudo_code": {
         const procedure = arguments_.procedure;
@@ -63,7 +74,7 @@ const fixturePort = (): HopperToolPort => ({
       case "list_documents":
         return Promise.resolve(ok(["fixture"]));
       case "list_strings":
-        return Promise.resolve(ok([{ address: "0x30", value: "hello" }]));
+        return Promise.resolve(ok(page({ "0x30": "hello" })));
       default:
         return Promise.resolve(ok(null));
     }
@@ -90,6 +101,19 @@ const connect = async (hopper: HopperToolPort = fixturePort()) => {
 };
 
 const jsonResult = (result: CallToolResult): JsonValue => {
+  if (result.structuredContent === undefined)
+    throw new Error("Tool result omitted structured content");
+  const structured = jsonValueSchema.safeParse(result.structuredContent);
+  if (!structured.success)
+    throw new Error("Tool structured result was not JSON");
+  if (
+    typeof structured.data === "object" &&
+    structured.data !== null &&
+    !Array.isArray(structured.data) &&
+    "result" in structured.data
+  ) {
+    return structured.data.result ?? null;
+  }
   const text = result.content.find((item) => item.type === "text");
   if (text?.type !== "text")
     throw new Error("Tool result omitted text content");
@@ -100,10 +124,10 @@ const jsonResult = (result: CallToolResult): JsonValue => {
 };
 
 describe("enhanced MCP tools", () => {
-  it("lists the complete 31 plus 8 surface", async () => {
+  it("lists the complete 31 plus 9 surface", async () => {
     const client = await connect();
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(39);
+    expect(listed.tools).toHaveLength(40);
     expect(
       listed.tools
         .map(({ name }) => name)
@@ -114,7 +138,7 @@ describe("enhanced MCP tools", () => {
     ).toEqual(ENHANCED_TOOL_CONTRACTS.map(({ name }) => name).sort());
   });
 
-  it("executes all eight tools through production registration", async () => {
+  it("executes all nine tools through production registration", async () => {
     const client = await connect();
     const calls = [
       ["swift_classes", { pattern: "Fixture" }],
@@ -125,6 +149,7 @@ describe("enhanced MCP tools", () => {
       ["analyze_swift_types", {}],
       ["find_xrefs_to_name", { name: "entry" }],
       ["binary_overview", {}],
+      ["analyze_function", { procedure: "0x1" }],
     ] as const;
     const results = [];
     for (const [name, arguments_] of calls) {
@@ -152,6 +177,7 @@ describe("enhanced MCP tools", () => {
       procedure_count: 6,
       string_count: 1,
     });
+    expect(results[8]).toBeNull();
   });
 
   it("bounds batch concurrency at the parsed maximum of 20", async () => {
@@ -179,6 +205,36 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).not.toBe(true);
     expect(maximum).toBe(20);
+  });
+
+  it("follows procedure pagination for whole-binary workflows", async () => {
+    const offsets: number[] = [];
+    const client = await connect({
+      callTool: (_name, arguments_) => {
+        const offset = arguments_.offset;
+        offsets.push(typeof offset === "number" ? offset : 0);
+        return Promise.resolve(
+          ok({
+            items: [
+              {
+                address: offset === 500 ? "0x2" : "0x1",
+                value: offset === 500 ? "_TtC4Last" : "_TtC5First",
+              },
+            ],
+            offset: typeof offset === "number" ? offset : 0,
+            limit: 500,
+            total: 2,
+            next_offset: offset === 500 ? null : 500,
+            has_more: offset !== 500,
+          }),
+        );
+      },
+    });
+    const result = jsonResult(
+      await client.callTool({ name: "swift_classes", arguments: {} }),
+    );
+    expect(offsets).toEqual([0, 500]);
+    expect(result).toMatchObject({ count: 2 });
   });
 
   it("returns a typed tool error for malformed Hopper boundary values", async () => {

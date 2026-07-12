@@ -19,6 +19,8 @@ export const registerSessionTools = (
     {
       description: openContract.description,
       inputSchema: openContract.inputSchema,
+      outputSchema: openContract.outputSchema,
+      annotations: openContract.annotations,
     },
     async (input, context) => {
       const parsed = z.object({ path: z.string().min(1) }).parse(input);
@@ -26,16 +28,19 @@ export const registerSessionTools = (
         session.open(parsed.path, { signal: context.mcpReq.signal }),
       );
       return opened.ok
-        ? toCallToolResult({
-            ok: true,
-            value: {
-              path: opened.value.path,
-              format: opened.value.format,
-              kind: opened.value.kind,
-              loaderArgs: [...opened.value.loaderArgs],
+        ? toCallToolResult(
+            {
+              ok: true,
+              value: {
+                path: opened.value.path,
+                format: opened.value.format,
+                kind: opened.value.kind,
+                loaderArgs: [...opened.value.loaderArgs],
+              },
             },
-          })
-        : toCallToolResult(opened);
+            openContract,
+          )
+        : toCallToolResult(opened, openContract);
     },
   );
   server.registerTool(
@@ -43,12 +48,15 @@ export const registerSessionTools = (
     {
       description: closeContract.description,
       inputSchema: closeContract.inputSchema,
+      outputSchema: closeContract.outputSchema,
+      annotations: closeContract.annotations,
     },
     async () =>
       toCallToolResult(
         await logToolExecution(logger, closeContract.name, () =>
           session.close(),
         ),
+        closeContract,
       ),
   );
   server.registerTool(
@@ -56,7 +64,10 @@ export const registerSessionTools = (
     {
       description: statusContract.description,
       inputSchema: statusContract.inputSchema,
+      outputSchema: statusContract.outputSchema,
+      annotations: statusContract.annotations,
     },
-    () => toCallToolResult({ ok: true, value: session.status() }),
+    () =>
+      toCallToolResult({ ok: true, value: session.status() }, statusContract),
   );
 };

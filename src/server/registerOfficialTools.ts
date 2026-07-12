@@ -32,6 +32,8 @@ const registerOfficialTool = (
     {
       description: contract.description,
       inputSchema: contract.inputSchema,
+      outputSchema: contract.outputSchema,
+      annotations: contract.annotations,
     },
     async (input, context) => {
       const arguments_ = projectOfficialArguments(contract, input);
@@ -40,7 +42,7 @@ const registerOfficialTool = (
           signal: context.mcpReq.signal,
         }),
       );
-      return toCallToolResult(result);
+      return toCallToolResult(result, contract);
     },
   );
 };

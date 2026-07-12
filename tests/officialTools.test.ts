@@ -68,6 +68,15 @@ const connect = async (hopper: HopperToolPort) => {
   return client;
 };
 
+const page: JsonValue = {
+  items: [],
+  offset: 0,
+  limit: 100,
+  total: 0,
+  next_offset: null,
+  has_more: false,
+};
+
 describe("official Hopper proxy tools", () => {
   it("lists exactly the 31 official contracts", async () => {
     const client = await connect({
@@ -90,7 +99,13 @@ describe("official Hopper proxy tools", () => {
     const client = await connect({
       callTool: (name, arguments_) => {
         invocations.push({ name, arguments_ });
-        return Promise.resolve(ok({ name, arguments: arguments_ }));
+        return Promise.resolve(
+          ok(
+            ["list_procedures", "list_names", "list_strings"].includes(name)
+              ? page
+              : { name, arguments: arguments_ },
+          ),
+        );
       },
     });
 

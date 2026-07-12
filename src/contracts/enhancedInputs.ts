@@ -18,7 +18,17 @@ export const enhancedInputSchemas = {
   }),
   analyze_swift_types: z.object({}),
   find_xrefs_to_name: z.object({ name: z.string() }),
-  binary_overview: z.object({}),
+  binary_overview: z.object({
+    detail: z.enum(["concise", "detailed"]).default("concise"),
+    limit: z.number().int().min(1).max(50).default(10),
+  }),
+  analyze_function: z.object({
+    procedure: z.string().describe("A procedure name or address"),
+    include_assembly: z.boolean().default(false),
+    limit: z.number().int().min(1).max(500).default(100),
+    max_pseudocode_chars: z.number().int().min(1).max(100_000).default(20_000),
+    max_instructions: z.number().int().min(1).max(5_000).default(500),
+  }),
 } as const;
 
 export type EnhancedToolName = keyof typeof enhancedInputSchemas;
@@ -33,4 +43,5 @@ export const enhancedToolNameSchema = z.enum([
   "analyze_swift_types",
   "find_xrefs_to_name",
   "binary_overview",
+  "analyze_function",
 ]);

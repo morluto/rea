@@ -4,9 +4,8 @@ import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { HopperProtocolError, type HopperError } from "../domain/errors.js";
 import {
   parseDocuments,
+  parseAddressedPage,
   parseListCount,
-  parseNames,
-  parseProcedures,
   parseRelatedAddresses,
   parseSegments,
 } from "../domain/hopperValues.js";
@@ -70,31 +69,35 @@ export class EnhancedTools {
           ? this.#findXrefs(parsed.data.name, signal)
           : invalidInput(name, parsed.error);
       }
-      case "binary_overview":
-        return this.#binaryOverview(signal);
+      case "binary_overview": {
+        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
+        return parsed.success
+          ? this.#binaryOverview(parsed.data, signal)
+          : invalidInput(name, parsed.error);
+      }
+      case "analyze_function": {
+        const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
+        return parsed.success
+          ? this.#call("analyze_function", parsed.data, signal)
+          : invalidInput(name, parsed.error);
+      }
     }
   }
 
   async #swiftClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_procedures", {}, signal);
-    if (!result.ok) return result;
-    const procedures = parseProcedures(result.value);
+    const procedures = await this.#allProcedures(signal);
     return procedures.ok
       ? ok(discoverSwiftClasses(procedures.value, pattern))
       : procedures;
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_names", {}, signal);
-    if (!result.ok) return result;
-    const names = parseNames(result.value);
+    const names = await this.#allAddressed("list_names", signal);
     return names.ok ? ok(discoverObjcClasses(names.value, pattern)) : names;
   }
 
   async #objcProtocols(signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_names", {}, signal);
-    if (!result.ok) return result;
-    const names = parseNames(result.value);
+    const names = await this.#allAddressed("list_names", signal);
     return names.ok ? ok(discoverObjcProtocols(names.value)) : names;
   }
 
@@ -187,9 +190,7 @@ export class EnhancedTools {
   }
 
   async #analyzeSwiftTypes(signal?: AbortSignal): EnhancedResult {
-    const result = await this.#call("list_procedures", {}, signal);
-    if (!result.ok) return result;
-    const procedures = parseProcedures(result.value);
+    const procedures = await this.#allProcedures(signal);
     return procedures.ok
       ? ok(categorizeSwiftTypes(procedures.value))
       : procedures;
@@ -213,37 +214,66 @@ export class EnhancedTools {
     );
   }
 
-  async #binaryOverview(signal?: AbortSignal): EnhancedResult {
-    const [segmentsResult, documentsResult, proceduresResult, stringsResult] =
+  async #binaryOverview(
+    input: { detail: "concise" | "detailed"; limit: number },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const [segmentsResult, documentsResult, procedures, stringsResult] =
       await Promise.all([
         this.#call("list_segments", {}, signal),
         this.#call("list_documents", {}, signal),
-        this.#call("list_procedures", {}, signal),
+        this.#allProcedures(signal),
         this.#call("list_strings", {}, signal),
       ]);
     if (!segmentsResult.ok) return segmentsResult;
     if (!documentsResult.ok) return documentsResult;
-    if (!proceduresResult.ok) return proceduresResult;
+    if (!procedures.ok) return procedures;
     if (!stringsResult.ok) return stringsResult;
 
     const segments = parseSegments(segmentsResult.value);
     if (!segments.ok) return segments;
     const documents = parseDocuments(documentsResult.value);
     if (!documents.ok) return documents;
-    const procedures = parseProcedures(proceduresResult.value);
-    if (!procedures.ok) return procedures;
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
     return ok({
       document: documents.value[0] ?? "unknown",
+      detail: input.detail,
       segments: segments.value
-        .slice(0, 10)
-        .map(({ name, start, end }) => ({ name, start, end })),
+        .slice(0, input.limit)
+        .map(({ name, start, end }) =>
+          input.detail === "detailed"
+            ? { name, start, end, length: addressDistance(start, end) }
+            : { name, start, end },
+        ),
       segment_count: segments.value.length,
       procedure_count: procedures.value.length,
       string_count: stringCount.value,
     });
+  }
+
+  async #allProcedures(signal?: AbortSignal) {
+    return this.#allAddressed("list_procedures", signal);
+  }
+
+  async #allAddressed(
+    tool: "list_names" | "list_procedures",
+    signal?: AbortSignal,
+  ) {
+    const entries: Array<{ address: string; name: string }> = [];
+    let offset = 0;
+    while (true) {
+      const result = await this.#call(tool, { offset, limit: 500 }, signal);
+      if (!result.ok) return result;
+      const page = parseAddressedPage(result.value);
+      if (!page.ok) return page;
+      entries.push(...page.value.items);
+      if (!page.value.hasMore || page.value.nextOffset === null) {
+        return ok(entries);
+      }
+      offset = page.value.nextOffset;
+    }
   }
 
   #call(
@@ -278,3 +308,6 @@ const resolveAddress = (value: JsonValue): string | undefined => {
     ? candidate
     : undefined;
 };
+
+const addressDistance = (start: string, end: string): number =>
+  Math.max(0, Number.parseInt(end, 16) - Number.parseInt(start, 16));
