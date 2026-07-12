@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![50 MCP tools](https://img.shields.io/badge/MCP_tools-50-5c4ee5?style=flat-square)](#50-个工具组成的工作台)
+[![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-个工具组成的工作台)
 [![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [50 个工具](#50-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
+[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [68 个工具](#68-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
 
 <br />
 
@@ -135,13 +135,15 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 - 分析 Swift 和 Objective-C 元数据。
 - 在 Hopper 中留下名称、注释与书签，使人与智能体的分析互相增强。
 
-## 50 个工具组成的工作台
+## 68 个工具组成的工作台
 
-| 工具类别   | 数量 | 示例                                                                                                                 |
-| ---------- | ---: | -------------------------------------------------------------------------------------------------------------------- |
-| 二进制检查 |   33 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                               |
-| 组合分析   |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
-| 二进制会话 |    7 | `open_binary`、`binary_session`、证据包、进程捕获与比较                                                              |
+| 工具类别       | 数量 | 示例                                                                                                                 |
+| -------------- | ---: | -------------------------------------------------------------------------------------------------------------------- |
+| 二进制检查     |   33 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                               |
+| 组合分析       |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
+| macOS 原生工具 |    5 | Mach-O 元数据、代码签名、plist、架构与 Swift 符号还原，无需启动 Hopper                                               |
+| 制品图谱       |    2 | 确定性目录、ZIP/APK/IPA 与 ASAR 清单，以及显式选择的事务式提取                                                       |
+| 二进制会话     |   18 | `open_binary`、`binary_session`、证据包、进程、制品与函数比较、残余未知项注册表                                      |
 
 ## 与其他编程智能体一起使用
 
