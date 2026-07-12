@@ -1,10 +1,29 @@
 {
   "name": "@morluto/rea",
   "version": "0.1.0",
-  "private": true,
+  "description": "Reverse-engineering automation for Hopper Disassembler through one CLI and MCP server.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/morluto/rea.git"
+  },
+  "homepage": "https://github.com/morluto/rea#readme",
+  "bugs": {
+    "url": "https://github.com/morluto/rea/issues"
+  },
+  "keywords": [
+    "reverse-engineering",
+    "hopper",
+    "disassembler",
+    "decompiler",
+    "mcp"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
-    "rea": "./scripts/rea.mjs"
+    "rea": "scripts/rea.mjs"
   },
   "engines": {
     "node": ">=22"
