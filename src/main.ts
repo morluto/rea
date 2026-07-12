@@ -11,6 +11,7 @@ import {
 import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
 import { createServer } from "./server/createServer.js";
+import { createLogger } from "./logger.js";
 
 /**
  * Start the long-lived MCP adapter and install idempotent shutdown handlers.
@@ -23,27 +24,35 @@ export const run = async (): Promise<number> => {
     process.stderr.write(`${config.error._tag}: ${config.error.message}\n`);
     return 1;
   }
+  const logger = createLogger("mcp", config.value.logLevel);
+  const serverLogger = logger.child({ layer: "server" });
 
-  const session = createBinarySession(config.value);
+  const session = createBinarySession(config.value, logger);
   if (config.value.hopperTargetPath !== undefined) {
     const opened = await session.open(config.value.hopperTargetPath, {
       targetKind: config.value.hopperTargetKind,
     });
     if (!opened.ok) {
       await session.close();
+      serverLogger.error(
+        { errorTag: opened.error._tag },
+        "Initial target failed to open",
+      );
       process.stderr.write(`${opened.error._tag}: ${opened.error.message}\n`);
       return 1;
     }
   }
   let handle: StdioServerHandle;
   try {
-    handle = serveStdio(() => createServer(session, session), {
+    handle = serveStdio(() => createServer(session, session, logger), {
       onerror: () => {
+        serverLogger.error("MCP stdio transport error");
         process.stderr.write("MCP stdio transport error\n");
       },
     });
   } catch {
     await session.close();
+    serverLogger.error("Failed to start MCP stdio transport");
     process.stderr.write("Failed to start MCP stdio transport\n");
     return 1;
   }
@@ -59,6 +68,7 @@ export const run = async (): Promise<number> => {
   const requestShutdown = (): void => {
     shutdown().catch(() => {
       process.exitCode = 1;
+      serverLogger.error("Failed to shut down cleanly");
       process.stderr.write("Failed to shut down cleanly\n");
     });
   };

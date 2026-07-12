@@ -42,7 +42,22 @@ describe("production stdio runtime", () => {
       await client.close();
       await transport.close();
     }
-    expect(stderr).toBe("");
+    const records = stderr
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line: string): unknown => JSON.parse(line));
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        application: "rea",
+        mode: "mcp",
+        layer: "server",
+        tool: "current_document",
+        status: "ok",
+      }),
+    );
+    expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
+    expect(stderr).not.toContain(fixturePath);
   });
 
   it("honors the configured kind for an initial database target", async () => {

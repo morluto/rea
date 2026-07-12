@@ -13,6 +13,7 @@ describe("runtime configuration", () => {
       expect(result.value.hopperLauncherPath).toContain("/MacOS/hopper");
       expect(result.value.hopperTargetKind).toBe("executable");
       expect(result.value.hopperLoaderArgs).toEqual([]);
+      expect(result.value.logLevel).toBe("info");
     }
   });
 
@@ -31,6 +32,7 @@ describe("runtime configuration", () => {
         hopperTargetPath: "/fixture/sample.hop",
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
+        logLevel: "info",
       },
     });
   });
@@ -46,4 +48,10 @@ describe("runtime configuration", () => {
       ).toBe(false);
     },
   );
+
+  it("parses supported log levels and rejects unknown levels", () => {
+    const configured = parseConfig({ REA_LOG_LEVEL: "debug" });
+    expect(configured.ok && configured.value.logLevel).toBe("debug");
+    expect(parseConfig({ REA_LOG_LEVEL: "verbose" }).ok).toBe(false);
+  });
 });

@@ -44,6 +44,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "knip": "knip",
+    "lint:dead": "knip",
     "jscpd": "jscpd src/ tests/",
     "scan:todos": "node scripts/scan-todos.mjs",
     "start": "node dist/main.js",
@@ -60,9 +61,14 @@
     "prepack": "npm run build",
     "prepare": "husky"
   },
+  "lint-staged": {
+    "*.{ts,mjs,json,md,yml,yaml}": "prettier --write",
+    "*.ts": "oxlint --fix"
+  },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0-beta.3",
     "incur": "0.4.13",
+    "pino": "^9.14.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -72,6 +78,7 @@
     "husky": "9.1.7",
     "jscpd": "5.0.12",
     "knip": "6.26.0",
+    "lint-staged": "^16.4.0",
     "oxlint": "1.73.0",
     "prettier": "3.6.2",
     "typedoc": "0.28.20",

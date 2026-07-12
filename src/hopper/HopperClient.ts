@@ -14,6 +14,7 @@ import {
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
+import { silentLogger, type Logger } from "../logger.js";
 import {
   parseResponseLine,
   responseResult,
@@ -29,6 +30,7 @@ export interface HopperClientOptions {
   readonly requestTimeoutMs?: number;
   readonly startupTimeoutMs?: number;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
+  readonly logger?: Logger;
 }
 
 /** Safe launcher telemetry; stderr content is intentionally never exposed. */
@@ -62,6 +64,7 @@ export class HopperClient {
   > &
     HopperClientOptions;
   readonly #pending = new Map<number, PendingRequest>();
+  readonly #logger: Logger;
   #socket: Socket | undefined;
   #launch: BridgeLaunch | undefined;
   #directory: string | undefined;
@@ -73,6 +76,7 @@ export class HopperClient {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: HopperClientOptions) {
+    this.#logger = options.logger ?? silentLogger;
     this.#options = {
       ...options,
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
@@ -224,6 +228,7 @@ export class HopperClient {
     if (options.signal?.aborted === true)
       return err(new HopperCancelledError());
     const id = this.#nextId++;
+    const startedAt = performance.now();
     const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs;
     const response = new Promise<Result<JsonValue, HopperError>>((resolve) => {
       const onAbort =
@@ -252,7 +257,17 @@ export class HopperClient {
           this.#settle(id, err(new HopperProcessError(null)));
       },
     );
-    return response;
+    const result = await response;
+    this.#logger[result.ok ? "debug" : "warn"](
+      {
+        method,
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        status: result.ok ? "ok" : "error",
+        ...(result.ok ? {} : { errorTag: result.error._tag }),
+      },
+      "Hopper bridge request completed",
+    );
+    return result;
   }
 
   #attachSocket(socket: Socket): void {
