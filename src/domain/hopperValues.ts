@@ -106,17 +106,6 @@ const boundedSchema = <T extends z.ZodType>(item: T) =>
           path: ["next_offset"],
         });
       }
-      if (
-        !value.truncated &&
-        value.total !== null &&
-        value.total !== value.returned
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "a complete collection total must equal returned",
-          path: ["total"],
-        });
-      }
     });
 const referenceEdgeSchema = z
   .object({

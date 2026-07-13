@@ -568,7 +568,7 @@ describe("enhanced MCP tools", () => {
     );
   });
 
-  it("rejects complete dossier collections with inflated totals", async () => {
+  it("accepts a final dossier page whose total exceeds returned", async () => {
     const malformedPort = fixturePort();
     const client = await connect({
       execute: async (name, arguments_, options) => {
@@ -597,10 +597,6 @@ describe("enhanced MCP tools", () => {
       name: "analyze_function",
       arguments: { procedure: "0x1" },
     });
-    expect(result.isError).toBe(true);
-    const text = result.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toContain(
-      "AnalysisOutputError",
-    );
+    expect(result.isError).not.toBe(true);
   });
 });
