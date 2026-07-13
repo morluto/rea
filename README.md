@@ -170,12 +170,12 @@ Uninstall preserves Hopper, Homebrew, Node.js, evidence, captures, external evid
 
 ### CLI or coding agent?
 
-| If you want to…                                           | Use                                            |
-| --------------------------------------------------------- | ---------------------------------------------- |
-| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent     |
-| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`               |
-| Validate or canonicalize an Evidence v2 bundle            | `rea evidence-import` or `rea evidence-export` |
-| Import source as historical reference                     | `rea import-reference-source`                  |
+| If you want to…                                           | Use                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------- |
+| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent                     |
+| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`                               |
+| Validate, canonicalize, or compare Evidence v2 bundles    | `rea evidence-import`, `rea evidence-export`, or `rea compare` |
+| Import source as historical reference                     | `rea import-reference-source`                                  |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
@@ -183,6 +183,7 @@ Filesystem evidence commands and MCP file tools are disabled until the operator 
 export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
+rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
 ```
 
 Historical source import requires a separate allowlist and never treats source as current behavioral authority:
@@ -276,6 +277,8 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow.
 
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the current research matrix and admission gate.
+
 ## Using REA with other coding agents
 
 Setup currently configures Claude Desktop and Cursor automatically. Any coding agent that supports local MCP servers can use REA with the configuration below.
@@ -320,9 +323,20 @@ The agent workflow above is the easiest way to use REA. For a one-off overview f
 
 ```bash
 npx -y rea-agents analyze /Applications/Notes.app
+npx -y rea-agents inspect /Applications/Notes.app
+npx -y rea-agents inspect /Applications/Notes.app --detail detailed --limit 20
+npx -y rea-agents search /Applications/Notes.app "offline"
+npx -y rea-agents function /Applications/Notes.app 0x1000
+npx -y rea-agents xrefs /Applications/Notes.app 0x1000
+npx -y rea-agents trace /Applications/Notes.app "offline"
+npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
+npx -y rea-agents capabilities
+npx -y rea-agents providers
 ```
 
-Run `npx -y rea-agents --help` for direct decompilation and other options.
+Run `npx -y rea-agents --help` for direct decompilation, bounded search and
+other options. `analyze` and `inspect` share the same overview workflow;
+`function`, `xrefs`, and `trace` return the same Evidence v2 envelopes as MCP.
 
 Or install the `rea` command globally:
 
@@ -347,9 +361,9 @@ Closing a REA session shuts down its bridge and removes its private socket direc
 Process capture is disabled by default. Enabling it requires
 `REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
 `REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
-environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
-adapter uses host networking, it also requires
-`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
+environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Scenarios use the
+owned loopback replay by default; a scenario requesting host networking also
+requires `REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
 
 If the native PTY backend is unavailable, install Xcode command-line tools and
 run `npm run rebuild:native`. Linux source builds require Python, `make`, and a

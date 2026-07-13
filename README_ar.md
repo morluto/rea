@@ -199,6 +199,7 @@ flowchart LR
 
 ```bash
 npx -y rea-agents analyze /Applications/Notes.app
+npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
 ```
 
 شغّل `npx -y rea-agents --help` لمعرفة خيارات فك الترجمة المباشر والخيارات الأخرى.
@@ -243,7 +244,7 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch68"]'
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-ليس حاليًا. يعتمد المحول الحالي على تطبيق Hopper لنظام macOS وواجهة Python الخاصة به.
+نعم، يعمل REA على macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت؛ Windows غير مدعوم حاليًا. يعتمد التحليل العميق على تطبيق Hopper وواجهة Python الخاصة به.
 
 </details>
 
