@@ -311,9 +311,9 @@ describe("enhanced MCP tools", () => {
             address: "0x2",
             status: "error",
             error: {
-              tag: "AnalysisOutputError",
-              message: "Invalid analysis output for decompile: failed",
-              details: { operation: "decompile", reason: "failed" },
+              category: "execution_failure",
+              message:
+                "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
             },
           },
         ],
@@ -352,7 +352,11 @@ describe("enhanced MCP tools", () => {
           {
             address: "0x1",
             status: "error",
-            error: { tag: "AnalysisOutputError" },
+            error: {
+              category: "execution_failure",
+              message:
+                "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+            },
           },
         ],
       },
@@ -551,8 +555,8 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toContain(
-      "non-advancing pagination offset",
+    expect(text?.type === "text" ? text.text : "").toBe(
+      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
     );
   });
 
@@ -598,8 +602,8 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toContain(
-      "HopperProtocolError",
+    expect(text?.type === "text" ? text.text : "").toBe(
+      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
     );
   });
 
@@ -619,8 +623,8 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toContain(
-      "AnalysisOutputError",
+    expect(text?.type === "text" ? text.text : "").toBe(
+      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
     );
   });
 
@@ -655,8 +659,8 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toContain(
-      "AnalysisOutputError",
+    expect(text?.type === "text" ? text.text : "").toBe(
+      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
     );
   });
 

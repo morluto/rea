@@ -252,6 +252,11 @@ describe("full MCP integration with multi-tool sequences", () => {
       },
     });
     expect(unavailable.isError).toBe(true);
+    expect(structured(unavailable)).toMatchObject({
+      error: {
+        category: "unsupported_provider",
+      },
+    });
     expect(received[0]).not.toHaveProperty("unknown_registry_approved");
     expect(
       structured(
@@ -260,9 +265,15 @@ describe("full MCP integration with multi-tool sequences", () => {
     ).toMatchObject({
       result: [
         {
-          domain: "provider-capability",
+          domain: "analysis-capability",
           question:
-            "procedure_pseudo_code is unavailable: Decompiler is not installed.",
+            "The requested analysis is unavailable for the current target.",
+          recommended_probes: [
+            {
+              rationale:
+                "Choose another analysis or target that can answer this question.",
+            },
+          ],
         },
       ],
     });
@@ -354,7 +365,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(names).not.toContain("open_binary");
   });
 
-  it("propagates remote Hopper errors with structured content", async () => {
+  it("projects remote failures without provider or bridge details", async () => {
     const client = await connect({
       execute: () =>
         Promise.resolve(err(new HopperRemoteError(-32000, "bridge timeout"))),
@@ -365,8 +376,14 @@ describe("full MCP integration with multi-tool sequences", () => {
       arguments: {},
     });
     expect(result.isError).toBe(true);
-    expect(text(result)).toContain("HopperRemoteError");
-    expect(text(result)).toContain("bridge timeout");
+    expect(structured(result)).toMatchObject({
+      error: {
+        category: "execution_failure",
+      },
+    });
+    expect(text(result)).toBe(
+      "Analysis could not complete. Retry once; if it continues, run `rea doctor`.",
+    );
   });
 
   it("handles concurrent tool calls without corruption", async () => {

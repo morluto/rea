@@ -7,6 +7,11 @@ import { add, commit, init } from "isomorphic-git";
 import { describe, expect, it } from "vitest";
 
 import { importReferenceSource } from "../src/application/ReferenceSourceImport.js";
+import { projectReferenceSourceEntryFailure } from "../src/application/ReferenceSourceImportEntries.js";
+import {
+  projectReferenceSourceImportError,
+  type ReferenceSourceImportError,
+} from "../src/application/ReferenceSourceImportTypes.js";
 import { createHistoricalSourceManifest } from "../src/domain/referenceSourceGraph.js";
 
 const limits = {
@@ -43,6 +48,52 @@ const importTree = (root: string, approvedRoot: string, signal?: AbortSignal) =>
   });
 
 describe("reference source import", () => {
+  it("projects entry failures without low-level reader diagnostics", () => {
+    for (const [kind, code] of [
+      ["directory", "io"],
+      ["symlink", "io"],
+      ["file", "io"],
+      ["file", "cancelled"],
+      ["file", "limit"],
+      ["unknown", "unsupported"],
+    ] as const) {
+      const message = projectReferenceSourceEntryFailure({
+        status: "failed",
+        path: "safe/path",
+        kind,
+        code,
+        message: "SECRET internal diagnostic /private/path",
+      });
+      expect(message).not.toContain("SECRET");
+      expect(message).not.toContain("/private/path");
+      expect(message).toMatch(/Check|try again|when ready|smaller|supported/u);
+    }
+  });
+
+  it("projects every import failure without raw parser or policy text", () => {
+    const expectedCategories = {
+      cancelled: "cancelled",
+      "invalid-limits": "invalid_input",
+      "invalid-root": "invalid_input",
+      io: "execution_failure",
+      parse: "execution_failure",
+      policy: "permission_required",
+    } as const;
+    for (const [code, category] of Object.entries(expectedCategories)) {
+      const projected = projectReferenceSourceImportError({
+        tag: "reference-source-import",
+        code: code as ReferenceSourceImportError["code"],
+        message: "SECRET parser stack and /private/path",
+      });
+      expect(projected.category).toBe(category);
+      expect(projected.message).not.toContain("SECRET");
+      expect(projected.message).not.toContain("/private/path");
+      expect(projected.message).toMatch(
+        /try again|when ready|positive integer|Check that|REA_REFERENCE_ROOTS_JSON/u,
+      );
+    }
+  });
+
   it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
     const parent = await mkdtemp(join(tmpdir(), "rea-reference-import-"));
     try {

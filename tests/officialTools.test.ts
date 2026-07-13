@@ -199,7 +199,7 @@ describe("official Hopper proxy tools", () => {
     expect(result.content).toEqual([
       {
         type: "text",
-        text: "HopperRemoteError: Hopper request failed (-1): denied",
+        text: "Analysis could not complete. Retry once; if it continues, run `rea doctor`.",
       },
     ]);
   });

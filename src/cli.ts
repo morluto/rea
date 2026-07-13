@@ -19,6 +19,8 @@ import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
 import { registerInvestigationCommands } from "./cliInvestigationCommands.js";
+import { projectAnalysisError } from "./domain/errors.js";
+import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -34,8 +36,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
-    description:
-      "Reverse engineer anything from your terminal or coding agent.",
+    description: "Reverse engineer anything from your terminal or agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
       instructions:
@@ -75,6 +76,11 @@ const registerCoreCommands = (
   const overviewOptions = z.object({
     detail: z.enum(["concise", "detailed"]).default("concise"),
     limit: z.number().int().min(1).max(50).default(10),
+    snapshot: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Load and update a local analysis snapshot"),
   });
   cli.command("analyze", {
     description: "Get an overview of an app",
@@ -88,7 +94,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -104,7 +110,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -114,13 +120,14 @@ const registerCoreCommands = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Procedure address"),
     }),
-    run: ({ args }) =>
+    options: z.object({ snapshot: z.string().min(1).optional() }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "decompile", () =>
         runDirectAnalysis(
           args.path,
           "procedure_pseudo_code",
           { procedure: args.address },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -131,7 +138,7 @@ const registerSetupCommands = (
   logger: Logger,
 ): void => {
   cli.command("setup", {
-    description: "Install requirements and configure coding agents",
+    description: "Install requirements and configure agents",
     options: z.object({
       yes: z
         .boolean()
@@ -223,13 +230,14 @@ const registerXrefsCommand = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Hexadecimal address"),
     }),
-    run: ({ args }) =>
+    options: z.object({ snapshot: z.string().min(1).optional() }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "xrefs", () =>
         runDirectAnalysis(
           args.path,
           "xrefs",
           { address: args.address },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -249,6 +257,7 @@ const registerTraceCommand = (
       caseSensitive: z.boolean().default(false),
       limit: z.number().int().min(1).max(100).default(20),
       maxOperations: z.number().int().min(1).max(100).default(20),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: {
       caseSensitive: "case-sensitive",
@@ -265,7 +274,7 @@ const registerTraceCommand = (
             limit: options.limit,
             max_operations: options.maxOperations,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -301,6 +310,7 @@ const registerFunctionCommand = (
       limit: z.number().int().min(1).max(500).default(100),
       maxPseudocodeChars: z.number().int().min(1).max(100_000).default(20_000),
       maxInstructions: z.number().int().min(1).max(5_000).default(500),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: {
       includeAssembly: "include-assembly",
@@ -319,7 +329,7 @@ const registerFunctionCommand = (
             max_pseudocode_chars: options.maxPseudocodeChars,
             max_instructions: options.maxInstructions,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -341,6 +351,7 @@ const registerSearchCommand = (
       caseSensitive: z.boolean().default(false),
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(100).default(100),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: { caseSensitive: "case-sensitive" },
     run: ({ args, options }) =>
@@ -355,7 +366,7 @@ const registerSearchCommand = (
             offset: options.offset,
             limit: options.limit,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -376,7 +387,10 @@ const registerReferenceSourceCommand = (
       logCliCommand(logger, "import-reference-source", async () => {
         const config = parseConfig(process.env);
         if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+          return {
+            error: "Import failed",
+            ...projectAnalysisError(config.error),
+          };
         const imported = await importReferenceSource({
           root: args.root,
           caller: "rea-cli",
@@ -386,7 +400,10 @@ const registerReferenceSourceCommand = (
         });
         return imported.ok
           ? imported.value
-          : { error: imported.error.code, message: imported.error.message };
+          : {
+              error: "Import failed",
+              ...projectReferenceSourceImportError(imported.error),
+            };
       }),
   });
 };

@@ -72,6 +72,11 @@ describe("Hopper bridge truthfulness", () => {
     );
     expect(bridgeSource).toContain("MAX_SEARCH_PATTERN_LENGTH = 256");
     expect(bridgeSource).toContain("MAX_SEARCH_VALUE_LENGTH = 4096");
+    expect(bridgeSource).toContain("MAX_REGEX_BACKTRACKING_PATHS = 10000");
+    expect(bridgeSource).toContain("MAX_REGEX_CANDIDATE_LENGTH = 4096");
+    expect(bridgeSource).toContain("MAX_REGEX_SEARCH_WORK_UNITS = 1000000");
+    expect(bridgeSource).toContain("_checked_regex_paths(");
+    expect(bridgeSource).toContain("_bounded_regex_matcher(");
     expect(bridgeSource).toContain('"value_truncated"');
     expect(bridgeSource).toContain("page_end = offset + limit");
     expect(bridgeSource).toContain("if offset <= total < page_end:");
@@ -90,5 +95,34 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain("def _diagnostic_type(error):");
     expect(bridgeSource).toContain('"type": _diagnostic_type(error)');
     expect(bridgeSource).not.toContain("traceback.format_exc");
+  });
+
+  it("stops background analysis and closes the session-owned document", () => {
+    expect(bridgeSource).toContain("def _session_document():");
+    expect(bridgeSource).toContain("os.path.realpath(REA_TARGET_PATH)");
+    expect(bridgeSource).toContain("document.getExecutableFilePath()");
+    expect(bridgeSource).toContain("document.getDatabaseFilePath()");
+    expect(bridgeSource).toContain("document.backgroundProcessActive()");
+    expect(bridgeSource).toContain("document.requestBackgroundProcessStop()");
+    expect(bridgeSource).toContain("document.waitForBackgroundProcessToEnd()");
+    expect(bridgeSource).toContain("document.closeDocument()");
+    expect(bridgeSource).toContain(
+      "document_closed = _session_document() is None",
+    );
+  });
+
+  it("returns deterministic addresses for direct procedure relationships", () => {
+    expect(bridgeSource).toContain(
+      "_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()",
+    );
+    expect(bridgeSource).toContain(
+      "_hex(item.getEntryPoint()) for item in procedure.getAllCalleeProcedures()",
+    );
+    expect(bridgeSource).not.toContain(
+      "_procedure_name(item) for item in procedure.getAllCallerProcedures()",
+    );
+    expect(bridgeSource).not.toContain(
+      "_procedure_name(item) for item in procedure.getAllCalleeProcedures()",
+    );
   });
 });

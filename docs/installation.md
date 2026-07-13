@@ -1,6 +1,6 @@
 # Installation and setup
 
-REA separates installing its CLI from configuring external software and coding agents.
+REA separates installing its CLI from configuring external software and agents.
 
 ## Install the CLI
 
@@ -35,7 +35,7 @@ Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-pro
 `rea setup` discovers the current state, prints one plan, and asks `Continue? [Y/n]`. The plan identifies:
 
 - an existing Hopper installation or the official package it proposes to install;
-- each detected coding-agent configuration path;
+- each detected agent configuration path;
 - the REA skill destination;
 - external software and package-manager effects.
 

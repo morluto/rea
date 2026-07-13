@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
 import { validateProcessCapture } from "./processCapture.js";
+import { jsonValueSchema } from "./jsonValue.js";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -42,8 +43,8 @@ export const processCaptureComparisonSchema = z
         index: z.number().int().nonnegative(),
         left_at_ms: z.number().int().nonnegative().nullable(),
         right_at_ms: z.number().int().nonnegative().nullable(),
-        left: z.unknown().nullable(),
-        right: z.unknown().nullable(),
+        left: jsonValueSchema.nullable(),
+        right: jsonValueSchema.nullable(),
       }),
     ]),
     limitations: z.array(z.string()),
@@ -165,8 +166,8 @@ const firstCollectionDivergence = (
       index,
       left_at_ms: eventTime(leftValue),
       right_at_ms: eventTime(rightValue),
-      left: leftValue,
-      right: rightValue,
+      left: jsonValueSchema.parse(leftValue),
+      right: jsonValueSchema.parse(rightValue),
     };
   }
   return null;

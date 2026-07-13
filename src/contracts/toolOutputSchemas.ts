@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ANALYSIS_ERROR_TAGS } from "../domain/errors.js";
 import { evidenceSchema } from "../domain/evidence.js";
 import {
   processCaptureComparisonSchema,
@@ -180,9 +179,18 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
   );
 const analysisErrorProjectionSchema = z
   .object({
-    tag: z.enum(ANALYSIS_ERROR_TAGS),
+    category: z.enum([
+      "invalid_input",
+      "permission_required",
+      "unsupported_provider",
+      "integrity_mismatch",
+      "truncated",
+      "cancelled",
+      "timeout",
+      "unavailable",
+      "execution_failure",
+    ]),
     message: z.string(),
-    details: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
   })
   .strict();
 const graphNode = z.discriminatedUnion("status", [
@@ -377,7 +385,16 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
     }),
   ),
-  close_binary: lifecycleResultOf(z.null()),
+  close_binary: lifecycleResultOf(
+    z.union([
+      z.null(),
+      z.object({
+        path: z.string(),
+        bytes: z.number().int().min(0),
+        entries: z.number().int().min(0),
+      }),
+    ]),
+  ),
   binary_session: lifecycleResultOf(
     z.union([
       sessionProvider.extend({ open: z.literal(false) }),

@@ -62,6 +62,13 @@ describe("runtime configuration", () => {
           maxStringLength: 1024 * 1024,
           maxNodes: 1_000_000,
         },
+        analysisSnapshotFilePolicy: {
+          roots: [],
+          maxBytes: 64 * 1024 * 1024,
+          maxDepth: 64,
+          maxStringLength: 1024 * 1024,
+          maxNodes: 1_000_000,
+        },
         referenceSourcePolicy: {
           roots: [],
           secretPatterns: [],

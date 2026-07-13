@@ -3,7 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -92,9 +96,10 @@ const registerOfficialTool = (
       ) {
         const unknown = registration.recordUnknown({
           approved: true,
-          question: `${contract.name} is unavailable: ${result.error.reason}`,
+          question:
+            "The requested analysis is unavailable for the current target.",
           severity: "medium",
-          domain: "provider-capability",
+          domain: "analysis-capability",
           supporting_evidence_ids: [],
           contradicting_evidence_ids: [],
           required_authority: "shipped-artifact",
@@ -104,7 +109,7 @@ const registerOfficialTool = (
             {
               operation: contract.name,
               rationale:
-                "Use a provider that declares this capability available.",
+                "Choose another analysis or target that can answer this question.",
             },
           ],
           relationships: [],
@@ -127,21 +132,12 @@ const projectOfficialArguments = (
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   input: unknown,
 ): Readonly<Record<string, JsonValue>> => {
-  const parsed = jsonValueSchema.safeParse(input);
-  if (
-    !parsed.success ||
-    typeof parsed.data !== "object" ||
-    parsed.data === null ||
-    Array.isArray(parsed.data)
-  ) {
-    // The SDK validates this with the same schema before invoking the callback.
-    throw new Error("Validated MCP tool input was not a JSON object");
-  }
+  const parsed = jsonObjectSchema.parse(contract.inputSchema.parse(input));
 
   const projected: Record<string, JsonValue> = {};
   for (const key of Object.keys(contract.inputSchema.shape)) {
     if (key === "unknown_registry_approved") continue;
-    projected[key] = parsed.data[key] ?? null;
+    projected[key] = jsonValueSchema.parse(parsed[key] ?? null);
   }
   return projected;
 };

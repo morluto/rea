@@ -23,6 +23,7 @@ export interface AppConfig {
   readonly processExecutionPolicy: ProcessExecutionPolicy;
   readonly artifactNativeMountEnabled: boolean;
   readonly evidenceFilePolicy: EvidenceFilePolicy;
+  readonly analysisSnapshotFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
 }
 
@@ -43,6 +44,7 @@ const environmentSchema = z.object({
   REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
   REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
   REA_EVIDENCE_ROOTS_JSON: z.string().default("[]"),
+  REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: z.string().default("[]"),
   REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
@@ -67,6 +69,14 @@ const parseStringArray = (
     return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
   }
 };
+
+const filePolicy = (roots: readonly string[]): EvidenceFilePolicy => ({
+  roots,
+  maxBytes: 64 * 1024 * 1024,
+  maxDepth: 64,
+  maxStringLength: 1024 * 1024,
+  maxNodes: 1_000_000,
+});
 
 /**
  * Parse Hopper launcher configuration once at the composition root.
@@ -127,6 +137,11 @@ export const parseConfig = (
     "REA_EVIDENCE_ROOTS_JSON",
   );
   if (!evidenceRoots.ok) return evidenceRoots;
+  const analysisSnapshotRoots = parseStringArray(
+    parsedEnvironment.data.REA_ANALYSIS_SNAPSHOT_ROOTS_JSON,
+    "REA_ANALYSIS_SNAPSHOT_ROOTS_JSON",
+  );
+  if (!analysisSnapshotRoots.ok) return analysisSnapshotRoots;
   const referenceRoots = parseStringArray(
     parsedEnvironment.data.REA_REFERENCE_ROOTS_JSON,
     "REA_REFERENCE_ROOTS_JSON",
@@ -155,13 +170,8 @@ export const parseConfig = (
     },
     artifactNativeMountEnabled:
       parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true",
-    evidenceFilePolicy: {
-      roots: evidenceRoots.value,
-      maxBytes: 64 * 1024 * 1024,
-      maxDepth: 64,
-      maxStringLength: 1024 * 1024,
-      maxNodes: 1_000_000,
-    },
+    evidenceFilePolicy: filePolicy(evidenceRoots.value),
+    analysisSnapshotFilePolicy: filePolicy(analysisSnapshotRoots.value),
     referenceSourcePolicy: {
       roots: referenceRoots.value,
       secretPatterns: secretPatterns.value,

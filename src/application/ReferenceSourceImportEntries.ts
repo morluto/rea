@@ -20,6 +20,23 @@ export interface ParsedReferenceSourceEntries {
   readonly limitations: string[];
 }
 
+/** Project a low-level entry failure into safe import guidance. */
+export const projectReferenceSourceEntryFailure = (
+  entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
+): string => {
+  if (entry.code === "cancelled")
+    return "This entry was not read because the import was cancelled. Start the import again when ready.";
+  if (entry.code === "limit")
+    return "This entry was not read because an import limit was reached. Import a smaller directory or raise the configured limits.";
+  if (entry.code === "unsupported")
+    return "This entry cannot be read safely on this system. Exclude it or import the directory on a supported system.";
+  if (entry.kind === "directory")
+    return "This directory could not be read. Check its permissions, then try again.";
+  if (entry.kind === "symlink")
+    return "This symbolic link could not be read safely. Check the link and its permissions, then try again.";
+  return "This file could not be read. Check its permissions, then try again.";
+};
+
 const hashBytes = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
@@ -27,13 +44,14 @@ const failedEntry = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
 ): HistoricalSourceGraphInput["entries"][number] => {
   const classifications = classifyReferenceSourcePath(entry.path);
+  const limitation = projectReferenceSourceEntryFailure(entry);
   if (entry.kind === "directory")
     return {
       path: entry.path,
       kind: "directory",
       classifications,
       tree_state: entry.code === "limit" ? "partial" : "unreadable",
-      limitations: [entry.message],
+      limitations: [limitation],
     };
   if (entry.kind === "symlink")
     return {
@@ -42,7 +60,7 @@ const failedEntry = (
       target: "<unreadable>",
       target_state: "unreadable",
       classifications,
-      limitations: [entry.message],
+      limitations: [limitation],
     };
   return {
     path: entry.path,
@@ -52,7 +70,7 @@ const failedEntry = (
     language: null,
     classifications: entry.kind === "file" ? classifications : ["unknown"],
     content_state: entry.code === "limit" ? "too-large" : "unreadable",
-    limitations: [entry.message],
+    limitations: [limitation],
   };
 };
 

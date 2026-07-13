@@ -9,7 +9,10 @@ import type {
 } from "../domain/processCapture.js";
 import { validateProcessCapture } from "../domain/processCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ProcessCaptureError } from "./ProcessCaptureError.js";
+import {
+  ProcessCaptureError,
+  processCaptureCancelled,
+} from "./ProcessCaptureError.js";
 
 export { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { startLoopbackReplay, type LoopbackReplay } from "./LoopbackReplay.js";
@@ -372,8 +375,7 @@ const completeCapture = async (options: {
   const { runtime, scenario } = options;
   runtime.checkpoints.trigger("root_exit");
   const { reason } = options.exit;
-  if (reason === "cancelled")
-    throw new ProcessCaptureError("process capture was cancelled");
+  if (reason === "cancelled") throw processCaptureCancelled();
   const settlement = await observeSettlement(
     options.runId,
     [

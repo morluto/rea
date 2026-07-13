@@ -16,6 +16,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { verifyPackagedInvestigation } from "./verify-package-investigation.mjs";
+import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 
 const expectedToolCount = TOOL_CONTRACTS.length;
 
@@ -42,6 +43,7 @@ try {
   ) {
     throw new Error("package contained generated Python bytecode");
   }
+  await verifyPackedBridge({ root, workspace, tarball, packedFiles });
   const prefix = join(workspace, "prefix");
   const home = join(workspace, "home");
   const fakeBin = join(workspace, "bin");
@@ -488,7 +490,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
