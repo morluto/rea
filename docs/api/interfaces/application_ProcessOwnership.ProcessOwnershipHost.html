@@ -11,9 +11,12 @@
 <li><a href="../modules/application_ProcessOwnership.html">application/ProcessOwnership</a></li>
 <li><a href="" aria-current="page">ProcessOwnershipHost</a></li></ul>
 <h1>Interface ProcessOwnershipHost</h1></div>
+<section class="tsd-panel tsd-comment">
+<div class="tsd-comment tsd-typography"><p>Narrow operating-system seam used to inspect and signal process groups.</p>
+</div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">ProcessOwnershipHost</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-call-signature" href="#environment-1">environment</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pid</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#listmembers-1">listMembers</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">processGroupId</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">ProcessGroupMember</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#signalgroup-1">signalGroup</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">processGroupId</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">signal</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Signals</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L24">src/application/ProcessOwnership.ts:24</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L26">src/application/ProcessOwnership.ts:26</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -40,7 +43,7 @@
 <li><span><span class="tsd-kind-parameter">pid</span>: <span class="tsd-signature-type">number</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L26">src/application/ProcessOwnership.ts:26</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L28">src/application/ProcessOwnership.ts:28</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="listmembers"><span>list<wbr/>Members</span><a href="#listmembers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -53,7 +56,7 @@
 <li><span><span class="tsd-kind-parameter">processGroupId</span>: <span class="tsd-signature-type">number</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">ProcessGroupMember</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L25">src/application/ProcessOwnership.ts:25</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L27">src/application/ProcessOwnership.ts:27</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="signalgroup"><span>signal<wbr/>Group</span><a href="#signalgroup" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -67,7 +70,7 @@
 <li><span><span class="tsd-kind-parameter">signal</span>: <span class="tsd-signature-type">Signals</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L27">src/application/ProcessOwnership.ts:27</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L29">src/application/ProcessOwnership.ts:29</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

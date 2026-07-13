@@ -20,6 +20,13 @@ interface TerminalRendererOptions {
 }
 
 /** Owns one headless terminal and serializes writes into deterministic frames. */
+/**
+ * Reconstructs bounded terminal states while raw PTY chunks remain authoritative.
+ *
+ * Rendered frames answer what an operator saw after control-sequence handling;
+ * raw frames preserve byte/chunk differences that can render identically.
+ * Comparisons retain both because neither representation subsumes the other.
+ */
 export class TerminalRenderer {
   readonly #terminal: InstanceType<typeof HeadlessPackage.Terminal>;
   readonly #serializeAddon = new SerializePackage.SerializeAddon();

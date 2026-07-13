@@ -12,11 +12,11 @@
 <li><a href="" aria-current="page">InteractionEvent</a></li></ul>
 <h1>Interface InteractionEvent</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>One attempted scripted interaction with the PTY.</p>
+<div class="tsd-comment tsd-typography"><p>Scheduled input, resize, or signal with its observed dispatch outcome.</p>
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">InteractionEvent</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#data">data</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dispatched_at_ms">dispatched_at_ms</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#outcome">outcome</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;failed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;dispatched&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;target_exited&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#scheduled_at_ms">scheduled_at_ms</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sequence">sequence</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#type">type</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;signal&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;input&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;resize&quot;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L412">src/domain/processCapture.ts:412</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L422">src/domain/processCapture.ts:422</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -38,32 +38,32 @@
 <h3 class="tsd-anchor-link" id="data"><code class="tsd-tag">Readonly</code><span>data</span><a href="#data" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">data</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L417">src/domain/processCapture.ts:417</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L427">src/domain/processCapture.ts:427</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dispatched_at_ms"><code class="tsd-tag">Readonly</code><span>dispatched_<wbr/>at_<wbr/>ms</span><a href="#dispatched_at_ms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">dispatched_at_ms</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L415">src/domain/processCapture.ts:415</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L425">src/domain/processCapture.ts:425</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="outcome"><code class="tsd-tag">Readonly</code><span>outcome</span><a href="#outcome" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">outcome</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;failed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;dispatched&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;target_exited&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L418">src/domain/processCapture.ts:418</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L428">src/domain/processCapture.ts:428</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="scheduled_at_ms"><code class="tsd-tag">Readonly</code><span>scheduled_<wbr/>at_<wbr/>ms</span><a href="#scheduled_at_ms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">scheduled_at_ms</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L414">src/domain/processCapture.ts:414</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L424">src/domain/processCapture.ts:424</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sequence"><code class="tsd-tag">Readonly</code><span>sequence</span><a href="#sequence" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sequence</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L413">src/domain/processCapture.ts:413</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L423">src/domain/processCapture.ts:423</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="type"><code class="tsd-tag">Readonly</code><span>type</span><a href="#type" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">type</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;signal&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;input&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;resize&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L416">src/domain/processCapture.ts:416</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/processCapture.ts#L426">src/domain/processCapture.ts:426</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

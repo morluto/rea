@@ -8,7 +8,13 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 
-/** Official Electron ASAR adapter. Individual files remain caller-bounded. */
+/**
+ * Official Electron ASAR adapter. Individual files remain caller-bounded.
+ *
+ * An entry marked `unpacked` is metadata, not an integrity exemption: Electron
+ * stores its bytes beside the archive in `<archive>.unpacked`, and callers must
+ * hash those companion bytes against the archive's declared integrity value.
+ */
 export class AsarArtifactReader implements ArtifactReader {
   readonly format = "asar" as const;
 

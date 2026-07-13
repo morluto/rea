@@ -41,7 +41,13 @@ else process.exit(route.termination.code);
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'\\''`)}'`;
 
-/** Start bounded executable replay wrappers and their private invocation ledger. */
+/**
+ * Start bounded executable replay wrappers and their private invocation ledger.
+ *
+ * Exact argument matching is deliberate: a fallback to the host executable
+ * would make an unmatched dependency call look authoritative. Unmatched and
+ * exhausted routes therefore fail visibly and remain part of the capture.
+ */
 export const startCommandShimReplay = async (
   scenario: ProcessScenario,
   temporaryRoot: string,

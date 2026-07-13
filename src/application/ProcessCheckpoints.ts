@@ -96,6 +96,9 @@ export class ProcessCheckpoints {
   capture(name: string): void {
     if (this.#captured.has(name)) return;
     this.#captured.add(name);
+    // Serialize scans even when time, terminal, and lifecycle triggers fire
+    // together. Each effect set is intentionally relative to the immediately
+    // preceding checkpoint, which preserves transient create/delete behavior.
     this.#pending = this.#pending.then(async () => {
       const snapshot = await snapshotRoots(this.scenario, this.signal);
       const previous = this.#captures.at(-1)?.files ?? [];

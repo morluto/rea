@@ -12,10 +12,13 @@
 <li><a href="" aria-current="page">TerminalRenderer</a></li></ul>
 <h1>Class TerminalRenderer</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Owns one headless terminal and serializes writes into deterministic frames.</p>
+<div class="tsd-comment tsd-typography"><p>Reconstructs bounded terminal states while raw PTY chunks remain authoritative.</p>
+<p>Rendered frames answer what an operator saw after control-sequence handling;
+raw frames preserve byte/chunk differences that can render identically.
+Comparisons retain both because neither representation subsumes the other.</p>
 </div></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L23">src/application/TerminalRenderer.ts:23</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L30">src/application/TerminalRenderer.ts:30</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -48,7 +51,7 @@
 <li><span><span class="tsd-kind-parameter">options</span>: <span class="tsd-signature-type">TerminalRendererOptions</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">TerminalRenderer</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L31">src/application/TerminalRenderer.ts:31</a></li></ul></aside></div></li></ul></section></section></details>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L38">src/application/TerminalRenderer.ts:38</a></li></ul></aside></div></li></ul></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -62,7 +65,7 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L74">src/application/TerminalRenderer.ts:74</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L81">src/application/TerminalRenderer.ts:81</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="frames"><span>frames</span><a href="#frames" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -73,7 +76,7 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_processCapture.RenderedTerminalFrame.html" class="tsd-signature-type tsd-kind-interface">RenderedTerminalFrame</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L63">src/application/TerminalRenderer.ts:63</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L70">src/application/TerminalRenderer.ts:70</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="resize"><span>resize</span><a href="#resize" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -90,7 +93,7 @@
 <li><span><span class="tsd-kind-parameter">atMs</span>: <span class="tsd-signature-type">number</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L55">src/application/TerminalRenderer.ts:55</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L62">src/application/TerminalRenderer.ts:62</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="truncated"><span>truncated</span><a href="#truncated" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -101,7 +104,7 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L69">src/application/TerminalRenderer.ts:69</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L76">src/application/TerminalRenderer.ts:76</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="write"><span>write</span><a href="#write" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -117,7 +120,7 @@
 <li><span><span class="tsd-kind-parameter">atMs</span>: <span class="tsd-signature-type">number</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L42">src/application/TerminalRenderer.ts:42</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/TerminalRenderer.ts#L49">src/application/TerminalRenderer.ts:49</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

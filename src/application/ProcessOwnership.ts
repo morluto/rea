@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/** Identity proof required before REA may signal a captured process group. */
 export interface OwnedProcessGroup {
   readonly runId: string;
   readonly leaderPid: number;
@@ -21,12 +22,14 @@ interface ProcessGroupMember {
   readonly command: string;
 }
 
+/** Narrow operating-system seam used to inspect and signal process groups. */
 export interface ProcessOwnershipHost {
   listMembers(processGroupId: number): Promise<readonly ProcessGroupMember[]>;
   environment(pid: number): Promise<Readonly<Record<string, string>>>;
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
 }
 
+/** Cleanup succeeds only when the group is absent or every member is owned. */
 export type ProcessCleanupResult =
   | { readonly cleaned: true; readonly signaled: boolean }
   | { readonly cleaned: false; readonly reason: string };
@@ -78,7 +81,13 @@ const systemHost: ProcessOwnershipHost = {
   },
 };
 
-/** Verify run-token ownership before signaling a POSIX process group. */
+/**
+ * Verify run-token ownership before signaling a POSIX process group.
+ *
+ * Process IDs and group IDs can be reused. REA therefore re-reads every live
+ * member's environment immediately before signaling and fails closed if any
+ * member cannot be inspected or lacks the per-capture run token.
+ */
 export const cleanupOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemHost,

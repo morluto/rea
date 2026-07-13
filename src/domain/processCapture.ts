@@ -37,6 +37,10 @@ const outputChunkSchema = z.object({
 });
 
 /** Exact boundary schema for bounded dynamic process scenarios. */
+/**
+ * Boundary schema for one explicitly approved, bounded process experiment.
+ * Defaults are part of the evidence contract and must remain deterministic.
+ */
 export const processScenarioSchema = z
   .object({
     approved: z
@@ -310,6 +314,7 @@ export const processScenarioSchema = z
   });
 
 /** A parsed, bounded dynamic process observation scenario. */
+/** Parsed instructions and resource bounds for one process experiment. */
 export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 
 /** Parse untrusted process scenario input and apply safe default budgets. */
@@ -317,6 +322,7 @@ export const parseProcessScenario = (input: unknown): ProcessScenario =>
   processScenarioSchema.parse(input);
 
 /** Operator-owned policy for process capture. */
+/** Operator-owned ceiling applied in addition to per-scenario approval. */
 export interface ProcessExecutionPolicy {
   readonly enabled: boolean;
   readonly executableRoots: readonly string[];
@@ -326,6 +332,7 @@ export interface ProcessExecutionPolicy {
 }
 
 /** A safe, caller-visible process-policy decision. */
+/** Explicit authorization result; denial reasons are safe to show callers. */
 export type ProcessPolicyDecision =
   | { readonly allowed: true }
   | { readonly allowed: false; readonly reason: string };
@@ -389,6 +396,7 @@ export const authorizeProcessScenario = (
 };
 
 /** One bounded terminal observation. */
+/** Normalized raw PTY chunk, preserving transport-level output differences. */
 export interface TerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
@@ -396,6 +404,7 @@ export interface TerminalFrame {
 }
 
 /** One rendered terminal state after xterm has parsed a PTY chunk or resize. */
+/** Serialized terminal state after interpreting control and resize sequences. */
 export interface RenderedTerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
@@ -409,6 +418,7 @@ export interface RenderedTerminalFrame {
 }
 
 /** One attempted scripted interaction with the PTY. */
+/** Scheduled input, resize, or signal with its observed dispatch outcome. */
 export interface InteractionEvent {
   readonly sequence: number;
   readonly scheduled_at_ms: number;
@@ -446,6 +456,9 @@ export interface ProcessSample {
 }
 
 /** A named filesystem observation captured during a process lifecycle. */
+/**
+ * Named filesystem state whose effects are relative to the prior checkpoint.
+ */
 export interface FilesystemCheckpoint {
   readonly name: string;
   readonly at_ms: number;
@@ -455,6 +468,7 @@ export interface FilesystemCheckpoint {
 }
 
 /** One invocation observed by the declarative command-shim replay adapter. */
+/** Recorded deterministic dependency invocation and route-match outcome. */
 export interface ShimEvent {
   readonly sequence: number;
   readonly at_ms: number;
@@ -481,6 +495,12 @@ export interface ProtocolEvent {
 }
 
 /** A bounded process observation with explicit incompleteness metadata. */
+/**
+ * Process Capture v3 observation set.
+ *
+ * `truncated` and `residual_unknowns` are semantic evidence: consumers must not
+ * infer equivalence from matching bounded observations when either is present.
+ */
 export interface ProcessCapture {
   readonly schema_version: 3;
   readonly normalization: z.infer<typeof normalizationSchema>;

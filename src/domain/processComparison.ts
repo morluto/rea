@@ -197,6 +197,12 @@ const chooseFirstDivergence = (
 };
 
 /** Compare bounded captures without equating missing or incompatible evidence. */
+/**
+ * Compare two Process Capture v3 observations without treating absence as proof.
+ *
+ * Observed differences outrank residual unknowns. A capture may therefore be
+ * definitively changed in one dimension while completeness remains unknown.
+ */
 export const compareProcessCaptures = (
   left: ProcessCapture,
   right: ProcessCapture,

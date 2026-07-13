@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { spawn, type IPty } from "node-pty";
 import type {
   FilesystemCheckpoint,
@@ -139,6 +139,10 @@ const makeEnvironment = (
   environment.REA_REPLAY_HTTP_URL = replay.httpUrl;
   environment.REA_REPLAY_WEBSOCKET_URL = replay.websocketUrl;
   environment.REA_SHIM_LEDGER_URL = shimReplay.url;
+  // PATH is evidence-producing input. Inheriting the host PATH here would let
+  // the authority and reconstruction probe different tools without recording
+  // that difference. Scenarios must opt in through environment or
+  // inherit_environment; deterministic shims always take precedence.
   environment.PATH = [shimReplay.binPath, environment.PATH ?? ""]
     .filter((part) => part.length > 0)
     .join(":");
@@ -315,6 +319,9 @@ const awaitTerminalExit = async ({
   reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
 }> =>
   new Promise((resolveExit) => {
+    // The kill caused by a deadline is observed later as an ordinary PTY exit.
+    // Keep the initiating lifecycle reason so comparisons distinguish a target
+    // exit from harness-owned timeout, idle-timeout, and cancellation cleanup.
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
     terminal.onExit((exit) => {
       for (const [eventIndex, event] of scenario.events.entries()) {
