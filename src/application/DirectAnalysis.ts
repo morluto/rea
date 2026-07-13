@@ -78,13 +78,19 @@ const runAnalysis = async (
     ) {
       const result = await new EnhancedTools(session).execute(tool, arguments_);
       return result.ok
-        ? createEvidence(opened.value, WORKFLOW_PROVIDER, {
-            operation: tool,
-            parameters: arguments_,
-            result: result.value,
-            confidence: "derived",
-            limitations: ["Derived by an REA composed workflow."],
-          })
+        ? createEvidence(
+            opened.value,
+            tool === "analyze_function"
+              ? session.providerIdentity(tool)
+              : WORKFLOW_PROVIDER,
+            {
+              operation: tool,
+              parameters: arguments_,
+              result: result.value,
+              confidence: "derived",
+              limitations: ["Derived by an REA composed workflow."],
+            },
+          )
         : { error: result.error._tag, message: result.error.message };
     }
     const result = await session.execute(tool, arguments_);

@@ -194,6 +194,7 @@ try {
   );
   if (
     functionResult.operation !== "analyze_function" ||
+    functionResult.provider?.id !== "hopper" ||
     functionResult.normalized_result?.procedure?.address !== "0x1000"
   )
     throw new Error(
