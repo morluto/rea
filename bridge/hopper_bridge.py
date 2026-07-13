@@ -18,6 +18,9 @@ _selected_document = None
 _search_inventory_cache = {}
 MAX_SEARCH_PATTERN_LENGTH = 256
 MAX_SEARCH_VALUE_LENGTH = 4096
+MAX_REGEX_BACKTRACKING_PATHS = 10000
+MAX_REGEX_CANDIDATE_LENGTH = 4096
+MAX_REGEX_SEARCH_WORK_UNITS = 1000000
 
 
 def _hex(value):
@@ -216,33 +219,150 @@ def _search_inventory(document, kind):
     return inventory
 
 
+def _checked_regex_paths(left, right, operation):
+    """Apply one path-count operation without crossing the static work budget."""
+    if operation == "add":
+        exceeded = left > MAX_REGEX_BACKTRACKING_PATHS - right
+        result = left + right
+    else:
+        exceeded = right != 0 and left > MAX_REGEX_BACKTRACKING_PATHS // right
+        result = left * right
+    if exceeded or result > MAX_REGEX_BACKTRACKING_PATHS:
+        raise ValueError(
+            "Regex exceeds the %d-path backtracking budget"
+            % MAX_REGEX_BACKTRACKING_PATHS
+        )
+    return result
+
+
+def _repeat_regex_paths(child_paths, minimum, maximum):
+    """Count every bounded repetition path, including alternative child paths."""
+    paths = 0
+    repeated_paths = 1
+    for count in range(maximum + 1):
+        if count >= minimum:
+            paths = _checked_regex_paths(paths, repeated_paths, "add")
+        if count < maximum:
+            repeated_paths = _checked_regex_paths(
+                repeated_paths, child_paths, "multiply"
+            )
+    return paths
+
+
+def _validate_regex_class(items):
+    """Accept only constant-time character-class operations."""
+    allowed = {
+        sre_parse.CATEGORY,
+        sre_parse.LITERAL,
+        sre_parse.NEGATE,
+        sre_parse.RANGE,
+    }
+    if any(operation not in allowed for operation, _ in items):
+        raise ValueError("Regex operation is not supported by the bounded matcher")
+
+
 def _validate_regex_node(node, inside_repeat=False):
-    """Reject regex structures with disproportionate or non-local evaluation cost."""
+    """Return capped path and step bounds for Python regex evaluation."""
+    leaf_operations = {
+        sre_parse.ANY,
+        sre_parse.AT,
+        sre_parse.CATEGORY,
+        sre_parse.LITERAL,
+        sre_parse.NOT_LITERAL,
+    }
     forbidden = {
         sre_parse.ASSERT,
         sre_parse.ASSERT_NOT,
         sre_parse.GROUPREF,
         sre_parse.GROUPREF_EXISTS,
     }
+    for name in ("GROUPREF_IGNORE", "GROUPREF_LOC_IGNORE", "GROUPREF_UNI_IGNORE"):
+        operation = getattr(sre_parse, name, None)
+        if operation is not None:
+            forbidden.add(operation)
     repeat_tokens = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
     possessive = getattr(sre_parse, "POSSESSIVE_REPEAT", None)
     if possessive is not None:
         repeat_tokens.add(possessive)
+    atomic = getattr(sre_parse, "ATOMIC_GROUP", None)
+
+    paths = 1
+    steps = 0
     for operation, argument in node:
         if operation in forbidden:
             raise ValueError("Regex lookarounds and backreferences are not supported")
-        if operation in repeat_tokens:
+        if operation in leaf_operations:
+            operation_paths = 1
+            operation_steps = 1
+        elif operation == sre_parse.IN:
+            _validate_regex_class(argument)
+            operation_paths = 1
+            operation_steps = 1
+        elif operation in repeat_tokens:
             if inside_repeat:
                 raise ValueError("Nested regex repetitions are not supported")
             minimum, maximum, child = argument
             if maximum == sre_parse.MAXREPEAT or maximum > 1000:
-                raise ValueError("Unbounded or excessive regex repetitions are not supported")
-            _validate_regex_node(child, True)
+                raise ValueError(
+                    "Unbounded or excessive regex repetitions are not supported"
+                )
+            child_paths, child_steps = _validate_regex_node(child, True)
+            operation_paths = _repeat_regex_paths(
+                child_paths, minimum, maximum
+            )
+            operation_steps = maximum * child_steps
         elif operation == sre_parse.SUBPATTERN:
-            _validate_regex_node(argument[-1], inside_repeat)
+            operation_paths, operation_steps = _validate_regex_node(
+                argument[-1], inside_repeat
+            )
         elif operation == sre_parse.BRANCH:
+            operation_paths = 0
+            operation_steps = 0
             for branch in argument[1]:
-                _validate_regex_node(branch, inside_repeat)
+                branch_paths, branch_steps = _validate_regex_node(
+                    branch, inside_repeat
+                )
+                operation_paths = _checked_regex_paths(
+                    operation_paths,
+                    branch_paths,
+                    "add",
+                )
+                operation_steps = max(operation_steps, branch_steps)
+        elif atomic is not None and operation == atomic:
+            operation_paths, operation_steps = _validate_regex_node(
+                argument, inside_repeat
+            )
+        else:
+            raise ValueError("Regex operation is not supported by the bounded matcher")
+        paths = _checked_regex_paths(paths, operation_paths, "multiply")
+        steps += operation_steps
+    return paths, steps
+
+
+def _bounded_regex_matcher(expression, backtracking_paths, steps_per_path):
+    """Create a matcher with per-candidate and cumulative work bounds."""
+    remaining_work = MAX_REGEX_SEARCH_WORK_UNITS
+    work_per_character = backtracking_paths * max(steps_per_path, 1)
+
+    def matches(value):
+        nonlocal remaining_work
+        if not isinstance(value, str):
+            raise ValueError("Regex candidates must be strings")
+        if len(value) > MAX_REGEX_CANDIDATE_LENGTH:
+            raise ValueError(
+                "Regex candidate exceeds the %d-character safety limit"
+                % MAX_REGEX_CANDIDATE_LENGTH
+            )
+        required_work = work_per_character * max(len(value), 1)
+        if required_work > remaining_work:
+            raise ValueError(
+                "Regex search exceeds the %d-unit work budget"
+                % MAX_REGEX_SEARCH_WORK_UNITS
+            )
+        remaining_work -= required_work
+        return expression.search(value) is not None
+
+    return matches
 
 
 def _search_page(document, kind, params):
@@ -268,11 +388,13 @@ def _search_page(document, kind, params):
     else:
         try:
             parsed = sre_parse.parse(pattern)
-            _validate_regex_node(parsed)
+            backtracking_paths, steps_per_path = _validate_regex_node(parsed)
             expression = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
-        except re.error as error:
+        except (re.error, OverflowError) as error:
             raise ValueError("Invalid regex pattern") from error
-        matches = lambda value: expression.search(value) is not None
+        matches = _bounded_regex_matcher(
+            expression, backtracking_paths, steps_per_path
+        )
 
     selected = []
     total = 0
