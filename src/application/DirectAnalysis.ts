@@ -20,7 +20,14 @@ const WORKFLOW_PROVIDER = {
  */
 export const runDirectAnalysis = async (
   path: string,
-  tool: "binary_overview" | "procedure_pseudo_code",
+  tool:
+    | "binary_overview"
+    | "procedure_pseudo_code"
+    | "analyze_function"
+    | "search_strings"
+    | "search_procedures"
+    | "xrefs"
+    | "trace_feature",
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => runAnalysis(path, tool, arguments_, logger);
@@ -33,13 +40,33 @@ export const runProviderAnalysis = async (
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => runAnalysis(path, tool, arguments_, logger);
 
+/** Describe configured providers without opening a target or launching Hopper. */
+export const runSessionStatus = async (
+  logger: Logger = silentLogger,
+): Promise<JsonValue> => {
+  const config = parseConfig(process.env);
+  if (!config.ok)
+    return { error: config.error._tag, message: config.error.message };
+  const session = createBinarySession(config.value, logger);
+  try {
+    return session.status();
+  } finally {
+    await session.close();
+  }
+};
+
 const runAnalysis = async (
   path: string,
   tool:
     | NativeToolName
     | ArtifactToolName
     | "binary_overview"
-    | "procedure_pseudo_code",
+    | "procedure_pseudo_code"
+    | "analyze_function"
+    | "search_strings"
+    | "search_procedures"
+    | "xrefs"
+    | "trace_feature",
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger,
 ): Promise<JsonValue> => {
@@ -51,7 +78,11 @@ const runAnalysis = async (
     const opened = await session.open(path);
     if (!opened.ok)
       return { error: opened.error._tag, message: opened.error.message };
-    if (tool === "binary_overview") {
+    if (
+      tool === "binary_overview" ||
+      tool === "analyze_function" ||
+      tool === "trace_feature"
+    ) {
       const result = await new EnhancedTools(session).execute(tool, arguments_);
       return result.ok
         ? createEvidence(opened.value, WORKFLOW_PROVIDER, {

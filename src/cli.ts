@@ -5,17 +5,16 @@ import { runDoctor } from "./application/Doctor.js";
 import {
   runDirectAnalysis,
   runProviderAnalysis,
+  runSessionStatus,
 } from "./application/DirectAnalysis.js";
 import { runSetup } from "./application/Setup.js";
 import { runUninstall } from "./application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { createLogger, parseLogLevel, type Logger } from "./logger.js";
+import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
-import {
-  exportEvidenceBundleCommand,
-  importEvidenceBundleCommand,
-} from "./application/EvidenceBundleCommands.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
+import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -49,6 +48,27 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
     },
   });
 
+  registerCoreCommands(cli, logger);
+  registerFunctionCommand(cli, logger);
+  registerSearchCommand(cli, logger);
+  registerXrefsCommand(cli, logger);
+  registerTraceCommand(cli, logger);
+  registerCapabilityCommands(cli, logger);
+  registerNativeCommands(cli, logger);
+  registerArtifactCommands(cli, logger);
+  registerEvidenceCommands(cli, logger);
+  registerReferenceSourceCommand(cli, logger);
+  return cli;
+};
+
+const registerCoreCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  const overviewOptions = z.object({
+    detail: z.enum(["concise", "detailed"]).default("concise"),
+    limit: z.number().int().min(1).max(50).default(10),
+  });
   cli.command("setup", {
     description: "Install requirements and configure coding agents",
     options: z.object({
@@ -86,9 +106,31 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
     args: z.object({
       path: z.string().describe("App, program, or Hopper database path"),
     }),
-    run: ({ args }) =>
+    options: overviewOptions,
+    run: ({ args, options }) =>
       logCliCommand(logger, "analyze", () =>
-        runDirectAnalysis(args.path, "binary_overview", {}, logger),
+        runDirectAnalysis(
+          args.path,
+          "binary_overview",
+          { detail: options.detail, limit: options.limit },
+          logger,
+        ),
+      ),
+  });
+  cli.command("inspect", {
+    description: "Inspect an app overview with evidence",
+    args: z.object({
+      path: z.string().describe("App, program, or Hopper database path"),
+    }),
+    options: overviewOptions,
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect", () =>
+        runDirectAnalysis(
+          args.path,
+          "binary_overview",
+          { detail: options.detail, limit: options.limit },
+          logger,
+        ),
       ),
   });
   cli.command("decompile", {
@@ -107,11 +149,154 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
         ),
       ),
   });
-  registerNativeCommands(cli, logger);
-  registerArtifactCommands(cli, logger);
-  registerEvidenceCommands(cli, logger);
-  registerReferenceSourceCommand(cli, logger);
-  return cli;
+};
+
+const registerXrefsCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("xrefs", {
+    description: "List bounded references to an analyzed address",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      address: z.string().describe("Hexadecimal address"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "xrefs", () =>
+        runDirectAnalysis(
+          args.path,
+          "xrefs",
+          { address: args.address },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerTraceCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("trace", {
+    description: "Trace a bounded literal feature through analyzed references",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      query: z.string().min(1).describe("Literal feature query"),
+    }),
+    options: z.object({
+      caseSensitive: z.boolean().default(false),
+      limit: z.number().int().min(1).max(100).default(20),
+      maxOperations: z.number().int().min(1).max(100).default(20),
+    }),
+    alias: {
+      caseSensitive: "case-sensitive",
+      maxOperations: "max-operations",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "trace", () =>
+        runDirectAnalysis(
+          args.path,
+          "trace_feature",
+          {
+            query: args.query,
+            case_sensitive: options.caseSensitive,
+            limit: options.limit,
+            max_operations: options.maxOperations,
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerCapabilityCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  for (const command of ["capabilities", "providers"] as const) {
+    cli.command(command, {
+      description:
+        command === "capabilities"
+          ? "List provider capabilities and side effects"
+          : "List configured analysis providers",
+      run: () => logCliCommand(logger, command, () => runSessionStatus(logger)),
+    });
+  }
+};
+
+const registerFunctionCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("function", {
+    description: "Analyze one bounded function with evidence",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      address: z.string().describe("Procedure name or address"),
+    }),
+    options: z.object({
+      includeAssembly: z.boolean().default(false),
+      limit: z.number().int().min(1).max(500).default(100),
+      maxPseudocodeChars: z.number().int().min(1).max(100_000).default(20_000),
+      maxInstructions: z.number().int().min(1).max(5_000).default(500),
+    }),
+    alias: {
+      includeAssembly: "include-assembly",
+      maxPseudocodeChars: "max-pseudocode-chars",
+      maxInstructions: "max-instructions",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "function", () =>
+        runDirectAnalysis(
+          args.path,
+          "analyze_function",
+          {
+            procedure: args.address,
+            include_assembly: options.includeAssembly,
+            limit: options.limit,
+            max_pseudocode_chars: options.maxPseudocodeChars,
+            max_instructions: options.maxInstructions,
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerSearchCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command("search", {
+    description: "Search bounded analyzed strings or procedure names",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      pattern: z.string().min(1).describe("Literal text or regex pattern"),
+    }),
+    options: z.object({
+      kind: z.enum(["strings", "procedures"]).default("strings"),
+      mode: z.enum(["literal", "regex"]).default("literal"),
+      caseSensitive: z.boolean().default(false),
+      offset: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(100).default(100),
+    }),
+    alias: { caseSensitive: "case-sensitive" },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "search", () =>
+        runDirectAnalysis(
+          args.path,
+          options.kind === "strings" ? "search_strings" : "search_procedures",
+          {
+            pattern: args.pattern,
+            mode: options.mode,
+            case_sensitive: options.caseSensitive,
+            offset: options.offset,
+            limit: options.limit,
+          },
+          logger,
+        ),
+      ),
+  });
 };
 
 const registerReferenceSourceCommand = (
@@ -252,84 +437,4 @@ const registerNativeCommands = (
         ),
       ),
   });
-};
-
-const registerEvidenceCommands = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-): void => {
-  cli.command("evidence-import", {
-    description: "Validate and import a bounded local Evidence v2 bundle",
-    args: z.object({
-      path: z.string().describe("Evidence bundle JSON path"),
-    }),
-    run: ({ args }) =>
-      logCliCommand(logger, "evidence-import", async () => {
-        const config = parseConfig(process.env);
-        if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
-        const imported = await importEvidenceBundleCommand(
-          args.path,
-          config.value.evidenceFilePolicy,
-        );
-        return imported.ok
-          ? imported.value
-          : { error: imported.error._tag, message: imported.error.message };
-      }),
-  });
-  cli.command("evidence-export", {
-    description: "Validate and atomically export canonical Evidence v2 JSON",
-    args: z.object({
-      source: z.string().describe("Existing evidence bundle JSON path"),
-      output: z.string().describe("Canonical output JSON path"),
-    }),
-    options: z.object({
-      overwrite: z.boolean().default(false).describe("Replace output file"),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "evidence-export", async () => {
-        const config = parseConfig(process.env);
-        if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
-        const exported = await exportEvidenceBundleCommand(
-          args.source,
-          args.output,
-          options.overwrite,
-          config.value.evidenceFilePolicy,
-        );
-        return exported.ok
-          ? exported.value
-          : { error: exported.error._tag, message: exported.error.message };
-      }),
-  });
-};
-
-const logCliCommand = async <Value>(
-  logger: Logger,
-  command: string,
-  execute: () => Promise<Value>,
-): Promise<Value> => {
-  const startedAt = performance.now();
-  try {
-    const value = await execute();
-    logger.info(
-      {
-        command,
-        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
-        status: "ok",
-      },
-      "CLI command completed",
-    );
-    return value;
-  } catch (cause: unknown) {
-    logger.error(
-      {
-        command,
-        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
-        status: "error",
-      },
-      "CLI command failed",
-    );
-    throw cause;
-  }
 };

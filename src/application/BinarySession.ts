@@ -316,6 +316,14 @@ export class BinarySession implements BinarySessionPort {
       name: this.#providerIdentity.name,
       version: this.#providerIdentity.version,
     };
+    const providers = new Map<string, ProviderIdentity>();
+    if (this.#capabilities === undefined) providers.set(provider.id, provider);
+    else
+      for (const descriptor of this.#capabilities.values())
+        providers.set(descriptor.provider.id, descriptor.provider);
+    const providerList = [...providers.values()]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map(({ id, name, version }) => ({ id, name, version }));
     const capabilities =
       this.#capabilities === undefined
         ? []
@@ -348,10 +356,11 @@ export class BinarySession implements BinarySessionPort {
               limitations: [...descriptor.limitations],
             }));
     return target === undefined
-      ? { open: false, provider, capabilities }
+      ? { open: false, provider, providers: providerList, capabilities }
       : {
           open: true,
           provider,
+          providers: providerList,
           capabilities,
           path: target.path,
           sha256: target.sha256,

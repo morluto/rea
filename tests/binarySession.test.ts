@@ -79,6 +79,7 @@ describe("binary session", () => {
     expect(provider.capabilities()[0]?.operation).toBe("address_name");
     expect(session.status()).toMatchObject({
       provider: { id: "fixture", name: "Fixture", version: "1" },
+      providers: [{ id: "fixture", name: "Fixture", version: "1" }],
       capabilities: [
         {
           operation: "address_name",
