@@ -35,7 +35,6 @@ import {
 import { assertNotCancelled } from "./ProcessCaptureAuthority.js";
 
 export { probeProcessCaptureCapability } from "./ProcessCaptureCapability.js";
-export type { ProcessCaptureCapability } from "./ProcessCaptureCapability.js";
 
 interface EnvironmentOptions {
   readonly scenario: ProcessScenario;

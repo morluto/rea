@@ -325,7 +325,6 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
 });
 
 export { validateProcessCapture } from "./processCaptureValidation.js";
-export type { ProcessCaptureValidationIssue } from "./processCaptureValidation.js";
 import { validateProcessCapture } from "./processCaptureValidation.js";
 
 /** Parse unknown input as v4 and reject invalid commitments or semantics. */

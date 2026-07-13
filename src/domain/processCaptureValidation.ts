@@ -1,5 +1,5 @@
 import type { ProcessCapture } from "./processCapture.js";
-import { canonicalProcessSha256 } from "./processScenario.js";
+import { digestProcessCommitment } from "./processScenario.js";
 
 /** One pure semantic validation failure in an otherwise shaped v4 capture. */
 export interface ProcessCaptureValidationIssue {
@@ -35,7 +35,7 @@ const validateCommitments = (
     ["replay_plan_sha256", manifest.replay_plan],
   ] as const)
     require(manifest[field] ===
-      canonicalProcessSha256(
+      digestProcessCommitment(
         value,
       ), `manifest.${field}`, "commitment does not match its canonical value");
   require(Date.parse(manifest.started_at) <=

@@ -42,7 +42,8 @@ const outputChunkSchema = z.object({
 export const LEGACY_PROCESS_CAPTURE_MESSAGE =
   "Process Capture v3 is unsupported. Re-run the scenario with this REA version using capture_process_scenario to produce Process Capture v4; captures cannot be upgraded because v4 requires new manifest and settlement evidence.";
 
-export const canonicalProcessSha256 = (value: unknown): string => {
+/** Compute a canonical SHA-256 commitment independent of object key order. */
+export const digestProcessCommitment = (value: unknown): string => {
   const serialized = canonicalize(value);
   if (serialized === undefined)
     throw new TypeError("Process capture commitment is not canonical JSON");
@@ -85,9 +86,6 @@ export const processComparisonContract = (
   command_shims: scenario.command_shims,
   replay: scenario.replay,
 });
-
-/** Compute a canonical SHA-256 commitment independent of object key order. */
-export const digestProcessCommitment = canonicalProcessSha256;
 
 /**
  * Boundary schema for one explicitly approved, bounded process experiment.
