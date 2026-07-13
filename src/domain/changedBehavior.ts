@@ -64,10 +64,10 @@ type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
 
 const EXPECTED_PROVIDERS = {
   compare_process_captures: {
-    predicate: "rea.process-comparison/v2",
+    predicate: "rea.process-comparison/v3",
     id: "rea-process",
     name: "REA deterministic process harness",
-    version: "2",
+    version: "3",
   },
   compare_artifacts: {
     predicate: "rea.artifact-comparison/v1",

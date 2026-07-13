@@ -11,6 +11,7 @@ import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import {
   compareProcessCaptures,
   processCaptureSchema,
+  validateProcessCapture,
 } from "../domain/processCapture.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { err } from "../domain/result.js";
@@ -23,6 +24,7 @@ export const registerProcessComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
   contract: (typeof SESSION_TOOL_CONTRACTS)[6],
+  now: () => number = Date.now,
 ): void => {
   server.registerTool(
     contract.name,
@@ -34,14 +36,34 @@ export const registerProcessComparisonTool = (
           left: processCaptureSchema,
           right_evidence_id: z.string(),
           right: processCaptureSchema,
+          max_capture_age_ms: z.number().int().nonnegative().optional(),
           unknown_registry_approved: z.literal(true).optional(),
         })
         .parse(input);
       const validated = validateCaptureSources(session, parsed);
       if (!validated.ok) return toCallToolResult(validated, contract);
-      const comparison = compareProcessCaptures(parsed.left, parsed.right);
+      let comparison: ReturnType<typeof compareProcessCaptures>;
+      try {
+        comparison = compareProcessCaptures(parsed.left, parsed.right, {
+          ...(parsed.max_capture_age_ms === undefined
+            ? {}
+            : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
+          now,
+        });
+      } catch (cause: unknown) {
+        return toCallToolResult(
+          err(
+            new EvidenceIntegrityError(
+              cause instanceof Error
+                ? cause.message
+                : "Invalid Process Capture v4",
+            ),
+          ),
+          contract,
+        );
+      }
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-comparison/v2",
+        predicateType: "rea.process-comparison/v3",
         operation: contract.name,
         parameters: {
           left_evidence_id: parsed.left_evidence_id,
@@ -85,13 +107,15 @@ const validateCaptureSources = (
     if (
       evidence === undefined ||
       evidence.operation !== "capture_process_scenario" ||
-      evidence.predicate_type !== "rea.process-capture/v3" ||
+      evidence.predicate_type !== "rea.process-capture/v4" ||
       evidence.provider.id !== PROCESS_PROVIDER.id ||
       evidence.provider.name !== PROCESS_PROVIDER.name ||
       evidence.provider.version !== PROCESS_PROVIDER.version ||
       evidence.confidence !== "observed" ||
       evidence.authority !== "controlled-replay" ||
       !result.success ||
+      (result.success && validateProcessCapture(result.data).length > 0) ||
+      validateProcessCapture(capture).length > 0 ||
       canonicalJson(result.data) !== canonicalJson(capture)
     )
       return err(

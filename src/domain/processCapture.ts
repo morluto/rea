@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import canonicalize from "canonicalize";
 import { z } from "zod";
 
 const positiveBudget = z.number().int().positive();
@@ -36,7 +38,57 @@ const outputChunkSchema = z.object({
   data: z.string().max(1_000_000),
 });
 
-/** Exact boundary schema for bounded dynamic process scenarios. */
+/** Actionable refusal shared by CLI, MCP, and Evidence import boundaries. */
+export const LEGACY_PROCESS_CAPTURE_MESSAGE =
+  "Process Capture v3 is unsupported. Re-run the scenario with this REA version using capture_process_scenario to produce Process Capture v4; captures cannot be upgraded because v4 requires new manifest and settlement evidence.";
+
+const canonicalSha256 = (value: unknown): string => {
+  const serialized = canonicalize(value);
+  if (serialized === undefined)
+    throw new TypeError("Process capture commitment is not canonical JSON");
+  return createHash("sha256").update(serialized).digest("hex");
+};
+
+/** Build the secret-safe scenario projection committed by Process Capture v4. */
+export const processScenarioCommitment = (
+  scenario: ProcessScenario,
+  executableSha256?: string,
+): Readonly<Record<string, unknown>> => ({
+  ...scenario,
+  environment: Object.fromEntries(
+    Object.entries(scenario.environment).map(([name, value]) => [
+      name,
+      scenario.secret_aliases.includes(name) ? "<redacted-secret>" : value,
+    ]),
+  ),
+  unknown_registry_approved: scenario.unknown_registry_approved === true,
+  executable_sha256: executableSha256 ?? null,
+});
+
+/** Project observation settings shared by authority and reconstruction. */
+export const processComparisonContract = (
+  scenario: ProcessScenario,
+): Readonly<Record<string, unknown>> => ({
+  working_directory: scenario.working_directory,
+  inherit_environment: scenario.inherit_environment,
+  secret_aliases: scenario.secret_aliases,
+  network_access: scenario.network_access,
+  filesystem_roots: scenario.filesystem_roots,
+  terminal: scenario.terminal,
+  checkpoints: scenario.checkpoints,
+  events: scenario.events,
+  timeout_ms: scenario.timeout_ms,
+  idle_timeout_ms: scenario.idle_timeout_ms,
+  settle_ms: scenario.settle_ms,
+  limits: scenario.limits,
+  normalization: scenario.normalization,
+  command_shims: scenario.command_shims,
+  replay: scenario.replay,
+});
+
+/** Compute a canonical SHA-256 commitment independent of object key order. */
+export const digestProcessCommitment = canonicalSha256;
+
 /**
  * Boundary schema for one explicitly approved, bounded process experiment.
  * Defaults are part of the evidence contract and must remain deterministic.
@@ -313,7 +365,6 @@ export const processScenarioSchema = z
       });
   });
 
-/** A parsed, bounded dynamic process observation scenario. */
 /** Parsed instructions and resource bounds for one process experiment. */
 export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 
@@ -321,7 +372,6 @@ export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 export const parseProcessScenario = (input: unknown): ProcessScenario =>
   processScenarioSchema.parse(input);
 
-/** Operator-owned policy for process capture. */
 /** Operator-owned ceiling applied in addition to per-scenario approval. */
 export interface ProcessExecutionPolicy {
   readonly enabled: boolean;
@@ -331,7 +381,6 @@ export interface ProcessExecutionPolicy {
   readonly allowExternalNetwork: boolean;
 }
 
-/** A safe, caller-visible process-policy decision. */
 /** Explicit authorization result; denial reasons are safe to show callers. */
 export type ProcessPolicyDecision =
   | { readonly allowed: true }
@@ -395,7 +444,6 @@ export const authorizeProcessScenario = (
   return { allowed: true };
 };
 
-/** One bounded terminal observation. */
 /** Normalized raw PTY chunk, preserving transport-level output differences. */
 export interface TerminalFrame {
   readonly sequence: number;
@@ -403,7 +451,6 @@ export interface TerminalFrame {
   readonly data: string;
 }
 
-/** One rendered terminal state after xterm has parsed a PTY chunk or resize. */
 /** Serialized terminal state after interpreting control and resize sequences. */
 export interface RenderedTerminalFrame {
   readonly sequence: number;
@@ -417,7 +464,6 @@ export interface RenderedTerminalFrame {
   readonly serialized_state: string;
 }
 
-/** One attempted scripted interaction with the PTY. */
 /** Scheduled input, resize, or signal with its observed dispatch outcome. */
 export interface InteractionEvent {
   readonly sequence: number;
@@ -455,7 +501,6 @@ export interface ProcessSample {
   readonly session_id: number | null;
 }
 
-/** A named filesystem observation captured during a process lifecycle. */
 /**
  * Named filesystem state whose effects are relative to the prior checkpoint.
  */
@@ -467,12 +512,12 @@ export interface FilesystemCheckpoint {
   readonly truncated: boolean;
 }
 
-/** One invocation observed by the declarative command-shim replay adapter. */
 /** Recorded deterministic dependency invocation and route-match outcome. */
 export interface ShimEvent {
   readonly sequence: number;
   readonly at_ms: number;
   readonly command: string;
+  readonly route_index: number | null;
   readonly arguments: readonly string[];
   readonly working_directory: string;
   readonly outcome: "matched" | "unmatched" | "exhausted";
@@ -494,15 +539,33 @@ export interface ProtocolEvent {
     | "disconnected";
 }
 
-/** A bounded process observation with explicit incompleteness metadata. */
 /**
- * Process Capture v3 observation set.
+ * Process Capture v4 observation set.
  *
  * `truncated` and `residual_unknowns` are semantic evidence: consumers must not
  * infer equivalence from matching bounded observations when either is present.
  */
 export interface ProcessCapture {
-  readonly schema_version: 3;
+  readonly schema_version: 4;
+  readonly manifest: {
+    readonly rea_version: string;
+    readonly provider_version: string;
+    readonly platform: string;
+    readonly architecture: string;
+    readonly pty_backend: "node-pty";
+    readonly started_at: string;
+    readonly completed_at: string;
+    readonly scenario: Readonly<Record<string, unknown>>;
+    readonly comparison_contract: Readonly<Record<string, unknown>>;
+    readonly shim_plan: readonly unknown[];
+    readonly replay_plan: Readonly<Record<string, unknown>>;
+    readonly full_scenario_sha256: string;
+    readonly comparison_contract_sha256: string;
+    readonly executable_sha256: string;
+    readonly normalization_sha256: string;
+    readonly shim_plan_sha256: string;
+    readonly replay_plan_sha256: string;
+  };
   readonly normalization: z.infer<typeof normalizationSchema>;
   readonly frames: readonly TerminalFrame[];
   readonly rendered_frames: readonly RenderedTerminalFrame[];
@@ -511,6 +574,11 @@ export interface ProcessCapture {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
+  };
+  readonly settlement: {
+    readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
+    readonly elapsed_ms: number;
+    readonly cleanup_outcome: "not_required" | "cleaned" | "failed";
   };
   readonly process_samples: readonly ProcessSample[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
@@ -558,7 +626,28 @@ const fileEffectSchema = z.object({
 
 /** Exact serialized shape of a bounded process capture. */
 export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
-  schema_version: z.literal(3),
+  schema_version: z.literal(4, {
+    error: LEGACY_PROCESS_CAPTURE_MESSAGE,
+  }),
+  manifest: z.object({
+    rea_version: z.string().min(1),
+    provider_version: z.string().min(1),
+    platform: z.string().min(1),
+    architecture: z.string().min(1),
+    pty_backend: z.literal("node-pty"),
+    started_at: z.iso.datetime(),
+    completed_at: z.iso.datetime(),
+    scenario: z.record(z.string(), z.unknown()),
+    comparison_contract: z.record(z.string(), z.unknown()),
+    shim_plan: z.array(z.unknown()),
+    replay_plan: z.record(z.string(), z.unknown()),
+    full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    shim_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    replay_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
   normalization: normalizationSchema,
   frames: z.array(
     z.object({
@@ -595,6 +684,11 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
     signal: z.number().int().nullable(),
     reason: z.enum(["exited", "timeout", "idle_timeout"]),
   }),
+  settlement: z.object({
+    state: z.enum(["quiesced", "alive_at_deadline", "unverifiable"]),
+    elapsed_ms: z.number().int().nonnegative(),
+    cleanup_outcome: z.enum(["not_required", "cleaned", "failed"]),
+  }),
   process_samples: z.array(
     z.object({
       at_ms: z.number().int().nonnegative(),
@@ -619,6 +713,7 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       sequence: z.number().int().nonnegative(),
       at_ms: z.number().int().nonnegative(),
       command: z.string(),
+      route_index: z.number().int().nonnegative().nullable(),
       arguments: z.array(z.string()),
       working_directory: z.string(),
       outcome: z.enum(["matched", "unmatched", "exhausted"]),
@@ -665,6 +760,173 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
     temporary_root: z.literal("removed"),
   }),
 });
+
+/** One pure semantic validation failure in an otherwise shaped v4 capture. */
+export interface ProcessCaptureValidationIssue {
+  readonly path: string;
+  readonly message: string;
+}
+
+const orderedBy = <Value>(
+  values: readonly Value[],
+  project: (value: Value) => number,
+): boolean =>
+  values.every(
+    (value, index) =>
+      index === 0 || project(value) >= project(values[index - 1]!),
+  );
+
+const orderedTimestamps = (
+  values: readonly { readonly at_ms: number }[],
+): boolean => orderedBy(values, ({ at_ms }) => at_ms);
+
+/** Recompute v4 commitments and cross-field invariants without side effects. */
+export const validateProcessCapture = (
+  capture: ProcessCapture,
+): readonly ProcessCaptureValidationIssue[] => {
+  const issues: ProcessCaptureValidationIssue[] = [];
+  const require = (condition: boolean, path: string, message: string): void => {
+    if (!condition) issues.push({ path, message });
+  };
+  const { manifest } = capture;
+  require(manifest.scenario.executable_sha256 ===
+    manifest.executable_sha256, "manifest.executable_sha256", "executable commitment does not match the scenario projection");
+  const commitments = [
+    ["full_scenario_sha256", manifest.scenario],
+    ["comparison_contract_sha256", manifest.comparison_contract],
+    ["normalization_sha256", capture.normalization],
+    ["shim_plan_sha256", manifest.shim_plan],
+    ["replay_plan_sha256", manifest.replay_plan],
+  ] as const;
+  for (const [field, value] of commitments)
+    require(manifest[field] ===
+      canonicalSha256(
+        value,
+      ), `manifest.${field}`, "commitment does not match its canonical value");
+  require(Date.parse(manifest.started_at) <=
+    Date.parse(
+      manifest.completed_at,
+    ), "manifest.completed_at", "completion precedes start");
+  const sequences = [
+    ["frames", capture.frames],
+    ["rendered_frames", capture.rendered_frames],
+    ["interaction_events", capture.interaction_events],
+    ["shim_events", capture.shim_events],
+    ["protocol_events", capture.protocol_events],
+  ] as const;
+  for (const [name, values] of sequences) {
+    require(values.every(
+      ({ sequence }, index) => sequence === index,
+    ), name, "sequence values must be contiguous from zero");
+  }
+  for (const [name, values] of [
+    ["frames", capture.frames],
+    ["rendered_frames", capture.rendered_frames],
+    ["process_samples", capture.process_samples],
+    ["filesystem_checkpoints", capture.filesystem_checkpoints],
+    ["shim_events", capture.shim_events],
+    ["protocol_events", capture.protocol_events],
+  ] as const)
+    require(orderedTimestamps(values), name, "timestamps must be ordered");
+  const checkpointNames = capture.filesystem_checkpoints.map(
+    ({ name }) => name,
+  );
+  require(new Set(checkpointNames).size ===
+    checkpointNames.length, "filesystem_checkpoints", "checkpoint names must be unique");
+  require(checkpointNames[0] ===
+    "before", "filesystem_checkpoints", "first checkpoint must be before");
+  require(checkpointNames.at(-1) ===
+    "after_settlement", "filesystem_checkpoints", "last checkpoint must be after_settlement");
+  require(!capture.filesystem_checkpoints.some(({ truncated }) => truncated) ||
+    capture.truncated, "truncated", "checkpoint truncation must propagate to the capture");
+  require(capture.exit.reason === "exited" ||
+    capture.exit.code ===
+      null, "exit", "deadline termination cannot declare a normal exit code");
+  require(capture.settlement.state !== "quiesced" ||
+    capture.settlement.cleanup_outcome ===
+      "not_required", "settlement.cleanup_outcome", "quiesced settlement cannot require cleanup");
+  require(capture.settlement.state === "quiesced" ||
+    capture.settlement.cleanup_outcome !==
+      "not_required", "settlement.cleanup_outcome", "non-quiesced settlement must report cleanup");
+  const shimPlans = manifest.shim_plan.flatMap((shim) =>
+    typeof shim === "object" &&
+    shim !== null &&
+    "name" in shim &&
+    "routes" in shim &&
+    typeof shim.name === "string" &&
+    Array.isArray(shim.routes)
+      ? shim.routes.map((route, routeIndex) => ({
+          command: shim.name as string,
+          route,
+          routeIndex,
+        }))
+      : [],
+  );
+  for (const event of capture.shim_events) {
+    const declaredRoute = shimPlans.find(
+      ({ command, routeIndex }) =>
+        command === event.command && routeIndex === event.route_index,
+    );
+    require(event.outcome === "unmatched"
+      ? event.route_index === null
+      : declaredRoute !==
+          undefined, "shim_events", "shim event has no declared route");
+  }
+  for (const plan of shimPlans) {
+    const maximum =
+      typeof plan.route === "object" &&
+      plan.route !== null &&
+      "max_calls" in plan.route &&
+      typeof plan.route.max_calls === "number"
+        ? plan.route.max_calls
+        : 0;
+    require(capture.shim_events.filter(
+      (event) =>
+        event.command === plan.command &&
+        event.route_index === plan.routeIndex &&
+        event.outcome === "matched",
+    ).length <=
+      maximum, "shim_events", "matched shim events exceed the declared route max_calls");
+  }
+  const replayHttp =
+    "http" in manifest.replay_plan && Array.isArray(manifest.replay_plan.http)
+      ? manifest.replay_plan.http
+      : [];
+  for (const event of capture.protocol_events)
+    if (
+      event.protocol === "http" &&
+      event.direction === "request" &&
+      event.outcome === "matched"
+    )
+      require(replayHttp.some(
+        (route) =>
+          typeof route === "object" &&
+          route !== null &&
+          "method" in route &&
+          route.method === event.method &&
+          "path" in route &&
+          route.path === event.path,
+      ), "protocol_events", "matched HTTP event has no declared replay route");
+  return issues;
+};
+
+/** Parse unknown input as v4 and reject invalid commitments or semantics. */
+export const parseProcessCapture = (input: unknown): ProcessCapture => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "schema_version" in input &&
+    input.schema_version === 3
+  )
+    throw new TypeError(LEGACY_PROCESS_CAPTURE_MESSAGE);
+  const capture = processCaptureSchema.parse(input);
+  const issues = validateProcessCapture(capture);
+  if (issues.length > 0)
+    throw new TypeError(
+      `Invalid Process Capture v4: ${issues.map(({ path, message }) => `${path}: ${message}`).join("; ")}`,
+    );
+  return capture;
+};
 
 export {
   compareProcessCaptures,

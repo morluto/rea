@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
+import { validateProcessCapture } from "./processCapture.js";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -198,7 +199,7 @@ const chooseFirstDivergence = (
 
 /** Compare bounded captures without equating missing or incompatible evidence. */
 /**
- * Compare two Process Capture v3 observations without treating absence as proof.
+ * Compare two Process Capture v4 observations without treating absence as proof.
  *
  * Observed differences outrank residual unknowns. A capture may therefore be
  * definitively changed in one dimension while completeness remains unknown.
@@ -206,7 +207,36 @@ const chooseFirstDivergence = (
 export const compareProcessCaptures = (
   left: ProcessCapture,
   right: ProcessCapture,
+  options: {
+    readonly maxCaptureAgeMs?: number;
+    readonly now?: () => number;
+  } = {},
 ): ProcessCaptureComparison => {
+  const invalid = [
+    ...validateProcessCapture(left),
+    ...validateProcessCapture(right),
+  ];
+  if (invalid.length > 0)
+    throw new TypeError(`Invalid Process Capture v4: ${invalid[0]!.path}`);
+  if (
+    left.schema_version !== right.schema_version ||
+    left.manifest.comparison_contract_sha256 !==
+      right.manifest.comparison_contract_sha256
+  )
+    throw new TypeError(
+      "Process captures have incompatible comparison contracts",
+    );
+  if (options.maxCaptureAgeMs !== undefined) {
+    const maxCaptureAgeMs = options.maxCaptureAgeMs;
+    const now = (options.now ?? Date.now)();
+    if (
+      [left, right].some(
+        ({ manifest }) =>
+          now - Date.parse(manifest.completed_at) > maxCaptureAgeMs,
+      )
+    )
+      throw new TypeError("Process capture exceeds max_capture_age_ms");
+  }
   if (left.truncated || right.truncated) {
     return {
       status: "truncated",
@@ -247,7 +277,8 @@ export const compareProcessCaptures = (
   const exit =
     hasUnknown(left, "exit") || hasUnknown(right, "exit")
       ? "unknown"
-      : JSON.stringify(left.exit) === JSON.stringify(right.exit)
+      : JSON.stringify({ exit: left.exit, settlement: left.settlement }) ===
+          JSON.stringify({ exit: right.exit, settlement: right.settlement })
         ? "unchanged"
         : "changed";
   const filesystem = classify(
@@ -279,7 +310,11 @@ export const compareProcessCaptures = (
       left.interaction_events,
       right.interaction_events,
     ),
-    firstCollectionDivergence("exit", [left.exit], [right.exit]),
+    firstCollectionDivergence(
+      "exit",
+      [{ ...left.exit, settlement: left.settlement }],
+      [{ ...right.exit, settlement: right.settlement }],
+    ),
     firstCollectionDivergence(
       "filesystem",
       filesystemObservations(left),

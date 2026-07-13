@@ -16,7 +16,12 @@ import { snapshotRoots } from "../src/application/FilesystemSnapshot.js";
 import {
   authorizeProcessScenario,
   compareProcessCaptures,
+  digestProcessCommitment,
+  LEGACY_PROCESS_CAPTURE_MESSAGE,
+  parseProcessCapture,
   parseProcessScenario,
+  processCaptureSchema,
+  type ProcessCapture,
   type ProcessExecutionPolicy,
 } from "../src/domain/processCapture.js";
 
@@ -24,6 +29,75 @@ const processFixture = fileURLToPath(
   new URL("./fixtures/processFidelity.mjs", import.meta.url),
 );
 const execFileAsync = promisify(execFile);
+
+const emptyCapture = (): ProcessCapture => {
+  const normalization = {
+    paths: true,
+    pids: true,
+    ports: true,
+    time_bucket_ms: 10,
+    patterns: [],
+  };
+  const scenario = { executable_sha256: "0".repeat(64) };
+  const comparisonContract = {};
+  const shimPlan: readonly unknown[] = [];
+  const replayPlan = {};
+  return {
+    schema_version: 4,
+    manifest: {
+      rea_version: "test",
+      provider_version: "3",
+      platform: process.platform,
+      architecture: process.arch,
+      pty_backend: "node-pty",
+      started_at: "2026-01-01T00:00:00.000Z",
+      completed_at: "2026-01-01T00:00:00.001Z",
+      scenario,
+      comparison_contract: comparisonContract,
+      shim_plan: shimPlan,
+      replay_plan: replayPlan,
+      full_scenario_sha256: digestProcessCommitment(scenario),
+      comparison_contract_sha256: digestProcessCommitment(comparisonContract),
+      executable_sha256: "0".repeat(64),
+      normalization_sha256: digestProcessCommitment(normalization),
+      shim_plan_sha256: digestProcessCommitment(shimPlan),
+      replay_plan_sha256: digestProcessCommitment(replayPlan),
+    },
+    normalization,
+    frames: [],
+    rendered_frames: [],
+    interaction_events: [],
+    exit: { code: 0, signal: null, reason: "exited" },
+    settlement: {
+      state: "quiesced",
+      elapsed_ms: 50,
+      cleanup_outcome: "not_required",
+    },
+    process_samples: [],
+    filesystem_checkpoints: [
+      { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
+      {
+        name: "after_settlement",
+        at_ms: 50,
+        files: [],
+        effects: [],
+        truncated: false,
+      },
+    ],
+    shim_events: [],
+    protocol_events: [],
+    files_before: [],
+    files_after: [],
+    filesystem_effects: [],
+    truncated: false,
+    limitations: [],
+    residual_unknowns: [],
+    cleanup: {
+      owned_process_group: "verified",
+      temporary_root: "removed",
+    },
+  };
+};
 
 describe("process capture domain", () => {
   const base = {
@@ -107,7 +181,9 @@ describe("process capture domain", () => {
 
   it("never considers truncated captures equivalent", () => {
     const capture = {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
+      manifest: emptyCapture().manifest,
+      settlement: emptyCapture().settlement,
       normalization: {
         paths: true,
         pids: true,
@@ -120,7 +196,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
-      filesystem_checkpoints: [],
+      filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
       files_before: [],
@@ -137,9 +213,72 @@ describe("process capture domain", () => {
     expect(compareProcessCaptures(capture, capture).status).toBe("truncated");
   });
 
+  it("rejects altered v4 commitments and accepts canonical key reordering", () => {
+    const capture = emptyCapture();
+    expect(parseProcessCapture(capture)).toEqual(capture);
+    expect(digestProcessCommitment({ second: 2, first: 1 })).toBe(
+      digestProcessCommitment({ first: 1, second: 2 }),
+    );
+    expect(() =>
+      parseProcessCapture({
+        ...capture,
+        manifest: {
+          ...capture.manifest,
+          normalization_sha256: "f".repeat(64),
+        },
+      }),
+    ).toThrow("normalization_sha256");
+    expect(() =>
+      parseProcessCapture({
+        ...capture,
+        manifest: {
+          ...capture.manifest,
+          executable_sha256: "f".repeat(64),
+        },
+      }),
+    ).toThrow("executable_sha256");
+  });
+
+  it("tells agents and users to recapture unsupported v3 evidence", () => {
+    const legacy = { ...emptyCapture(), schema_version: 3 };
+    expect(() => parseProcessCapture(legacy)).toThrow(
+      LEGACY_PROCESS_CAPTURE_MESSAGE,
+    );
+    const parsed = processCaptureSchema.safeParse(legacy);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error("expected legacy capture rejection");
+    expect(parsed.error.issues[0]?.message).toBe(
+      LEGACY_PROCESS_CAPTURE_MESSAGE,
+    );
+  });
+
+  it("requires compatible contracts and enforces capture age through a clock seam", () => {
+    const capture = emptyCapture();
+    expect(() =>
+      compareProcessCaptures(capture, {
+        ...capture,
+        manifest: {
+          ...capture.manifest,
+          comparison_contract: { changed: true },
+          comparison_contract_sha256: digestProcessCommitment({
+            changed: true,
+          }),
+        },
+      }),
+    ).toThrow("incompatible comparison contracts");
+    expect(() =>
+      compareProcessCaptures(capture, capture, {
+        maxCaptureAgeMs: 1,
+        now: () => Date.parse("2026-01-01T00:00:01.000Z"),
+      }),
+    ).toThrow("max_capture_age_ms");
+  });
+
   it("classifies missing observations as unknown and one-sided evidence as added", () => {
     const base = {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
+      manifest: emptyCapture().manifest,
+      settlement: emptyCapture().settlement,
       normalization: {
         paths: true,
         pids: true,
@@ -152,7 +291,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
-      filesystem_checkpoints: [],
+      filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
       files_before: [],
@@ -196,7 +335,9 @@ describe("process capture domain", () => {
 
   it("compares raw terminal chunks even when rendered states agree", () => {
     const capture = {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
+      manifest: emptyCapture().manifest,
+      settlement: emptyCapture().settlement,
       normalization: {
         paths: true,
         pids: true,
@@ -209,7 +350,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
-      filesystem_checkpoints: [],
+      filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
       files_before: [],
@@ -237,7 +378,9 @@ describe("process capture domain", () => {
 
   it("keeps filesystem evidence unknown when stable snapshots match", () => {
     const capture = {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
+      manifest: emptyCapture().manifest,
+      settlement: emptyCapture().settlement,
       normalization: {
         paths: true,
         pids: true,
@@ -250,7 +393,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
-      filesystem_checkpoints: [],
+      filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
       files_before: [],
@@ -275,9 +418,17 @@ describe("process capture domain", () => {
     const transient = compareProcessCaptures(complete, {
       ...complete,
       filesystem_checkpoints: [
+        { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
         {
           name: "during_run",
           at_ms: 10,
+          files: [],
+          effects: [],
+          truncated: false,
+        },
+        {
+          name: "after_settlement",
+          at_ms: 50,
           files: [],
           effects: [],
           truncated: false,
@@ -290,7 +441,9 @@ describe("process capture domain", () => {
 
   it("detects changes in normalized process sample metadata", () => {
     const capture = {
-      schema_version: 3 as const,
+      schema_version: 4 as const,
+      manifest: emptyCapture().manifest,
+      settlement: emptyCapture().settlement,
       normalization: {
         paths: true,
         pids: true,
@@ -312,7 +465,7 @@ describe("process capture domain", () => {
           command: "worker",
         },
       ],
-      filesystem_checkpoints: [],
+      filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
       files_before: [],
@@ -618,7 +771,7 @@ describe("process capture adapter", () => {
       );
       expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
-      expect(result.value.schema_version).toBe(3);
+      expect(result.value.schema_version).toBe(4);
       expect(result.value.rendered_frames.at(-1)?.lines.join("\n")).toContain(
         "probe:codex 1.2.3",
       );

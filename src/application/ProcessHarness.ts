@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,11 +13,21 @@ import type {
   ProcessScenario,
   TerminalFrame,
 } from "../domain/processCapture.js";
-import { authorizeProcessScenario } from "../domain/processCapture.js";
+import {
+  authorizeProcessScenario,
+  digestProcessCommitment,
+  processComparisonContract,
+  processScenarioCommitment,
+  validateProcessCapture,
+} from "../domain/processCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/errors.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 import { startLoopbackReplay, type LoopbackReplay } from "./LoopbackReplay.js";
-import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  observeOwnedProcessGroup,
+} from "./ProcessOwnership.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { snapshotRoots, type SnapshotResult } from "./FilesystemSnapshot.js";
 import {
@@ -33,6 +44,7 @@ import {
   normalizeProcessText,
   redactProtocolEvents,
 } from "./ProcessNormalization.js";
+import { PROCESS_PROVIDER } from "./ProcessEvidence.js";
 
 const isWithin = (candidate: string, root: string): boolean =>
   candidate === root ||
@@ -249,19 +261,31 @@ interface CaptureResultOptions {
   readonly interactions: readonly InteractionEvent[];
   readonly checkpoints: readonly FilesystemCheckpoint[];
   readonly shimEvents: ProcessCapture["shim_events"];
+  readonly settlement: ProcessCapture["settlement"];
+  readonly manifest: ProcessCapture["manifest"];
 }
 
 const buildCaptureResult = (options: CaptureResultOptions): ProcessCapture => ({
-  schema_version: 3,
+  schema_version: 4,
+  manifest: options.manifest,
   normalization: options.scenario.normalization,
   frames: options.frames,
-  rendered_frames: options.renderedFrames,
+  rendered_frames: [...options.renderedFrames]
+    .sort(
+      (left, right) =>
+        left.at_ms - right.at_ms || left.sequence - right.sequence,
+    )
+    .map((frame, sequence) => ({ ...frame, sequence })),
   interaction_events: options.interactions,
   exit: {
-    code: options.exit.exitCode < 0 ? null : options.exit.exitCode,
+    code:
+      options.exit.reason === "exited" && options.exit.exitCode >= 0
+        ? options.exit.exitCode
+        : null,
     signal: options.exit.signal ?? null,
     reason: options.exit.reason,
   },
+  settlement: options.settlement,
   process_samples: normalizeProcessSamples(
     options.samples,
     options.scenario,
@@ -303,6 +327,78 @@ const buildCaptureResult = (options: CaptureResultOptions): ProcessCapture => ({
     temporary_root: "removed",
   },
 });
+
+const hashFile = async (path: string): Promise<string> => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+};
+
+const createRunManifest = async (
+  scenario: ProcessScenario,
+  startedAt: Date,
+  completedAt: Date,
+): Promise<ProcessCapture["manifest"]> => {
+  const executableSha256 = await hashFile(scenario.executable);
+  const scenarioCommitment = processScenarioCommitment(
+    scenario,
+    executableSha256,
+  );
+  const comparisonContract = processComparisonContract(scenario);
+  return {
+    rea_version: PRODUCT_IDENTITY.packageVersion,
+    provider_version: PROCESS_PROVIDER.version,
+    platform: process.platform,
+    architecture: process.arch,
+    pty_backend: "node-pty",
+    started_at: startedAt.toISOString(),
+    completed_at: completedAt.toISOString(),
+    scenario: scenarioCommitment,
+    comparison_contract: comparisonContract,
+    shim_plan: scenario.command_shims,
+    replay_plan: scenario.replay,
+    full_scenario_sha256: digestProcessCommitment(scenarioCommitment),
+    comparison_contract_sha256: digestProcessCommitment(comparisonContract),
+    executable_sha256: executableSha256,
+    normalization_sha256: digestProcessCommitment(scenario.normalization),
+    shim_plan_sha256: digestProcessCommitment(scenario.command_shims),
+    replay_plan_sha256: digestProcessCommitment(scenario.replay),
+  };
+};
+
+const observeSettlement = async (
+  runId: string,
+  processGroupIds: readonly number[],
+  settleMs: number,
+): Promise<Omit<ProcessCapture["settlement"], "cleanup_outcome">> => {
+  if (process.platform === "win32")
+    return { state: "unverifiable", elapsed_ms: 0 };
+  const started = Date.now();
+  let consecutiveEmpty = 0;
+  let deadlineReached = false;
+  while (!deadlineReached) {
+    const observations = await Promise.all(
+      [...new Set(processGroupIds)].map((processGroupId) =>
+        observeOwnedProcessGroup({
+          runId,
+          leaderPid: processGroupId,
+          processGroupId,
+        }),
+      ),
+    );
+    if (observations.some(({ state }) => state === "unverifiable"))
+      return { state: "unverifiable", elapsed_ms: Date.now() - started };
+    if (observations.every(({ state }) => state === "empty")) {
+      consecutiveEmpty += 1;
+      if (consecutiveEmpty >= 2)
+        return { state: "quiesced", elapsed_ms: Date.now() - started };
+    } else consecutiveEmpty = 0;
+    deadlineReached = Date.now() - started >= settleMs;
+    if (deadlineReached) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+  return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };
+};
 
 const awaitTerminalExit = async ({
   terminal,
@@ -523,6 +619,7 @@ const runProcessScenario = async (
   let checkpoints: ProcessCheckpoints | undefined;
   let shimReplay: CommandShimReplay | undefined;
   let started = 0;
+  let startedAt = new Date(0);
   let lastOutput = 0;
   const timers = new Set<NodeJS.Timeout>();
   let capture: ProcessCapture | undefined;
@@ -530,11 +627,16 @@ const runProcessScenario = async (
   let framesTruncated = (): boolean => false;
   let stopSampler = async () => ({ partial: false });
   let samplingPartial = false;
+  let settlement: Omit<ProcessCapture["settlement"], "cleanup_outcome"> = {
+    state: "unverifiable",
+    elapsed_ms: 0,
+  };
   const interactions: InteractionEvent[] = [];
   const dispatchedEventIndexes = new Set<number>();
 
   try {
     replay = await startLoopbackReplay(scenario);
+    startedAt = new Date();
     started = Date.now();
     lastOutput = started;
     renderer = new TerminalRenderer({
@@ -601,8 +703,15 @@ const runProcessScenario = async (
     checkpoints.trigger("root_exit");
     if (exitReason === "cancelled")
       throw new ProcessCaptureError("process capture was cancelled");
-    await new Promise((resolveSettle) =>
-      setTimeout(resolveSettle, scenario.settle_ms),
+    settlement = await observeSettlement(
+      runId,
+      [
+        terminal.pid,
+        ...samples.flatMap(({ process_group_id }) =>
+          process_group_id === null ? [] : [process_group_id],
+        ),
+      ],
+      scenario.settle_ms,
     );
     checkpoints.trigger("settled");
     samplingPartial = (await stopSampler()).partial;
@@ -610,6 +719,7 @@ const runProcessScenario = async (
     const after = await snapshotRoots(scenario, signal);
     const renderedFrames = await renderer.frames();
     const filesystemCheckpoints = await checkpoints.finish(after);
+    const manifest = await createRunManifest(scenario, startedAt, new Date());
     truncated ||=
       after.truncated ||
       replay.truncated ||
@@ -649,6 +759,8 @@ const runProcessScenario = async (
           terminal?.pid ?? -1,
         ),
       })),
+      settlement: { ...settlement, cleanup_outcome: "not_required" },
+      manifest,
     });
   } catch (cause: unknown) {
     terminal?.kill("SIGKILL");
@@ -668,6 +780,25 @@ const runProcessScenario = async (
       process_group_id === null ? [] : [process_group_id],
     ),
   });
+  if (capture !== undefined) {
+    capture = {
+      ...capture,
+      settlement: {
+        ...capture.settlement,
+        cleanup_outcome:
+          capture.settlement.state === "quiesced"
+            ? "not_required"
+            : cleanupFailure === undefined
+              ? "cleaned"
+              : "failed",
+      },
+    };
+    const issues = validateProcessCapture(capture);
+    if (issues.length > 0)
+      executionFailure = new ProcessCaptureError(
+        `process capture validation failed: ${issues[0]!.path}: ${issues[0]!.message}`,
+      );
+  }
   return resolveProcessResult(capture, executionFailure, cleanupFailure);
 };
 

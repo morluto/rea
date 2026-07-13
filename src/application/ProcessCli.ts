@@ -5,8 +5,9 @@ import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   compareProcessCaptures,
+  LEGACY_PROCESS_CAPTURE_MESSAGE,
   parseProcessScenario,
-  processCaptureSchema,
+  parseProcessCapture,
 } from "../domain/processCapture.js";
 import { captureProcessScenario } from "./ProcessHarness.js";
 import {
@@ -38,7 +39,7 @@ export const compareProcessEvidenceFiles = async (
   const right = parseCaptureEvidence(await readJson(rightPath));
   const comparison = compareProcessCaptures(left.capture, right.capture);
   return createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.process-comparison/v2",
+    predicateType: "rea.process-comparison/v3",
     operation: "compare_process_captures",
     parameters: {
       left_evidence_id: left.id,
@@ -58,14 +59,17 @@ const parseCaptureEvidence = (input: unknown) => {
   const evidence = parseEvidence(input);
   if (
     evidence.operation !== "capture_process_scenario" ||
-    evidence.predicate_type !== "rea.process-capture/v3" ||
+    evidence.predicate_type !== "rea.process-capture/v4" ||
     evidence.provider.id !== PROCESS_PROVIDER.id ||
     evidence.provider.version !== PROCESS_PROVIDER.version
-  )
-    throw new TypeError("Expected REA Process Capture v3 Evidence");
+  ) {
+    if (evidence.predicate_type === "rea.process-capture/v3")
+      throw new TypeError(LEGACY_PROCESS_CAPTURE_MESSAGE);
+    throw new TypeError("Expected REA Process Capture v4 Evidence");
+  }
   return {
     id: evidence.evidence_id,
-    capture: processCaptureSchema.parse(evidence.normalized_result),
+    capture: parseProcessCapture(evidence.normalized_result),
   };
 };
 
