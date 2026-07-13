@@ -21,6 +21,7 @@ export interface AppConfig {
   readonly hopperLoaderArgs: readonly string[];
   readonly logLevel: LogLevel;
   readonly processExecutionPolicy: ProcessExecutionPolicy;
+  readonly artifactNativeMountEnabled: boolean;
   readonly evidenceFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
 }
@@ -34,6 +35,7 @@ const environmentSchema = z.object({
     .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
     .default("info"),
   REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
+  REA_ARTIFACT_NATIVE_MOUNT_ENABLED: z.enum(["true", "false"]).default("false"),
   REA_PROCESS_ALLOW_EXTERNAL_NETWORK: z
     .enum(["true", "false"])
     .default("false"),
@@ -151,6 +153,8 @@ export const parseConfig = (
       allowExternalNetwork:
         parsedEnvironment.data.REA_PROCESS_ALLOW_EXTERNAL_NETWORK === "true",
     },
+    artifactNativeMountEnabled:
+      parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true",
     evidenceFilePolicy: {
       roots: evidenceRoots.value,
       maxBytes: 64 * 1024 * 1024,

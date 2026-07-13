@@ -34,6 +34,7 @@ const traversalLimitsInput = {
 
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.object({
+  native_mount_approved: z.boolean().default(false),
   ...pageInput,
   ...traversalLimitsInput,
 });
