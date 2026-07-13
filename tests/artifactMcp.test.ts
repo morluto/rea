@@ -1,8 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createPackageWithOptions } from "@electron/asar";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -16,6 +18,63 @@ import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
 describe("artifact graph MCP integration", () => {
+  it("returns ASAR integrity path and hashes as structured error data", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-asar-integrity-mcp-"));
+    const source = join(root, "source");
+    const original = "console.log('ok');\n";
+    const changed = "changed();\n";
+    await mkdir(source);
+    await writeFile(join(source, "main.js"), original);
+    const archive = join(root, "fixture.asar");
+    await createPackageWithOptions(source, archive, { unpack: "*.js" });
+    await writeFile(join(`${archive}.unpacked`, "main.js"), changed);
+
+    const session = new BinarySession(new ArtifactProvider());
+    const server = createServer(session, session);
+    const client = new Client({ name: "asar-integrity-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path: archive },
+      });
+      expect(opened.isError).not.toBe(true);
+
+      const result = await client.callTool({
+        name: "inventory_artifact",
+        arguments: {},
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        error: {
+          tag: "ArtifactOperationError",
+          category: "integrity_mismatch",
+          message:
+            "Artifact is invalid or has changed. Get a fresh copy and try again.",
+          details: {
+            operation: "inventory_artifact",
+            reason: "integrity",
+            logicalPath: "main.js",
+            declaredSha256: createHash("sha256").update(original).digest("hex"),
+            calculatedSha256: createHash("sha256")
+              .update(changed)
+              .digest("hex"),
+            unpacked: true,
+          },
+        },
+      });
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
+
   it("rejects altered payloads that reuse session Evidence IDs", async () => {
     const session = new BinarySession(() => ({
       health: () => Promise.resolve(),

@@ -181,8 +181,22 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
 const analysisErrorProjectionSchema = z
   .object({
     tag: z.enum(ANALYSIS_ERROR_TAGS),
+    category: z.enum([
+      "invalid_input",
+      "permission_required",
+      "unsupported_provider",
+      "integrity_mismatch",
+      "truncated",
+      "cancelled",
+      "timeout",
+      "unavailable",
+      "execution_failure",
+    ]),
     message: z.string(),
-    details: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
+    details: z.record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean(), z.null()]),
+    ),
   })
   .strict();
 const graphNode = z.discriminatedUnion("status", [

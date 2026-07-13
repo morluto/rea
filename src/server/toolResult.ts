@@ -1,6 +1,10 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
-import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
+import {
+  AnalysisOutputError,
+  projectAnalysisError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
@@ -22,9 +26,10 @@ const errorResult = (error: AnalysisError): CallToolResult => {
     content: [
       {
         type: "text",
-        text: `${projected.tag}: ${projected.message}`,
+        text: projected.message,
       },
     ],
+    structuredContent: { error: projected },
     isError: true,
   };
 };
@@ -40,9 +45,17 @@ const successResult = (
       content: [
         {
           type: "text",
-          text: "AnalysisOutputError: Analysis output does not match the tool contract",
+          text: "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
         },
       ],
+      structuredContent: {
+        error: projectAnalysisError(
+          new AnalysisOutputError(
+            contract.name,
+            "output does not match the tool contract",
+          ),
+        ),
+      },
       isError: true,
     };
   }

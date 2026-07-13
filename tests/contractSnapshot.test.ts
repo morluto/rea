@@ -14,6 +14,19 @@ import {
   sessionOutputSchemas,
 } from "../src/contracts/toolOutputSchemas.js";
 
+const emptySchemaPaths = (value: unknown, path = "$"): string[] => {
+  if (Array.isArray(value))
+    return value.flatMap((item, index) =>
+      emptySchemaPaths(item, `${path}[${String(index)}]`),
+    );
+  if (typeof value !== "object" || value === null) return [];
+  const entries = Object.entries(value);
+  if (entries.length === 0) return [path];
+  return entries.flatMap(([key, item]) =>
+    emptySchemaPaths(item, `${path}.${key}`),
+  );
+};
+
 describe("tool contract surface", () => {
   it("advertises complete typed schemas and annotations for all analysis tools", () => {
     const contracts = [
@@ -120,6 +133,24 @@ describe("tool contract surface", () => {
       expect(JSON.stringify(schema)).not.toContain('"result":{}');
       expect(contract.description.length).toBeGreaterThan(100);
       expect(contract.description).toMatch(/[.;]/u);
+    }
+  });
+
+  it("publishes no unconstrained output-schema holes across all 68 tools", () => {
+    const contracts = [
+      ...OFFICIAL_TOOL_CONTRACTS,
+      ...ENHANCED_TOOL_CONTRACTS,
+      ...NATIVE_TOOL_CONTRACTS,
+      ...ARTIFACT_TOOL_CONTRACTS,
+      ...SESSION_TOOL_CONTRACTS,
+    ];
+    expect(contracts).toHaveLength(68);
+    for (const contract of contracts) {
+      const schema = z.toJSONSchema(contract.outputSchema, {
+        target: "draft-07",
+        unrepresentable: "any",
+      });
+      expect(emptySchemaPaths(schema), contract.name).toEqual([]);
     }
   });
 });

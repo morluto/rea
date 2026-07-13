@@ -26,9 +26,21 @@ describe("tool result projection", () => {
       content: [
         {
           type: "text",
-          text: "AnalysisOutputError: Analysis output does not match the tool contract",
+          text: "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
         },
       ],
+      structuredContent: {
+        error: {
+          tag: "AnalysisOutputError",
+          category: "execution_failure",
+          message:
+            "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+          details: {
+            operation: "provider_neutral_fixture",
+            reason: "output does not match the tool contract",
+          },
+        },
+      },
       isError: true,
     });
   });
