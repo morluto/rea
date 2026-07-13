@@ -19,6 +19,38 @@ const readmes = [
   "README_ar.md",
 ] as const;
 
+const expectedToolCounts = [
+  OFFICIAL_TOOL_CONTRACTS.length,
+  ENHANCED_TOOL_CONTRACTS.length,
+  NATIVE_TOOL_CONTRACTS.length,
+  ARTIFACT_TOOL_CONTRACTS.length,
+  SESSION_TOOL_CONTRACTS.length,
+] as const;
+
+const toolCountsFromReadme = (content: string, path: string): number[] => {
+  const lines = content.split(/\r?\n/u);
+  const headingIndex = lines.findIndex((line) => /^## .*68/u.test(line));
+  if (headingIndex === -1)
+    throw new Error(`Missing 68-tool heading in ${path}`);
+
+  const counts: number[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (line.startsWith("## ")) break;
+    if (!line.trim().startsWith("|") || /^\|\s*-/.test(line)) continue;
+    const cells = line.split("|").map((cell) => cell.trim());
+    const countCell = cells[2];
+    if (countCell === undefined)
+      throw new Error(`Malformed table row in ${path}`);
+    const count = Number(countCell);
+    if (!Number.isInteger(count)) {
+      if (counts.length === 0) continue;
+      throw new Error(`Non-numeric tool count in ${path}`);
+    }
+    counts.push(count);
+  }
+  return counts;
+};
+
 describe("localized README product facts", () => {
   it.each(readmes)(
     "keeps commands and requirements aligned in %s",
@@ -34,17 +66,13 @@ describe("localized README product facts", () => {
       expect(content).toContain('"args": ["-y", "rea-agents", "mcp"]');
       expect(content).toContain("Node.js 24");
       expect(content).toContain("macOS 12");
+      expect(content).toContain("Ubuntu 24.04");
+      expect(content).toContain("Fedora 41");
+      expect(content).toContain("Arch Linux");
+      if (path === "README_ar.md")
+        expect(content).toContain("Windows غير مدعوم حاليًا");
       expect(content).toContain(`MCP_tools-${String(TOOL_CONTRACTS.length)}`);
-      for (const count of [
-        OFFICIAL_TOOL_CONTRACTS.length,
-        ENHANCED_TOOL_CONTRACTS.length,
-        NATIVE_TOOL_CONTRACTS.length,
-        ARTIFACT_TOOL_CONTRACTS.length,
-        SESSION_TOOL_CONTRACTS.length,
-      ])
-        expect(content).toMatch(
-          new RegExp(`\\|\\s*${String(count)}\\s*\\|`, "u"),
-        );
+      expect(toolCountsFromReadme(content, path)).toEqual(expectedToolCounts);
     },
   );
 
