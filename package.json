@@ -33,8 +33,7 @@
     "rea": "scripts/rea.mjs"
   },
   "engines": {
-    "node": ">=24.18.0 <25",
-    "npm": ">=11.16.0 <12"
+    "node": "^22.19.0 || >=24.11.0"
   },
   "packageManager": "npm@11.16.0",
   "files": [
@@ -99,7 +98,7 @@
     "pino": "9.14.0",
     "plist": "5.0.0",
     "smol-toml": "^1.7.0",
-    "write-file-atomic": "8.0.0",
+    "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
     "zod": "4.4.3"
   },

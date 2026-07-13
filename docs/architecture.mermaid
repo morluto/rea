@@ -8,7 +8,7 @@ graph TD
     subgraph "Adapters"
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
         BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
-        INSTALL["Host installation adapters<br/>macOS: Homebrew cask<br/>Linux: verified vendor package + apt/dnf/pacman"]
+        INSTALL["Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
     subgraph "Application Layer"

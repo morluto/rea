@@ -324,15 +324,32 @@ try {
     await writeFile(skillPath, "stale managed skill\n");
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }
+  const planned = json(await run(cli, ["setup", "--json"], environment));
+  if (supportedSetupHost) {
+    if (
+      planned.status !== "needs_confirmation" ||
+      planned.appliedActions.length !== 0 ||
+      !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
+      !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
+      (await readFile(claudeConfig, "utf8")) !== '{"existing":true}\n' ||
+      (await readFile(cursorConfig, "utf8")) !== '{"existing":true}\n' ||
+      (await readFile(skillPath, "utf8")) !== "stale managed skill\n"
+    )
+      throw new Error("packaged setup plan mutated files before approval");
+  }
   const first = json(await run(cli, ["setup", "--yes", "--json"], environment));
   const second = json(
-    await run(cli, ["setup", "--yes", "--json"], environment),
+    await run(
+      cli,
+      ["setup", "--yes", "--install-hopper", "--json"],
+      environment,
+    ),
   );
   if (supportedSetupHost) {
     if (
       first.status !== "ready" ||
       second.status !== "ready" ||
-      second.actions.length !== 0
+      second.appliedActions.length !== 0
     )
       throw new Error("packaged setup was not ready and idempotent");
     for (const configPath of [claudeConfig, cursorConfig]) {
@@ -467,7 +484,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "idempotent" : "unsupported-host-rejected", clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

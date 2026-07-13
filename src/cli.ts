@@ -1,5 +1,6 @@
 import { Cli, z } from "incur";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline/promises";
 
 import { runDoctor } from "./application/Doctor.js";
 import {
@@ -7,7 +8,7 @@ import {
   runProviderAnalysis,
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
-import { runSetup } from "./application/Setup.js";
+import { runSetup, type SetupAction } from "./application/Setup.js";
 import { runUninstall } from "./application/Uninstall.js";
 import { runUpgrade, systemUpgradeHost } from "./application/Upgrade.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -76,11 +77,27 @@ const registerCoreCommands = (
       yes: z
         .boolean()
         .default(false)
-        .describe("Approve prerequisite installation"),
+        .describe("Approve user-owned setup actions without prompting"),
+      installHopper: z
+        .boolean()
+        .default(false)
+        .describe("Also approve Hopper installation with --yes"),
     }),
-    alias: { yes: "y" },
-    run: ({ options }) =>
-      logCliCommand(logger, "setup", () => runSetup(options.yes)),
+    alias: { yes: "y", installHopper: "install-hopper" },
+    run: ({ options, formatExplicit }) =>
+      logCliCommand(logger, "setup", () =>
+        runSetup(
+          {
+            approved: options.yes,
+            installHopper: options.installHopper,
+            structured: formatExplicit,
+          },
+          undefined,
+          options.yes || formatExplicit || process.stdin.isTTY !== true
+            ? undefined
+            : confirmSetup,
+        ),
+      ),
   });
   cli.command("doctor", {
     description: "Check whether REA is ready",
@@ -161,6 +178,28 @@ const registerCoreCommands = (
         ),
       ),
   });
+};
+
+const confirmSetup = async (
+  actions: readonly SetupAction[],
+): Promise<boolean> => {
+  process.stdout.write("\nREA setup plan\n");
+  for (const action of actions)
+    process.stdout.write(
+      `  - ${action.detail}\n    ${action.target}${action.external ? " (external software)" : ""}\n`,
+    );
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (await prompt.question("Continue? [Y/n] "))
+      .trim()
+      .toLowerCase();
+    return answer === "" || answer === "y" || answer === "yes";
+  } finally {
+    prompt.close();
+  }
 };
 
 const registerXrefsCommand = (

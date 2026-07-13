@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#منصة-من-68-أداة)
-[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
 [البدء السريع](#البدء-السريع) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [68 أداة](#منصة-من-68-أداة) · [كيف يعمل](#كيف-يعمل) · [الأسئلة الشائعة](#الأسئلة-الشائعة)
@@ -74,21 +74,21 @@ npx skills add morluto/rea
 
 - macOS 12 أو أحدث
 - Ubuntu 24.04+ أو Fedora 41+ أو Arch Linux ‏64 بت
-- Node.js 24.18.x وnpm 11.16.x (شغّل `nvm use` لاختيار الإصدار المثبّت)
+- Node.js 22.19+ أو 24.11+ وnpm المرفق مع Node
 
-لا تحتاج إلى تثبيت أدوات الهندسة العكسية يدويًا. يثبت Setup برنامج Homebrew و[Hopper](https://www.hopperapp.com/) عند الحاجة، ثم يهيئ وكلاء البرمجة المدعومين. Hopper برنامج منفصل يحتاج إلى ترخيص خاص به؛ يثبته Setup لكنه لا يوفر الترخيص.
+يعرض `rea setup` خطة التغييرات كاملة ويطلب التأكيد قبل تطبيقها. لا يثبت أو يحدّث Homebrew أو Node.js أو npm. إذا كان [Hopper](https://www.hopperapp.com/) مفقودًا، يقترح Setup الحزمة الرسمية. Hopper برنامج منفصل يحتاج إلى ترخيص خاص به.
 
 #### التثبيت على Linux واستكشاف الأخطاء
 
 على Ubuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت، ينزّل REA حزمة DEB أو RPM أو Arch الرسمية، ويتحقق من الحجم وقيمة التحقق المنشورين، ثم يستخدم `apt-get` أو `dnf` أو `pacman` لحل الاعتماديات. عند التشغيل دون root يعرض `pkexec` طلب تفويض النظام. لا يستدعي REA الأمر `sudo`.
 
-مسار المشغّل الافتراضي هو `/opt/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا أبلغ Doctor عن غياب محرك التحليل، شغّل `ldd /opt/hopper/bin/Hopper | grep 'not found'`، وثبّت المكتبات الناقصة ثم أعد `rea setup --yes`. يتطلب التحليل الحقيقي `DISPLAY` أو `WAYLAND_DISPLAY` وترخيص Hopper مفعّلًا. أضف `~/.local/bin` إلى `PATH` أيضًا.
+مسار المشغّل الافتراضي هو `/opt/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا أبلغ Doctor عن غياب محرك التحليل، شغّل `ldd /opt/hopper/bin/Hopper | grep 'not found'`، وثبّت المكتبات الناقصة ثم أعد `rea setup`. يتطلب التحليل الحقيقي `DISPLAY` أو `WAYLAND_DISPLAY` وترخيص Hopper مفعّلًا. أضف `~/.local/bin` إلى `PATH` أيضًا.
 
 ### 1. إعداد REA
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents setup --yes
+npx -y rea-agents setup
 ```
 
 إذا طلب macOS أو برنامج التثبيت تأكيدًا، فأكمل الخطوة ثم شغّل الأمر نفسه مرة أخرى.
