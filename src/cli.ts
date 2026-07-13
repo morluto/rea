@@ -18,6 +18,7 @@ import { parseConfig } from "./config.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
+import { registerInvestigationCommands } from "./cliInvestigationCommands.js";
 import { projectAnalysisError } from "./domain/errors.js";
 import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 
@@ -61,6 +62,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
   registerArtifactCommands(cli, logger);
+  registerInvestigationCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
   registerReferenceSourceCommand(cli, logger);
   registerProcessCommands(cli, logger);

@@ -456,7 +456,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "find_changed_behavior",
-    "Aggregate validated process, artifact, and function comparison Evidence into a deterministic change report. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims.",
+    "Aggregate validated comparison Evidence, or automatically run and resume a persistent cross-version artifact investigation beneath an approved evidence root. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims.",
     changedBehaviorInputSchema,
   ),
   session(

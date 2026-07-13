@@ -19,6 +19,7 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  InvestigationWorkspaceError,
   NoBinaryOpenError,
   ProviderAdapterError,
   ProviderSelectionError,
@@ -72,6 +73,11 @@ describe("analysis error projection", () => {
       EvidenceFileError: new EvidenceFileError("read", "outside-root", {
         cause: secretCause,
       }),
+      InvestigationWorkspaceError: new InvestigationWorkspaceError(
+        "update",
+        "revision-conflict",
+        { cause: secretCause },
+      ),
       UnknownRegistryError: new UnknownRegistryError("revision-conflict", {
         cause: secretCause,
       }),
@@ -97,7 +103,7 @@ describe("analysis error projection", () => {
     } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
-    expect(projected).toHaveLength(23);
+    expect(projected).toHaveLength(24);
     const serialized = JSON.stringify(projected);
     for (const hidden of [
       "secret-token",

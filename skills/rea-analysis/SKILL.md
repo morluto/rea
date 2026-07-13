@@ -2,7 +2,7 @@
 name: rea-analysis
 description: Reverse engineer apps with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "11"
+  version: "12"
   tool_count: 68
 ---
 
@@ -109,6 +109,13 @@ bundle digests to anchor paginated reports.
 Use `find_changed_behavior` to combine existing comparison Evidence. Runtime
 process differences are observed changes; artifact and function differences
 remain static candidates, not causal proof. Supply complete comparison pages.
+For an automatic two-version artifact investigation, use its
+`investigation_run` mode with explicit write approval and a workspace beneath
+`REA_EVIDENCE_ROOTS_JSON`. It checkpoints inventory, comparison, and report
+Evidence in monotonic CAS-linked revisions. Repeating the same content and
+budgets resumes or reuses the run. This automatic mode does not execute either
+version or perform fuzzy function matching, so its behavior status remains
+unknown without separate controlled runtime Evidence.
 
 Use `build_call_path` with explicit `analyze_function` Evidence groups from one
 artifact and provider. Select endpoints by exact address. Missing dossiers,

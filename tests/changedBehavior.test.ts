@@ -85,6 +85,7 @@ const artifactResult = (
   pagination: {
     readonly offset?: number;
     readonly next_offset?: number | null;
+    readonly total?: number;
   } = {},
   nestedLinks: string[] = [left.evidence_id, right.evidence_id],
 ): JsonValue => ({
@@ -113,7 +114,7 @@ const artifactResult = (
     ],
     offset: pagination.offset ?? 0,
     limit: 100,
-    total: 1,
+    total: pagination.total ?? 1,
     next_offset: pagination.next_offset ?? null,
   },
   limitations: [],
@@ -177,13 +178,26 @@ describe("changed behavior", () => {
     expect(findChangedBehavior([changed, unknown], 0, 1)).toEqual(result);
   });
 
-  it("requires complete artifact comparison pagination", () => {
+  it("keeps incomplete artifact comparison pagination explicit", () => {
     const paged = comparison(
       "compare_artifacts",
-      artifactResult({ next_offset: 1 }),
+      artifactResult({ next_offset: 1, total: 2 }),
     );
-    expect(() => findChangedBehavior([paged], 0, 100)).toThrow(
-      /complete artifact comparison pagination/u,
+    const result = findChangedBehavior([paged], 0, 100);
+    expect(result).toMatchObject({
+      behavior_status: "unknown",
+      summary: { static_candidates: 1, unresolved: 1 },
+      findings: { total: 2 },
+    });
+    expect(result.limitations).toContain(
+      "Artifact comparison reports 1 of 2 changes.",
+    );
+    const laterPage = comparison(
+      "compare_artifacts",
+      artifactResult({ offset: 1, next_offset: null, total: 2 }),
+    );
+    expect(() => findChangedBehavior([laterPage], 0, 100)).toThrow(
+      /pagination from offset zero/u,
     );
   });
 

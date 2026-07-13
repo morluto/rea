@@ -1,3 +1,5 @@
+import canonicalize from "canonicalize";
+
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -388,8 +390,8 @@ const unknownRevisionKey = (unknown: ResidualUnknown): string =>
   `${unknown.unknown_id}:${String(unknown.revision)}`;
 
 const recordsAgree = (left: Evidence, right: Evidence): boolean =>
-  JSON.stringify(withoutLocalPath(left)) ===
-  JSON.stringify(withoutLocalPath(right));
+  canonicalize(withoutLocalPath(left)) ===
+  canonicalize(withoutLocalPath(right));
 
 const withoutLocalPath = (evidence: Evidence): Evidence => ({
   ...evidence,

@@ -15,6 +15,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { verifyPackagedInvestigation } from "./verify-package-investigation.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 
 const expectedToolCount = TOOL_CONTRACTS.length;
@@ -104,6 +105,7 @@ try {
     ]),
     REA_NPX_LOG: npxLog,
     REA_EVIDENCE_ROOTS_JSON: JSON.stringify([evidenceRoot]),
+    REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([workspace]),
     REA_REFERENCE_ROOTS_JSON: JSON.stringify([referenceRoot]),
     REA_REFERENCE_SECRET_PATTERNS_JSON: JSON.stringify([".env"]),
   };
@@ -124,6 +126,7 @@ try {
     !help.includes("upgrade") ||
     !help.includes("inventory-artifact") ||
     !help.includes("extract-artifact") ||
+    !help.includes("investigate-versions") ||
     !help.includes("import-reference-source") ||
     !help.includes("compare") ||
     !llms.includes("decompile") ||
@@ -158,6 +161,8 @@ try {
     artifactInventory.normalized_result?.manifest?.root_format !== "zip"
   )
     throw new Error("packaged artifact inventory CLI failed");
+  // prettier-ignore
+  await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
   const overview = json(
     await run(cli, ["analyze", process.execPath, "--json"], environment),
   );

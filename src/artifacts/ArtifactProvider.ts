@@ -26,12 +26,9 @@ import {
   ArtifactReaderFailure,
   type ArtifactLimits,
 } from "./ArtifactReader.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
 
-const IDENTITY: ProviderIdentity = Object.freeze({
-  id: "rea-artifact-graph",
-  name: "REA safe artifact graph provider",
-  version: "1",
-});
+const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {

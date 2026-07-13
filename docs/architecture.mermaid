@@ -12,7 +12,8 @@ graph TD
     end
 
     subgraph "Application Layer"
-        APP["src/application/<br/>Shared CLI/MCP session composition<br/>setup, diagnostics, lifecycle, enhanced workflows"]
+        APP["src/application/<br/>Shared CLI/MCP session composition<br/>lifecycle, enhanced workflows, persistent investigations"]
+        WORKSPACE["Investigation workspace store<br/>approved roots, canonical JSON<br/>atomic CAS revisions and locks"]
     end
 
     subgraph "Hopper Layer"
@@ -24,11 +25,11 @@ graph TD
     end
 
     subgraph "Domain Layer"
-        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>errors, Result, hopperValues, symbolAnalysis"]
+        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>evidence, comparisons, workspace commitments"]
     end
 
     subgraph "Configuration"
-        CONFIG["src/config.ts<br/>Zod-validated env parsing<br/>HOPPER_TARGET_PATH, launcher, loader args"]
+        CONFIG["src/config.ts<br/>Zod-validated env parsing<br/>provider settings and approved roots"]
     end
 
     subgraph "Tests"
@@ -41,6 +42,7 @@ graph TD
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    APP --> WORKSPACE
     APP --> INSTALL
     SERVER --> CONTRACTS
     SERVER --> APP

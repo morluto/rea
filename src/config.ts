@@ -23,6 +23,7 @@ export interface AppConfig {
   readonly processExecutionPolicy: ProcessExecutionPolicy;
   readonly artifactNativeMountEnabled: boolean;
   readonly evidenceFilePolicy: EvidenceFilePolicy;
+  readonly investigationInputRoots: readonly string[];
   readonly analysisSnapshotFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
 }
@@ -44,6 +45,7 @@ const environmentSchema = z.object({
   REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
   REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
   REA_EVIDENCE_ROOTS_JSON: z.string().default("[]"),
+  REA_INVESTIGATION_INPUT_ROOTS_JSON: z.string().default("[]"),
   REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: z.string().default("[]"),
   REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
@@ -78,6 +80,31 @@ const filePolicy = (roots: readonly string[]): EvidenceFilePolicy => ({
   maxNodes: 1_000_000,
 });
 
+const parseLoaderArgs = (
+  encoded: string | undefined,
+): Result<readonly string[], ConfigurationError> => {
+  if (encoded === undefined) return ok([]);
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(encoded);
+  } catch (cause: unknown) {
+    return err(
+      new ConfigurationError("HOPPER_LOADER_ARGS_JSON must be valid JSON", {
+        cause,
+      }),
+    );
+  }
+  const parsed = z.array(z.string()).safeParse(decoded);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        new ConfigurationError(
+          "HOPPER_LOADER_ARGS_JSON must encode an array of strings",
+          { cause: parsed.error },
+        ),
+      );
+};
+
 /**
  * Parse Hopper launcher configuration once at the composition root.
  * Explicit loader arguments override REA's header-derived defaults for a
@@ -95,28 +122,10 @@ export const parseConfig = (
       }),
     );
   }
-  let loaderArgs: unknown = [];
-  const encoded = parsedEnvironment.data.HOPPER_LOADER_ARGS_JSON;
-  if (encoded !== undefined) {
-    try {
-      loaderArgs = JSON.parse(encoded);
-    } catch (cause: unknown) {
-      return err(
-        new ConfigurationError("HOPPER_LOADER_ARGS_JSON must be valid JSON", {
-          cause,
-        }),
-      );
-    }
-  }
-  const parsedArgs = z.array(z.string()).safeParse(loaderArgs);
-  if (!parsedArgs.success) {
-    return err(
-      new ConfigurationError(
-        "HOPPER_LOADER_ARGS_JSON must encode an array of strings",
-        { cause: parsedArgs.error },
-      ),
-    );
-  }
+  const loaderArgs = parseLoaderArgs(
+    parsedEnvironment.data.HOPPER_LOADER_ARGS_JSON,
+  );
+  if (!loaderArgs.ok) return loaderArgs;
   const executableRoots = parseStringArray(
     parsedEnvironment.data.REA_PROCESS_EXECUTABLE_ROOTS_JSON,
     "REA_PROCESS_EXECUTABLE_ROOTS_JSON",
@@ -137,6 +146,11 @@ export const parseConfig = (
     "REA_EVIDENCE_ROOTS_JSON",
   );
   if (!evidenceRoots.ok) return evidenceRoots;
+  const investigationInputRoots = parseStringArray(
+    parsedEnvironment.data.REA_INVESTIGATION_INPUT_ROOTS_JSON,
+    "REA_INVESTIGATION_INPUT_ROOTS_JSON",
+  );
+  if (!investigationInputRoots.ok) return investigationInputRoots;
   const analysisSnapshotRoots = parseStringArray(
     parsedEnvironment.data.REA_ANALYSIS_SNAPSHOT_ROOTS_JSON,
     "REA_ANALYSIS_SNAPSHOT_ROOTS_JSON",
@@ -158,7 +172,7 @@ export const parseConfig = (
       defaultHopperLauncherPath(),
     hopperTargetPath: parsedEnvironment.data.HOPPER_TARGET_PATH,
     hopperTargetKind: parsedEnvironment.data.HOPPER_TARGET_KIND,
-    hopperLoaderArgs: parsedArgs.data,
+    hopperLoaderArgs: loaderArgs.value,
     logLevel: parsedEnvironment.data.REA_LOG_LEVEL,
     processExecutionPolicy: {
       enabled: parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true",
@@ -171,6 +185,7 @@ export const parseConfig = (
     artifactNativeMountEnabled:
       parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true",
     evidenceFilePolicy: filePolicy(evidenceRoots.value),
+    investigationInputRoots: investigationInputRoots.value,
     analysisSnapshotFilePolicy: filePolicy(analysisSnapshotRoots.value),
     referenceSourcePolicy: {
       roots: referenceRoots.value,

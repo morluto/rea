@@ -102,6 +102,16 @@ export const scanArtifactInventory = async (
 ): Promise<ArtifactInventorySnapshot> => {
   abortIfNeeded(signal);
   const path = await realpath(inputPath);
+  return scanCanonicalArtifactInventory(path, limits, signal, nativeMount);
+};
+
+/** Scan one already-canonical artifact path without resolving it again. */
+export const scanCanonicalArtifactInventory = async (
+  path: string,
+  limits: ArtifactLimits,
+  signal?: AbortSignal,
+  nativeMount: ArtifactNativeMountPolicy = NATIVE_MOUNT_DISABLED,
+): Promise<ArtifactInventorySnapshot> => {
   const metadata = await lstat(path);
   const rootFormat = await classifyRoot(path, metadata.isDirectory());
   const rootDigest = metadata.isDirectory()
