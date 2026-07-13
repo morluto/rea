@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import { supportsNodeVersion } from "../domain/runtimeVersion.js";
 import { probeHomebrew } from "./homebrew.js";
 import {
   linuxHopperLauncherPath,
@@ -60,10 +61,9 @@ export const runDoctor = async (
   readonly checks: readonly DoctorCheck[];
 }> => {
   const checks: DoctorCheck[] = [];
-  const nodeMajor = parseMajor(host.nodeVersion);
   checks.push(
-    check("node", nodeMajor >= 24, host.nodeVersion, {
-      remediation: "Install Node.js 24.18 or newer.",
+    check("node", supportsNodeVersion(host.nodeVersion), host.nodeVersion, {
+      remediation: "Install Node.js 22.19+ or 24.11+.",
       classification: "missing_dependency",
     }),
   );
@@ -107,7 +107,7 @@ export const runDoctor = async (
   checks.push(
     check("hopper", hopperPath !== undefined, hopperPath, {
       remediation:
-        "Run rea setup --yes to install Hopper, or set HOPPER_LAUNCHER_PATH.",
+        "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       classification: "missing_analysis_engine",
     }),
   );

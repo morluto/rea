@@ -24,90 +24,54 @@ afterEach(async () => {
 });
 
 describe("curl installer scenarios", () => {
-  it("installs a pinned release with closed stdin and cleans temporary files", async () => {
+  it("installs only a pinned REA CLI with closed stdin", async () => {
     const fixture = await createFixture();
-    const result = await runInstaller(fixture, { REA_VERSION: "0.3.0" });
-    expect(result.stdout).toContain("REA 0.3.0 is installed and ready");
+    const result = await runInstaller(fixture, ["--version", "0.3.0"]);
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(result.stdout).toContain("Run ");
     expect(await readFile(fixture.npmLog, "utf8")).toContain(
-      "rea-agents@0.3.0",
+      "install --global --prefix",
     );
+    expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
     expect(await readdir(fixture.temporary)).toEqual([]);
   });
 
-  it("resolves and validates the latest rea-agents release tag", async () => {
+  it("accepts Node 25 without installing or replacing it", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(fixture, ["--version", "0.3.0"], {
+      FAKE_NODE_VERSION: "25.1.0",
+    });
+    expect(result.stdout).toContain("Runtime: Node.js 25.1.0");
+  });
+
+  it("resolves and validates the latest REA release tag", async () => {
     const fixture = await createFixture();
     const result = await runInstaller(fixture);
-    expect(result.stdout).toContain("Installing rea-agents@0.3.0");
+    expect(result.stdout).toContain("Version: 0.3.0");
   });
 
-  it("bootstraps checksum-verified Node 24 into the user prefix", async () => {
+  it("prints a dry run without invoking npm", async () => {
     const fixture = await createFixture();
-    const result = await runInstaller(fixture, {
-      REA_VERSION: "0.3.0",
-      FAKE_OLD_NODE: "1",
-      FAKE_NODE_ARCHIVE: fixture.nodeArchive,
-      FAKE_NODE_SUMS: fixture.nodeSums,
+    const result = await runInstaller(fixture, [
+      "--version",
+      "0.3.0",
+      "--dry-run",
+    ]);
+    expect(result.stdout).toContain("no changes made");
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
     });
-    expect(result.stdout).toContain("REA 0.3.0 is installed and ready");
-    expect(
-      await readFile(
-        join(fixture.home, ".local/share/rea/node/bin/node"),
-        "utf8",
-      ),
-    ).toContain("24.18.0");
-  });
-
-  it("reports fresh Hopper activation as partial success", async () => {
-    const fixture = await createFixture();
-    const result = await runInstaller(fixture, {
-      REA_VERSION: "0.3.0",
-      FAKE_SETUP_ACTIONS: '["installed_hopper"]',
-    });
-    expect(result.stdout).toContain("One user action remains");
-    expect(result.stdout).toContain("open Hopper");
   });
 
   it.each([
-    [
-      "injected version",
-      { REA_VERSION: "0.3.0;touch /tmp/pwned" },
-      "exact semantic version",
-    ],
-    [
-      "npm failure",
-      { REA_VERSION: "0.3.0", FAKE_NPM_FAIL: "1" },
-      "npm package installation failed",
-    ],
-    [
-      "version mismatch",
-      { REA_VERSION: "0.3.0", FAKE_REA_VERSION: "9.9.9" },
-      "does not match",
-    ],
-    [
-      "malformed setup",
-      { REA_VERSION: "0.3.0", FAKE_SETUP_JSON: "not-json" },
-      "malformed output",
-    ],
-    [
-      "unhealthy doctor",
-      { REA_VERSION: "0.3.0", FAKE_DOCTOR_HEALTHY: "false" },
-      "unhealthy required component",
-    ],
+    ["unsupported Node", { FAKE_NODE_VERSION: "20.0.0" }, "unsupported"],
+    ["npm failure", { FAKE_NPM_FAIL: "1" }, "npm package installation failed"],
+    ["version mismatch", { FAKE_REA_VERSION: "9.9.9" }, "does not match"],
   ] as const)("fails closed on %s", async (_name, overrides, message) => {
     const fixture = await createFixture();
-    await expect(runInstaller(fixture, overrides)).rejects.toMatchObject({
-      stderr: expect.stringContaining(message),
-    });
-  });
-
-  it("is safe to rerun", async () => {
-    const fixture = await createFixture();
-    await runInstaller(fixture, { REA_VERSION: "0.3.0" });
-    await runInstaller(fixture, { REA_VERSION: "0.3.0" });
-    expect(
-      (await readFile(fixture.npmLog, "utf8")).trim().split("\n"),
-    ).toHaveLength(2);
-    expect(await readdir(fixture.temporary)).toEqual([]);
+    await expect(
+      runInstaller(fixture, ["--version", "0.3.0"], overrides),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining(message) });
   });
 });
 
@@ -116,8 +80,7 @@ interface InstallerFixture {
   readonly bin: string;
   readonly temporary: string;
   readonly npmLog: string;
-  readonly nodeArchive: string;
-  readonly nodeSums: string;
+  readonly reaLog: string;
 }
 
 const createFixture = async (): Promise<InstallerFixture> => {
@@ -127,52 +90,45 @@ const createFixture = async (): Promise<InstallerFixture> => {
   const bin = join(root, "bin");
   const temporary = join(root, "tmp");
   const npmLog = join(root, "npm.log");
-  const nodeFixture = join(root, "node-v24.18.0-linux-x64");
-  const nodeArchive = `${nodeFixture}.tar.xz`;
-  const nodeSums = join(root, "SHASUMS256.txt");
+  const reaLog = join(root, "rea.log");
   await Promise.all([mkdir(home), mkdir(bin), mkdir(temporary)]);
-  const realNode = process.execPath;
-  await mkdir(join(nodeFixture, "bin"), { recursive: true });
-  await executable(
-    join(nodeFixture, "bin/node"),
-    `#!/bin/sh\nif [ "$1" = "-p" ]; then echo 24.18.0; else exec ${shellQuote(realNode)} "$@"; fi\n`,
-  );
-  await executable(
-    join(nodeFixture, "bin/npm"),
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.16.0; exit 0; fi\nprintf "%s\\n" "$*" >> "$FAKE_NPM_LOG"\nexit 0\n',
-  );
-  await execFileAsync("tar", [
-    "-cJf",
-    nodeArchive,
-    "-C",
-    root,
-    "node-v24.18.0-linux-x64",
-  ]);
-  const checksum = (
-    await execFileAsync("sha256sum", [nodeArchive])
-  ).stdout.split(" ")[0];
-  await writeFile(nodeSums, `${checksum}  node-v24.18.0-linux-x64.tar.xz\n`);
   await executable(
     join(bin, "uname"),
     '#!/bin/sh\n[ "$1" = "-m" ] && echo x86_64 || echo Linux\n',
   );
   await executable(
     join(bin, "node"),
-    `#!/bin/sh\nif [ "$1" = "-p" ]; then [ "\${FAKE_OLD_NODE:-}" = "1" ] && echo 20.0.0 || echo 24.18.0; else exec ${shellQuote(realNode)} "$@"; fi\n`,
+    `#!/bin/sh
+if [ "$1" = "-p" ]; then printf '%s\n' "\${FAKE_NODE_VERSION:-24.18.0}"; else exec ${shellQuote(process.execPath)} "$@"; fi
+`,
   );
   await executable(
     join(bin, "npm"),
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 11.16.0; exit 0; fi\nprintf "%s\\n" "$*" >> "$FAKE_NPM_LOG"\n[ "${FAKE_NPM_FAIL:-}" = "1" ] && exit 1\nexit 0\n',
+    `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_NPM_LOG"
+[ "\${FAKE_NPM_FAIL:-}" = "1" ] && exit 1
+prefix="$HOME/.local"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then shift; prefix="$1"; fi
+  shift
+done
+mkdir -p "$prefix/bin"
+cp "$FAKE_REA_SOURCE" "$prefix/bin/rea"
+chmod +x "$prefix/bin/rea"
+`,
   );
   await executable(
     join(bin, "curl"),
-    '#!/bin/sh\nout=""\nurl=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "-o" ]; then shift; out="$1"; else url="$1"; fi\n  shift\ndone\ncase "$url" in\n  *node-v24.18.0-linux-x64.tar.xz) cp "$FAKE_NODE_ARCHIVE" "$out" ;;\n  *SHASUMS256.txt) cp "$FAKE_NODE_SUMS" "$out" ;;\n  *) printf \'{"tag_name":"rea-agents-0.3.0"}\' ;;\nesac\n',
+    '#!/bin/sh\nprintf \'{"tag_name":"rea-agents-0.3.0"}\'\n',
   );
   await executable(
-    join(bin, "rea"),
-    '#!/bin/sh\ncase "$1" in\n--version) printf "%s\\n" "${FAKE_REA_VERSION:-0.3.0}" ;;\nsetup) if [ -n "${FAKE_SETUP_JSON:-}" ]; then printf "%s\\n" "$FAKE_SETUP_JSON"; else printf \'{"status":"ready","actions":%s}\\n\' "${FAKE_SETUP_ACTIONS:-[]}"; fi ;;\ndoctor) printf \'{"healthy":%s,"checks":[]}\\n\' "${FAKE_DOCTOR_HEALTHY:-true}" ;;\nesac\n',
+    join(bin, "rea-source"),
+    `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_REA_LOG"
+[ "$1" = "--version" ] && printf '%s\n' "\${FAKE_REA_VERSION:-0.3.0}"
+`,
   );
-  return { home, bin, temporary, npmLog, nodeArchive, nodeSums };
+  return { home, bin, temporary, npmLog, reaLog };
 };
 
 const executable = async (path: string, source: string): Promise<void> => {
@@ -182,15 +138,18 @@ const executable = async (path: string, source: string): Promise<void> => {
 
 const runInstaller = async (
   fixture: InstallerFixture,
+  args: readonly string[] = [],
   overrides: Readonly<Record<string, string>> = {},
 ): Promise<{ readonly stdout: string; readonly stderr: string }> =>
-  execFileAsync("/bin/bash", [join(process.cwd(), "install.sh")], {
+  execFileAsync("/bin/bash", [join(process.cwd(), "install.sh"), ...args], {
     env: {
       ...process.env,
       HOME: fixture.home,
       TMPDIR: fixture.temporary,
-      PATH: `${fixture.bin}:${process.env.PATH ?? ""}`,
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
       FAKE_NPM_LOG: fixture.npmLog,
+      FAKE_REA_LOG: fixture.reaLog,
+      FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
       ...overrides,
     },
   });

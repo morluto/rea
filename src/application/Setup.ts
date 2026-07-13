@@ -9,22 +9,19 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { supportsNodeVersion } from "../domain/runtimeVersion.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
-import { probeHomebrew } from "./homebrew.js";
 import {
   installLinuxHopper,
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
-
-const execFileAsync = promisify(execFile);
+import { installMacHopper } from "./MacHopper.js";
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
@@ -58,14 +55,12 @@ export interface SetupHost {
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
-  hasHomebrew(): Promise<boolean>;
-  installHomebrew(): Promise<boolean>;
   hopperPath(): Promise<string | undefined>;
-  installHopper(): Promise<boolean>;
+  installHopper(): Promise<string | undefined>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
-    hopperPath: string,
+    hopperPath: string | undefined,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
@@ -77,56 +72,126 @@ export interface SetupHost {
  * prompt, avoiding deadlocks in stdio and other unattended environments.
  */
 export interface SetupResult {
-  readonly status: "ready" | "needs_human";
-  readonly actions: readonly string[];
+  readonly status: "planned" | "needs_confirmation" | "ready" | "needs_human";
+  readonly plannedActions: readonly SetupAction[];
+  readonly appliedActions: readonly string[];
   readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
   readonly doctor: Awaited<ReturnType<typeof runDoctor>>;
   readonly remediation?: string;
 }
 
+/** One concrete setup mutation disclosed before approval. */
+export interface SetupAction {
+  readonly kind: "install_hopper" | "configure_client" | "install_skill";
+  readonly target: string;
+  readonly detail: string;
+  readonly external: boolean;
+}
+
+/** Explicit authorization supplied by an interactive or unattended CLI adapter. */
+export interface SetupOptions {
+  readonly approved: boolean;
+  readonly installHopper: boolean;
+  readonly structured: boolean;
+}
+
+/** Adapter-owned interactive confirmation for a fully discovered setup plan. */
+export type SetupConfirmation = (
+  actions: readonly SetupAction[],
+) => Promise<boolean>;
+
 /**
  * Install prerequisites and configure detected clients idempotently.
- * With `yes` false, mutations requiring consent are reported as `needs_human`;
- * with `yes` true, external installers still fail closed if they require UI.
+ * Discovery always precedes mutation. Interactive confirmation or explicit
+ * unattended options authorize only the actions represented in the result.
  */
 export const runSetup = async (
-  yes: boolean,
+  options: SetupOptions,
   host: SetupHost = systemSetupHost(),
+  confirm?: SetupConfirmation,
 ): Promise<SetupResult> => {
-  const actions: string[] = [];
+  const appliedActions: string[] = [];
+  let plannedActions: readonly SetupAction[] = [];
   const clients: Record<string, ClientConfigurationResult> = {};
   const fail = async (remediation: string): Promise<SetupResult> => ({
     status: "needs_human",
-    actions,
+    plannedActions,
+    appliedActions,
     clients,
     doctor: await host.doctor(),
     remediation,
   });
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
-  if (host.platform === "darwin" && !(await host.hasHomebrew())) {
-    if (!yes) return fail("Re-run with --yes to install Homebrew.");
-    if (!(await host.installHomebrew()))
-      return fail(
-        "Homebrew installation was interrupted; resolve the installer prompt and re-run setup.",
-      );
-    actions.push("installed_homebrew");
-  }
   let hopperPath = await host.hopperPath();
-  if (hopperPath === undefined) {
-    if (!yes) return fail("Re-run with --yes to install Hopper.");
-    if (!(await host.installHopper()))
-      return fail(
-        "Hopper installation was interrupted; resolve the system prompt and re-run setup.",
-      );
-    actions.push("installed_hopper");
-    hopperPath = await host.hopperPath();
-    if (hopperPath === undefined)
-      return fail(
-        "Hopper installation completed but its launcher was not found.",
-      );
+  const detectedClients = await host.detectedClients();
+  plannedActions = [
+    ...(hopperPath === undefined
+      ? [
+          {
+            kind: "install_hopper" as const,
+            target:
+              host.platform === "darwin"
+                ? "~/Applications/Hopper Disassembler.app"
+                : "system package manager",
+            detail:
+              "Download the official Hopper package, verify it, install it, and open Hopper for activation.",
+            external: true,
+          },
+        ]
+      : []),
+    ...detectedClients
+      .filter(({ format }) => format !== "unsupported")
+      .map(
+        (client): SetupAction => ({
+          kind: "configure_client",
+          target: client.configPath,
+          detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
+          external: false,
+        }),
+      ),
+    {
+      kind: "install_skill",
+      target: "~/.agents/skills/rea-analysis/SKILL.md",
+      detail: "Install or update the bundled REA analysis skill.",
+      external: false,
+    },
+  ];
+  let approved = options.approved;
+  let interactiveApproval = false;
+  if (!approved && confirm !== undefined && !options.structured) {
+    interactiveApproval = await confirm(plannedActions);
+    approved = interactiveApproval;
   }
-  for (const client of await host.detectedClients()) {
+  if (!approved)
+    return {
+      status: confirm === undefined ? "needs_confirmation" : "planned",
+      plannedActions,
+      appliedActions,
+      clients,
+      doctor: await host.doctor(),
+      remediation:
+        "Review the setup plan, then rerun interactively or with --yes.",
+    };
+
+  if (
+    hopperPath === undefined &&
+    (interactiveApproval || options.installHopper)
+  ) {
+    hopperPath = await host.installHopper();
+    if (hopperPath === undefined)
+      return {
+        status: "needs_human",
+        plannedActions,
+        appliedActions,
+        clients,
+        doctor: await host.doctor(),
+        remediation:
+          "Hopper installation failed; install Hopper manually or rerun setup after resolving the reported system error.",
+      };
+    appliedActions.push("installed_hopper");
+  }
+  for (const client of detectedClients) {
     const result = await host.configureClient(
       client,
       hopperPath,
@@ -138,18 +203,19 @@ export const runSetup = async (
         `${client.name} configuration ${result.reason} verification failed; no successful configuration was reported.`,
       );
     if (result.status === "configured")
-      actions.push(`configured_${client.name}`);
+      appliedActions.push(`configured_${client.name}`);
   }
   const skill = await host.installSkill();
   if (skill === "failed")
     return fail("Agent skill installation or readback failed.");
-  if (skill === "installed") actions.push("installed_skill");
+  if (skill === "installed") appliedActions.push("installed_skill");
   const doctor = await host.doctor();
-  const activationRequired = actions.includes("installed_hopper");
+  const activationRequired = appliedActions.includes("installed_hopper");
   const ready = doctor.healthy && !activationRequired;
   return {
     status: ready ? "ready" : "needs_human",
-    actions,
+    plannedActions,
+    appliedActions,
     clients,
     doctor,
     ...(ready
@@ -157,7 +223,9 @@ export const runSetup = async (
       : {
           remediation: activationRequired
             ? "Open Hopper, complete its one-time activation, then rerun rea doctor --json."
-            : "Run rea doctor and apply each reported remediation.",
+            : hopperPath === undefined
+              ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
+              : "Run rea doctor and apply each reported remediation.",
         }),
   };
 };
@@ -167,7 +235,8 @@ const hostRemediation = async (
 ): Promise<string | undefined> => {
   if (host.platform !== "darwin" && host.platform !== "linux")
     return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
-  if (major(host.nodeVersion) < 24) return "Install Node.js 24.18 or newer.";
+  if (!supportsNodeVersion(host.nodeVersion))
+    return "Install Node.js 22.19+ or 24.11+ and rerun setup.";
   if (host.platform === "darwin") {
     const version = await host.macosVersion();
     return version === undefined || major(version) < 12
@@ -179,7 +248,7 @@ const hostRemediation = async (
     : "REA supports Hopper on Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.";
 };
 
-/** Production setup effects for macOS, Homebrew, JSON MCP clients, and the canonical skill directory. */
+/** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
 const systemSetupHost = (): SetupHost => {
   const doctorHost = systemDoctorHost();
   return {
@@ -187,21 +256,14 @@ const systemSetupHost = (): SetupHost => {
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
-    hasHomebrew: () => brewSucceeds(["--version"]),
-    installHomebrew: () =>
-      commandSucceeds(
-        "/bin/bash",
-        [
-          "-c",
-          "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)",
-        ],
-        { ...process.env, NONINTERACTIVE: "1" },
-      ),
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
-    installHopper: () =>
-      process.platform === "linux"
-        ? installLinuxHopper().then(({ status }) => status === "installed")
-        : brewSucceeds(["install", "--cask", "hopper-disassembler"]),
+    installHopper: async () => {
+      const result =
+        process.platform === "linux"
+          ? await installLinuxHopper()
+          : await installMacHopper();
+      return result.status === "installed" ? result.launcherPath : undefined;
+    },
     detectedClients: () => detectClients(homedir()),
     configureClient: (client, hopperPath, command) =>
       client.format === "unsupported"
@@ -473,24 +535,6 @@ export const installCanonicalSkill = async (
   }
 };
 
-const commandSucceeds = async (
-  command: string,
-  args: readonly string[],
-  env?: NodeJS.ProcessEnv,
-): Promise<boolean> => {
-  try {
-    await execFileAsync(command, args, env === undefined ? {} : { env });
-    return true;
-  } catch {
-    return false;
-  }
-};
-const brewSucceeds = async (args: readonly string[]): Promise<boolean> => {
-  const result = await probeHomebrew(async (command) =>
-    (await commandSucceeds(command, args)) ? true : undefined,
-  );
-  return result === true;
-};
 const major = (version: string): number =>
   Number.parseInt(version.split(".")[0] ?? "0", 10);
 const exists = async (path: string): Promise<boolean> => {
