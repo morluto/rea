@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { sha256 } from "./lib/conformance-fixtures.mjs";
+import {
+  generateLargeFixture,
+  sha256,
+  sourceDigest,
+} from "./lib/conformance-fixtures.mjs";
 
 const exec = promisify(execFile);
 const manifestPath = resolve(
@@ -16,6 +20,23 @@ const root = dirname(manifestPath);
 
 for (const fixture of manifest.fixtures) {
   const artifactPath = join(root, fixture.artifact);
+  const sources = [];
+  for (const source of fixture.sources ?? []) {
+    const content =
+      source.path === "generated/large.c"
+        ? generateLargeFixture()
+        : await readFile(join(process.cwd(), "tests/conformance", source.path));
+    if (sha256(content) !== source.sha256)
+      throw new Error(
+        `${fixture.name}: source hash mismatch for ${source.path}`,
+      );
+    sources.push({ path: source.path, content });
+  }
+  if (
+    fixture.sourceSha256 !== undefined &&
+    sourceDigest(sources) !== fixture.sourceSha256
+  )
+    throw new Error(`${fixture.name}: source manifest digest mismatch`);
   const artifact = await readFile(artifactPath);
   if (sha256(artifact) !== fixture.artifactSha256)
     throw new Error(`${fixture.name}: artifact hash mismatch`);
