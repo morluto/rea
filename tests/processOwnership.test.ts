@@ -67,4 +67,40 @@ describe("owned process-group cleanup", () => {
       signaled: false,
     });
   });
+
+  it("fails closed when the launcher command identity changes", async () => {
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: "run-token" },
+    });
+    expect(
+      await cleanupOwnedProcessGroup(
+        {
+          ...ownership,
+          expectedCommand: "/owned/hopper",
+          expectedParentPid: 1,
+        },
+        adapter,
+      ),
+    ).toEqual({
+      cleaned: false,
+      reason: "owned launcher command identity did not match",
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the launcher parent identity changes", async () => {
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: "run-token" },
+    });
+    expect(
+      await cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture", expectedParentPid: 999 },
+        adapter,
+      ),
+    ).toEqual({
+      cleaned: false,
+      reason: "owned launcher parent identity did not match",
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
 });

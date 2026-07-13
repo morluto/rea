@@ -8,6 +8,10 @@ export interface OwnedProcessGroup {
   readonly runId: string;
   readonly leaderPid: number;
   readonly processGroupId: number;
+  /** Expected launcher identity, checked only while the leader exists. */
+  readonly expectedCommand?: string;
+  /** Expected launcher parent, checked only while the leader exists. */
+  readonly expectedParentPid?: number;
 }
 
 interface ProcessGroupMember {
@@ -86,6 +90,25 @@ export const cleanupOwnedProcessGroup = async (
     return { cleaned: false, reason: "process group could not be inspected" };
   }
   if (members.length === 0) return { cleaned: true, signaled: false };
+  const leader = members.find((member) => member.pid === ownership.leaderPid);
+  if (leader !== undefined) {
+    if (
+      ownership.expectedParentPid !== undefined &&
+      leader.parentPid !== ownership.expectedParentPid
+    )
+      return {
+        cleaned: false,
+        reason: "owned launcher parent identity did not match",
+      };
+    if (
+      ownership.expectedCommand !== undefined &&
+      !commandMatches(leader.command, ownership.expectedCommand)
+    )
+      return {
+        cleaned: false,
+        reason: "owned launcher command identity did not match",
+      };
+  }
   for (const member of members) {
     let environment: Readonly<Record<string, string>>;
     try {
@@ -112,4 +135,13 @@ export const cleanupOwnedProcessGroup = async (
       return { cleaned: false, reason: "owned process group signal failed" };
   }
   return { cleaned: true, signaled: true };
+};
+
+const commandMatches = (actual: string, expected: string): boolean => {
+  const normalizedActual = actual.trim();
+  const normalizedExpected = expected.trim();
+  return (
+    normalizedActual === normalizedExpected ||
+    normalizedActual.startsWith(`${normalizedExpected} `)
+  );
 };
