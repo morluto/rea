@@ -6,6 +6,7 @@
 export const PRODUCT_IDENTITY = {
   displayName: "REA",
   packageName: "rea-agents",
+  packageVersion: "1.1.0",
   cliBinary: "rea",
   mcpCommand: "npx -y rea-agents mcp",
   mcpServerKey: "rea",

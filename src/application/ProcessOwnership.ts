@@ -34,6 +34,12 @@ export type ProcessCleanupResult =
   | { readonly cleaned: true; readonly signaled: boolean }
   | { readonly cleaned: false; readonly reason: string };
 
+/** Token-verified liveness result used by post-root-exit settlement. */
+export type ProcessGroupObservation =
+  | { readonly state: "empty" }
+  | { readonly state: "alive" }
+  | { readonly state: "unverifiable"; readonly reason: string };
+
 const parseEnvironment = (value: string): Readonly<Record<string, string>> =>
   Object.fromEntries(
     value
@@ -144,6 +150,41 @@ export const cleanupOwnedProcessGroup = async (
       return { cleaned: false, reason: "owned process group signal failed" };
   }
   return { cleaned: true, signaled: true };
+};
+
+/** Observe one group without signaling it, failing closed on identity doubt. */
+export const observeOwnedProcessGroup = async (
+  ownership: OwnedProcessGroup,
+  host: ProcessOwnershipHost = systemHost,
+): Promise<ProcessGroupObservation> => {
+  let members: readonly ProcessGroupMember[];
+  try {
+    members = await host.listMembers(ownership.processGroupId);
+  } catch {
+    return {
+      state: "unverifiable",
+      reason: "process group could not be inspected",
+    };
+  }
+  if (members.length === 0) return { state: "empty" };
+  for (const member of members) {
+    try {
+      if (
+        (await host.environment(member.pid)).REA_PROCESS_RUN_ID !==
+        ownership.runId
+      )
+        return {
+          state: "unverifiable",
+          reason: "process ownership did not match",
+        };
+    } catch {
+      return {
+        state: "unverifiable",
+        reason: "process ownership could not be revalidated",
+      };
+    }
+  }
+  return { state: "alive" };
 };
 
 const commandMatches = (actual: string, expected: string): boolean => {

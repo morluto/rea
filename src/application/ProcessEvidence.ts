@@ -5,12 +5,13 @@ import type {
   ProcessCapture,
   ProcessScenario,
 } from "../domain/processCapture.js";
+import { parseProcessCapture } from "../domain/processCapture.js";
 
-/** Provider identity for controlled Process Capture v3 evidence. */
+/** Provider identity for controlled Process Capture v4 evidence. */
 export const PROCESS_PROVIDER = {
   id: "rea-process",
   name: "REA deterministic process harness",
-  version: "2",
+  version: "3",
 } as const;
 
 /** Project one process scenario into secret-free Evidence parameters. */
@@ -26,16 +27,17 @@ const processEvidenceParameters = (
   normalization: scenario.normalization,
 });
 
-/** Create one canonical observed Process Capture v3 Evidence record. */
+/** Create one canonical observed Process Capture v4 Evidence record. */
 export const createProcessCaptureEvidence = (
   scenario: ProcessScenario,
   capture: ProcessCapture,
-) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.process-capture/v3",
+) => {
+  const validatedCapture = parseProcessCapture(capture);
+  return createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: "rea.process-capture/v4",
     operation: "capture_process_scenario",
     parameters: processEvidenceParameters(scenario),
-    result: jsonValueSchema.parse(capture),
+    result: jsonValueSchema.parse(validatedCapture),
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -44,5 +46,6 @@ export const createProcessCaptureEvidence = (
       architecture: process.arch,
       isolation: "process",
     },
-    limitations: capture.limitations,
+    limitations: validatedCapture.limitations,
   });
+};

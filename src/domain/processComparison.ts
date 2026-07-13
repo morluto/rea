@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
+import { validateProcessCapture } from "./processCapture.js";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -196,36 +197,69 @@ const chooseFirstDivergence = (
   );
 };
 
-/** Compare bounded captures without equating missing or incompatible evidence. */
-/**
- * Compare two Process Capture v3 observations without treating absence as proof.
- *
- * Observed differences outrank residual unknowns. A capture may therefore be
- * definitively changed in one dimension while completeness remains unknown.
- */
-export const compareProcessCaptures = (
+const assertComparable = (
   left: ProcessCapture,
   right: ProcessCapture,
-): ProcessCaptureComparison => {
-  if (left.truncated || right.truncated) {
-    return {
-      status: "truncated",
-      terminal: "truncated",
-      interaction: "truncated",
-      exit: "truncated",
-      filesystem: "truncated",
-      protocol: "truncated",
-      process: "truncated",
-      shim: "truncated",
-      first_divergence: {
-        status: "unknown",
-        reason: "At least one capture is truncated.",
-      },
-      limitations: ["At least one capture is truncated."],
-    };
-  }
-  const sameNormalization =
-    JSON.stringify(left.normalization) === JSON.stringify(right.normalization);
+  options: { readonly maxCaptureAgeMs?: number; readonly now?: () => number },
+): void => {
+  const invalid = [
+    ...validateProcessCapture(left),
+    ...validateProcessCapture(right),
+  ];
+  if (invalid.length > 0)
+    throw new TypeError(`Invalid Process Capture v4: ${invalid[0]!.path}`);
+  if (
+    left.schema_version !== right.schema_version ||
+    left.manifest.comparison_contract_sha256 !==
+      right.manifest.comparison_contract_sha256
+  )
+    throw new TypeError(
+      "Process captures have incompatible comparison contracts",
+    );
+  if (options.maxCaptureAgeMs === undefined) return;
+  const maxCaptureAgeMs = options.maxCaptureAgeMs;
+  const now = (options.now ?? Date.now)();
+  if (
+    [left, right].some(
+      ({ manifest }) =>
+        now - Date.parse(manifest.completed_at) > maxCaptureAgeMs,
+    )
+  )
+    throw new TypeError("Process capture exceeds max_capture_age_ms");
+};
+
+const truncatedComparison = (): ProcessCaptureComparison => ({
+  status: "truncated",
+  terminal: "truncated",
+  interaction: "truncated",
+  exit: "truncated",
+  filesystem: "truncated",
+  protocol: "truncated",
+  process: "truncated",
+  shim: "truncated",
+  first_divergence: {
+    status: "unknown",
+    reason: "At least one capture is truncated.",
+  },
+  limitations: ["At least one capture is truncated."],
+});
+
+type ComparisonDimensions = Pick<
+  ProcessCaptureComparison,
+  | "terminal"
+  | "interaction"
+  | "exit"
+  | "filesystem"
+  | "protocol"
+  | "process"
+  | "shim"
+>;
+
+const compareDimensions = (
+  left: ProcessCapture,
+  right: ProcessCapture,
+  sameNormalization: boolean,
+): ComparisonDimensions => {
   const classify = (
     scope: ProcessCapture["residual_unknowns"][number]["scope"],
     leftValues: readonly unknown[],
@@ -234,40 +268,57 @@ export const compareProcessCaptures = (
     !sameNormalization || hasUnknown(left, scope) || hasUnknown(right, scope)
       ? "unknown"
       : classifyCollection(leftValues, rightValues);
-  const terminal = classify(
-    "terminal",
-    terminalObservations(left),
-    terminalObservations(right),
-  );
-  const interaction = classify(
-    "terminal",
-    left.interaction_events,
-    right.interaction_events,
-  );
-  const exit =
-    hasUnknown(left, "exit") || hasUnknown(right, "exit")
-      ? "unknown"
-      : JSON.stringify(left.exit) === JSON.stringify(right.exit)
-        ? "unchanged"
-        : "changed";
-  const filesystem = classify(
-    "filesystem",
-    filesystemObservations(left),
-    filesystemObservations(right),
-  );
-  const protocol = classify(
-    "protocol",
-    left.protocol_events,
-    right.protocol_events,
-  );
-  const process = classify(
-    "process",
-    left.process_samples,
-    right.process_samples,
-  );
-  const shim = sameNormalization
-    ? classifyCollection(left.shim_events, right.shim_events)
-    : "unknown";
+  return {
+    terminal: classify(
+      "terminal",
+      terminalObservations(left),
+      terminalObservations(right),
+    ),
+    interaction: classify(
+      "terminal",
+      left.interaction_events,
+      right.interaction_events,
+    ),
+    exit:
+      hasUnknown(left, "exit") || hasUnknown(right, "exit")
+        ? "unknown"
+        : JSON.stringify({ exit: left.exit, settlement: left.settlement }) ===
+            JSON.stringify({ exit: right.exit, settlement: right.settlement })
+          ? "unchanged"
+          : "changed",
+    filesystem: classify(
+      "filesystem",
+      filesystemObservations(left),
+      filesystemObservations(right),
+    ),
+    protocol: classify("protocol", left.protocol_events, right.protocol_events),
+    process: classify("process", left.process_samples, right.process_samples),
+    shim: sameNormalization
+      ? classifyCollection(left.shim_events, right.shim_events)
+      : "unknown",
+  };
+};
+
+/** Compare bounded captures without equating missing or incompatible evidence. */
+/**
+ * Compare two Process Capture v4 observations without treating absence as proof.
+ *
+ * Observed differences outrank residual unknowns. A capture may therefore be
+ * definitively changed in one dimension while completeness remains unknown.
+ */
+export const compareProcessCaptures = (
+  left: ProcessCapture,
+  right: ProcessCapture,
+  options: {
+    readonly maxCaptureAgeMs?: number;
+    readonly now?: () => number;
+  } = {},
+): ProcessCaptureComparison => {
+  assertComparable(left, right, options);
+  if (left.truncated || right.truncated) return truncatedComparison();
+  const sameNormalization =
+    JSON.stringify(left.normalization) === JSON.stringify(right.normalization);
+  const dimensions = compareDimensions(left, right, sameNormalization);
   const observedFirstDivergence = chooseFirstDivergence([
     firstCollectionDivergence(
       "terminal",
@@ -279,7 +330,11 @@ export const compareProcessCaptures = (
       left.interaction_events,
       right.interaction_events,
     ),
-    firstCollectionDivergence("exit", [left.exit], [right.exit]),
+    firstCollectionDivergence(
+      "exit",
+      [{ ...left.exit, settlement: left.settlement }],
+      [{ ...right.exit, settlement: right.settlement }],
+    ),
     firstCollectionDivergence(
       "filesystem",
       filesystemObservations(left),
@@ -311,21 +366,15 @@ export const compareProcessCaptures = (
         : observedFirstDivergence;
   return {
     status: comparisonStatus([
-      terminal,
-      interaction,
-      exit,
-      filesystem,
-      protocol,
-      process,
-      shim,
+      dimensions.terminal,
+      dimensions.interaction,
+      dimensions.exit,
+      dimensions.filesystem,
+      dimensions.protocol,
+      dimensions.process,
+      dimensions.shim,
     ]),
-    terminal,
-    interaction,
-    exit,
-    filesystem,
-    protocol,
-    process,
-    shim,
+    ...dimensions,
     first_divergence: firstDivergence,
     limitations: [
       ...left.limitations,

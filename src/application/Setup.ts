@@ -22,6 +22,9 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { installMacHopper } from "./MacHopper.js";
+import { installCanonicalSkill } from "./SetupSkill.js";
+
+export { installCanonicalSkill } from "./SetupSkill.js";
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
@@ -100,6 +103,65 @@ export type SetupConfirmation = (
   actions: readonly SetupAction[],
 ) => Promise<boolean>;
 
+const setupPlan = (
+  platform: NodeJS.Platform,
+  hopperPath: string | undefined,
+  clients: readonly SetupClient[],
+): readonly SetupAction[] => [
+  ...(hopperPath === undefined
+    ? [
+        {
+          kind: "install_hopper" as const,
+          target:
+            platform === "darwin"
+              ? "~/Applications/Hopper Disassembler.app"
+              : "system package manager",
+          detail:
+            "Download the official Hopper package, verify it, install it, and open Hopper for activation.",
+          external: true,
+        },
+      ]
+    : []),
+  ...clients
+    .filter(({ format }) => format !== "unsupported")
+    .map(
+      (client): SetupAction => ({
+        kind: "configure_client",
+        target: client.configPath,
+        detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
+        external: false,
+      }),
+    ),
+  {
+    kind: "install_skill",
+    target: "~/.agents/skills/rea-analysis/SKILL.md",
+    detail: "Install or update the bundled REA analysis skill.",
+    external: false,
+  },
+];
+
+const configureDetectedClients = async (options: {
+  readonly host: SetupHost;
+  readonly detectedClients: readonly SetupClient[];
+  readonly hopperPath: string | undefined;
+  readonly clients: Record<string, ClientConfigurationResult>;
+  readonly appliedActions: string[];
+}): Promise<string | undefined> => {
+  for (const client of options.detectedClients) {
+    const result = await options.host.configureClient(
+      client,
+      options.hopperPath,
+      registrationCommand(),
+    );
+    options.clients[client.name] = result;
+    if (result.status === "failed")
+      return `${client.name} configuration ${result.reason} verification failed; no successful configuration was reported.`;
+    if (result.status === "configured")
+      options.appliedActions.push(`configured_${client.name}`);
+  }
+  return undefined;
+};
+
 /**
  * Install prerequisites and configure detected clients idempotently.
  * Discovery always precedes mutation. Interactive confirmation or explicit
@@ -125,38 +187,7 @@ export const runSetup = async (
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
   const detectedClients = await host.detectedClients();
-  plannedActions = [
-    ...(hopperPath === undefined
-      ? [
-          {
-            kind: "install_hopper" as const,
-            target:
-              host.platform === "darwin"
-                ? "~/Applications/Hopper Disassembler.app"
-                : "system package manager",
-            detail:
-              "Download the official Hopper package, verify it, install it, and open Hopper for activation.",
-            external: true,
-          },
-        ]
-      : []),
-    ...detectedClients
-      .filter(({ format }) => format !== "unsupported")
-      .map(
-        (client): SetupAction => ({
-          kind: "configure_client",
-          target: client.configPath,
-          detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
-          external: false,
-        }),
-      ),
-    {
-      kind: "install_skill",
-      target: "~/.agents/skills/rea-analysis/SKILL.md",
-      detail: "Install or update the bundled REA analysis skill.",
-      external: false,
-    },
-  ];
+  plannedActions = setupPlan(host.platform, hopperPath, detectedClients);
   let approved = options.approved;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
@@ -191,20 +222,14 @@ export const runSetup = async (
       };
     appliedActions.push("installed_hopper");
   }
-  for (const client of detectedClients) {
-    const result = await host.configureClient(
-      client,
-      hopperPath,
-      registrationCommand(),
-    );
-    clients[client.name] = result;
-    if (result.status === "failed")
-      return fail(
-        `${client.name} configuration ${result.reason} verification failed; no successful configuration was reported.`,
-      );
-    if (result.status === "configured")
-      appliedActions.push(`configured_${client.name}`);
-  }
+  const clientFailure = await configureDetectedClients({
+    host,
+    detectedClients,
+    hopperPath,
+    clients,
+    appliedActions,
+  });
+  if (clientFailure !== undefined) return fail(clientFailure);
   const skill = await host.installSkill();
   if (skill === "failed")
     return fail("Agent skill installation or readback failed.");
@@ -483,56 +508,6 @@ export const configureTomlClient = async (
     status: "configured",
     ...(backupPath === undefined ? {} : { backupPath }),
   };
-};
-
-/** Transactionally install or upgrade the versioned canonical REA skill. */
-export const installCanonicalSkill = async (
-  home: string,
-): Promise<"installed" | "unchanged" | "failed"> => {
-  const destination = join(
-    home,
-    ".agents/skills",
-    PRODUCT_IDENTITY.skillName,
-    "SKILL.md",
-  );
-  const backup = `${destination}.rea.backup`;
-  let original: string | undefined;
-  try {
-    const content = await readFile(
-      new URL(
-        `../../skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    original = await readFile(destination, "utf8").catch(() => undefined);
-    if (original === content) return "unchanged";
-    await mkdir(dirname(destination), { recursive: true });
-    if (original !== undefined)
-      await writeFileAtomic(backup, original, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-    await writeFileAtomic(destination, content, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    if ((await readFile(destination, "utf8")) !== content)
-      throw new Error("skill readback mismatch");
-    return "installed";
-  } catch {
-    try {
-      if (original === undefined) await rm(destination, { force: true });
-      else
-        await writeFileAtomic(destination, original, {
-          encoding: "utf8",
-          mode: 0o600,
-        });
-    } catch {
-      // The backup remains beside the skill for explicit operator recovery.
-    }
-    return "failed";
-  }
 };
 
 const major = (version: string): number =>

@@ -283,7 +283,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     const captureEvidence = (capture: typeof left) =>
       createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-capture/v3",
+        predicateType: "rea.process-capture/v4",
         operation: "capture_process_scenario",
         parameters: {},
         result: jsonValueSchema.parse(capture),

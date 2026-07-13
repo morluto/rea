@@ -33,7 +33,7 @@ const source = (
     {
       predicateType:
         authority === "controlled-replay"
-          ? "rea.process-capture/v3"
+          ? "rea.process-capture/v4"
           : "rea.analysis/v2",
       operation:
         authority === "controlled-replay"
@@ -89,10 +89,10 @@ const processComparison = (
     {
       id: "rea-process",
       name: "REA deterministic process harness",
-      version: "2",
+      version: "3",
     },
     {
-      predicateType: "rea.process-comparison/v2",
+      predicateType: "rea.process-comparison/v3",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: left.evidence_id,

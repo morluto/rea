@@ -99,6 +99,8 @@ export const startCommandShimReplay = async (
             sequence: events.length,
             at_ms: Math.max(0, Date.now() - started),
             command: invocation.command,
+            route_index:
+              routeIndex !== undefined && routeIndex >= 0 ? routeIndex : null,
             arguments: invocation.arguments,
             working_directory: invocation.working_directory,
             outcome,

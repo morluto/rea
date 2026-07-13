@@ -2,7 +2,7 @@
 name: rea-analysis
 description: Reverse engineer apps with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "11"
+  version: "12"
   tool_count: 68
 ---
 
@@ -36,13 +36,19 @@ REA accepts a `.app` bundle directly. Do not expose its internal `Contents/MacOS
 
 Briefly tell the user what you will investigate. Open the app with `open_binary`, begin with `binary_overview`, and narrow the investigation around the requested feature. Use decompilation, strings, names, callers, callees, and cross-references as needed.
 
-For applications, ZIP/APK/IPA packages, or Electron ASAR archives, call
+For applications, ZIP/APK/IPA packages, Electron ASAR archives, or DMGs, call
 `inventory_artifact` before extraction. Follow its deterministic occurrence
 pages and cite graph manifest IDs. `extract_artifact` requires explicit user
 approval, an absent absolute output root, and selected occurrence IDs; never
 extract every entry implicitly. Symlinks and encrypted entries are inventory
-facts, not extractable files. Nested containers require a separate deliberate
-inventory step.
+facts, not extractable files. Inventory traverses discovered ASARs within the
+same graph and shared limits, including ASARs inside an approved mounted DMG.
+
+Native DMG traversal is macOS-only, read-only, and disabled by default. Use it
+only when the user approves that inventory call with
+`native_mount_approved: true` and the operator has separately enabled
+`REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Without both gates, retain the DMG
+root-hash-only result. Never imply that approval changes extraction authority.
 
 Explain conclusions in plain language. Point to the relevant decompiled code, strings, names, and connections so the user can see how the explanation was reached. Do not claim to recover original source code or automatically clone an application.
 
@@ -56,6 +62,15 @@ limitations and residual unknowns. Process capture is disabled by default,
 requires per-call approval plus operator policy, and uses host networking only
 when the operator explicitly permits it. It is behavioral evidence, not a
 security sandbox.
+
+`capture_process_scenario` produces Process Capture v4 only. If a boundary
+reports Process Capture v3, tell the user or calling agent to rerun the original
+scenario; v3 cannot be upgraded because it lacks required manifest and
+settlement evidence. Treat the v4 manifest commitments as compatibility and
+provenance evidence, and distinguish root exit from descendant settlement.
+When comparing stored captures, set `max_capture_age_ms` when the task requires
+fresh behavioral evidence. Different scenario and executable digests are
+allowed, but schema and comparison-contract digests must be compatible.
 
 Do not let unanswered questions disappear. Use `record_unknown` only with
 explicit approval, attach supporting and contradicting evidence IDs, and record

@@ -47,6 +47,7 @@ describe("runtime configuration", () => {
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
         logLevel: "info",
+        artifactNativeMountEnabled: false,
         processExecutionPolicy: {
           enabled: false,
           executableRoots: [],
