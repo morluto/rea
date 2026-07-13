@@ -129,6 +129,8 @@ class NativeMacOSClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: { readonly signal?: AbortSignal },
   ) {
+    if (options?.signal?.aborted === true)
+      return err(new AnalysisCancelledError(operation));
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
     if (!isNativeOperation(operation))

@@ -365,12 +365,12 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "batch_decompile",
-    "Decompile up to 20 explicit procedure symbols or addresses concurrently. Per-item strings may contain errors or no-output markers, so validate each result; use analyze_function for a richer single-function dossier.",
+    "Decompile up to 20 explicit procedure symbols or addresses concurrently. Returns ordered per-item ok/error variants and aggregate counts; use analyze_function for a richer single-function dossier.",
     enhancedInputSchemas.batch_decompile,
   ),
   enhanced(
     "get_call_graph",
-    "Traverse Hopper's caller or callee relationships from one symbol or address for at most five levels. Nodes preserve per-procedure errors; indirect calls may be missing and results are not a whole-program CFG.",
+    "Traverse Hopper's caller or callee relationships from one symbol or address for at most five levels. Every node has an ok/error status and failures use safe typed projections; indirect calls may be missing and results are not a whole-program CFG.",
     enhancedInputSchemas.get_call_graph,
   ),
   enhanced(
@@ -380,7 +380,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve a name through Hopper and return analyzed references to its address. Use when starting from a selector or symbol; resolution failure is returned explicitly and xrefs remain untyped.",
+    "Resolve an exact name through Hopper's exhaustively paged name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; xrefs remain untyped.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(

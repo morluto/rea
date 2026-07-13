@@ -137,6 +137,26 @@ describe("native macOS provider", () => {
     }
   });
 
+  it("classifies pre-aborted requests before operation or runner discovery", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const runner = new CountingRunner();
+    const client = new NativeMacOSProvider(runner, "linux").createClient(
+      machoTarget("/fixture"),
+    );
+
+    const result = await client.execute(
+      "list_architectures",
+      {},
+      {
+        signal: controller.signal,
+      },
+    );
+
+    expect(!result.ok && result.error._tag).toBe("AnalysisCancelledError");
+    expect(runner.calls).toBe(0);
+  });
+
   it("parses thin and universal lipo fixtures", async () => {
     expect(
       parseLipoArchitectures(await fixture("lipo-thin.txt")),
@@ -166,6 +186,15 @@ class FailingRunner implements NativeCommandRunner {
 
   run(tool: string) {
     return Promise.resolve(err(new NativeCommandFailure(tool, this.reason)));
+  }
+}
+
+class CountingRunner implements NativeCommandRunner {
+  calls = 0;
+
+  run(tool: string) {
+    this.calls += 1;
+    return Promise.resolve(err(new NativeCommandFailure(tool, "unavailable")));
   }
 }
 

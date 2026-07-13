@@ -6,6 +6,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisProtocolError,
+  AnalysisTimeoutError,
+  ArtifactOperationError,
   BinaryTargetError,
   ConfigurationError,
   EvidenceFileError,
@@ -20,8 +22,10 @@ import {
   NoBinaryOpenError,
   ProviderAdapterError,
   ProviderSelectionError,
+  UnknownRegistryError,
   projectAnalysisError,
   type AnalysisError,
+  type AnalysisErrorTag,
 } from "../src/domain/errors.js";
 import { ProcessCaptureError } from "../src/application/ProcessHarness.js";
 
@@ -34,35 +38,67 @@ describe("analysis error projection", () => {
 
   it("exhaustively projects stable tags without causes or local paths", () => {
     const secretCause = new Error("secret-token");
-    const errors: readonly AnalysisError[] = [
-      new AnalysisProtocolError("protocol"),
-      new AnalysisInputError("overview", { cause: secretCause }),
-      new AnalysisOutputError("overview", "invalid shape", {
+    const byTag = {
+      AnalysisProtocolError: new AnalysisProtocolError("protocol failed"),
+      AnalysisInputError: new AnalysisInputError("overview", {
         cause: secretCause,
       }),
-      new AnalysisCapabilityUnavailableError("fixture", "overview", "absent"),
-      new AnalysisCancelledError("overview"),
-      new ProviderSelectionError("overview"),
-      new ProviderAdapterError("fixture", "overview", { cause: secretCause }),
-      new ProcessCaptureError("capture refused", { cause: secretCause }),
-      new EvidenceIntegrityError("integrity", { cause: secretCause }),
-      new EvidenceLimitError("records", 10),
-      new EvidenceFileError("read", "outside-root", { cause: secretCause }),
-      new HopperTimeoutError(100),
-      new HopperCancelledError(),
-      new HopperProtocolError("wire", { cause: secretCause }),
-      new HopperRemoteError(7, "safe"),
-      new HopperProcessError(1),
-      new HopperStartError({ cause: secretCause }),
-      new ConfigurationError("configuration", { cause: secretCause }),
-      new NoBinaryOpenError(),
-      new BinaryTargetError("/secret/local/path", "invalid", {
+      AnalysisOutputError: new AnalysisOutputError(
+        "overview",
+        "invalid shape",
+        {
+          cause: secretCause,
+        },
+      ),
+      AnalysisCapabilityUnavailableError:
+        new AnalysisCapabilityUnavailableError("fixture", "overview", "absent"),
+      AnalysisCancelledError: new AnalysisCancelledError("overview"),
+      AnalysisTimeoutError: new AnalysisTimeoutError("overview", 50),
+      ProviderSelectionError: new ProviderSelectionError("overview"),
+      ProviderAdapterError: new ProviderAdapterError("fixture", "overview", {
         cause: secretCause,
       }),
-    ];
+      ArtifactOperationError: new ArtifactOperationError(
+        "inventory_artifact",
+        "integrity",
+      ),
+      ProcessCaptureError: new ProcessCaptureError("capture failed", {
+        cause: secretCause,
+      }),
+      EvidenceIntegrityError: new EvidenceIntegrityError("integrity failed", {
+        cause: secretCause,
+      }),
+      EvidenceLimitError: new EvidenceLimitError("records", 10),
+      EvidenceFileError: new EvidenceFileError("read", "outside-root", {
+        cause: secretCause,
+      }),
+      UnknownRegistryError: new UnknownRegistryError("revision-conflict", {
+        cause: secretCause,
+      }),
+      HopperTimeoutError: new HopperTimeoutError(100),
+      HopperCancelledError: new HopperCancelledError(),
+      HopperProtocolError: new HopperProtocolError("wire failed", {
+        cause: secretCause,
+      }),
+      HopperRemoteError: new HopperRemoteError(7, "safe"),
+      HopperProcessError: new HopperProcessError(1),
+      HopperStartError: new HopperStartError({ cause: secretCause }),
+      ConfigurationError: new ConfigurationError("configuration failed", {
+        cause: secretCause,
+      }),
+      NoBinaryOpenError: new NoBinaryOpenError(),
+      BinaryTargetError: new BinaryTargetError(
+        "/secret/local/path",
+        "invalid",
+        {
+          cause: secretCause,
+        },
+      ),
+    } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
+    const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
     expect(new Set(projected.map(({ tag }) => tag)).size).toBe(errors.length);
-    expect(projected).toHaveLength(20);
+    expect(projected).toHaveLength(23);
     expect(JSON.stringify(projected)).not.toContain("secret-token");
     expect(JSON.stringify(projected)).not.toContain("/secret/local/path");
     expect(

@@ -425,6 +425,20 @@ try {
       json(text(current)).normalized_result !== "fixture"
     )
       throw new Error("packaged MCP bridge call failed");
+    const batch = await client.callTool(
+      { name: "batch_decompile", arguments: { addresses: ["0x1000"] } },
+      mcpOptions,
+    );
+    const batchResult = json(text(batch)).normalized_result;
+    if (
+      batch.isError === true ||
+      batchResult?.total !== 1 ||
+      batchResult?.succeeded !== 1 ||
+      batchResult?.failed !== 0 ||
+      batchResult?.items?.[0]?.status !== "ok" ||
+      batchResult?.items?.[0]?.pseudocode !== "return 0;"
+    )
+      throw new Error("packaged MCP structured batch result failed");
     const closed = await client.callTool(
       { name: "close_binary", arguments: {} },
       mcpOptions,

@@ -24,6 +24,10 @@ export interface AddressedPage {
   readonly hasMore: boolean;
 }
 
+/** Return the non-negative byte distance between hexadecimal addresses. */
+export const addressDistance = (start: string, end: string): number =>
+  Math.max(0, Number.parseInt(end, 16) - Number.parseInt(start, 16));
+
 const procedureMapSchema = z.record(z.string(), z.string());
 const addressedNamesSchema = z.array(
   z.object({ address: z.string(), name: z.string() }),
