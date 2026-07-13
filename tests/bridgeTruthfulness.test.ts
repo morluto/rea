@@ -96,4 +96,18 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain('"type": _diagnostic_type(error)');
     expect(bridgeSource).not.toContain("traceback.format_exc");
   });
+
+  it("stops background analysis and closes the session-owned document", () => {
+    expect(bridgeSource).toContain("def _session_document():");
+    expect(bridgeSource).toContain("os.path.realpath(REA_TARGET_PATH)");
+    expect(bridgeSource).toContain("document.getExecutableFilePath()");
+    expect(bridgeSource).toContain("document.getDatabaseFilePath()");
+    expect(bridgeSource).toContain("document.backgroundProcessActive()");
+    expect(bridgeSource).toContain("document.requestBackgroundProcessStop()");
+    expect(bridgeSource).toContain("document.waitForBackgroundProcessToEnd()");
+    expect(bridgeSource).toContain("document.closeDocument()");
+    expect(bridgeSource).toContain(
+      "document_closed = _session_document() is None",
+    );
+  });
 });

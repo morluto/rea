@@ -126,7 +126,14 @@ const server = createServer((socket) => {
           true,
         );
       } else if (request.method === "shutdown") {
-        send({ id: request.id, result: { shutdown: true } });
+        send({
+          id: request.id,
+          result: {
+            shutdown: true,
+            analysis_stopped: true,
+            document_closed: true,
+          },
+        });
         setTimeout(() => server.close(), 2);
       } else if (request.method === "hang") {
         // Deliberately leave the request pending.

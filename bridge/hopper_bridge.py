@@ -18,6 +18,19 @@ _selected_document = None
 _search_inventory_cache = {}
 MAX_SEARCH_PATTERN_LENGTH = 256
 MAX_SEARCH_VALUE_LENGTH = 4096
+
+
+def _session_document():
+    """Find only the document opened for this authenticated REA session."""
+    target = os.path.realpath(REA_TARGET_PATH)
+    for document in Document.getAllDocuments():
+        paths = (document.getExecutableFilePath(), document.getDatabaseFilePath())
+        for path in paths:
+            if path and os.path.realpath(path) == target:
+                return document
+    return None
+
+
 MAX_REGEX_BACKTRACKING_PATHS = 10000
 MAX_REGEX_CANDIDATE_LENGTH = 4096
 MAX_REGEX_SEARCH_WORK_UNITS = 1000000
@@ -616,7 +629,21 @@ def _dispatch(method, params):
     if method == "health":
         return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
     if method == "shutdown":
-        return {"shutdown": True}
+        document = _session_document()
+        if document is None:
+            return {"shutdown": True, "analysis_stopped": True, "document_closed": True}
+        if document.backgroundProcessActive():
+            document.requestBackgroundProcessStop()
+        if document.backgroundProcessActive():
+            document.waitForBackgroundProcessToEnd()
+        analysis_stopped = not document.backgroundProcessActive()
+        document.closeDocument()
+        document_closed = _session_document() is None
+        return {
+            "shutdown": True,
+            "analysis_stopped": analysis_stopped,
+            "document_closed": document_closed,
+        }
     if method == "list_documents":
         return [document.getDocumentName() for document in Document.getAllDocuments()]
     if method == "current_document":
