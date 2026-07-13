@@ -702,17 +702,17 @@ describe("process capture adapter", () => {
     if (!capability.available) return;
     const policy: ProcessExecutionPolicy = {
       enabled: true,
-      executableRoots: ["/bin"],
-      workingRoots: ["/tmp"],
+      executableRoots: [dirname(process.execPath)],
+      workingRoots: [dirname(processFixture)],
       allowedEnvironment: [],
       allowExternalNetwork: true,
     };
     const timedOut = await captureProcessScenario(
       parseProcessScenario({
         approved: true,
-        executable: "/bin/sh",
-        arguments: ["-c", "sleep 5"],
-        working_directory: "/tmp",
+        executable: process.execPath,
+        arguments: [processFixture, "hang"],
+        working_directory: dirname(processFixture),
         timeout_ms: 50,
         idle_timeout_ms: 5_000,
       }),
@@ -731,9 +731,9 @@ describe("process capture adapter", () => {
     const cancelled = await captureProcessScenario(
       parseProcessScenario({
         approved: true,
-        executable: "/bin/sh",
-        arguments: ["-c", "sleep 5"],
-        working_directory: "/tmp",
+        executable: process.execPath,
+        arguments: [processFixture, "hang"],
+        working_directory: dirname(processFixture),
         timeout_ms: 5_000,
         idle_timeout_ms: 5_000,
       }),
