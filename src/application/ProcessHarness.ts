@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn, type IPty } from "node-pty";
 import type {
-  FileState,
+  FilesystemCheckpoint,
+  InteractionEvent,
   ProcessCapture,
   ProcessExecutionPolicy,
   ProcessSample,
@@ -18,6 +19,15 @@ import { startLoopbackReplay, type LoopbackReplay } from "./LoopbackReplay.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { snapshotRoots, type SnapshotResult } from "./FilesystemSnapshot.js";
+import {
+  classifyFilesystemEffects,
+  ProcessCheckpoints,
+} from "./ProcessCheckpoints.js";
+import { TerminalRenderer } from "./TerminalRenderer.js";
+import {
+  startCommandShimReplay,
+  type CommandShimReplay,
+} from "./CommandShimReplay.js";
 import {
   normalizeProcessSamples,
   normalizeProcessText,
@@ -104,12 +114,18 @@ export const probeProcessCaptureCapability =
     }
   };
 
+interface EnvironmentOptions {
+  readonly scenario: ProcessScenario;
+  readonly home: string;
+  readonly replay: LoopbackReplay;
+  readonly shimReplay: CommandShimReplay;
+  readonly runId: string;
+}
+
 const makeEnvironment = (
-  scenario: ProcessScenario,
-  home: string,
-  replay: LoopbackReplay,
-  runId: string,
+  options: EnvironmentOptions,
 ): Record<string, string> => {
+  const { scenario, home, replay, shimReplay, runId } = options;
   const environment: Record<string, string> = {
     ...scenario.environment,
     HOME: home,
@@ -122,36 +138,75 @@ const makeEnvironment = (
   }
   environment.REA_REPLAY_HTTP_URL = replay.httpUrl;
   environment.REA_REPLAY_WEBSOCKET_URL = replay.websocketUrl;
+  environment.REA_SHIM_LEDGER_URL = shimReplay.url;
+  environment.PATH = [shimReplay.binPath, environment.PATH ?? ""]
+    .filter((part) => part.length > 0)
+    .join(":");
   return environment;
 };
 
-const scheduleScenarioEvents = (
-  scenario: ProcessScenario,
-  getTerminal: () => IPty | undefined,
-  timers: Set<NodeJS.Timeout>,
-): void => {
-  for (const event of scenario.events) {
+interface ScenarioEventOptions {
+  readonly scenario: ProcessScenario;
+  readonly getTerminal: () => IPty | undefined;
+  readonly timers: Set<NodeJS.Timeout>;
+  readonly interactions: InteractionEvent[];
+  readonly renderer: TerminalRenderer;
+  readonly started: number;
+  readonly dispatchedEventIndexes: Set<number>;
+}
+
+const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
+  const { scenario, getTerminal, timers, interactions, renderer, started } =
+    options;
+  for (const [eventIndex, event] of scenario.events.entries()) {
     const timer = setTimeout(() => {
+      options.dispatchedEventIndexes.add(eventIndex);
       const terminal = getTerminal();
-      if (event.type === "input") terminal?.write(event.data);
-      else if (event.type === "resize")
-        terminal?.resize(event.columns, event.rows);
-      else terminal?.kill(event.signal);
+      const dispatchedAt = Math.max(0, Date.now() - started);
+      let outcome: InteractionEvent["outcome"] = "dispatched";
+      if (terminal === undefined) outcome = "target_exited";
+      else {
+        try {
+          if (event.type === "input") terminal.write(event.data);
+          else if (event.type === "resize") {
+            terminal.resize(event.columns, event.rows);
+            renderer.resize(event.columns, event.rows, dispatchedAt);
+          } else terminal.kill(event.signal);
+        } catch {
+          outcome = "failed";
+        }
+      }
+      interactions.push({
+        sequence: interactions.length,
+        scheduled_at_ms: event.at_ms,
+        dispatched_at_ms: dispatchedAt,
+        type: event.type,
+        data:
+          event.type === "input"
+            ? event.sensitive
+              ? `<redacted-input:${String(Buffer.byteLength(event.data))}-bytes>`
+              : normalizeProcessText(
+                  event.data,
+                  scenario,
+                  "<no-temporary-root>",
+                  -1,
+                )
+            : event.type === "resize"
+              ? `${String(event.columns)}x${String(event.rows)}`
+              : event.signal,
+        outcome,
+      });
     }, event.at_ms);
     timers.add(timer);
   }
 };
 
-const startScenarioEvents = (
-  scenario: ProcessScenario,
-  getTerminal: () => IPty | undefined,
-  timers: Set<NodeJS.Timeout>,
-): (() => void) => {
-  let started = false;
+const startScenarioEvents = (options: ScenarioEventOptions): (() => void) => {
+  let eventsStarted = false;
   return () => {
-    if (started) return;
-    started = true;
-    scheduleScenarioEvents(scenario, getTerminal, timers);
+    if (eventsStarted) return;
+    eventsStarted = true;
+    scheduleScenarioEvents(options);
   };
 };
 
@@ -167,6 +222,8 @@ interface TerminalExitOptions {
   readonly lastOutput: () => number;
   readonly signal: AbortSignal | undefined;
   readonly timers: Set<NodeJS.Timeout>;
+  readonly interactions: InteractionEvent[];
+  readonly dispatchedEventIndexes: ReadonlySet<number>;
 }
 
 interface CaptureResultOptions {
@@ -184,36 +241,18 @@ interface CaptureResultOptions {
   readonly scenario: ProcessScenario;
   readonly rootPid: number;
   readonly samplingPartial: boolean;
+  readonly renderedFrames: ProcessCapture["rendered_frames"];
+  readonly interactions: readonly InteractionEvent[];
+  readonly checkpoints: readonly FilesystemCheckpoint[];
+  readonly shimEvents: ProcessCapture["shim_events"];
 }
 
-const classifyFilesystemEffects = (
-  before: readonly FileState[],
-  after: readonly FileState[],
-): ProcessCapture["filesystem_effects"] => {
-  const beforeByPath = new Map(before.map((file) => [file.path, file]));
-  const afterByPath = new Map(after.map((file) => [file.path, file]));
-  const paths = [
-    ...new Set([...beforeByPath.keys(), ...afterByPath.keys()]),
-  ].sort();
-  return paths.map((path) => {
-    const beforeFile = beforeByPath.get(path) ?? null;
-    const afterFile = afterByPath.get(path) ?? null;
-    const status =
-      beforeFile === null
-        ? "created"
-        : afterFile === null
-          ? "deleted"
-          : JSON.stringify(beforeFile) === JSON.stringify(afterFile)
-            ? "unchanged"
-            : "modified";
-    return { path, status, before: beforeFile, after: afterFile };
-  });
-};
-
 const buildCaptureResult = (options: CaptureResultOptions): ProcessCapture => ({
-  schema_version: 2,
+  schema_version: 3,
   normalization: options.scenario.normalization,
   frames: options.frames,
+  rendered_frames: options.renderedFrames,
+  interaction_events: options.interactions,
   exit: {
     code: options.exit.exitCode < 0 ? null : options.exit.exitCode,
     signal: options.exit.signal ?? null,
@@ -224,6 +263,8 @@ const buildCaptureResult = (options: CaptureResultOptions): ProcessCapture => ({
     options.scenario,
     options.rootPid,
   ),
+  filesystem_checkpoints: options.checkpoints,
+  shim_events: options.shimEvents,
   protocol_events: redactProtocolEvents(
     options.replay.events,
     options.scenario,
@@ -266,6 +307,8 @@ const awaitTerminalExit = async ({
   lastOutput,
   signal,
   timers,
+  interactions,
+  dispatchedEventIndexes,
 }: TerminalExitOptions): Promise<{
   exitCode: number;
   signal?: number;
@@ -274,6 +317,22 @@ const awaitTerminalExit = async ({
   new Promise((resolveExit) => {
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
     terminal.onExit((exit) => {
+      for (const [eventIndex, event] of scenario.events.entries()) {
+        if (dispatchedEventIndexes.has(eventIndex)) continue;
+        interactions.push({
+          sequence: interactions.length,
+          scheduled_at_ms: event.at_ms,
+          dispatched_at_ms: Math.max(0, Date.now() - started),
+          type: event.type,
+          data:
+            event.type === "input"
+              ? "<not-dispatched>"
+              : event.type === "resize"
+                ? `${String(event.columns)}x${String(event.rows)}`
+                : event.signal,
+          outcome: "target_exited",
+        });
+      }
       for (const timer of timers) {
         clearTimeout(timer);
         clearInterval(timer);
@@ -300,8 +359,12 @@ const releaseProcessResources = async (options: {
   readonly timers: ReadonlySet<NodeJS.Timeout>;
   readonly replay: LoopbackReplay | undefined;
   readonly terminal: IPty | undefined;
+  readonly renderer: TerminalRenderer | undefined;
+  readonly shimReplay: CommandShimReplay | undefined;
+  readonly checkpoints: ProcessCheckpoints | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
+  readonly sampledProcessGroupIds: readonly number[];
 }): Promise<string | undefined> => {
   for (const timer of options.timers) clearTimeout(timer);
   let failure: string | undefined;
@@ -310,13 +373,34 @@ const releaseProcessResources = async (options: {
   } catch {
     failure = "loopback replay cleanup failed";
   }
+  try {
+    await options.shimReplay?.close();
+  } catch {
+    failure ??= "command shim replay cleanup failed";
+  }
+  try {
+    await options.renderer?.dispose();
+  } catch {
+    failure ??= "terminal renderer cleanup failed";
+  }
+  try {
+    await options.checkpoints?.dispose();
+  } catch {
+    failure ??= "filesystem checkpoint cleanup failed";
+  }
   if (options.terminal !== undefined && process.platform !== "win32") {
-    const cleaned = await cleanupOwnedProcessGroup({
-      runId: options.runId,
-      leaderPid: options.terminal.pid,
-      processGroupId: options.terminal.pid,
-    });
-    if (!cleaned.cleaned) failure ??= cleaned.reason;
+    const processGroupIds = new Set([
+      options.terminal.pid,
+      ...options.sampledProcessGroupIds,
+    ]);
+    for (const processGroupId of processGroupIds) {
+      const cleaned = await cleanupOwnedProcessGroup({
+        runId: options.runId,
+        leaderPid: processGroupId,
+        processGroupId,
+      });
+      if (!cleaned.cleaned) failure ??= cleaned.reason;
+    }
   }
   try {
     await rm(options.temporaryRoot, { recursive: true, force: true });
@@ -334,6 +418,8 @@ const captureTerminalFrames = (options: {
   readonly temporaryRoot: string;
   readonly onOutput: () => void;
   readonly onFirstOutput: () => void;
+  readonly renderer: TerminalRenderer;
+  readonly checkpoints: ProcessCheckpoints;
 }): (() => boolean) => {
   let outputBytes = 0;
   let truncated = false;
@@ -349,20 +435,24 @@ const captureTerminalFrames = (options: {
       return;
     }
     outputBytes += bytes;
+    const atMs =
+      Math.floor(
+        (Date.now() - options.started) /
+          options.scenario.normalization.time_bucket_ms,
+      ) * options.scenario.normalization.time_bucket_ms;
+    const normalized = normalizeProcessText(
+      data,
+      options.scenario,
+      options.temporaryRoot,
+      options.terminal.pid,
+    );
     options.frames.push({
       sequence: options.frames.length,
-      at_ms:
-        Math.floor(
-          (Date.now() - options.started) /
-            options.scenario.normalization.time_bucket_ms,
-        ) * options.scenario.normalization.time_bucket_ms,
-      data: normalizeProcessText(
-        data,
-        options.scenario,
-        options.temporaryRoot,
-        options.terminal.pid,
-      ),
+      at_ms: atMs,
+      data: normalized,
     });
+    options.renderer.write(data, atMs);
+    options.checkpoints.observeTerminal(normalized);
   });
   return () => truncated;
 };
@@ -422,6 +512,9 @@ const runProcessScenario = async (
   let truncated = before.truncated;
   let terminal: IPty | undefined;
   let replay: LoopbackReplay | undefined;
+  let renderer: TerminalRenderer | undefined;
+  let checkpoints: ProcessCheckpoints | undefined;
+  let shimReplay: CommandShimReplay | undefined;
   let started = 0;
   let lastOutput = 0;
   const timers = new Set<NodeJS.Timeout>();
@@ -430,19 +523,45 @@ const runProcessScenario = async (
   let framesTruncated = (): boolean => false;
   let stopSampler = async () => ({ partial: false });
   let samplingPartial = false;
+  const interactions: InteractionEvent[] = [];
+  const dispatchedEventIndexes = new Set<number>();
 
   try {
     replay = await startLoopbackReplay(scenario);
     started = Date.now();
     lastOutput = started;
+    renderer = new TerminalRenderer({
+      columns: scenario.terminal.columns,
+      rows: scenario.terminal.rows,
+      scrollback: scenario.terminal.scrollback,
+      maxFrames: scenario.limits.frames,
+      maxBytes: scenario.limits.output_bytes,
+      normalize: (value) =>
+        normalizeProcessText(
+          value,
+          scenario,
+          temporaryRoot,
+          terminal?.pid ?? -1,
+        ),
+    });
+    checkpoints = new ProcessCheckpoints(scenario, started, before, signal);
+    shimReplay = await startCommandShimReplay(scenario, temporaryRoot, started);
     terminal = spawn(scenario.executable, [...scenario.arguments], {
       cwd: scenario.working_directory,
-      env: makeEnvironment(scenario, home, replay, runId),
-      cols: 80,
-      rows: 24,
+      env: makeEnvironment({ scenario, home, replay, shimReplay, runId }),
+      cols: scenario.terminal.columns,
+      rows: scenario.terminal.rows,
       name: "xterm-256color",
     });
-    const startEvents = startScenarioEvents(scenario, () => terminal, timers);
+    const startEvents = startScenarioEvents({
+      scenario,
+      getTerminal: () => terminal,
+      timers,
+      interactions,
+      renderer,
+      started,
+      dispatchedEventIndexes,
+    });
     if (!eventsRequireReadiness(scenario)) startEvents();
     framesTruncated = captureTerminalFrames({
       terminal,
@@ -452,6 +571,8 @@ const runProcessScenario = async (
       temporaryRoot,
       onOutput: () => (lastOutput = Date.now()),
       onFirstOutput: startEvents,
+      renderer,
+      checkpoints,
     });
     stopSampler = startProcessSampler(
       terminal.pid,
@@ -466,22 +587,30 @@ const runProcessScenario = async (
       lastOutput: () => lastOutput,
       signal,
       timers,
+      interactions,
+      dispatchedEventIndexes,
     });
     const exitReason = exit.reason;
-    samplingPartial = (await stopSampler()).partial;
+    checkpoints.trigger("root_exit");
     if (exitReason === "cancelled")
       throw new ProcessCaptureError("process capture was cancelled");
     await new Promise((resolveSettle) =>
       setTimeout(resolveSettle, scenario.settle_ms),
     );
+    checkpoints.trigger("settled");
+    samplingPartial = (await stopSampler()).partial;
     assertNotCancelled(signal);
     const after = await snapshotRoots(scenario, signal);
+    const renderedFrames = await renderer.frames();
+    const filesystemCheckpoints = await checkpoints.finish(after);
     truncated ||=
       after.truncated ||
       replay.truncated ||
+      shimReplay.truncated ||
       framesTruncated() ||
-      samples.length >= scenario.limits.processes;
-    truncated ||= samplingPartial;
+      filesystemCheckpoints.some(({ truncated: partial }) => partial) ||
+      samplingPartial;
+    truncated ||= renderer.truncated();
     capture = buildCaptureResult({
       frames,
       exit: { ...exit, reason: exitReason },
@@ -493,6 +622,26 @@ const runProcessScenario = async (
       scenario,
       rootPid: terminal.pid,
       samplingPartial,
+      renderedFrames,
+      interactions,
+      checkpoints: filesystemCheckpoints,
+      shimEvents: shimReplay.events.map((event) => ({
+        ...event,
+        arguments: event.arguments.map((argument) =>
+          normalizeProcessText(
+            argument,
+            scenario,
+            temporaryRoot,
+            terminal?.pid ?? -1,
+          ),
+        ),
+        working_directory: normalizeProcessText(
+          event.working_directory,
+          scenario,
+          temporaryRoot,
+          terminal?.pid ?? -1,
+        ),
+      })),
     });
   } catch (cause: unknown) {
     terminal?.kill("SIGKILL");
@@ -503,8 +652,14 @@ const runProcessScenario = async (
     timers,
     replay,
     terminal,
+    renderer,
+    shimReplay,
+    checkpoints,
     runId,
     temporaryRoot,
+    sampledProcessGroupIds: samples.flatMap(({ process_group_id }) =>
+      process_group_id === null ? [] : [process_group_id],
+    ),
   });
   return resolveProcessResult(capture, executionFailure, cleanupFailure);
 };

@@ -19,12 +19,7 @@ export const DENY_EVIDENCE_FILE_POLICY: EvidenceFilePolicy = {
   maxNodes: 1_000_000,
 };
 
-/** Provider identity for controlled process-capture evidence. */
-export const PROCESS_PROVIDER = {
-  id: "rea-process",
-  name: "REA deterministic process harness",
-  version: "1",
-} as const;
+export { PROCESS_PROVIDER } from "../application/ProcessEvidence.js";
 
 /** Provider identity for deterministic cross-artifact comparisons. */
 export const ARTIFACT_COMPARISON_PROVIDER = {

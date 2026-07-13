@@ -10,6 +10,7 @@ const reservedEnvironment = new Set([
   "REA_PROCESS_RUN_ID",
   "REA_REPLAY_HTTP_URL",
   "REA_REPLAY_WEBSOCKET_URL",
+  "REA_SHIM_LEDGER_URL",
 ]);
 const normalizationSchema = z.object({
   paths: z.boolean(),
@@ -22,6 +23,17 @@ const normalizationSchema = z.object({
       replacement: z.string().max(100),
     }),
   ),
+});
+const checkpointNameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u);
+const commandNameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
+const outputChunkSchema = z.object({
+  at_ms: z.number().int().nonnegative().max(300_000),
+  stream: z.enum(["stdout", "stderr"]),
+  data: z.string().max(1_000_000),
 });
 
 /** Exact boundary schema for bounded dynamic process scenarios. */
@@ -44,6 +56,62 @@ export const processScenarioSchema = z
     secret_aliases: z.array(environmentName).max(64).default([]),
     network_access: z.literal("host").default("host"),
     filesystem_roots: z.array(z.string().startsWith("/")).max(16).default([]),
+    terminal: z
+      .object({
+        columns: z.number().int().min(1).max(1_000).default(80),
+        rows: z.number().int().min(1).max(1_000).default(24),
+        scrollback: z.number().int().min(0).max(10_000).default(1_000),
+      })
+      .default({ columns: 80, rows: 24, scrollback: 1_000 }),
+    checkpoints: z
+      .array(
+        z.object({
+          name: checkpointNameSchema,
+          trigger: z.discriminatedUnion("type", [
+            z.object({
+              type: z.literal("time"),
+              at_ms: z.number().int().nonnegative().max(300_000),
+            }),
+            z.object({
+              type: z.literal("terminal_literal"),
+              value: z.string().min(1).max(10_000),
+              occurrence: z.number().int().positive().max(1_000).default(1),
+            }),
+            z.object({ type: z.literal("root_exit") }),
+            z.object({ type: z.literal("settled") }),
+          ]),
+        }),
+      )
+      .max(64)
+      .default([]),
+    command_shims: z
+      .array(
+        z.object({
+          name: commandNameSchema,
+          routes: z
+            .array(
+              z.object({
+                arguments: z.array(z.string()).max(256),
+                outputs: z.array(outputChunkSchema).max(1_000).default([]),
+                termination: z.discriminatedUnion("type", [
+                  z.object({
+                    type: z.literal("exit"),
+                    code: z.number().int().min(0).max(255),
+                  }),
+                  z.object({
+                    type: z.literal("signal"),
+                    signal: z.enum(["SIGINT", "SIGTERM", "SIGKILL"]),
+                  }),
+                ]),
+                max_calls: z.number().int().positive().max(100).default(1),
+              }),
+            )
+            .min(1)
+            .max(100),
+        }),
+      )
+      .max(32)
+      .default([]),
     events: z
       .array(
         z.discriminatedUnion("type", [
@@ -51,6 +119,7 @@ export const processScenarioSchema = z
             ...timedEventBase,
             type: z.literal("input"),
             data: z.string(),
+            sensitive: z.boolean().default(false),
           }),
           z.object({
             ...timedEventBase,
@@ -216,6 +285,28 @@ export const processScenarioSchema = z
         });
       }
     }
+    const checkpointNames = scenario.checkpoints.map(({ name }) => name);
+    for (const [index, name] of checkpointNames.entries()) {
+      if (name === "before" || name === "after_settlement")
+        context.addIssue({
+          code: "custom",
+          message: "checkpoint name is reserved by the capture lifecycle",
+          path: ["checkpoints", index, "name"],
+        });
+    }
+    if (new Set(checkpointNames).size !== checkpointNames.length)
+      context.addIssue({
+        code: "custom",
+        message: "checkpoint names must be unique",
+        path: ["checkpoints"],
+      });
+    const shimNames = scenario.command_shims.map(({ name }) => name);
+    if (new Set(shimNames).size !== shimNames.length)
+      context.addIssue({
+        code: "custom",
+        message: "command shim names must be unique",
+        path: ["command_shims"],
+      });
   });
 
 /** A parsed, bounded dynamic process observation scenario. */
@@ -304,6 +395,29 @@ export interface TerminalFrame {
   readonly data: string;
 }
 
+/** One rendered terminal state after xterm has parsed a PTY chunk or resize. */
+export interface RenderedTerminalFrame {
+  readonly sequence: number;
+  readonly at_ms: number;
+  readonly columns: number;
+  readonly rows: number;
+  readonly cursor_x: number;
+  readonly cursor_y: number;
+  readonly active_buffer: "normal" | "alternate";
+  readonly lines: readonly string[];
+  readonly serialized_state: string;
+}
+
+/** One attempted scripted interaction with the PTY. */
+export interface InteractionEvent {
+  readonly sequence: number;
+  readonly scheduled_at_ms: number;
+  readonly dispatched_at_ms: number;
+  readonly type: "input" | "resize" | "signal";
+  readonly data: string;
+  readonly outcome: "dispatched" | "target_exited" | "failed";
+}
+
 /** One filesystem state used for before/after comparison. */
 export interface FileState {
   readonly path: string;
@@ -327,6 +441,27 @@ export interface ProcessSample {
   readonly pid: number;
   readonly parent_pid: number;
   readonly command: string;
+  readonly process_group_id: number | null;
+  readonly session_id: number | null;
+}
+
+/** A named filesystem observation captured during a process lifecycle. */
+export interface FilesystemCheckpoint {
+  readonly name: string;
+  readonly at_ms: number;
+  readonly files: readonly FileState[];
+  readonly effects: readonly FileEffect[];
+  readonly truncated: boolean;
+}
+
+/** One invocation observed by the declarative command-shim replay adapter. */
+export interface ShimEvent {
+  readonly sequence: number;
+  readonly at_ms: number;
+  readonly command: string;
+  readonly arguments: readonly string[];
+  readonly working_directory: string;
+  readonly outcome: "matched" | "unmatched" | "exhausted";
 }
 
 /** A bounded loopback replay observation. */
@@ -347,15 +482,19 @@ export interface ProtocolEvent {
 
 /** A bounded process observation with explicit incompleteness metadata. */
 export interface ProcessCapture {
-  readonly schema_version: 2;
+  readonly schema_version: 3;
   readonly normalization: z.infer<typeof normalizationSchema>;
   readonly frames: readonly TerminalFrame[];
+  readonly rendered_frames: readonly RenderedTerminalFrame[];
+  readonly interaction_events: readonly InteractionEvent[];
   readonly exit: {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
   readonly process_samples: readonly ProcessSample[];
+  readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
+  readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
@@ -379,15 +518,56 @@ export interface ProcessCapture {
   };
 }
 
+const fileStateSchema = z.object({
+  path: z.string(),
+  type: z.enum(["file", "directory", "symlink", "other"]),
+  mode: z.number().int().nonnegative(),
+  size: z.number().int().nonnegative(),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
+  symlink_target: z.string().nullable(),
+});
+const fileEffectSchema = z.object({
+  path: z.string(),
+  status: z.enum(["created", "modified", "deleted", "unchanged"]),
+  before: fileStateSchema.nullable(),
+  after: fileStateSchema.nullable(),
+});
+
 /** Exact serialized shape of a bounded process capture. */
 export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
-  schema_version: z.literal(2),
+  schema_version: z.literal(3),
   normalization: normalizationSchema,
   frames: z.array(
     z.object({
       sequence: z.number().int().nonnegative(),
       at_ms: z.number().int().nonnegative(),
       data: z.string(),
+    }),
+  ),
+  rendered_frames: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
+      columns: z.number().int().positive(),
+      rows: z.number().int().positive(),
+      cursor_x: z.number().int().nonnegative(),
+      cursor_y: z.number().int().nonnegative(),
+      active_buffer: z.enum(["normal", "alternate"]),
+      lines: z.array(z.string()),
+      serialized_state: z.string(),
+    }),
+  ),
+  interaction_events: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      scheduled_at_ms: z.number().int().nonnegative(),
+      dispatched_at_ms: z.number().int().nonnegative(),
+      type: z.enum(["input", "resize", "signal"]),
+      data: z.string(),
+      outcome: z.enum(["dispatched", "target_exited", "failed"]),
     }),
   ),
   exit: z.object({
@@ -401,6 +581,27 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       pid: z.number().int().positive(),
       parent_pid: z.number().int().nonnegative(),
       command: z.string(),
+      process_group_id: z.number().int().positive().nullable(),
+      session_id: z.number().int().nonnegative().nullable(),
+    }),
+  ),
+  filesystem_checkpoints: z.array(
+    z.object({
+      name: z.string(),
+      at_ms: z.number().int().nonnegative(),
+      files: z.array(fileStateSchema),
+      effects: z.array(fileEffectSchema),
+      truncated: z.boolean(),
+    }),
+  ),
+  shim_events: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
+      command: z.string(),
+      arguments: z.array(z.string()),
+      working_directory: z.string(),
+      outcome: z.enum(["matched", "unmatched", "exhausted"]),
     }),
   ),
   protocol_events: z.array(
@@ -420,64 +621,9 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       ]),
     }),
   ),
-  files_before: z.array(
-    z.object({
-      path: z.string(),
-      type: z.enum(["file", "directory", "symlink", "other"]),
-      mode: z.number().int().nonnegative(),
-      size: z.number().int().nonnegative(),
-      sha256: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/u)
-        .nullable(),
-      symlink_target: z.string().nullable(),
-    }),
-  ),
-  files_after: z.array(
-    z.object({
-      path: z.string(),
-      type: z.enum(["file", "directory", "symlink", "other"]),
-      mode: z.number().int().nonnegative(),
-      size: z.number().int().nonnegative(),
-      sha256: z
-        .string()
-        .regex(/^[a-f0-9]{64}$/u)
-        .nullable(),
-      symlink_target: z.string().nullable(),
-    }),
-  ),
-  filesystem_effects: z.array(
-    z.object({
-      path: z.string(),
-      status: z.enum(["created", "modified", "deleted", "unchanged"]),
-      before: z
-        .object({
-          path: z.string(),
-          type: z.enum(["file", "directory", "symlink", "other"]),
-          mode: z.number().int().nonnegative(),
-          size: z.number().int().nonnegative(),
-          sha256: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/u)
-            .nullable(),
-          symlink_target: z.string().nullable(),
-        })
-        .nullable(),
-      after: z
-        .object({
-          path: z.string(),
-          type: z.enum(["file", "directory", "symlink", "other"]),
-          mode: z.number().int().nonnegative(),
-          size: z.number().int().nonnegative(),
-          sha256: z
-            .string()
-            .regex(/^[a-f0-9]{64}$/u)
-            .nullable(),
-          symlink_target: z.string().nullable(),
-        })
-        .nullable(),
-    }),
-  ),
+  files_before: z.array(fileStateSchema),
+  files_after: z.array(fileStateSchema),
+  filesystem_effects: z.array(fileEffectSchema),
   truncated: z.boolean(),
   limitations: z.array(z.string()),
   residual_unknowns: z.array(

@@ -107,7 +107,7 @@ describe("process capture domain", () => {
 
   it("never considers truncated captures equivalent", () => {
     const capture = {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       normalization: {
         paths: true,
         pids: true,
@@ -116,8 +116,12 @@ describe("process capture domain", () => {
         patterns: [],
       },
       frames: [],
+      rendered_frames: [],
+      interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      filesystem_checkpoints: [],
+      shim_events: [],
       protocol_events: [],
       files_before: [],
       files_after: [],
@@ -135,7 +139,7 @@ describe("process capture domain", () => {
 
   it("classifies missing observations as unknown and one-sided evidence as added", () => {
     const base = {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       normalization: {
         paths: true,
         pids: true,
@@ -144,8 +148,12 @@ describe("process capture domain", () => {
         patterns: [],
       },
       frames: [],
+      rendered_frames: [],
+      interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      filesystem_checkpoints: [],
+      shim_events: [],
       protocol_events: [],
       files_before: [],
       files_after: [],
@@ -161,6 +169,19 @@ describe("process capture domain", () => {
     const added = compareProcessCaptures(base, {
       ...base,
       frames: [{ sequence: 0, at_ms: 0, data: "new" }],
+      rendered_frames: [
+        {
+          sequence: 0,
+          at_ms: 0,
+          columns: 3,
+          rows: 1,
+          cursor_x: 3,
+          cursor_y: 0,
+          active_buffer: "normal",
+          lines: ["new"],
+          serialized_state: "new",
+        },
+      ],
     });
     expect(added.terminal).toBe("added");
     expect(added.status).toBe("changed");
@@ -169,12 +190,54 @@ describe("process capture domain", () => {
       base,
     );
     expect(unknown.process).toBe("unknown");
+    expect(unknown.shim).toBe("unchanged");
     expect(unknown.status).toBe("unknown");
+  });
+
+  it("compares raw terminal chunks even when rendered states agree", () => {
+    const capture = {
+      schema_version: 3 as const,
+      normalization: {
+        paths: true,
+        pids: true,
+        ports: true,
+        time_bucket_ms: 10,
+        patterns: [],
+      },
+      frames: [{ sequence: 0, at_ms: 0, data: "bar" }],
+      rendered_frames: [],
+      interaction_events: [],
+      exit: { code: 0, signal: null, reason: "exited" as const },
+      process_samples: [],
+      filesystem_checkpoints: [],
+      shim_events: [],
+      protocol_events: [],
+      files_before: [],
+      files_after: [],
+      filesystem_effects: [],
+      truncated: false,
+      limitations: [],
+      residual_unknowns: [],
+      cleanup: {
+        owned_process_group: "verified" as const,
+        temporary_root: "removed" as const,
+      },
+    };
+
+    const comparison = compareProcessCaptures(capture, {
+      ...capture,
+      frames: [{ sequence: 0, at_ms: 0, data: "foo\rbar" }],
+    });
+    expect(comparison.terminal).toBe("changed");
+    expect(comparison.first_divergence).toMatchObject({
+      status: "found",
+      dimension: "terminal",
+    });
   });
 
   it("keeps filesystem evidence unknown when stable snapshots match", () => {
     const capture = {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       normalization: {
         paths: true,
         pids: true,
@@ -183,8 +246,12 @@ describe("process capture domain", () => {
         patterns: [],
       },
       frames: [],
+      rendered_frames: [],
+      interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      filesystem_checkpoints: [],
+      shim_events: [],
       protocol_events: [],
       files_before: [],
       files_after: [],
@@ -203,11 +270,27 @@ describe("process capture domain", () => {
     const comparison = compareProcessCaptures(capture, capture);
     expect(comparison.filesystem).toBe("unknown");
     expect(comparison.status).toBe("unknown");
+
+    const complete = { ...capture, residual_unknowns: [] };
+    const transient = compareProcessCaptures(complete, {
+      ...complete,
+      filesystem_checkpoints: [
+        {
+          name: "during_run",
+          at_ms: 10,
+          files: [],
+          effects: [],
+          truncated: false,
+        },
+      ],
+    });
+    expect(transient.filesystem).toBe("changed");
+    expect(transient.status).toBe("changed");
   });
 
   it("detects changes in normalized process sample metadata", () => {
     const capture = {
-      schema_version: 2 as const,
+      schema_version: 3 as const,
       normalization: {
         paths: true,
         pids: true,
@@ -216,10 +299,21 @@ describe("process capture domain", () => {
         patterns: [],
       },
       frames: [],
+      rendered_frames: [],
+      interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [
-        { at_ms: 10, pid: 1, parent_pid: 0, command: "worker" },
+        {
+          at_ms: 10,
+          pid: 1,
+          parent_pid: 0,
+          process_group_id: 1,
+          session_id: 1,
+          command: "worker",
+        },
       ],
+      filesystem_checkpoints: [],
+      shim_events: [],
       protocol_events: [],
       files_before: [],
       files_after: [],
@@ -235,7 +329,14 @@ describe("process capture domain", () => {
     const changed = {
       ...capture,
       process_samples: [
-        { at_ms: 20, pid: 1, parent_pid: 2, command: "worker" },
+        {
+          at_ms: 20,
+          pid: 1,
+          parent_pid: 2,
+          process_group_id: 1,
+          session_id: 1,
+          command: "worker",
+        },
       ],
     };
 
@@ -451,6 +552,96 @@ describe("process capture adapter", () => {
     }
   });
 
+  it("renders terminal state, records shim invocations, and captures literal checkpoints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-v3-test-"));
+    const script = join(root, "scenario.mjs");
+    await writeFile(
+      script,
+      [
+        'import { spawnSync } from "node:child_process";',
+        'const result = spawnSync("codex", ["--version"], { encoding: "utf8" });',
+        'const node = spawnSync("node", ["--version"], { encoding: "utf8" });',
+        "process.stdout.write(`probe:${result.stdout}`);",
+        "process.stdout.write(`runtime:${node.stdout}`);",
+      ].join("\n"),
+    );
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const result = await captureProcessScenario(
+        parseProcessScenario({
+          approved: true,
+          executable: process.execPath,
+          arguments: [script],
+          working_directory: root,
+          filesystem_roots: [root],
+          checkpoints: [
+            {
+              name: "probe_seen",
+              trigger: { type: "terminal_literal", value: "probe:codex 1.2.3" },
+            },
+          ],
+          command_shims: [
+            {
+              name: "codex",
+              routes: [
+                {
+                  arguments: ["--version"],
+                  outputs: [
+                    { at_ms: 0, stream: "stdout", data: "codex 1.2.3\n" },
+                  ],
+                  termination: { type: "exit", code: 0 },
+                },
+              ],
+            },
+            {
+              name: "node",
+              routes: [
+                {
+                  arguments: ["--version"],
+                  outputs: [
+                    { at_ms: 0, stream: "stdout", data: "node 9.8.7\n" },
+                  ],
+                  termination: { type: "exit", code: 0 },
+                },
+              ],
+            },
+          ],
+        }),
+        {
+          enabled: true,
+          executableRoots: [dirname(process.execPath)],
+          workingRoots: [root],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      expect(result.value.schema_version).toBe(3);
+      expect(result.value.rendered_frames.at(-1)?.lines.join("\n")).toContain(
+        "probe:codex 1.2.3",
+      );
+      expect(result.value.shim_events).toEqual([
+        expect.objectContaining({
+          command: "codex",
+          arguments: ["--version"],
+          outcome: "matched",
+        }),
+        expect.objectContaining({
+          command: "node",
+          arguments: ["--version"],
+          outcome: "matched",
+        }),
+      ]);
+      expect(
+        result.value.filesystem_checkpoints.map(({ name }) => name),
+      ).toEqual(["before", "probe_seen", "after_settlement"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not follow or disclose symlink targets outside declared roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-symlink-test-"));
     await symlink("/etc/passwd", join(root, "escape"));
@@ -460,13 +651,13 @@ describe("process capture adapter", () => {
       const result = await captureProcessScenario(
         parseProcessScenario({
           approved: true,
-          executable: "/bin/true",
+          executable: "/usr/bin/true",
           working_directory: root,
           filesystem_roots: [root],
         }),
         {
           enabled: true,
-          executableRoots: ["/bin"],
+          executableRoots: ["/usr/bin"],
           workingRoots: [root],
           allowedEnvironment: [],
           allowExternalNetwork: true,

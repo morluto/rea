@@ -432,12 +432,12 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "capture_process_scenario",
-    "Run one bounded process under a PTY using operator-approved executable and working roots. Requires approved: true; unknown_registry_approved: true separately records capture residuals. Captures normalized terminal frames, descendants, filesystem snapshots, and loopback replay. Disabled unless operator policy enables it; not a security sandbox.",
+    "Run one bounded process under a PTY using operator-approved executable and working roots. Requires approved: true; unknown_registry_approved: true separately records capture residuals. Captures raw and xterm-rendered terminal frames, scripted interactions, lifecycle filesystem checkpoints, process ownership, declarative command shims, and loopback replay. Disabled unless operator policy enables it; not a security sandbox.",
     processScenarioSchema,
   ),
   session(
     "compare_process_captures",
-    "Compare two bounded process captures across terminal, exit, sampled process, filesystem, HTTP, and WebSocket evidence. Missing or truncated observations are never treated as equivalent.",
+    "Compare two Process Capture v3 observations across terminal, interaction, exit, process, filesystem, command-shim, HTTP, and WebSocket evidence, returning the first bounded divergence. Missing or truncated observations are never treated as equivalent.",
     z.object({
       left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
       left: processCaptureSchema,

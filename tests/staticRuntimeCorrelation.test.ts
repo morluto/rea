@@ -18,7 +18,7 @@ const capture = (digit: string): Evidence =>
     undefined,
     { id: "fixture", name: "Fixture", version: "1" },
     {
-      predicateType: "rea.process-capture/v2",
+      predicateType: "rea.process-capture/v3",
       operation: "capture_process_scenario",
       parameters: {},
       result: { digit },
@@ -41,10 +41,26 @@ const processComparison = (
   const result = {
     status: terminal,
     terminal,
+    interaction: terminal === "truncated" ? "truncated" : "unchanged",
     exit: terminal === "truncated" ? "truncated" : "unchanged",
     filesystem: terminal === "truncated" ? "truncated" : "unchanged",
     protocol: terminal === "truncated" ? "truncated" : "unchanged",
     process: terminal === "truncated" ? "truncated" : "unchanged",
+    shim: terminal === "truncated" ? "truncated" : "unchanged",
+    first_divergence:
+      terminal === "changed"
+        ? {
+            status: "found",
+            dimension: "terminal",
+            index: 0,
+            left_at_ms: 0,
+            right_at_ms: 0,
+            left: "left",
+            right: "right",
+          }
+        : terminal === "truncated" || terminal === "unknown"
+          ? { status: "unknown", reason: "Incomplete fixture." }
+          : { status: "none" },
     limitations: terminal === "unknown" ? ["Terminal unavailable."] : [],
   } satisfies JsonValue;
   return createEvidence(
@@ -52,10 +68,10 @@ const processComparison = (
     {
       id: "rea-process",
       name: "REA deterministic process harness",
-      version: "1",
+      version: "2",
     },
     {
-      predicateType: "rea.process-comparison/v1",
+      predicateType: "rea.process-comparison/v2",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: leftCapture.evidence_id,

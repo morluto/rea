@@ -33,7 +33,7 @@ const source = (
     {
       predicateType:
         authority === "controlled-replay"
-          ? "rea.process-capture/v2"
+          ? "rea.process-capture/v3"
           : "rea.analysis/v2",
       operation:
         authority === "controlled-replay"
@@ -55,10 +55,26 @@ const processResult = (
 ): JsonValue => ({
   status: terminal === "changed" ? "changed" : terminal,
   terminal,
+  interaction: "unchanged",
   exit: "unchanged",
   filesystem: "unchanged",
   protocol: "unchanged",
   process: "unchanged",
+  shim: "unchanged",
+  first_divergence:
+    terminal === "changed"
+      ? {
+          status: "found",
+          dimension: "terminal",
+          index: 0,
+          left_at_ms: 0,
+          right_at_ms: 0,
+          left: "left",
+          right: "right",
+        }
+      : terminal === "unknown"
+        ? { status: "unknown", reason: "Incomplete fixture." }
+        : { status: "none" },
   limitations: [],
 });
 
@@ -73,10 +89,10 @@ const processComparison = (
     {
       id: "rea-process",
       name: "REA deterministic process harness",
-      version: "1",
+      version: "2",
     },
     {
-      predicateType: "rea.process-comparison/v1",
+      predicateType: "rea.process-comparison/v2",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: left.evidence_id,

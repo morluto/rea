@@ -33,11 +33,11 @@ const comparison = (
       name: process
         ? "REA deterministic process harness"
         : "REA artifact comparison",
-      version: "1",
+      version: operation === "compare_process_captures" ? "2" : "1",
     },
     {
       predicateType: process
-        ? "rea.process-comparison/v1"
+        ? "rea.process-comparison/v2"
         : "rea.artifact-comparison/v1",
       operation,
       parameters: {},
@@ -58,10 +58,26 @@ const processResult = (
 ): JsonValue => ({
   status: overrides.status ?? "unchanged",
   terminal: overrides.terminal ?? "unchanged",
+  interaction: "unchanged",
   exit: overrides.exit ?? "unchanged",
   filesystem: "unchanged",
   protocol: "unchanged",
   process: "unchanged",
+  shim: "unchanged",
+  first_divergence:
+    overrides.status === "changed"
+      ? {
+          status: "found",
+          dimension: "terminal",
+          index: 0,
+          left_at_ms: 0,
+          right_at_ms: 0,
+          left: "left",
+          right: "right",
+        }
+      : overrides.status === "truncated" || overrides.status === "unknown"
+        ? { status: "unknown", reason: "Incomplete fixture." }
+        : { status: "none" },
   limitations: [],
 });
 
