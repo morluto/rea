@@ -15,6 +15,7 @@ export const ANALYSIS_ERROR_TAGS = [
   "EvidenceIntegrityError",
   "EvidenceLimitError",
   "EvidenceFileError",
+  "InvestigationWorkspaceError",
   "UnknownRegistryError",
   "HopperTimeoutError",
   "HopperCancelledError",
@@ -192,6 +193,29 @@ export class EvidenceFileError extends AnalysisError {
   }
 }
 
+/** Persistent investigation workspace access or CAS validation failed. */
+export class InvestigationWorkspaceError extends AnalysisError {
+  readonly _tag = "InvestigationWorkspaceError";
+
+  constructor(
+    readonly operation: "read" | "update",
+    readonly reason:
+      | "disabled"
+      | "outside-root"
+      | "not-file"
+      | "too-large"
+      | "invalid-json"
+      | "integrity"
+      | "locked"
+      | "revision-conflict"
+      | "name-conflict"
+      | "io",
+    options?: ErrorOptions,
+  ) {
+    super(`Investigation workspace ${operation} failed: ${reason}`, options);
+  }
+}
+
 /** Residual-unknown mutation failed a lifecycle, reference, or CAS invariant. */
 export class UnknownRegistryError extends AnalysisError {
   readonly _tag = "UnknownRegistryError";
@@ -347,6 +371,8 @@ const safeDetails = (
     return { limit: error.limit, maximum: error.maximum };
   if (error instanceof EvidenceFileError)
     return { operation: error.operation, reason: error.reason };
+  if (error instanceof InvestigationWorkspaceError)
+    return { operation: error.operation, reason: error.reason };
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof HopperTimeoutError)
     return { timeoutMs: error.timeoutMs };
@@ -374,6 +400,7 @@ const KNOWN_ERROR_TAGS = {
   EvidenceIntegrityError: true,
   EvidenceLimitError: true,
   EvidenceFileError: true,
+  InvestigationWorkspaceError: true,
   UnknownRegistryError: true,
   HopperTimeoutError: true,
   HopperCancelledError: true,

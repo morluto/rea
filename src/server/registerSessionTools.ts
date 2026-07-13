@@ -434,12 +434,17 @@ export const registerSessionTools = (
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerBundleComparisonTool(server, session, compareBundlesContract);
-  registerInvestigationTools(server, session, [
-    changedBehaviorContract,
-    callPathContract,
-    staticRuntimeContract,
-    reconstructionContract,
-  ]);
+  registerInvestigationTools(
+    server,
+    session,
+    [
+      changedBehaviorContract,
+      callPathContract,
+      staticRuntimeContract,
+      reconstructionContract,
+    ],
+    evidenceFilePolicy,
+  );
   registerUnknownTools({
     server,
     session,

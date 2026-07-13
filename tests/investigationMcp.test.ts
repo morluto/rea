@@ -1,4 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -14,8 +17,72 @@ import {
 import { parseEvidence } from "../src/domain/evidence.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
+import { readInvestigationWorkspace } from "../src/application/InvestigationWorkspaceStore.js";
+import type { EvidenceFilePolicy } from "../src/domain/evidenceBundle.js";
 
 describe("investigation MCP workflows", () => {
+  it("runs and reuses a persistent cross-version workspace", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-mcp-"));
+    const left = join(directory, "left");
+    const right = join(directory, "right");
+    const workspace = join(directory, "workspace.json");
+    await Promise.all([mkdir(left), mkdir(right)]);
+    await Promise.all([
+      writeFile(join(left, "feature.txt"), "old\n"),
+      writeFile(join(right, "feature.txt"), "new\n"),
+    ]);
+    const filePolicy = evidencePolicy(directory);
+    const { session, server, client } = await connected(filePolicy);
+    try {
+      const arguments_ = {
+        investigation_run: {
+          approved: true,
+          workspace_path: workspace,
+          workspace_name: "mcp-release-diff",
+          left_path: left,
+          right_path: right,
+          options: { page_size: 500, change_limit: 100 },
+        },
+      };
+      const first = await client.callTool({
+        name: "find_changed_behavior",
+        arguments: arguments_,
+      });
+      expect(first.isError).not.toBe(true);
+      const firstEvidence = parseEvidence(
+        z.object({ result: z.unknown() }).parse(first.structuredContent).result,
+      );
+      expect(firstEvidence.normalized_result).toMatchObject({
+        behavior_status: "unknown",
+        summary: { static_candidates: 2 },
+        investigation_run: { inventory_evidence_count: 2 },
+      });
+      expect(session.hasEvidence(firstEvidence.evidence_id)).toBe(true);
+      const loaded = await readInvestigationWorkspace(workspace, filePolicy);
+      expect(loaded).toMatchObject({
+        ok: true,
+        value: { revision: 3, runs: [{ status: "complete" }] },
+      });
+
+      const second = await client.callTool({
+        name: "find_changed_behavior",
+        arguments: arguments_,
+      });
+      expect(second.isError, JSON.stringify(second)).not.toBe(true);
+      const secondEvidence = parseEvidence(
+        z.object({ result: z.unknown() }).parse(second.structuredContent)
+          .result,
+      );
+      expect(secondEvidence.evidence_id).toBe(firstEvidence.evidence_id);
+      expect(
+        await readInvestigationWorkspace(workspace, filePolicy),
+      ).toMatchObject({ ok: true, value: { revision: 3 } });
+    } finally {
+      await close(session, server, client);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("aggregates comparison Evidence and records an approved runtime gap", async () => {
     const { session, server, client } = await connected();
     const comparison =
@@ -193,13 +260,17 @@ describe("investigation MCP workflows", () => {
   });
 });
 
-const connected = async () => {
+const connected = async (evidenceFilePolicy?: EvidenceFilePolicy) => {
   const session = new BinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
-  const server = createServer(session, session);
+  const server = createServer(
+    session,
+    session,
+    evidenceFilePolicy === undefined ? {} : { evidenceFilePolicy },
+  );
   const client = new Client({ name: "investigation-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -207,6 +278,14 @@ const connected = async () => {
   await client.connect(clientTransport);
   return { session, server, client };
 };
+
+const evidencePolicy = (root: string): EvidenceFilePolicy => ({
+  roots: [root],
+  maxBytes: 64 * 1024 * 1024,
+  maxDepth: 64,
+  maxStringLength: 1024 * 1024,
+  maxNodes: 1_000_000,
+});
 
 const close = async (
   session: BinarySession,

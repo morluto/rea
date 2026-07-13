@@ -198,6 +198,7 @@ Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots
 | Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent                     |
 | Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`                               |
 | Validate, canonicalize, or compare Evidence v2 bundles    | `rea evidence-import`, `rea evidence-export`, or `rea compare` |
+| Run or resume a persistent two-version artifact analysis  | `rea investigate-versions`                                     |
 | Import source as historical reference                     | `rea import-reference-source`                                  |
 | Capture or compare controlled process behavior            | `rea capture-process` or `rea compare-process-captures`        |
 
@@ -208,7 +209,17 @@ export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
+rea investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
 ```
+
+`investigate-versions` inventories both versions, checkpoints their observed
+Evidence, derives an artifact comparison, and records a changed-behavior report.
+The workspace uses deterministic content identities and monotonic CAS-linked
+revisions, so the same request resumes an interrupted run or reuses a completed
+run without replacing earlier investigations. It currently compares static
+artifact structure only; it does not execute either version, and its report
+keeps every difference labeled as a behavior candidate. See
+[Persistent investigation workspaces](docs/investigation-workspaces.md).
 
 Historical source import requires a separate allowlist and never treats source as current behavioral authority:
 
@@ -246,7 +257,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Reconstruct an app's authentication, storage, update, or networking flow.
 - Recover enough structure to document an undocumented format or interface.
 - Trace a suspicious behavior from a string or symbol to the code that implements it.
-- Compare implementation paths across two app versions by switching targets in one session.
+- Run, checkpoint, resume, and reuse a content-addressed artifact investigation across two versions.
 - Turn recovered behavior into product features, tests, migration notes, ports, or interoperable replacements.
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
@@ -273,6 +284,7 @@ REA is already useful for native application investigation on macOS:
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
+- Persist automatic cross-version artifact runs as canonical, lock-protected workspaces with tamper-evident revision commitments.
 - Capture approved PTY scenarios as Process Capture v3 Evidence, including raw and rendered terminal frames, scripted interactions, child-process lifecycle, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
 - Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
@@ -297,7 +309,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.
 6. **More static-analysis providers** — native platform utilities first, followed by Ghidra, IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, and other engines behind provider-neutral capabilities.
 7. **More targets and platforms** — Windows-native providers and ConPTY verification, Linux parity, websites and APIs, mobile artifacts, firmware, document formats, and other software-defined systems.
-8. **Differential reconstruction** — compare artifacts, functions, bundles, protocols, UIs, and process captures; track residual unknowns; verify a reconstruction against observed behavior.
+8. **Differential reconstruction expansion** — add automatic function matching, protocol/UI comparison, controlled replay, residual-unknown planning, and reconstruction verification to persistent version runs.
 
 Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
@@ -339,7 +351,7 @@ flowchart LR
     Artifact --> Target
 ```
 
-The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation.
+The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation. Approved persistent workspaces keep canonical Evidence and resumable run checkpoints across both process and session lifetimes.
 
 ## CLI
 
@@ -354,6 +366,7 @@ npx -y rea-agents function /Applications/Notes.app 0x1000
 npx -y rea-agents xrefs /Applications/Notes.app 0x1000
 npx -y rea-agents trace /Applications/Notes.app "offline"
 npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
+npx -y rea-agents investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes
 npx -y rea-agents capabilities
 npx -y rea-agents providers
 ```

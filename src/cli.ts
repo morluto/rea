@@ -18,6 +18,7 @@ import { parseConfig } from "./config.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
+import { registerInvestigationCommands } from "./cliInvestigationCommands.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -59,6 +60,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
   registerArtifactCommands(cli, logger);
+  registerInvestigationCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
   registerReferenceSourceCommand(cli, logger);
   registerProcessCommands(cli, logger);
@@ -69,10 +71,14 @@ const registerCoreCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  const overviewOptions = z.object({
-    detail: z.enum(["concise", "detailed"]).default("concise"),
-    limit: z.number().int().min(1).max(50).default(10),
-  });
+  registerManagementCommands(cli, logger);
+  registerOverviewCommands(cli, logger);
+};
+
+const registerManagementCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
   cli.command("setup", {
     description: "Install requirements and configure coding agents",
     options: z.object({
@@ -132,6 +138,17 @@ const registerCoreCommands = (
         ),
       ),
   });
+};
+
+const overviewOptions = z.object({
+  detail: z.enum(["concise", "detailed"]).default("concise"),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+const registerOverviewCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
   cli.command("analyze", {
     description: "Get an overview of an app",
     args: z.object({

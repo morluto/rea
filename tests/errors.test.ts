@@ -19,6 +19,7 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  InvestigationWorkspaceError,
   NoBinaryOpenError,
   ProviderAdapterError,
   ProviderSelectionError,
@@ -72,6 +73,11 @@ describe("analysis error projection", () => {
       EvidenceFileError: new EvidenceFileError("read", "outside-root", {
         cause: secretCause,
       }),
+      InvestigationWorkspaceError: new InvestigationWorkspaceError(
+        "update",
+        "revision-conflict",
+        { cause: secretCause },
+      ),
       UnknownRegistryError: new UnknownRegistryError("revision-conflict", {
         cause: secretCause,
       }),
@@ -98,7 +104,7 @@ describe("analysis error projection", () => {
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
     expect(new Set(projected.map(({ tag }) => tag)).size).toBe(errors.length);
-    expect(projected).toHaveLength(23);
+    expect(projected).toHaveLength(24);
     expect(JSON.stringify(projected)).not.toContain("secret-token");
     expect(JSON.stringify(projected)).not.toContain("/secret/local/path");
     expect(
