@@ -10,6 +10,7 @@ import type {
   InteractionEvent,
   ProcessCapture,
   ProcessExecutionPolicy,
+  ProcessPolicyDecision,
   ProcessSample,
   ProcessScenario,
   TerminalFrame,
@@ -405,7 +406,11 @@ export const prepareProcessCapture = async (
   readonly before: SnapshotResult;
 }> => {
   const decision = authorizeProcessScenario(scenario, policy);
-  if (!decision.allowed) throw new ProcessCaptureError(decision.reason);
+  if (!decision.allowed)
+    throw new ProcessCaptureError(decision.reason, {
+      userCategory: "permission_required",
+      userMessage: processPolicyMessage(decision.reason),
+    });
   await assertRealPathAuthority(scenario, policy);
   assertNotCancelled(signal);
   const before = await snapshotRoots(scenario, signal);
@@ -414,4 +419,24 @@ export const prepareProcessCapture = async (
   const home = join(temporaryRoot, "home");
   await import("node:fs/promises").then(({ mkdir }) => mkdir(home));
   return { temporaryRoot, runId, home, before };
+};
+
+const processPolicyMessage = (
+  reason: Exclude<ProcessPolicyDecision, { readonly allowed: true }>["reason"],
+): string => {
+  if (reason === "process capture is disabled")
+    return "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.";
+  if (reason === "host network access is not approved by operator policy")
+    return "This capture requests host network access, but policy does not allow it. Use replayed network access or ask the operator to enable external network capture.";
+  if (reason === "executable is outside approved roots")
+    return "The executable is outside the approved capture directories. Choose an approved executable or add its directory to `REA_PROCESS_EXECUTABLE_ROOTS_JSON`.";
+  if (reason === "working directory is outside approved roots")
+    return "The working directory is outside the approved capture directories. Choose an approved directory or add it to `REA_PROCESS_WORKING_ROOTS_JSON`.";
+  if (reason === "filesystem root is outside approved roots")
+    return "A requested filesystem root is outside the approved capture directories. Remove it or add its directory to `REA_PROCESS_WORKING_ROOTS_JSON`.";
+  if (
+    reason === "scenario requests an environment variable not allowed by policy"
+  )
+    return "The capture requests an environment variable that policy does not allow. Remove it or add its name to `REA_PROCESS_ALLOWED_ENV_JSON`.";
+  return reason satisfies never;
 };
