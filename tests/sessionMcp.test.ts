@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,12 +9,16 @@ import { z } from "zod";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
+import { probeProcessCaptureCapability } from "../src/application/ProcessHarness.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
 import { createServer } from "../src/server/createServer.js";
 import { evidenceBundleSchema } from "../src/domain/evidenceBundle.js";
 import { silentLogger } from "../src/logger.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
+const processFixture = fileURLToPath(
+  new URL("./fixtures/processFidelity.mjs", import.meta.url),
+);
 let directory: string | undefined;
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
@@ -173,13 +178,14 @@ describe("target-free MCP lifecycle", () => {
   }, 10_000);
 
   it("records approved process residuals in the unknown registry", async () => {
+    if (!(await probeProcessCaptureCapability()).available) return;
     const session = new BinarySession(() => client("fixture", []));
     const server = createServer(session, session, {
       logger: silentLogger,
       processPolicy: {
         enabled: true,
-        executableRoots: ["/usr/bin"],
-        workingRoots: ["/tmp"],
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [dirname(processFixture)],
         allowedEnvironment: [],
         allowExternalNetwork: true,
       },
@@ -196,13 +202,13 @@ describe("target-free MCP lifecycle", () => {
       arguments: {
         approved: true,
         unknown_registry_approved: true,
-        executable: "/usr/bin/printf",
-        arguments: ["abcdef"],
-        working_directory: "/tmp",
+        executable: process.execPath,
+        arguments: [processFixture, "partial"],
+        working_directory: dirname(processFixture),
         limits: { output_bytes: 1 },
       },
     });
-    expect(captured.isError).not.toBe(true);
+    expect(captured.isError, text(captured)).not.toBe(true);
     const listed = z
       .object({
         result: z.array(z.object({ question: z.string(), domain: z.string() })),
