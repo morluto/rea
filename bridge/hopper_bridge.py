@@ -634,10 +634,17 @@ def _dispatch(method, params):
             return {"shutdown": True, "analysis_stopped": True, "document_closed": True}
         if document.backgroundProcessActive():
             document.requestBackgroundProcessStop()
+        if REA_OWNS_PROCESS_LIFETIME:
+            return {
+                "shutdown": True,
+                "analysis_stopped": not document.backgroundProcessActive(),
+                "document_closed": False,
+                "cleanup_required": True,
+            }
         if document.backgroundProcessActive():
             document.waitForBackgroundProcessToEnd()
-        analysis_stopped = not document.backgroundProcessActive()
         document.closeDocument()
+        analysis_stopped = not document.backgroundProcessActive()
         document_closed = _session_document() is None
         return {
             "shutdown": True,

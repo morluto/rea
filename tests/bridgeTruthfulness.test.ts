@@ -104,6 +104,8 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain("document.getDatabaseFilePath()");
     expect(bridgeSource).toContain("document.backgroundProcessActive()");
     expect(bridgeSource).toContain("document.requestBackgroundProcessStop()");
+    expect(bridgeSource).toContain("if REA_OWNS_PROCESS_LIFETIME:");
+    expect(bridgeSource).toContain('"cleanup_required": True');
     expect(bridgeSource).toContain("document.waitForBackgroundProcessToEnd()");
     expect(bridgeSource).toContain("document.closeDocument()");
     expect(bridgeSource).toContain(

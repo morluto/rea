@@ -27,6 +27,8 @@ export interface BridgeSession {
 export interface BridgeLaunch {
   readonly process: ChildProcess;
   readonly ownsProcessLifetime: boolean;
+  /** True when verified process cleanup completes bridge shutdown. */
+  readonly shutdownByCleanup?: boolean;
   readonly cleanup?: () => Promise<ProcessCleanupResult>;
 }
 
@@ -69,11 +71,13 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     options: { readonly signal?: AbortSignal } = {},
   ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>> {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
+    const ownsProcessLifetime = usesLinuxDemo(this.options);
     const source = [
       `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
       `REA_TOKEN = ${JSON.stringify(session.token)}`,
       `REA_RUN_ID = ${JSON.stringify(session.runId)}`,
       `REA_TARGET_PATH = ${JSON.stringify(this.options.targetPath)}`,
+      `REA_OWNS_PROCESS_LIFETIME = ${ownsProcessLifetime ? "True" : "False"}`,
       `exec(compile(open(${JSON.stringify(this.options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(this.options.bridgeScriptPath)}, 'exec'))`,
       "",
     ].join("\n");
@@ -141,6 +145,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return ok({
         process: child,
         ownsProcessLifetime: true,
+        shutdownByCleanup: ownsProcessLifetime,
         cleanup: () =>
           cleanupOwnedProcessGroup(
             ownedProcessGroup(session, pid, ownershipCommand),
@@ -163,11 +168,7 @@ const linuxDemoLaunch = (
       readonly ownershipCommand: string;
     }
   | undefined => {
-  if (
-    process.platform !== "linux" ||
-    basename(options.launcherPath) !== "Hopper" ||
-    options.demoHelperPath === undefined
-  )
+  if (!usesLinuxDemo(options) || options.demoHelperPath === undefined)
     return undefined;
   return {
     command: "/usr/bin/python3",
@@ -184,6 +185,11 @@ const linuxDemoLaunch = (
     ],
   };
 };
+
+const usesLinuxDemo = (options: HopperApplicationLauncherOptions): boolean =>
+  process.platform === "linux" &&
+  basename(options.launcherPath) === "Hopper" &&
+  options.demoHelperPath !== undefined;
 
 const spawnLauncher = async (
   command: string,
