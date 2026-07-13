@@ -120,6 +120,17 @@ rea doctor
 rea analyze /Applications/Notes.app
 ```
 
+Update that global installation in place:
+
+```bash
+rea upgrade
+```
+
+REA checks npm for the latest release and verifies that the running package is
+the global installation it will replace. Source, local, and `npx` copies report
+the manual `npm install --global rea-agents@latest` command instead of updating
+an unrelated global package.
+
 Choose either the no-install commands or the global installation. You do not need both.
 
 ### Requirements

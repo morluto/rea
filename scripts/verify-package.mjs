@@ -119,6 +119,7 @@ try {
   const expectedDoctorHealth = supportedSetupHost;
   if (
     !help.includes("setup") ||
+    !help.includes("upgrade") ||
     !help.includes("inventory-artifact") ||
     !help.includes("extract-artifact") ||
     !help.includes("import-reference-source") ||
