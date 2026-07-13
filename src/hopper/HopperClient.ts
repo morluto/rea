@@ -173,7 +173,13 @@ export class HopperClient {
           {},
           { timeoutMs: SHUTDOWN_TIMEOUT_MS },
         ).catch(() => err(new HopperProcessError(null)));
-        if (!shutdown.ok || !isShutdownAcknowledgement(shutdown.value))
+        if (
+          !shutdown.ok ||
+          !isShutdownAcknowledgement(
+            shutdown.value,
+            this.#launch?.shutdownByCleanup === true,
+          )
+        )
           this.#logger.warn(
             { status: shutdown.ok ? "invalid-acknowledgement" : "failed" },
             "Hopper document shutdown was not confirmed",
@@ -412,13 +418,17 @@ const connectOnce = async (
     });
   });
 
-const isShutdownAcknowledgement = (value: JsonValue): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  value.shutdown === true &&
-  value.analysis_stopped === true &&
-  value.document_closed === true;
+const isShutdownAcknowledgement = (
+  value: JsonValue,
+  ownsProcessLifetime: boolean,
+): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  if (value.shutdown !== true) return false;
+  if (value.analysis_stopped === true && value.document_closed === true)
+    return true;
+  return ownsProcessLifetime && value.cleanup_required === true;
+};
 
 const parseServerInfo = (
   value: JsonValue,
