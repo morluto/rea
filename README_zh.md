@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-个工具组成的工作台)
-[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
 [快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [68 个工具](#68-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
@@ -76,20 +76,20 @@ npx skills add morluto/rea
 
 - macOS 12 或更高版本
 - Ubuntu 24.04+、Fedora 41+ 或 64 位 Arch Linux
-- Node.js 24.18.x 和 npm 11.16.x（运行 `nvm use` 选择固定版本）
+- Node.js 22.19+ 或 24.11+，以及随 Node 安装的 npm
 
-你不需要手动安装逆向工程工具。Setup 会在需要时安装 Homebrew 和 [Hopper](https://www.hopperapp.com/)，然后配置支持的编程智能体。Hopper 是独立软件，需要单独授权；Setup 可以安装它，但不提供许可证。
+`rea setup` 会先显示完整变更计划并请求确认。它不会安装或更新 Homebrew、Node.js 或 npm。缺少 [Hopper](https://www.hopperapp.com/) 时，Setup 会提议安装官方软件包；Hopper 是需要单独许可证的独立软件。
 
 #### Linux 安装与故障排除
 
 在 Ubuntu 24.04+、Fedora 41+ 和 64 位 Arch Linux 上，REA 会下载 Hopper 官方的 DEB、RPM 或 Arch 软件包，验证发布方提供的大小和校验和，然后通过 `apt-get`、`dnf` 或 `pacman` 安装依赖。非 root 运行时，`pkexec` 会显示系统授权提示；REA 不调用 `sudo`。
 
-默认启动器是 `/opt/hopper/bin/Hopper`。自定义安装可设置 `HOPPER_LAUNCHER_PATH`。如果 Doctor 报告缺少分析引擎，请运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'`，安装缺少的系统库后重新运行 `rea setup --yes`。真实分析需要 `DISPLAY` 或 `WAYLAND_DISPLAY` 以及已激活的 Hopper 许可证。Linux 上还应确保 `~/.local/bin` 位于 `PATH` 中。
+默认启动器是 `/opt/hopper/bin/Hopper`。自定义安装可设置 `HOPPER_LAUNCHER_PATH`。如果 Doctor 报告缺少分析引擎，请运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'`，安装缺少的系统库后重新运行 `rea setup`。真实分析需要 `DISPLAY` 或 `WAYLAND_DISPLAY` 以及已激活的 Hopper 许可证。Linux 上还应确保 `~/.local/bin` 位于 `PATH` 中。
 
 ```bash
 # 1. 安装和配置 REA
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents setup --yes
+npx -y rea-agents setup
 ```
 
 如果 macOS 或安装程序要求确认，请完成提示，然后再次运行同一命令。

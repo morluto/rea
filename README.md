@@ -11,14 +11,14 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-tools-for-investigation)
-[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
 [Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [68 tools](#68-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
-<code>curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code>
+<code>npm install --global rea-agents && rea setup</code>
 
 </div>
 
@@ -81,15 +81,24 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 
 ## Quick start
 
-### One-command install — recommended
+### Install the CLI — recommended
+
+```bash
+npm install --global rea-agents
+rea setup
+```
+
+Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or coding-agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
+
+REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
+
+An optional curl wrapper installs the same CLI package and starts setup only when a terminal is available:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 ```
 
-The installer supports macOS 12+, Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux. It installs compatible Node.js 24/npm 11 prerequisites, the exact latest `rea-agents-*` release, the official Hopper package, detected client registrations, and the bundled skill, then verifies the result. macOS uses Homebrew; Linux uses the native package manager and may show a system authorization prompt. Pin a reproducible release with `REA_VERSION=0.3.0`; `REA_VERSION` is the only supported installer environment override.
-
-REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It configures detected clients with documented local MCP files; Devin is reported as skipped because its public documentation does not define a local configuration file. You can safely rerun the installer or `rea setup --yes`. If REA's local analysis engine needs one-time activation, installation remains intact and setup reports the exact remaining action rather than claiming full readiness.
+Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`, or `--version 1.0.0`. The curl wrapper never installs prerequisites or configures integrations itself. See [Installation and setup](docs/installation.md) for its exact mutation boundary.
 
 ### With a coding agent — recommended
 
@@ -99,23 +108,23 @@ npx skills add morluto/rea
 
 Ask your agent to set up REA. It will check your Mac, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
 
-Approve installation if needed, complete the one-time activation when prompted, then describe the app or feature you want to understand. REA handles the binary-analysis tools behind the scenes.
+Review the setup plan, approve it if appropriate, complete Hopper's one-time activation when prompted, then describe the app or feature you want to understand.
 
 ### From Terminal — no installation
 
 ```bash
-npx -y rea-agents setup --yes
+npx -y rea-agents setup
 npx -y rea-agents doctor
 npx -y rea-agents analyze /Applications/Notes.app
 ```
 
-If macOS or an installer asks for confirmation, complete the prompt and run the same command again. Restart a configured coding agent so it loads REA.
+Review the setup plan before confirming it. Restart a configured coding agent so it loads REA.
 
 ### From Terminal — install the `rea` command
 
 ```bash
 npm install --global rea-agents
-rea setup --yes
+rea setup
 rea doctor
 rea analyze /Applications/Notes.app
 ```
@@ -137,9 +146,10 @@ Choose either the no-install commands or the global installation. You do not nee
 
 - macOS 12 or newer
 - Ubuntu 24.04+, Fedora 41+, or 64-bit Arch Linux
-- Node.js 24.18.x with npm 11.16.x
+- Node.js 22.19+ or 24.11+ (including newer releases)
+- npm; REA does not require or install a particular npm version
 
-You do not need to choose or install binary-analysis tools yourself. REA setup handles them when needed. Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. REA can install the official macOS or Linux package, but you must approve installation and complete its one-time activation.
+Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. Setup reuses an existing installation. If Hopper is missing, interactive setup proposes the official package and includes it in the confirmation plan. Unattended installation requires `rea setup --yes --install-hopper`.
 
 If something is not working, run:
 
@@ -151,7 +161,9 @@ npx -y rea-agents doctor
 
 ### Linux installation and troubleshooting
 
-On Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux, setup downloads the matching official Hopper package, restricts downloads to Hopper's public origin, verifies the published size and checksum, and invokes `apt-get`, `dnf`, or `pacman`. When REA is not already running as root, `pkexec` presents the system authorization prompt. REA never invokes `sudo`.
+On macOS, approved setup downloads Hopper's official DMG, verifies it, and installs the app into `~/Applications` without Homebrew or administrator privileges. It opens Hopper once for activation; no manual drag-and-drop is required.
+
+On Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux, approved setup downloads the matching official Hopper package, restricts downloads to Hopper's public origin, verifies the published size and checksum, and invokes `apt-get`, `dnf`, or `pacman`. When REA is not already running as root, `pkexec` presents the system authorization prompt. REA never invokes `sudo`.
 
 The normal Linux launcher is `/opt/hopper/bin/Hopper`. If Hopper was installed elsewhere:
 
@@ -166,7 +178,7 @@ If doctor reports a missing analysis engine even though the file exists, inspect
 ldd /opt/hopper/bin/Hopper | grep 'not found'
 ```
 
-Install the missing distribution packages and rerun `rea setup --yes`. Hopper is a desktop application: real analysis requires an active `DISPLAY` or `WAYLAND_DISPLAY`, plus one-time license activation. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
+Install the missing distribution packages and rerun `rea setup`. Hopper is a desktop application: real analysis requires an active `DISPLAY` or `WAYLAND_DISPLAY`, plus one-time license activation. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
 
 REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
 
@@ -177,7 +189,7 @@ rea uninstall
 rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
 ```
 
-Uninstall preserves Hopper, Homebrew, Node.js, evidence, captures, external evidence roots, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
+Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
 
 ### CLI or coding agent?
 
@@ -286,7 +298,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 7. **More targets and platforms** — Windows-native providers and ConPTY verification, Linux parity, websites and APIs, mobile artifacts, firmware, document formats, and other software-defined systems.
 8. **Differential reconstruction** — compare artifacts, functions, bundles, protocols, UIs, and process captures; track residual unknowns; verify a reconstruction against observed behavior.
 
-Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow.
+Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
 See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the current research matrix and admission gate.
 

@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-ツールのワークベンチ)
-[![Node.js 24](https://img.shields.io/badge/Node.js-24.18.x-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
 [クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [68 ツール](#68-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
@@ -76,20 +76,20 @@ npx skills add morluto/rea
 
 - macOS 12 以降
 - Ubuntu 24.04+、Fedora 41+、または 64 ビット Arch Linux
-- Node.js 24.18.x と npm 11.16.x（`nvm use` で固定バージョンを選択）
+- Node.js 22.19+ または 24.11+ と、Node に付属する npm
 
-リバースエンジニアリングツールを手動でインストールする必要はありません。Setup は必要に応じて Homebrew と [Hopper](https://www.hopperapp.com/) をインストールし、対応するコーディングエージェントを設定します。Hopper は別製品で、ライセンスは別途必要です。Setup はインストールしますが、ライセンスは提供しません。
+`rea setup` は変更計画を表示し、確認後に適用します。Homebrew、Node.js、npm をインストールまたは更新しません。[Hopper](https://www.hopperapp.com/) がない場合は公式パッケージを提案します。Hopper は別製品で、ライセンスは別途必要です。
 
 #### Linux のインストールとトラブルシューティング
 
 Ubuntu 24.04+、Fedora 41+、64 ビット Arch Linux では、REA が公式の DEB、RPM、または Arch パッケージを取得し、公開されたサイズとチェックサムを検証してから `apt-get`、`dnf`、または `pacman` で依存関係を解決します。root 以外では `pkexec` がシステム承認を表示します。REA は `sudo` を呼び出しません。
 
-既定のランチャーは `/opt/hopper/bin/Hopper` です。別の場所では `HOPPER_LAUNCHER_PATH` を設定してください。Doctor が解析エンジン不足を報告した場合は `ldd /opt/hopper/bin/Hopper | grep 'not found'` を実行し、不足ライブラリを入れて `rea setup --yes` を再実行します。実解析には `DISPLAY` または `WAYLAND_DISPLAY` と有効化済み Hopper ライセンスが必要です。`~/.local/bin` も `PATH` に追加してください。
+既定のランチャーは `/opt/hopper/bin/Hopper` です。別の場所では `HOPPER_LAUNCHER_PATH` を設定してください。Doctor が解析エンジン不足を報告した場合は `ldd /opt/hopper/bin/Hopper | grep 'not found'` を実行し、不足ライブラリを入れて `rea setup` を再実行します。実解析には `DISPLAY` または `WAYLAND_DISPLAY` と有効化済み Hopper ライセンスが必要です。`~/.local/bin` も `PATH` に追加してください。
 
 ```bash
 # 1. REA をセットアップ
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents setup --yes
+npx -y rea-agents setup
 ```
 
 macOS やインストーラーから確認を求められた場合は、その操作を完了してから同じコマンドをもう一度実行してください。

@@ -60,11 +60,11 @@ describe("localized README product facts", () => {
       expect(content).toContain(
         "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
       );
-      expect(content).toContain("npx -y rea-agents setup --yes");
+      expect(content).toContain("npx -y rea-agents setup");
       expect(content).toContain("npx -y rea-agents doctor");
       expect(content).toContain("rea uninstall");
       expect(content).toContain('"args": ["-y", "rea-agents", "mcp"]');
-      expect(content).toContain("Node.js 24");
+      expect(content).toContain("Node.js 22");
       expect(content).toContain("macOS 12");
       expect(content).toContain("Ubuntu 24.04");
       expect(content).toContain("Fedora 41");
@@ -80,7 +80,9 @@ describe("localized README product facts", () => {
     const content = await readFile(resolve("README.md"), "utf8");
     expect(content).toContain("npx -y rea-agents analyze");
     expect(content).toContain("npm install --global rea-agents");
-    expect(content).toContain("rea setup --yes");
+    expect(content).toContain("rea setup");
+    expect(content).toContain("--install-hopper");
+    expect(content).toContain("docs/installation.md");
     expect(content).toContain("You do not need both");
   });
 });
