@@ -1,4 +1,4 @@
-# Process Capture v3
+# Process Capture v4
 
 Process Capture records one approved command as deterministic Evidence. It is
 intended for authority-versus-reconstruction checks where terminal behavior,
@@ -10,6 +10,13 @@ metadata, named filesystem checkpoints, command-shim invocations, loopback
 HTTP/WebSocket exchanges, and process exit ownership. Missing or bounded
 observations remain explicit; a truncated capture is never treated as
 equivalent to another capture.
+
+Every v4 capture includes a run manifest with canonical SHA-256 commitments for
+the secret-safe full scenario projection, comparison contract, executable,
+normalization rules, command-shim plan, and replay plan. The manifest also
+records the REA/provider versions, platform, architecture, PTY backend, and UTC
+start/completion timestamps. Capture creation, Evidence import, and comparison
+recompute the self-contained commitments and reject invalid lifecycle data.
 
 ## Enable the capability
 
@@ -31,7 +38,7 @@ not a security sandbox: the target runs with the current user's permissions.
 
 ## Capture a scenario
 
-`rea capture-process` reads a JSON scenario and writes Process Capture v3
+`rea capture-process` reads a JSON scenario and writes Process Capture v4
 Evidence to stdout:
 
 ```bash
@@ -115,6 +122,10 @@ process, and shim behavior. `first_divergence` points to the earliest observed
 difference. Residual unknowns prevent a claim of complete equivalence, but they
 do not hide an observed difference in another dimension.
 
+Captures must have equal comparison-contract commitments, but may identify
+different scenarios and executables. MCP callers may set `max_capture_age_ms`;
+the application clock then rejects stale captures before comparison.
+
 ## Limits and lifecycle behavior
 
 Scenarios bound output bytes, frames, files, file bytes, process observations,
@@ -128,3 +139,9 @@ revalidates that identifier before signaling sampled process groups, including
 groups detached from the original parent. Temporary HOME, replay, shim,
 terminal, checkpoint, and sampling resources are released on success, failure,
 timeout, and cancellation.
+
+After root exit, REA checks token-owned process groups every 50 ms. Two
+consecutive empty observations establish `quiesced`; the settlement deadline
+otherwise produces `alive_at_deadline`, while inspection or identity failures
+produce `unverifiable`. Sampling can still miss short-lived or early-detached
+descendants, which remains a residual unknown.

@@ -268,12 +268,12 @@ The public interface describes what the agent is trying to learn. Providers deci
 REA is already useful for native application investigation on macOS:
 
 - Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
-- Traverse content-addressed artifact graphs without extraction; materialize only approved occurrences into absent output roots.
+- Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
-- Capture approved PTY scenarios as Process Capture v3 Evidence, including raw and rendered terminal frames, scripted interactions, child-process lifecycle, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
+- Capture approved PTY scenarios as Process Capture v4 Evidence, including committed run manifests, raw and rendered terminal frames, scripted interactions, descendant settlement, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
 - Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
 - Compare canonical Evidence bundles by exact membership, explicit observation pairs, and residual-unknown histories without turning omissions into behavioral absence.
@@ -390,7 +390,7 @@ environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
 adapter uses host networking, it also requires
 `REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
 
-Capture a scenario or compare two saved Process Capture v3 Evidence records:
+Capture a scenario or compare two saved Process Capture v4 Evidence records:
 
 ```bash
 rea capture-process ./scenario.json > authority.json
@@ -400,7 +400,7 @@ rea compare-process-captures authority.json reconstruction.json
 
 The comparison reports each observed dimension separately and identifies the
 first terminal, interaction, exit, filesystem, protocol, process, or shim
-divergence. See [Process Capture v3](docs/process-capture.md) for scenario
+divergence. See [Process Capture v4](docs/process-capture.md) for scenario
 fields, command-shim replay, checkpoint triggers, limits, and safety behavior.
 
 If the native PTY backend is unavailable, install Xcode command-line tools and
