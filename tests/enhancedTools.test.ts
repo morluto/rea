@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../src/application/EnhancedTools.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
-import { observed as ok } from "./fixtures/analysisExecution.js";
+import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
+import { err } from "../src/domain/result.js";
 import { createServer } from "../src/server/createServer.js";
+import { observed as ok } from "./fixtures/analysisExecution.js";
 
 const PROCEDURES = {
   "0x1": "_TtC7Fixture5Class",
@@ -39,6 +41,7 @@ const fixturePort = (): AnalysisOperationPort => ({
               "0x10": "_OBJC_CLASS_$_Fixture",
               "0x11": "_OBJC_CLASS_$_Fixture",
               "0x12": "_OBJC_PROTOCOL_$_FixtureDelegate",
+              "0x13": "entry",
             }),
           ),
         );
@@ -63,9 +66,7 @@ const fixturePort = (): AnalysisOperationPort => ({
       case "procedure_callers":
         return Promise.resolve(ok(["0x9"]));
       case "address_name":
-        return Promise.resolve(
-          ok({ address: "0x1", name: arguments_.address ?? "" }),
-        );
+        return Promise.resolve(ok(arguments_.address ?? null));
       case "xrefs":
         return Promise.resolve(ok(["0x20", "0x21"]));
       case "resolve_containing_procedure":
@@ -217,16 +218,29 @@ describe("enhanced MCP tools", () => {
     // Legacy behavior treats any `_OBJC_` label, including protocol labels, as a class.
     expect(results[1]).toMatchObject({ count: 2 });
     expect(results[2]).toMatchObject({ count: 1 });
-    expect(results[3]).toEqual({ "0x1": "pseudo:0x1", "0x2": "pseudo:0x2" });
+    expect(results[3]).toEqual({
+      items: [
+        { address: "0x1", status: "ok", pseudocode: "pseudo:0x1" },
+        { address: "0x2", status: "ok", pseudocode: "pseudo:0x2" },
+      ],
+      total: 2,
+      succeeded: 2,
+      failed: 0,
+    });
     expect(results[4]).toEqual({
-      "0": [{ address: "0x1", calls: ["0x2", "0x3"] }],
+      "0": [{ address: "0x1", status: "ok", calls: ["0x2", "0x3"] }],
       "1": [
-        { address: "0x2", calls: ["0x1"] },
-        { address: "0x3", calls: [] },
+        { address: "0x2", status: "ok", calls: ["0x1"] },
+        { address: "0x3", status: "ok", calls: [] },
       ],
     });
     expect(results[5]).toMatchObject({ total: 6 });
-    expect(results[6]).toEqual({ xrefs: ["0x20", "0x21"] });
+    expect(results[6]).toEqual({
+      status: "resolved",
+      name: "entry",
+      address: "0x13",
+      xrefs: ["0x20", "0x21"],
+    });
     expect(results[7]).toMatchObject({
       document: "fixture",
       segment_count: 1,
@@ -273,6 +287,84 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).not.toBe(true);
     expect(maximum).toBe(20);
+  });
+
+  it("returns ordered typed batch failures and zero counts for empty input", async () => {
+    const tools = new EnhancedTools({
+      execute: (_name, arguments_) =>
+        arguments_.procedure === "0x2"
+          ? Promise.resolve(err(new AnalysisOutputError("decompile", "failed")))
+          : Promise.resolve(ok("pseudo")),
+    });
+
+    const result = await tools.execute("batch_decompile", {
+      addresses: ["0x1", "0x2"],
+    });
+    const empty = await tools.execute("batch_decompile", { addresses: [] });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        items: [
+          { address: "0x1", status: "ok", pseudocode: "pseudo" },
+          {
+            address: "0x2",
+            status: "error",
+            error: {
+              tag: "AnalysisOutputError",
+              message: "Invalid analysis output for decompile: failed",
+              details: { operation: "decompile", reason: "failed" },
+            },
+          },
+        ],
+        total: 2,
+        succeeded: 1,
+        failed: 1,
+      },
+    });
+    expect(empty).toEqual({
+      ok: true,
+      value: { items: [], total: 0, succeeded: 0, failed: 0 },
+    });
+  });
+
+  it("returns typed graph failures and stable unresolved-name results", async () => {
+    const tools = new EnhancedTools({
+      execute: (name) =>
+        name === "procedure_callees"
+          ? Promise.resolve(err(new AnalysisOutputError(name, "failed")))
+          : Promise.resolve(ok(page({}))),
+    });
+
+    const graph = await tools.execute("get_call_graph", {
+      address: "0x1",
+      direction: "forward",
+      depth: 1,
+    });
+    const unresolved = await tools.execute("find_xrefs_to_name", {
+      name: "missing",
+    });
+
+    expect(graph).toMatchObject({
+      ok: true,
+      value: {
+        "0": [
+          {
+            address: "0x1",
+            status: "error",
+            error: { tag: "AnalysisOutputError" },
+          },
+        ],
+      },
+    });
+    expect(unresolved).toEqual({
+      ok: true,
+      value: {
+        status: "unresolved",
+        name: "missing",
+        reason: "name_not_found",
+      },
+    });
   });
 
   it("follows procedure pagination for whole-binary workflows", async () => {

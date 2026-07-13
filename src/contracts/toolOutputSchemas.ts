@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ANALYSIS_ERROR_TAGS } from "../domain/errors.js";
 import { evidenceSchema } from "../domain/evidence.js";
 import {
   processCaptureComparisonSchema,
@@ -177,9 +178,25 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
       [property]: z.array(addressedEntry),
     }),
   );
-const graphNode = z.union([
-  z.object({ address: z.string(), calls: z.array(z.string()) }),
-  z.object({ address: z.string(), error: z.string() }),
+/** Exact public projection of an expected analysis failure. */
+export const analysisErrorProjectionSchema = z
+  .object({
+    tag: z.enum(ANALYSIS_ERROR_TAGS),
+    message: z.string(),
+    details: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
+  })
+  .strict();
+const graphNode = z.discriminatedUnion("status", [
+  z.object({
+    address: z.string(),
+    status: z.literal("ok"),
+    calls: z.array(z.string()),
+  }),
+  z.object({
+    address: z.string(),
+    status: z.literal("error"),
+    error: analysisErrorProjectionSchema,
+  }),
 ]);
 const functionDossierOutput = resultOf(functionDossierSchema);
 
@@ -242,10 +259,25 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   get_objc_classes: symbolDiscoveryOutput("classes"),
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   batch_decompile: resultOf(
-    z.union([
-      z.object({ error: z.literal("No addresses provided") }),
-      z.record(z.string(), z.string()),
-    ]),
+    z.object({
+      items: z.array(
+        z.discriminatedUnion("status", [
+          z.object({
+            address: z.string(),
+            status: z.literal("ok"),
+            pseudocode: z.string().min(1),
+          }),
+          z.object({
+            address: z.string(),
+            status: z.literal("error"),
+            error: analysisErrorProjectionSchema,
+          }),
+        ]),
+      ),
+      total: z.number().int().min(0),
+      succeeded: z.number().int().min(0),
+      failed: z.number().int().min(0),
+    }),
   ),
   get_call_graph: resultOf(z.record(z.string(), z.array(graphNode))),
   analyze_swift_types: resultOf(
@@ -261,9 +293,18 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     }),
   ),
   find_xrefs_to_name: resultOf(
-    z.union([
-      z.object({ xrefs: addressList }),
-      z.object({ error: z.string() }),
+    z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("resolved"),
+        name: z.string(),
+        address: z.string(),
+        xrefs: addressList,
+      }),
+      z.object({
+        status: z.literal("unresolved"),
+        name: z.string(),
+        reason: z.literal("name_not_found"),
+      }),
     ]),
   ),
   binary_overview: resultOf(

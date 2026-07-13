@@ -1,27 +1,34 @@
-export type AnalysisErrorTag =
-  | "AnalysisProtocolError"
-  | "AnalysisInputError"
-  | "AnalysisOutputError"
-  | "AnalysisCapabilityUnavailableError"
-  | "AnalysisCancelledError"
-  | "AnalysisTimeoutError"
-  | "ProviderSelectionError"
-  | "ProviderAdapterError"
-  | "ArtifactOperationError"
-  | "ProcessCaptureError"
-  | "EvidenceIntegrityError"
-  | "EvidenceLimitError"
-  | "EvidenceFileError"
-  | "UnknownRegistryError"
-  | "HopperTimeoutError"
-  | "HopperCancelledError"
-  | "HopperProtocolError"
-  | "HopperRemoteError"
-  | "HopperProcessError"
-  | "HopperStartError"
-  | "ConfigurationError"
-  | "NoBinaryOpenError"
-  | "BinaryTargetError";
+import type { JsonValue } from "./jsonValue.js";
+
+/** Stable tags exposed by safe analysis-error projections. */
+export const ANALYSIS_ERROR_TAGS = [
+  "AnalysisProtocolError",
+  "AnalysisInputError",
+  "AnalysisOutputError",
+  "AnalysisCapabilityUnavailableError",
+  "AnalysisCancelledError",
+  "AnalysisTimeoutError",
+  "ProviderSelectionError",
+  "ProviderAdapterError",
+  "ArtifactOperationError",
+  "ProcessCaptureError",
+  "EvidenceIntegrityError",
+  "EvidenceLimitError",
+  "EvidenceFileError",
+  "UnknownRegistryError",
+  "HopperTimeoutError",
+  "HopperCancelledError",
+  "HopperProtocolError",
+  "HopperRemoteError",
+  "HopperProcessError",
+  "HopperStartError",
+  "ConfigurationError",
+  "NoBinaryOpenError",
+  "BinaryTargetError",
+] as const;
+
+/** Stable tag for an expected analysis failure. */
+export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
 
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
@@ -280,7 +287,8 @@ export class BinaryTargetError extends AnalysisError {
   }
 }
 
-export interface AnalysisErrorProjection {
+export interface AnalysisErrorProjection
+  extends Readonly<Record<string, JsonValue>> {
   readonly tag: AnalysisErrorTag;
   readonly message: string;
   readonly details: Readonly<Record<string, string | number | null>>;

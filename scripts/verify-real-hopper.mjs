@@ -185,12 +185,18 @@ const verifyCurrentTarget = async (client, options) => {
     boundedResult === null ||
     typeof boundedResult !== "object" ||
     Array.isArray(boundedResult) ||
-    Object.keys(boundedResult).length !== 1
+    boundedResult.total !== 1 ||
+    boundedResult.succeeded !== 1 ||
+    boundedResult.failed !== 0 ||
+    !Array.isArray(boundedResult.items) ||
+    boundedResult.items.length !== 1 ||
+    boundedResult.items[0]?.address !== firstAddress ||
+    boundedResult.items[0]?.status !== "ok"
   ) {
     throw new Error("batch_decompile returned an invalid result");
   }
   const boundedPseudocode = requirePseudocode(
-    boundedResult[firstAddress],
+    boundedResult.items[0].pseudocode,
     "batch_decompile",
   );
   const dossier = requireFunctionDossier(

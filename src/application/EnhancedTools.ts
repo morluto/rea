@@ -8,9 +8,11 @@ import {
   AnalysisInputError,
   AnalysisCancelledError,
   AnalysisOutputError,
+  projectAnalysisError,
   type AnalysisError,
 } from "../domain/errors.js";
 import {
+  addressDistance,
   parseDocuments,
   parseFunctionDossier,
   parseAddressedPage,
@@ -134,26 +136,40 @@ export class EnhancedTools {
     addresses: readonly string[],
     signal?: AbortSignal,
   ): EnhancedResult {
-    if (addresses.length === 0) return ok({ error: "No addresses provided" });
-
-    const entries = await Promise.all(
+    const items = await Promise.all(
       addresses.map(async (address) => {
         const result = await this.#call(
           "procedure_pseudo_code",
           { procedure: address },
           signal,
         );
-        return [
-          address,
-          result.ok
-            ? result.value === null || result.value === ""
-              ? "No output"
-              : result.value
-            : `Error: ${result.error.message}`,
-        ] as const;
+        if (!result.ok)
+          return {
+            address,
+            status: "error" as const,
+            error: projectAnalysisError(result.error),
+          };
+        if (typeof result.value !== "string" || result.value.length === 0)
+          return {
+            address,
+            status: "error" as const,
+            error: projectAnalysisError(
+              new AnalysisOutputError(
+                "procedure_pseudo_code",
+                "provider returned empty pseudocode",
+              ),
+            ),
+          };
+        return { address, status: "ok" as const, pseudocode: result.value };
       }),
     );
-    return ok(Object.fromEntries(entries));
+    const succeeded = items.filter(({ status }) => status === "ok").length;
+    return ok({
+      items,
+      total: items.length,
+      succeeded,
+      failed: items.length - succeeded,
+    });
   }
 
   async #callGraph(
@@ -190,7 +206,8 @@ export class EnhancedTools {
       if (!result.ok) {
         graph[level].push({
           address: current.address,
-          error: result.error.message,
+          status: "error",
+          error: projectAnalysisError(result.error),
         });
         continue;
       }
@@ -198,12 +215,14 @@ export class EnhancedTools {
       if (!related.ok) {
         graph[level].push({
           address: current.address,
-          error: related.error.message,
+          status: "error",
+          error: projectAnalysisError(related.error),
         });
         continue;
       }
       graph[level].push({
         address: current.address,
+        status: "ok",
         calls: [...related.value],
       });
       if (current.depth + 1 < input.depth) {
@@ -226,21 +245,34 @@ export class EnhancedTools {
   }
 
   async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {
-    const resolved = await this.#call(
-      "address_name",
-      { address: name },
+    const names = await this.#allAddressed("list_names", signal);
+    if (!names.ok) return names;
+    const resolved = names.value.find((entry) => entry.name === name);
+    if (resolved === undefined)
+      return ok({ status: "unresolved", name, reason: "name_not_found" });
+
+    const xrefs = await this.#call(
+      "xrefs",
+      { address: resolved.address },
       signal,
     );
-    if (!resolved.ok) return resolved;
-    const address = resolveAddress(resolved.value);
-    if (address === undefined)
-      return ok({ error: `Could not resolve name: ${name}` });
-
-    const xrefs = await this.#call("xrefs", { address }, signal);
     if (!xrefs.ok) return xrefs;
-    return ok(
-      Array.isArray(xrefs.value) ? { xrefs: xrefs.value } : xrefs.value,
-    );
+    if (
+      !Array.isArray(xrefs.value) ||
+      xrefs.value.some((xref) => typeof xref !== "string")
+    )
+      return err(
+        new AnalysisOutputError(
+          "xrefs",
+          "provider returned an invalid address list",
+        ),
+      );
+    return ok({
+      status: "resolved",
+      name,
+      address: resolved.address,
+      xrefs: xrefs.value,
+    });
   }
 
   async #binaryOverview(
@@ -491,17 +523,3 @@ const invalidInput = (name: EnhancedToolName, cause: Error): EnhancedResult =>
       }),
     ),
   );
-
-const resolveAddress = (value: JsonValue): string | undefined => {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  const candidate = value.address ?? value.name;
-  return typeof candidate === "string" && candidate.length > 0
-    ? candidate
-    : undefined;
-};
-
-const addressDistance = (start: string, end: string): number =>
-  Math.max(0, Number.parseInt(end, 16) - Number.parseInt(start, 16));
