@@ -49,12 +49,18 @@ export interface CrossVersionInvestigationOutcome {
   readonly reused: boolean;
 }
 
+/** Runtime authority and cancellation capabilities for one investigation. */
+export interface CrossVersionInvestigationExecution {
+  readonly inputRoots: readonly string[];
+  readonly session?: BinarySessionPort;
+  readonly signal?: AbortSignal;
+}
+
 /** Run or resume a deterministic cross-version artifact investigation. */
 export const runCrossVersionInvestigation = async (
   input: CrossVersionInvestigationInput,
   policy: EvidenceFilePolicy,
-  session?: BinarySessionPort,
-  signal?: AbortSignal,
+  execution: CrossVersionInvestigationExecution,
 ): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {
   const parsed = crossVersionInvestigationInputSchema.safeParse(input);
   if (!parsed.success)
@@ -71,14 +77,18 @@ export const runCrossVersionInvestigation = async (
   const preflight = validateWorkspaceRequest(initial.value, parsed.data);
   if (!preflight.ok) return preflight;
 
-  const snapshots = await scanVersions(parsed.data, signal);
+  const snapshots = await scanVersions(
+    parsed.data,
+    execution.inputRoots,
+    execution.signal,
+  );
   if (!snapshots.ok) return snapshots;
   return continueInvestigation({
     input: parsed.data,
     initial: initial.value,
     snapshots: snapshots.value,
     policy,
-    session,
+    session: execution.session,
   });
 };
 

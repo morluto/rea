@@ -15,9 +15,9 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   paginateArtifactInventory,
-  scanArtifactInventory,
   type ArtifactInventorySnapshot,
 } from "./ArtifactInventory.js";
+import { scanAuthorizedArtifactInventory } from "./AuthorizedArtifactInventory.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "./InvestigationProviders.js";
 
 export const AUTOMATIC_RUN_LIMITATION =
@@ -33,17 +33,28 @@ export interface InventoryEvidencePages {
   readonly right: readonly Evidence[];
 }
 
-/** Scan both inputs once under the same bounded traversal policy. */
+/** Authorize and scan both inputs once under the same bounded traversal policy. */
 export const scanVersions = async (
   input: CrossVersionInvestigationInput,
+  inputRoots: readonly string[],
   signal?: AbortSignal,
 ): Promise<Result<VersionSnapshots, AnalysisError>> => {
   try {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError("find_changed_behavior"));
     const limits = artifactLimits(input.options);
-    const left = await scanArtifactInventory(input.left_path, limits, signal);
-    const right = await scanArtifactInventory(input.right_path, limits, signal);
+    const left = await scanAuthorizedArtifactInventory(
+      input.left_path,
+      inputRoots,
+      limits,
+      signal,
+    );
+    const right = await scanAuthorizedArtifactInventory(
+      input.right_path,
+      inputRoots,
+      limits,
+      signal,
+    );
     return ok({ left, right });
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure)

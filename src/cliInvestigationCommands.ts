@@ -98,6 +98,7 @@ const runInvestigation = async (
       },
     },
     config.value.evidenceFilePolicy,
+    { inputRoots: config.value.investigationInputRoots },
   );
   return investigated.ok
     ? investigated.value.evidence

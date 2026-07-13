@@ -427,6 +427,7 @@ const registerLifecycleTools = ({
 export interface SessionToolOptions {
   readonly processPolicy?: ProcessExecutionPolicy;
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
+  readonly investigationInputRoots?: readonly string[];
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
 }
 
@@ -486,17 +487,16 @@ export const registerSessionTools = (
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerBundleComparisonTool(server, session, compareBundlesContract);
-  registerInvestigationTools(
-    server,
-    session,
-    [
-      changedBehaviorContract,
-      callPathContract,
-      staticRuntimeContract,
-      reconstructionContract,
-    ],
-    evidenceFilePolicy,
-  );
+  const investigationContracts = [
+    changedBehaviorContract,
+    callPathContract,
+    staticRuntimeContract,
+    reconstructionContract,
+  ] as const;
+  registerInvestigationTools(server, session, investigationContracts, {
+    evidenceFiles: evidenceFilePolicy,
+    inputRoots: options.investigationInputRoots ?? [],
+  });
   registerUnknownTools({
     server,
     session,

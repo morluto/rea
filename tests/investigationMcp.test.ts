@@ -84,6 +84,48 @@ describe("investigation MCP workflows", () => {
     }
   });
 
+  it("refuses automatic artifact reads outside operator-approved roots", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-mcp-"));
+    const approvedInputs = join(directory, "approved-inputs");
+    const outsideInputs = join(directory, "outside-inputs");
+    const evidenceRoot = join(directory, "evidence");
+    await Promise.all([
+      mkdir(approvedInputs),
+      mkdir(outsideInputs),
+      mkdir(evidenceRoot),
+    ]);
+    const left = join(outsideInputs, "left");
+    const right = join(outsideInputs, "right");
+    await Promise.all([mkdir(left), mkdir(right)]);
+    const { session, server, client } = await connected(
+      evidencePolicy(evidenceRoot),
+      [approvedInputs],
+    );
+    try {
+      const response = await client.callTool({
+        name: "find_changed_behavior",
+        arguments: {
+          investigation_run: {
+            approved: true,
+            workspace_path: join(evidenceRoot, "workspace.json"),
+            left_path: left,
+            right_path: right,
+          },
+        },
+      });
+      expect(response.isError).toBe(true);
+      expect(response.content).toEqual([
+        {
+          type: "text",
+          text: "Artifact path is not allowed. Choose a path inside the artifact and try again.",
+        },
+      ]);
+    } finally {
+      await close(session, server, client);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("aggregates comparison Evidence and records an approved runtime gap", async () => {
     const { session, server, client } = await connected();
     const comparison =
@@ -384,7 +426,10 @@ describe("investigation MCP workflows", () => {
   });
 });
 
-const connected = async (evidenceFilePolicy?: EvidenceFilePolicy) => {
+const connected = async (
+  evidenceFilePolicy?: EvidenceFilePolicy,
+  investigationInputRoots: readonly string[] = evidenceFilePolicy?.roots ?? [],
+) => {
   const session = new BinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
@@ -393,7 +438,12 @@ const connected = async (evidenceFilePolicy?: EvidenceFilePolicy) => {
   const server = createServer(
     session,
     session,
-    evidenceFilePolicy === undefined ? {} : { evidenceFilePolicy },
+    evidenceFilePolicy === undefined
+      ? {}
+      : {
+          evidenceFilePolicy,
+          investigationInputRoots,
+        },
   );
   const client = new Client({ name: "investigation-test", version: "1" });
   const [clientTransport, serverTransport] =

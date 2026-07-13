@@ -70,7 +70,9 @@ describe("persistent cross-version investigation workspace", () => {
   it("checkpoints, validates, and reuses a completed deterministic run", async () => {
     const { path, input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");
-    const first = await runCrossVersionInvestigation(input, policy(directory));
+    const first = await runCrossVersionInvestigation(input, policy(directory), {
+      inputRoots: [directory],
+    });
     expect(first).toMatchObject({
       ok: true,
       value: { reused: false, workspace: { revision: 3 } },
@@ -96,7 +98,11 @@ describe("persistent cross-version investigation workspace", () => {
       serializeInvestigationWorkspace(first.value.workspace),
     );
 
-    const second = await runCrossVersionInvestigation(input, policy(directory));
+    const second = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
     expect(second).toMatchObject({
       ok: true,
       value: {
@@ -117,6 +123,7 @@ describe("persistent cross-version investigation workspace", () => {
     const completed = await runCrossVersionInvestigation(
       input,
       policy(directory),
+      { inputRoots: [directory] },
     );
     if (!completed.ok) throw completed.error;
     const run = completed.value.workspace.runs[0];
@@ -153,6 +160,7 @@ describe("persistent cross-version investigation workspace", () => {
     const resumed = await runCrossVersionInvestigation(
       { ...input, workspace_path: resumePath },
       policy(directory),
+      { inputRoots: [directory] },
     );
     expect(resumed).toMatchObject({
       ok: true,
@@ -167,14 +175,20 @@ describe("persistent cross-version investigation workspace", () => {
   it("appends a changed-content run without replacing earlier Evidence", async () => {
     const { right, input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");
-    const first = await runCrossVersionInvestigation(input, policy(directory));
+    const first = await runCrossVersionInvestigation(input, policy(directory), {
+      inputRoots: [directory],
+    });
     if (!first.ok) throw first.error;
     const firstRun = first.value.workspace.runs[0];
     if (firstRun === undefined || firstRun.result_evidence_id === null)
       throw new Error("missing first completed run");
 
     await writeFile(join(right, "app.txt"), "version three\n");
-    const second = await runCrossVersionInvestigation(input, policy(directory));
+    const second = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
     expect(second).toMatchObject({
       ok: true,
       value: {
@@ -204,7 +218,9 @@ describe("persistent cross-version investigation workspace", () => {
       mode: 0o600,
     });
     expect(
-      await runCrossVersionInvestigation(input, policy(directory)),
+      await runCrossVersionInvestigation(input, policy(directory), {
+        inputRoots: [directory],
+      }),
     ).toMatchObject({
       ok: false,
       error: { _tag: "InvestigationWorkspaceError", reason: "locked" },
@@ -212,7 +228,9 @@ describe("persistent cross-version investigation workspace", () => {
     await rm(`${path}.lock`);
     await writeFile(`${path}.lock`, "occupied\n", { mode: 0o600 });
     expect(
-      await runCrossVersionInvestigation(input, policy(directory)),
+      await runCrossVersionInvestigation(input, policy(directory), {
+        inputRoots: [directory],
+      }),
     ).toMatchObject({
       ok: false,
       error: { _tag: "InvestigationWorkspaceError", reason: "locked" },
@@ -222,6 +240,7 @@ describe("persistent cross-version investigation workspace", () => {
     const completed = await runCrossVersionInvestigation(
       input,
       policy(directory),
+      { inputRoots: [directory] },
     );
     if (!completed.ok) throw completed.error;
     await expect(stat(`${path}.lock`)).rejects.toMatchObject({
@@ -231,6 +250,7 @@ describe("persistent cross-version investigation workspace", () => {
       await runCrossVersionInvestigation(
         { ...input, expected_workspace_revision: 2 },
         policy(directory),
+        { inputRoots: [directory] },
       ),
     ).toMatchObject({
       ok: false,
@@ -259,8 +279,7 @@ describe("persistent cross-version investigation workspace", () => {
       await runCrossVersionInvestigation(
         { ...input, workspace_path: cancelledPath },
         policy(directory),
-        undefined,
-        controller.signal,
+        { inputRoots: [directory], signal: controller.signal },
       ),
     ).toMatchObject({
       ok: false,
@@ -274,7 +293,9 @@ describe("persistent cross-version investigation workspace", () => {
     const approved = join(directory, "approved");
     await mkdir(approved);
     expect(
-      await runCrossVersionInvestigation(input, policy(approved)),
+      await runCrossVersionInvestigation(input, policy(approved), {
+        inputRoots: [directory],
+      }),
     ).toMatchObject({
       ok: false,
       error: {
@@ -291,10 +312,27 @@ describe("persistent cross-version investigation workspace", () => {
       await runCrossVersionInvestigation(
         { ...input, workspace_path: escaped },
         policy(approved),
+        { inputRoots: [directory] },
       ),
     ).toMatchObject({
       ok: false,
       error: { _tag: "InvestigationWorkspaceError", reason: "not-file" },
     });
+  });
+
+  it("rejects artifact inputs outside independently approved roots", async () => {
+    const { input, path } = await fixture();
+    if (directory === undefined) throw new Error("missing fixture root");
+    const approvedInputs = join(directory, "approved-inputs");
+    await mkdir(approvedInputs);
+    expect(
+      await runCrossVersionInvestigation(input, policy(directory), {
+        inputRoots: [approvedInputs],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "path" },
+    });
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

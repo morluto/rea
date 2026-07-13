@@ -41,19 +41,33 @@ export const registerInvestigationTools = (
     ToolContract<"correlate_static_and_runtime">,
     ToolContract<"verify_reconstruction">,
   ],
-  evidenceFilePolicy: EvidenceFilePolicy,
+  policies: InvestigationToolPolicies,
 ): void => {
-  registerChangedBehavior(server, session, contracts[0], evidenceFilePolicy);
+  registerChangedBehavior(server, session, contracts[0], policies);
   registerCallPath(server, session, contracts[1]);
   registerStaticRuntime(server, session, contracts[2]);
   registerReconstruction(server, session, contracts[3]);
 };
 
+interface InvestigationToolPolicies {
+  readonly evidenceFiles: EvidenceFilePolicy;
+  readonly inputRoots: readonly string[];
+}
+
+const investigationExecution = (
+  session: BinarySessionPort,
+  signal: AbortSignal,
+  inputRoots: readonly string[],
+) => ({ session, signal, inputRoots });
+
+const isIncomplete = (status: string): boolean =>
+  status === "unknown" || status === "truncated";
+
 const registerChangedBehavior = (
   server: McpServer,
   session: BinarySessionPort,
   contract: ToolContract<"find_changed_behavior">,
-  evidenceFilePolicy: EvidenceFilePolicy,
+  policies: InvestigationToolPolicies,
 ): void => {
   server.registerTool(
     contract.name,
@@ -63,9 +77,12 @@ const registerChangedBehavior = (
       if (parsed.investigation_run !== undefined) {
         const investigated = await runCrossVersionInvestigation(
           parsed.investigation_run,
-          evidenceFilePolicy,
-          session,
-          context.mcpReq.signal,
+          policies.evidenceFiles,
+          investigationExecution(
+            session,
+            context.mcpReq.signal,
+            policies.inputRoots,
+          ),
         );
         if (!investigated.ok) return toCallToolResult(investigated, contract);
         const result = changedBehaviorResultSchema.parse(
@@ -76,8 +93,7 @@ const registerChangedBehavior = (
             session,
             investigated.value.evidence,
             parsed.unknown_registry_approved,
-            result.behavior_status === "unknown" ||
-              result.behavior_status === "truncated",
+            isIncomplete(result.behavior_status),
             {
               question: `Automatic changed behavior run ${result.investigation_run?.run_id ?? "unknown"} remains ${result.behavior_status}`,
               domain: "changed-behavior",
@@ -126,8 +142,7 @@ const registerChangedBehavior = (
         session,
         evidence,
         parsed.unknown_registry_approved,
-        result.behavior_status === "unknown" ||
-          result.behavior_status === "truncated",
+        isIncomplete(result.behavior_status),
         {
           question:
             "Did both versions behave the same under a complete controlled replay?",

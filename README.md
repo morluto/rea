@@ -207,14 +207,17 @@ Filesystem evidence commands and MCP file tools are disabled until the operator 
 
 ```bash
 export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
+export REA_INVESTIGATION_INPUT_ROOTS_JSON='["/absolute/path/to/releases"]'
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
-rea investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
+rea investigate-versions /absolute/path/to/releases/v1 /absolute/path/to/releases/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
 ```
 
 `investigate-versions` inventories both versions, checkpoints their observed
 Evidence, derives an artifact comparison, and records a changed-behavior report.
+Both input paths must resolve beneath `REA_INVESTIGATION_INPUT_ROOTS_JSON`;
+workspace files remain independently restricted by `REA_EVIDENCE_ROOTS_JSON`.
 The workspace uses deterministic content identities and monotonic CAS-linked
 revisions, so the same request resumes an interrupted run or reuses a completed
 run without replacing earlier investigations. It currently compares static
