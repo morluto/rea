@@ -753,9 +753,9 @@ def _dispatch(method, params):
         if method == "procedure_pseudo_code":
             return procedure.decompile()
         if method == "procedure_callers":
-            return [_procedure_name(item) for item in procedure.getAllCallerProcedures()]
+            return sorted((_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()), key=lambda value: int(value, 16))
         if method == "procedure_callees":
-            return [_procedure_name(item) for item in procedure.getAllCalleeProcedures()]
+            return sorted((_hex(item.getEntryPoint()) for item in procedure.getAllCalleeProcedures()), key=lambda value: int(value, 16))
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
             length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)

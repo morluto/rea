@@ -110,4 +110,19 @@ describe("Hopper bridge truthfulness", () => {
       "document_closed = _session_document() is None",
     );
   });
+
+  it("returns deterministic addresses for direct procedure relationships", () => {
+    expect(bridgeSource).toContain(
+      "_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()",
+    );
+    expect(bridgeSource).toContain(
+      "_hex(item.getEntryPoint()) for item in procedure.getAllCalleeProcedures()",
+    );
+    expect(bridgeSource).not.toContain(
+      "_procedure_name(item) for item in procedure.getAllCallerProcedures()",
+    );
+    expect(bridgeSource).not.toContain(
+      "_procedure_name(item) for item in procedure.getAllCalleeProcedures()",
+    );
+  });
 });
