@@ -37,6 +37,27 @@ describe("analysis error projection", () => {
     );
   });
 
+  it("projects stable, safe Linux startup failure codes", () => {
+    const expected = [
+      [70, "private_display_unavailable"],
+      [71, "x11_authorization_failed"],
+      [72, "unsupported_hopper_build"],
+      [73, "invalid_launch_command"],
+      [74, "process_ownership_mismatch"],
+      [75, "hopper_exited_during_startup"],
+      [76, "unsupported_demo_dialog"],
+      [77, "unexpected_display_geometry"],
+      [78, "x11_input_failed"],
+      [79, "runtime_dependency_unavailable"],
+    ] as const;
+    for (const [exitCode, code] of expected) {
+      const projected = projectAnalysisError(new HopperProcessError(exitCode));
+      expect(projected.code).toBe(code);
+      expect(projected.message.length).toBeGreaterThan(20);
+      expect(JSON.stringify(projected)).not.toContain("/proc/");
+    }
+  });
+
   it("projects every typed failure without internal details", () => {
     const secretCause = new Error("secret-token");
     const byTag = {

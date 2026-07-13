@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   installLinuxHopper,
-  linuxPackageManagerCommand,
+  linuxPackageManagerCommands,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
   type LinuxDistribution,
   type LinuxHopperDownload,
   type LinuxHopperInstallHost,
+  type LinuxHopperLauncherStatus,
   type LinuxPackageFamily,
 } from "../src/application/LinuxHopper.js";
 
@@ -19,12 +20,10 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     packageFamily: "deb",
     supported: true,
   };
-  metadata: unknown = releasesFor(new Uint8Array([1, 2, 3]));
   archive = new Uint8Array([1, 2, 3]);
-  metadataOk = true;
   archiveOk = true;
   installSucceeds = true;
-  launcherExists = true;
+  launcherStatusValue: LinuxHopperLauncherStatus = "ready";
   downloads: string[] = [];
   installed: Array<{ family: LinuxPackageFamily; archive: string }> = [];
   cleaned: string[] = [];
@@ -33,11 +32,6 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(this.distributionValue);
   download = (url: string): Promise<LinuxHopperDownload> => {
     this.downloads.push(url);
-    if (url.includes("files-api.php"))
-      return Promise.resolve({
-        ok: this.metadataOk,
-        bytes: new TextEncoder().encode(JSON.stringify(this.metadata)),
-      });
     return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
   };
   createTemporaryDirectory = (): Promise<string> =>
@@ -50,7 +44,8 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     this.installed.push({ family, archive });
     return Promise.resolve(this.installSucceeds);
   };
-  launcherReady = (): Promise<boolean> => Promise.resolve(this.launcherExists);
+  launcherStatus = (): Promise<LinuxHopperLauncherStatus> =>
+    Promise.resolve(this.launcherStatusValue);
   cleanup = (path: string): Promise<void> => {
     this.cleaned.push(path);
     return Promise.resolve();
@@ -103,22 +98,47 @@ describe("Linux Hopper installation", () => {
     ["arch", "pacman"],
   ] as const)("selects the %s native package manager", (family, executable) => {
     expect(
-      linuxPackageManagerCommand(family, "/tmp/Hopper package", true),
-    ).toMatchObject({
-      executable,
-    });
-    expect(
-      linuxPackageManagerCommand(family, "/tmp/Hopper package", false),
-    ).toMatchObject({
-      executable: "pkexec",
-      args: [
+      linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
+    ).toContainEqual(
+      expect.objectContaining({
         executable,
-        expect.any(String),
-        expect.any(String),
-        expect.any(String),
-      ],
-    });
+      }),
+    );
+    expect(
+      linuxPackageManagerCommands(family, "/tmp/Hopper package", false),
+    ).toContainEqual(
+      expect.objectContaining({
+        executable: "pkexec",
+        args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
+      }),
+    );
   });
+
+  it.each([
+    ["deb", ["xvfb", "xauth", "python3", "libx11-6", "libxtst6"]],
+    [
+      "rpm",
+      [
+        "xorg-x11-server-Xvfb",
+        "xorg-x11-xauth",
+        "python3",
+        "libX11",
+        "libXtst",
+      ],
+    ],
+    ["arch", ["xorg-server-xvfb", "xorg-xauth", "python", "libx11", "libxtst"]],
+  ] as const)(
+    "installs the %s demo-session dependencies",
+    (family, packages) => {
+      expect(
+        linuxPackageManagerCommands(family, "/tmp/Hopper package", true),
+      ).toContainEqual(
+        expect.objectContaining({
+          args: expect.arrayContaining([...packages]),
+        }),
+      );
+    },
+  );
 
   it.each(["deb", "rpm", "arch"] as const)(
     "downloads, verifies, installs, reads back, and cleans a %s package",
@@ -129,7 +149,7 @@ describe("Linux Hopper installation", () => {
         packageFamily: family,
         supported: true,
       };
-      const result = await installLinuxHopper(host);
+      const result = await installFixture(host);
       expect(result).toEqual({
         status: "installed",
         launcherPath: "/opt/hopper/bin/Hopper",
@@ -143,13 +163,12 @@ describe("Linux Hopper installation", () => {
 
   it.each([
     ["unsupported host", "unsupported_host"],
-    ["malformed metadata", "release_metadata"],
-    ["unexpected origin", "release_metadata"],
-    ["metadata request failure", "release_metadata"],
     ["package request failure", "download"],
     ["checksum mismatch", "integrity"],
     ["package manager failure", "authorization_or_package_manager"],
     ["missing launcher", "launcher_missing"],
+    ["missing runtime", "runtime_dependencies"],
+    ["unsupported build", "unsupported_hopper_build"],
   ] as const)("classifies %s", async (scenario, reason) => {
     const host = new RecordingLinuxHost();
     if (scenario === "unsupported host")
@@ -158,21 +177,15 @@ describe("Linux Hopper installation", () => {
         packageFamily: "deb",
         supported: false,
       };
-    if (scenario === "malformed metadata") host.metadata = { invalid: true };
-    if (scenario === "unexpected origin") {
-      const metadata = releasesFor(host.archive);
-      const ubuntu = metadata["Ubuntu / Mint"];
-      if (ubuntu === undefined)
-        throw new Error("fixture omitted Ubuntu release");
-      ubuntu.filename = "https://example.com/Hopper.deb";
-      host.metadata = metadata;
-    }
-    if (scenario === "metadata request failure") host.metadataOk = false;
     if (scenario === "package request failure") host.archiveOk = false;
     if (scenario === "checksum mismatch") host.archive = new Uint8Array([9]);
     if (scenario === "package manager failure") host.installSucceeds = false;
-    if (scenario === "missing launcher") host.launcherExists = false;
-    expect(await installLinuxHopper(host)).toEqual({
+    if (scenario === "missing launcher") host.launcherStatusValue = "missing";
+    if (scenario === "missing runtime")
+      host.launcherStatusValue = "runtime_dependencies";
+    if (scenario === "unsupported build")
+      host.launcherStatusValue = "unsupported_hopper_build";
+    expect(await installFixture(host)).toEqual({
       status: "failed",
       reason,
     });
@@ -198,7 +211,7 @@ describe("Linux Hopper installation", () => {
 function releasesFor(
   bytes: Uint8Array,
 ): Record<
-  string,
+  LinuxPackageFamily,
   { filename: string; file_length: string; file_hash: string }
 > {
   const release = (extension: string) => ({
@@ -207,8 +220,13 @@ function releasesFor(
     file_hash: createHash("sha1").update(bytes).digest("hex"),
   });
   return {
-    "Ubuntu / Mint": release("deb"),
-    Fedora: release("rpm"),
-    Arch: release("pkg.tar.xz"),
+    deb: release("deb"),
+    rpm: release("rpm"),
+    arch: release("pkg.tar.xz"),
   };
 }
+
+const installFixture = (host: RecordingLinuxHost) =>
+  installLinuxHopper(host, {
+    releases: releasesFor(new Uint8Array([1, 2, 3])),
+  });

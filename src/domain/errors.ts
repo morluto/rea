@@ -1,4 +1,10 @@
 import type { JsonValue } from "./jsonValue.js";
+import {
+  hopperStartupFailure,
+  type HopperStartupFailureCode,
+} from "./hopperStartupFailure.js";
+export { hopperStartupFailure } from "./hopperStartupFailure.js";
+export type { HopperStartupFailureCode } from "./hopperStartupFailure.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -282,9 +288,14 @@ export class HopperRemoteError extends HopperError {
 /** The owned Hopper bridge stopped before its client was closed. */
 export class HopperProcessError extends HopperError {
   readonly _tag = "HopperProcessError";
+  readonly failureCode: HopperStartupFailureCode | undefined;
+  override readonly userMessage: string | undefined;
 
   constructor(readonly exitCode: number | null) {
     super(`Hopper bridge stopped unexpectedly with code ${String(exitCode)}`);
+    const failure = hopperStartupFailure(exitCode);
+    this.failureCode = failure?.code;
+    this.userMessage = failure?.message;
   }
 }
 
@@ -337,6 +348,7 @@ export interface AnalysisErrorProjection
     | "unavailable"
     | "execution_failure";
   readonly message: string;
+  readonly code?: HopperStartupFailureCode;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -344,9 +356,12 @@ export const projectAnalysisError = (
   error: AnalysisError,
 ): AnalysisErrorProjection => {
   assertKnownTag(error._tag);
+  const code =
+    error instanceof HopperProcessError ? error.failureCode : undefined;
   return {
     category: errorCategory(error),
     message: userMessage(error),
+    ...(code === undefined ? {} : { code }),
   };
 };
 
@@ -413,6 +428,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 const userMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
+  if (error.userMessage !== undefined) return error.userMessage;
   if (UNREADABLE_OUTPUT_TAGS.has(error._tag))
     return "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.";
   if (UNSUPPORTED_PROVIDER_TAGS.has(error._tag))

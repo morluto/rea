@@ -10,6 +10,7 @@ import { parseBinaryTarget } from "../domain/binaryTarget.js";
 import { supportsNodeVersion } from "../domain/runtimeVersion.js";
 import { probeHomebrew } from "./homebrew.js";
 import {
+  linuxHopperBinarySupported,
   linuxHopperLauncherPath,
   linuxSharedLibrariesAvailable,
   readLinuxDistribution,
@@ -43,6 +44,8 @@ export interface DoctorHost {
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
   executable(path: string): Promise<boolean>;
+  supportedLinuxHopper(path: string): Promise<boolean>;
+  linuxDemoRuntimeReady(): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
 }
@@ -111,6 +114,33 @@ export const runDoctor = async (
       classification: "missing_analysis_engine",
     }),
   );
+  if (host.platform === "linux" && hopperPath !== undefined)
+    checks.push(
+      check(
+        "hopper-version",
+        await host.supportedLinuxHopper(hopperPath),
+        hopperPath,
+        {
+          remediation: unsupportedHopperRemediation(
+            host.configuredHopperPath === hopperPath,
+          ),
+          classification: "config_drift",
+        },
+      ),
+    );
+  if (host.platform === "linux" && hopperPath !== undefined)
+    checks.push(
+      check(
+        "hopper-demo-runtime",
+        await host.linuxDemoRuntimeReady(),
+        undefined,
+        {
+          remediation:
+            "Rerun rea setup to install the Xvfb, xauth, Python, X11, and XTEST packages required for Linux demo sessions.",
+          classification: "missing_dependency",
+        },
+      ),
+    );
   if (target !== undefined)
     checks.push(
       check("target", await host.validTarget(target), target, {
@@ -124,6 +154,11 @@ export const runDoctor = async (
     checks,
   };
 };
+
+const unsupportedHopperRemediation = (configured: boolean): string =>
+  configured
+    ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
+    : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
 
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (): DoctorHost => ({
@@ -160,6 +195,21 @@ export const systemDoctorHost = (): DoctorHost => ({
       return false;
     }
   },
+  async linuxDemoRuntimeReady() {
+    try {
+      await access("/usr/bin/Xvfb", constants.X_OK);
+      await access("/usr/bin/xauth", constants.X_OK);
+      await access("/usr/bin/python3", constants.X_OK);
+      await execFileAsync("/usr/bin/python3", [
+        "-c",
+        "import ctypes; ctypes.CDLL('libX11.so.6'); ctypes.CDLL('libXtst.so.6')",
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  supportedLinuxHopper: linuxHopperBinarySupported,
   async brewHopperPath() {
     return probeHomebrew(async (command) => {
       try {

@@ -117,7 +117,7 @@ try {
   const doctor = json(await run(cli, ["doctor", "--json"], environment));
   const supportedSetupHost =
     doctor.checks?.find(({ name }) => name === "host")?.ok === true;
-  const expectedDoctorHealth = supportedSetupHost;
+  const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
   if (
     !help.includes("setup") ||
     !help.includes("upgrade") ||
@@ -350,9 +350,10 @@ try {
     ),
   );
   if (supportedSetupHost) {
+    const status = process.platform === "linux" ? "needs_human" : "ready";
     if (
-      first.status !== "ready" ||
-      second.status !== "ready" ||
+      first.status !== status ||
+      second.status !== status ||
       second.appliedActions.length !== 0
     )
       throw new Error("packaged setup was not ready and idempotent");
@@ -398,7 +399,7 @@ try {
     const recovered = json(
       await run(cli, ["setup", "--yes", "--json"], environment),
     );
-    if (recovered.status !== "ready")
+    if (recovered.status !== status)
       throw new Error("packaged setup did not recover");
   } else if (
     first.status !== "needs_human" ||

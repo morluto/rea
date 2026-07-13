@@ -16,6 +16,27 @@ permissions:
   contents: read
 
 jobs:
+  clean-setup:
+    name: Clean setup, CLI, and MCP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Pack CLI for setup verification
+        shell: bash
+        run: |
+          tarball="$(npm pack --silent)"
+          prefix="${RUNNER_TEMP}/rea-prefix"
+          npm install --global --prefix "${prefix}" "./${tarball}"
+          echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
+      - name: Verify clean Linux setup through CLI and MCP
+        run: sudo --preserve-env=REA_VERIFY_SERVER_COMMAND,PATH npm run verify:setup:linux
+
   verify:
     name: Installed package against real Linux Hopper
     runs-on: [self-hosted, Linux, hopper]

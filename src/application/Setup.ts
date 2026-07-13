@@ -24,6 +24,13 @@ import {
 import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { installCanonicalSkill } from "./SetupSkill.js";
+import { setupPlan } from "./SetupPlan.js";
+import {
+  setupInstallFailure,
+  type SetupFailureCode,
+  type SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
+export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 
 export { installCanonicalSkill } from "./SetupSkill.js";
 
@@ -60,7 +67,7 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
-  installHopper(): Promise<string | undefined>;
+  installHopper(): Promise<SetupHopperInstallResult>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
@@ -82,6 +89,7 @@ export interface SetupResult {
   readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
   readonly doctor: Awaited<ReturnType<typeof runDoctor>>;
   readonly remediation?: string;
+  readonly code?: SetupFailureCode;
 }
 
 /** One concrete setup mutation disclosed before approval. */
@@ -103,43 +111,6 @@ export interface SetupOptions {
 export type SetupConfirmation = (
   actions: readonly SetupAction[],
 ) => Promise<boolean>;
-
-const setupPlan = (
-  platform: NodeJS.Platform,
-  hopperPath: string | undefined,
-  clients: readonly SetupClient[],
-): readonly SetupAction[] => [
-  ...(hopperPath === undefined
-    ? [
-        {
-          kind: "install_hopper" as const,
-          target:
-            platform === "darwin"
-              ? "~/Applications/Hopper Disassembler.app"
-              : "system package manager",
-          detail:
-            "Download the official Hopper package, verify it, install it, and open Hopper for activation.",
-          external: true,
-        },
-      ]
-    : []),
-  ...clients
-    .filter(({ format }) => format !== "unsupported")
-    .map(
-      (client): SetupAction => ({
-        kind: "configure_client",
-        target: client.configPath,
-        detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
-        external: false,
-      }),
-    ),
-  {
-    kind: "install_skill",
-    target: "~/.agents/skills/rea-analysis/SKILL.md",
-    detail: "Install or update the bundled REA analysis skill.",
-    external: false,
-  },
-];
 
 /**
  * Install prerequisites and configure detected clients idempotently.
@@ -165,8 +136,16 @@ export const runSetup = async (
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
+  const initialDoctor = await host.doctor();
+  const linuxHopperRepairNeeded = initialDoctor.checks.some(
+    ({ name, ok, detail }) =>
+      !ok &&
+      (name === "hopper-demo-runtime" ||
+        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
+  );
+  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
   const detectedClients = await host.detectedClients();
-  plannedActions = setupPlan(host.platform, hopperPath, detectedClients);
+  plannedActions = setupPlan(host.platform, installHopper, detectedClients);
   let approved = options.approved;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
@@ -184,21 +163,19 @@ export const runSetup = async (
         "Review the setup plan, then rerun interactively or with --yes.",
     };
 
-  if (
-    hopperPath === undefined &&
-    (interactiveApproval || options.installHopper)
-  ) {
-    hopperPath = await host.installHopper();
-    if (hopperPath === undefined)
+  if (installHopper && (interactiveApproval || options.installHopper)) {
+    const installed = await host.installHopper();
+    if (installed.status === "failed")
       return {
         status: "needs_human",
         plannedActions,
         appliedActions,
         clients,
         doctor: await host.doctor(),
-        remediation:
-          "Hopper installation failed; install Hopper manually or rerun setup after resolving the reported system error.",
+        code: installed.code,
+        remediation: installed.remediation,
       };
+    hopperPath = installed.launcherPath;
     appliedActions.push("installed_hopper");
   }
   const clientFailure = await configureDetectedClients({
@@ -217,24 +194,34 @@ export const runSetup = async (
     );
   if (skill === "installed") appliedActions.push("installed_skill");
   const doctor = await host.doctor();
-  const activationRequired = appliedActions.includes("installed_hopper");
-  const ready = doctor.healthy && !activationRequired;
+  const remediation = finalSetupRemediation(
+    host.platform,
+    appliedActions.includes("installed_hopper"),
+    doctor.healthy,
+    hopperPath,
+  );
   return {
-    status: ready ? "ready" : "needs_human",
+    status: remediation === undefined ? "ready" : "needs_human",
     plannedActions,
     appliedActions,
     clients,
     doctor,
-    ...(ready
-      ? {}
-      : {
-          remediation: activationRequired
-            ? "Open Hopper, complete its one-time activation, then rerun rea doctor --json."
-            : hopperPath === undefined
-              ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
-              : "Run rea doctor and apply each reported remediation.",
-        }),
+    ...(remediation === undefined ? {} : { remediation }),
   };
+};
+
+const finalSetupRemediation = (
+  platform: NodeJS.Platform,
+  installedHopper: boolean,
+  healthy: boolean,
+  hopperPath: string | undefined,
+): string | undefined => {
+  if (platform === "darwin" && installedHopper)
+    return "Open Hopper, choose its demo mode or activate a license, then rerun rea doctor --json.";
+  if (healthy) return undefined;
+  return hopperPath === undefined
+    ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
+    : "Run rea doctor and apply each reported remediation.";
 };
 
 const hostRemediation = async (
@@ -269,7 +256,8 @@ const systemSetupHost = (): SetupHost => {
         process.platform === "linux"
           ? await installLinuxHopper()
           : await installMacHopper();
-      return result.status === "installed" ? result.launcherPath : undefined;
+      if (result.status === "installed") return result;
+      return setupInstallFailure(result.reason);
     },
     detectedClients: () => detectClients(homedir()),
     configureClient: (client, hopperPath, command) =>

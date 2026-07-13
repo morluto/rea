@@ -44,6 +44,7 @@ export interface HopperApplicationLauncherOptions {
   readonly targetKind: "executable" | "database";
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
+  readonly demoHelperPath?: string;
 }
 
 /**
@@ -101,26 +102,16 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         options.signal,
       );
       if (!prepared) return err(new HopperCancelledError());
-      const child = spawn(this.options.launcherPath, args, {
-        stdio: ["ignore", "ignore", "pipe"],
-        detached: process.platform !== "win32",
-        env: { ...process.env, REA_PROCESS_RUN_ID: session.runId },
-      });
-      const started = await new Promise<Result<undefined, HopperStartError>>(
-        (resolve) => {
-          const onSpawn = (): void => {
-            child.off("error", onError);
-            resolve(ok(undefined));
-          };
-          const onError = (cause: Error): void => {
-            child.off("spawn", onSpawn);
-            resolve(err(new HopperStartError({ cause })));
-          };
-          child.once("spawn", onSpawn);
-          child.once("error", onError);
-        },
+      const linuxDemo = linuxDemoLaunch(this.options, session, args);
+      const ownershipCommand =
+        linuxDemo?.ownershipCommand ?? this.options.launcherPath;
+      const started = await spawnLauncher(
+        linuxDemo?.command ?? this.options.launcherPath,
+        linuxDemo?.args ?? args,
+        session.runId,
       );
       if (!started.ok) return started;
+      const child = started.value;
       const pid = child.pid;
       if (pid === undefined)
         return err(
@@ -132,7 +123,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         pid,
         process_group_id: pid,
         parent_pid: process.pid,
-        launcher: this.options.launcherPath,
+        launcher: linuxDemo?.command ?? this.options.launcherPath,
         created_at: new Date().toISOString(),
       };
       try {
@@ -143,7 +134,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         );
       } catch (cause: unknown) {
         await cleanupOwnedProcessGroup(
-          ownedProcessGroup(session, pid, this.options.launcherPath),
+          ownedProcessGroup(session, pid, ownershipCommand),
         );
         return err(new HopperStartError({ cause }));
       }
@@ -152,7 +143,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         ownsProcessLifetime: true,
         cleanup: () =>
           cleanupOwnedProcessGroup(
-            ownedProcessGroup(session, pid, this.options.launcherPath),
+            ownedProcessGroup(session, pid, ownershipCommand),
           ),
       });
     } catch (cause: unknown) {
@@ -160,6 +151,63 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
   }
 }
+
+const linuxDemoLaunch = (
+  options: HopperApplicationLauncherOptions,
+  session: BridgeSession,
+  hopperArgs: readonly string[],
+):
+  | {
+      readonly command: string;
+      readonly args: readonly string[];
+      readonly ownershipCommand: string;
+    }
+  | undefined => {
+  if (
+    process.platform !== "linux" ||
+    basename(options.launcherPath) !== "Hopper" ||
+    options.demoHelperPath === undefined
+  )
+    return undefined;
+  return {
+    command: "/usr/bin/python3",
+    ownershipCommand: "/usr/bin/python3",
+    args: [
+      options.demoHelperPath,
+      "--hopper",
+      options.launcherPath,
+      "--socket",
+      session.socketPath,
+      "--",
+      options.launcherPath,
+      ...hopperArgs,
+    ],
+  };
+};
+
+const spawnLauncher = async (
+  command: string,
+  args: readonly string[],
+  runId: string,
+): Promise<Result<ChildProcess, HopperStartError>> => {
+  const child = spawn(command, args, {
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: process.platform !== "win32",
+    env: { ...process.env, REA_PROCESS_RUN_ID: runId },
+  });
+  return new Promise((resolve) => {
+    const onSpawn = (): void => {
+      child.off("error", onError);
+      resolve(ok(child));
+    };
+    const onError = (cause: Error): void => {
+      child.off("spawn", onSpawn);
+      resolve(err(new HopperStartError({ cause })));
+    };
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+  });
+};
 
 const ownedProcessGroup = (
   session: BridgeSession,

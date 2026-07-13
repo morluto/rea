@@ -8,6 +8,8 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   linuxDistribution: () => Promise.resolve(undefined),
   validTarget: (path) => Promise.resolve(path.includes("Hopper")),
   executable: (path) => Promise.resolve(path.includes("Hopper")),
+  supportedLinuxHopper: () => Promise.resolve(true),
+  linuxDemoRuntimeReady: () => Promise.resolve(true),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
   ...overrides,
@@ -77,6 +79,53 @@ describe("doctor", () => {
     );
     expect(result.healthy).toBe(true);
     expect(result.hopperPath).toBe(path);
+  });
+  it("reports missing Linux demo-session dependencies", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        macosVersion: () => Promise.resolve(undefined),
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "ubuntu",
+            versionId: "24.04",
+            packageFamily: "deb",
+            supported: true,
+          }),
+        linuxDemoRuntimeReady: () => Promise.resolve(false),
+      }),
+    );
+    expect(result.healthy).toBe(false);
+    expect(
+      result.checks.find(({ name }) => name === "hopper-demo-runtime"),
+    ).toMatchObject({
+      ok: false,
+      classification: "missing_dependency",
+      remediation: expect.stringContaining("xauth"),
+    });
+  });
+  it("explains how to recover from an unsupported configured launcher", async () => {
+    const path = "/custom/Hopper";
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        configuredHopperPath: path,
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "ubuntu",
+            versionId: "24.04",
+            packageFamily: "deb",
+            supported: true,
+          }),
+        executable: (candidate) => Promise.resolve(candidate === path),
+        supportedLinuxHopper: () => Promise.resolve(false),
+      }),
+    );
+    expect(
+      result.checks.find(({ name }) => name === "hopper-version")?.remediation,
+    ).toContain("Unset or update HOPPER_LAUNCHER_PATH");
   });
   it("detects a Homebrew cask installed outside /Applications", async () => {
     const path =

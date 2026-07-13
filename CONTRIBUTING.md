@@ -4,7 +4,7 @@ REA welcomes focused bug fixes, documentation improvements, tests, and reverse-e
 
 ## Development setup
 
-REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verification additionally requires either macOS 12+ or an officially supported Linux host (Ubuntu 24.04+, Fedora 41+, or 64-bit Arch), an installed and activated Hopper application, and a desktop session. Run `nvm use` before installing dependencies.
+REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verification additionally requires either macOS 12+ or an officially supported Linux host (Ubuntu 24.04+, Fedora 41+, or 64-bit Arch) and an installed Hopper application. Linux demo verification uses its own private Xvfb display and does not require a desktop session. Run `nvm use` before installing dependencies.
 
 ```bash
 npm ci
@@ -43,7 +43,7 @@ HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
 npm run verify:hopper
 ```
 
-On a self-hosted Linux runner with `DISPLAY` or `WAYLAND_DISPLAY`, use:
+On a self-hosted Linux runner with the setup-installed Xvfb dependencies, use:
 
 ```bash
 HOPPER_TARGET_PATH=/path/to/target-a \

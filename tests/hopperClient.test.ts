@@ -59,6 +59,21 @@ class SilentLauncher implements BridgeLauncher {
   }
 }
 
+class ExitingLauncher implements BridgeLauncher {
+  constructor(readonly code: number) {}
+
+  launch() {
+    return Promise.resolve(
+      ok({
+        process: spawn(process.execPath, ["-e", `process.exit(${this.code})`], {
+          stdio: ["ignore", "ignore", "pipe"],
+        }),
+        ownsProcessLifetime: true,
+      }),
+    );
+  }
+}
+
 const clients: HopperClient[] = [];
 const startClient = async () => {
   const client = new HopperClient({
@@ -181,6 +196,37 @@ describe("HopperClient", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
+    "reports Linux adapter exit %i during bridge startup",
+    async (exitCode) => {
+      const client = new HopperClient({
+        launcher: new ExitingLauncher(exitCode),
+        startupTimeoutMs: 10_000,
+      });
+      clients.push(client);
+      const startedAt = Date.now();
+      const result = await client.start();
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "HopperProcessError",
+          exitCode,
+        });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    },
+  );
+
+  it("allows a short-lived launcher to hand off bridge startup", async () => {
+    const client = new HopperClient({
+      launcher: new ExitingLauncher(0),
+      startupTimeoutMs: 100,
+    });
+    clients.push(client);
+    const result = await client.start();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("HopperTimeoutError");
   });
 
   it("ignores more than 1,024 late responses without corrupting the session", async () => {
