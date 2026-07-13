@@ -21,6 +21,22 @@ SUPPORTED_HOPPER_SHA256 = {
 EXPECTED_SCREEN = (1280, 1024)
 EXPECTED_DIALOG = (189, 370, 901, 284)
 DEMO_CLICK = (305, 632)
+PRIVATE_DISPLAY_UNAVAILABLE = 70
+X11_AUTHORIZATION_FAILED = 71
+UNSUPPORTED_HOPPER_BUILD = 72
+INVALID_LAUNCH_COMMAND = 73
+PROCESS_OWNERSHIP_MISMATCH = 74
+HOPPER_EXITED_DURING_STARTUP = 75
+UNSUPPORTED_DEMO_DIALOG = 76
+UNEXPECTED_DISPLAY_GEOMETRY = 77
+X11_INPUT_FAILED = 78
+RUNTIME_DEPENDENCY_UNAVAILABLE = 79
+
+
+class AdapterFailure(Exception):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class XWindowAttributes(ctypes.Structure):
@@ -181,20 +197,20 @@ def start_xvfb(session: Path) -> tuple[subprocess.Popen[bytes], str, Path]:
         if Path(f"/tmp/.X11-unix/X{display_number}").exists():
             continue
         cookie = secrets.token_hex(16)
-        subprocess.run(
-            [
-                "/usr/bin/xauth",
-                "-f",
-                str(authority),
-                "add",
-                display_name,
-                ".",
-                cookie,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            subprocess.run(
+                [
+                    "/usr/bin/xauth", "-f", str(authority), "add",
+                    display_name, ".", cookie,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise AdapterFailure(
+                X11_AUTHORIZATION_FAILED, "private X authorization failed"
+            ) from error
         authority.chmod(0o600)
         process = subprocess.Popen(
             [
@@ -220,7 +236,7 @@ def start_xvfb(session: Path) -> tuple[subprocess.Popen[bytes], str, Path]:
         if process.poll() is None:
             process.terminate()
         process.wait()
-    raise SystemExit("private X display unavailable")
+    raise AdapterFailure(PRIVATE_DISPLAY_UNAVAILABLE, "private X display unavailable")
 
 
 def main() -> int:
@@ -228,10 +244,10 @@ def main() -> int:
     hopper = Path(args.hopper)
     socket = Path(args.socket)
     if digest(hopper) not in SUPPORTED_HOPPER_SHA256:
-        raise SystemExit("unsupported Hopper binary")
+        raise AdapterFailure(UNSUPPORTED_HOPPER_BUILD, "unsupported Hopper binary")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command or Path(command[0]).resolve() != hopper.resolve():
-        raise SystemExit("invalid Hopper launch command")
+        raise AdapterFailure(INVALID_LAUNCH_COMMAND, "invalid Hopper launch command")
     xvfb, display_name, authority = start_xvfb(socket.parent)
     child: subprocess.Popen[bytes] | None = None
     display: int | None = None
@@ -252,18 +268,25 @@ def main() -> int:
         leader = os.getpid()
         os.environ["XAUTHORITY"] = str(authority)
 
-        x11 = ctypes.CDLL("libX11.so.6")
-        xtst = ctypes.CDLL("libXtst.so.6")
+        try:
+            x11 = ctypes.CDLL("libX11.so.6")
+            xtst = ctypes.CDLL("libXtst.so.6")
+        except OSError as error:
+            raise AdapterFailure(
+                RUNTIME_DEPENDENCY_UNAVAILABLE, "X11 runtime unavailable"
+            ) from error
         configure_x11(x11, xtst)
         display = x11.XOpenDisplay(display_name.encode())
         if not display:
-            raise SystemExit("private X display unavailable")
+            raise AdapterFailure(PRIVATE_DISPLAY_UNAVAILABLE, "private X display unavailable")
         root = x11.XDefaultRootWindow(display)
         if (
             x11.XDisplayWidth(display, 0),
             x11.XDisplayHeight(display, 0),
         ) != EXPECTED_SCREEN:
-            raise SystemExit("unexpected private display geometry")
+            raise AdapterFailure(
+                UNEXPECTED_DISPLAY_GEOMETRY, "unexpected private display geometry"
+            )
 
         deadline = time.monotonic() + 10
         observed: list[tuple[int, int, int, int, int]] = []
@@ -276,17 +299,29 @@ def main() -> int:
                 if child.poll() is None:
                     time.sleep(0.1)
                     continue
-                raise SystemExit("owned Hopper process exited")
+                raise AdapterFailure(
+                    HOPPER_EXITED_DURING_STARTUP, "owned Hopper process exited"
+                )
             observed = windows(x11, display, root)
             if any(window[1:] == EXPECTED_DIALOG for window in observed):
                 break
             time.sleep(0.1)
         else:
-            raise SystemExit(f"expected Hopper demo dialog not found: {observed}")
+            if not hopper_is_owned(leader, hopper):
+                raise AdapterFailure(
+                    PROCESS_OWNERSHIP_MISMATCH, "Hopper process ownership mismatch"
+                )
+            raise AdapterFailure(
+                UNSUPPORTED_DEMO_DIALOG, "expected Hopper demo dialog not found"
+            )
 
-        xtst.XTestFakeMotionEvent(display, -1, DEMO_CLICK[0], DEMO_CLICK[1], 0)
-        xtst.XTestFakeButtonEvent(display, 1, True, 0)
-        xtst.XTestFakeButtonEvent(display, 1, False, 0)
+        input_results = (
+            xtst.XTestFakeMotionEvent(display, -1, DEMO_CLICK[0], DEMO_CLICK[1], 0),
+            xtst.XTestFakeButtonEvent(display, 1, True, 0),
+            xtst.XTestFakeButtonEvent(display, 1, False, 0),
+        )
+        if not all(input_results):
+            raise AdapterFailure(X11_INPUT_FAILED, "private X input failed")
         x11.XFlush(display)
         x11.XCloseDisplay(display)
         display = None
@@ -309,8 +344,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except SystemExit as error:
-        if isinstance(error.code, str):
-            print(error.code, file=os.sys.stderr)
-            raise SystemExit(78) from None
-        raise
+    except AdapterFailure as error:
+        print(str(error), file=os.sys.stderr)
+        raise SystemExit(error.code) from None

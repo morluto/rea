@@ -24,6 +24,16 @@ import {
 import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { installCanonicalSkill } from "./SetupSkill.js";
+import { setupPlan } from "./SetupPlan.js";
+import {
+  setupInstallFailure,
+  type SetupFailureCode,
+  type SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
+export type {
+  SetupFailureCode,
+  SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
 
 export { installCanonicalSkill } from "./SetupSkill.js";
 
@@ -60,7 +70,7 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
-  installHopper(): Promise<string | undefined>;
+  installHopper(): Promise<SetupHopperInstallResult>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
@@ -82,6 +92,7 @@ export interface SetupResult {
   readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
   readonly doctor: Awaited<ReturnType<typeof runDoctor>>;
   readonly remediation?: string;
+  readonly code?: SetupFailureCode;
 }
 
 /** One concrete setup mutation disclosed before approval. */
@@ -103,45 +114,6 @@ export interface SetupOptions {
 export type SetupConfirmation = (
   actions: readonly SetupAction[],
 ) => Promise<boolean>;
-
-const setupPlan = (
-  platform: NodeJS.Platform,
-  installHopper: boolean,
-  clients: readonly SetupClient[],
-): readonly SetupAction[] => [
-  ...(installHopper
-    ? [
-        {
-          kind: "install_hopper" as const,
-          target:
-            platform === "darwin"
-              ? "~/Applications/Hopper Disassembler.app"
-              : "system package manager",
-          detail:
-            platform === "linux"
-              ? "Download, verify, and install Hopper plus its Xvfb demo-session dependencies. For the supported demo build, REA uses a private display and selects Hopper's offered demo mode for each analysis session."
-              : "Download the official Hopper package, verify it, and install it. Hopper may show its demo or license prompt when first opened.",
-          external: true,
-        },
-      ]
-    : []),
-  ...clients
-    .filter(({ format }) => format !== "unsupported")
-    .map(
-      (client): SetupAction => ({
-        kind: "configure_client",
-        target: client.configPath,
-        detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
-        external: false,
-      }),
-    ),
-  {
-    kind: "install_skill",
-    target: "~/.agents/skills/rea-analysis/SKILL.md",
-    detail: "Install or update the bundled REA analysis skill.",
-    external: false,
-  },
-];
 
 /**
  * Install prerequisites and configure detected clients idempotently.
@@ -195,17 +167,18 @@ export const runSetup = async (
     };
 
   if (installHopper && (interactiveApproval || options.installHopper)) {
-    hopperPath = await host.installHopper();
-    if (hopperPath === undefined)
+    const installed = await host.installHopper();
+    if (installed.status === "failed")
       return {
         status: "needs_human",
         plannedActions,
         appliedActions,
         clients,
         doctor: await host.doctor(),
-        remediation:
-          "Hopper installation failed; install Hopper manually or rerun setup after resolving the reported system error.",
+        code: installed.code,
+        remediation: installed.remediation,
       };
+    hopperPath = installed.launcherPath;
     appliedActions.push("installed_hopper");
   }
   const clientFailure = await configureDetectedClients({
@@ -286,7 +259,8 @@ const systemSetupHost = (): SetupHost => {
         process.platform === "linux"
           ? await installLinuxHopper()
           : await installMacHopper();
-      return result.status === "installed" ? result.launcherPath : undefined;
+      if (result.status === "installed") return result;
+      return setupInstallFailure(result.reason);
     },
     detectedClients: () => detectClients(homedir()),
     configureClient: (client, hopperPath, command) =>

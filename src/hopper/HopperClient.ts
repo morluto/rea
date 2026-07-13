@@ -10,6 +10,7 @@ import {
   HopperProcessError,
   HopperProtocolError,
   HopperStartError,
+  hopperStartupFailure,
   HopperTimeoutError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -212,7 +213,10 @@ export class HopperClient {
     while (Date.now() < deadline) {
       if (signal?.aborted === true) return err(new HopperCancelledError());
       if (this.#closing) return err(new HopperProcessError(null));
-      if (this.#launcherExitCode === 78)
+      if (
+        this.#launcherExitCode !== undefined &&
+        hopperStartupFailure(this.#launcherExitCode) !== undefined
+      )
         return err(new HopperProcessError(this.#launcherExitCode));
       try {
         await access(socketPath);

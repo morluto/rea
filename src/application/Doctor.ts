@@ -121,8 +121,9 @@ export const runDoctor = async (
         await host.supportedLinuxHopper(hopperPath),
         hopperPath,
         {
-          remediation:
-            "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.",
+          remediation: unsupportedHopperRemediation(
+            host.configuredHopperPath === hopperPath,
+          ),
           classification: "config_drift",
         },
       ),
@@ -135,7 +136,7 @@ export const runDoctor = async (
         undefined,
         {
           remediation:
-            "Rerun rea setup to install the Xvfb, Python, X11, and XTEST packages required for Linux demo sessions.",
+            "Rerun rea setup to install the Xvfb, xauth, Python, X11, and XTEST packages required for Linux demo sessions.",
           classification: "missing_dependency",
         },
       ),
@@ -153,6 +154,11 @@ export const runDoctor = async (
     checks,
   };
 };
+
+const unsupportedHopperRemediation = (configured: boolean): string =>
+  configured
+    ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
+    : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
 
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (): DoctorHost => ({

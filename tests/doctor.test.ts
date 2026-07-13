@@ -99,7 +99,33 @@ describe("doctor", () => {
     expect(result.healthy).toBe(false);
     expect(
       result.checks.find(({ name }) => name === "hopper-demo-runtime"),
-    ).toMatchObject({ ok: false, classification: "missing_dependency" });
+    ).toMatchObject({
+      ok: false,
+      classification: "missing_dependency",
+      remediation: expect.stringContaining("xauth"),
+    });
+  });
+  it("explains how to recover from an unsupported configured launcher", async () => {
+    const path = "/custom/Hopper";
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        configuredHopperPath: path,
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "ubuntu",
+            versionId: "24.04",
+            packageFamily: "deb",
+            supported: true,
+          }),
+        executable: (candidate) => Promise.resolve(candidate === path),
+        supportedLinuxHopper: () => Promise.resolve(false),
+      }),
+    );
+    expect(
+      result.checks.find(({ name }) => name === "hopper-version")?.remediation,
+    ).toContain("Unset or update HOPPER_LAUNCHER_PATH");
   });
   it("detects a Homebrew cask installed outside /Applications", async () => {
     const path =

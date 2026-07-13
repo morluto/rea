@@ -191,6 +191,20 @@ const analysisErrorProjectionSchema = z
       "execution_failure",
     ]),
     message: z.string(),
+    code: z
+      .enum([
+        "private_display_unavailable",
+        "x11_authorization_failed",
+        "unsupported_hopper_build",
+        "invalid_launch_command",
+        "process_ownership_mismatch",
+        "hopper_exited_during_startup",
+        "unsupported_demo_dialog",
+        "unexpected_display_geometry",
+        "x11_input_failed",
+        "runtime_dependency_unavailable",
+      ])
+      .optional(),
   })
   .strict();
 const graphNode = z.discriminatedUnion("status", [

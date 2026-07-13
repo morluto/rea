@@ -62,7 +62,7 @@ export interface LinuxHopperInstallHost {
   createTemporaryDirectory(): Promise<string>;
   writeArchive(path: string, bytes: Uint8Array): Promise<void>;
   installPackage(family: LinuxPackageFamily, archive: string): Promise<boolean>;
-  launcherReady(path: string): Promise<boolean>;
+  launcherStatus(path: string): Promise<LinuxHopperLauncherStatus>;
   cleanup(path: string): Promise<void>;
 }
 
@@ -78,8 +78,16 @@ export type LinuxHopperInstallResult =
         | "integrity"
         | "authorization_or_package_manager"
         | "launcher_missing"
+        | "runtime_dependencies"
+        | "unsupported_hopper_build"
         | "cancelled";
     };
+
+export type LinuxHopperLauncherStatus =
+  | "ready"
+  | "missing"
+  | "runtime_dependencies"
+  | "unsupported_hopper_build";
 
 /** Parse an os-release document without executing its shell syntax. */
 export const parseLinuxDistribution = (text: string): LinuxDistribution => {
@@ -155,8 +163,13 @@ export const installLinuxHopper = async (
     if (!(await host.installPackage(distribution.packageFamily, archive)))
       return { status: "failed", reason: "authorization_or_package_manager" };
     const launcherPath = "/opt/hopper/bin/Hopper";
-    if (!(await host.launcherReady(launcherPath)))
-      return { status: "failed", reason: "launcher_missing" };
+    const launcherStatus = await host.launcherStatus(launcherPath);
+    if (launcherStatus !== "ready")
+      return {
+        status: "failed",
+        reason:
+          launcherStatus === "missing" ? "launcher_missing" : launcherStatus,
+      };
     return { status: "installed", launcherPath };
   } catch (cause: unknown) {
     if (isAbortCause(cause)) return { status: "failed", reason: "cancelled" };
@@ -185,16 +198,17 @@ const systemLinuxHopperInstallHost = (): LinuxHopperInstallHost => ({
   createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-")),
   writeArchive: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
   installPackage: installSystemPackage,
-  async launcherReady(path) {
+  async launcherStatus(path) {
     try {
       await access(path);
       const linked = await execFileAsync("ldd", [path]);
-      return (
-        linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`) &&
-        (await linuxHopperBinarySupported(path))
-      );
+      if (!linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`))
+        return "runtime_dependencies";
+      return (await linuxHopperBinarySupported(path))
+        ? "ready"
+        : "unsupported_hopper_build";
     } catch {
-      return false;
+      return "missing";
     }
   },
   cleanup: (path) => rm(path, { recursive: true, force: true }),

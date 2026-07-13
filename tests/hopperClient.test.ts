@@ -198,22 +198,25 @@ describe("HopperClient", () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
-  it("reports an owned launcher exit during bridge startup", async () => {
-    const client = new HopperClient({
-      launcher: new ExitingLauncher(78),
-      startupTimeoutMs: 10_000,
-    });
-    clients.push(client);
-    const startedAt = Date.now();
-    const result = await client.start();
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toMatchObject({
-        _tag: "HopperProcessError",
-        exitCode: 78,
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
+    "reports Linux adapter exit %i during bridge startup",
+    async (exitCode) => {
+      const client = new HopperClient({
+        launcher: new ExitingLauncher(exitCode),
+        startupTimeoutMs: 10_000,
       });
-    expect(Date.now() - startedAt).toBeLessThan(500);
-  });
+      clients.push(client);
+      const startedAt = Date.now();
+      const result = await client.start();
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "HopperProcessError",
+          exitCode,
+        });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+    },
+  );
 
   it("allows a short-lived launcher to hand off bridge startup", async () => {
     const client = new HopperClient({

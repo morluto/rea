@@ -9,6 +9,7 @@ import {
   type LinuxDistribution,
   type LinuxHopperDownload,
   type LinuxHopperInstallHost,
+  type LinuxHopperLauncherStatus,
   type LinuxPackageFamily,
 } from "../src/application/LinuxHopper.js";
 
@@ -22,7 +23,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   archive = new Uint8Array([1, 2, 3]);
   archiveOk = true;
   installSucceeds = true;
-  launcherExists = true;
+  launcherStatusValue: LinuxHopperLauncherStatus = "ready";
   downloads: string[] = [];
   installed: Array<{ family: LinuxPackageFamily; archive: string }> = [];
   cleaned: string[] = [];
@@ -43,7 +44,8 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     this.installed.push({ family, archive });
     return Promise.resolve(this.installSucceeds);
   };
-  launcherReady = (): Promise<boolean> => Promise.resolve(this.launcherExists);
+  launcherStatus = (): Promise<LinuxHopperLauncherStatus> =>
+    Promise.resolve(this.launcherStatusValue);
   cleanup = (path: string): Promise<void> => {
     this.cleaned.push(path);
     return Promise.resolve();
@@ -165,6 +167,8 @@ describe("Linux Hopper installation", () => {
     ["checksum mismatch", "integrity"],
     ["package manager failure", "authorization_or_package_manager"],
     ["missing launcher", "launcher_missing"],
+    ["missing runtime", "runtime_dependencies"],
+    ["unsupported build", "unsupported_hopper_build"],
   ] as const)("classifies %s", async (scenario, reason) => {
     const host = new RecordingLinuxHost();
     if (scenario === "unsupported host")
@@ -176,7 +180,11 @@ describe("Linux Hopper installation", () => {
     if (scenario === "package request failure") host.archiveOk = false;
     if (scenario === "checksum mismatch") host.archive = new Uint8Array([9]);
     if (scenario === "package manager failure") host.installSucceeds = false;
-    if (scenario === "missing launcher") host.launcherExists = false;
+    if (scenario === "missing launcher") host.launcherStatusValue = "missing";
+    if (scenario === "missing runtime")
+      host.launcherStatusValue = "runtime_dependencies";
+    if (scenario === "unsupported build")
+      host.launcherStatusValue = "unsupported_hopper_build";
     expect(await installFixture(host)).toEqual({
       status: "failed",
       reason,

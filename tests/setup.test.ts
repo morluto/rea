@@ -6,6 +6,7 @@ import {
   type SetupClient,
   type SetupHost,
   type SetupOptions,
+  type SetupHopperInstallResult,
 } from "../src/application/Setup.js";
 import type { DoctorCheck } from "../src/application/Doctor.js";
 import type { LinuxDistribution } from "../src/application/LinuxHopper.js";
@@ -35,11 +36,21 @@ class FakeSetupHost implements SetupHost {
   linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distribution);
   hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
-  installHopper = (): Promise<string | undefined> => {
+  installHopper = (): Promise<SetupHopperInstallResult> => {
     this.hopperInstalls += 1;
     this.linuxDemoRuntimeMissing = false;
-    if (this.hopperInstallSucceeds) this.hopper = "/manual/Hopper";
-    return Promise.resolve(this.hopper);
+    if (this.hopperInstallSucceeds) {
+      this.hopper = "/manual/Hopper";
+      return Promise.resolve({
+        status: "installed",
+        launcherPath: this.hopper,
+      });
+    }
+    return Promise.resolve({
+      status: "failed",
+      code: "download_failed",
+      remediation: "Download failed.",
+    });
   };
   detectedClients = (): Promise<readonly SetupClient[]> =>
     Promise.resolve(this.clients);
@@ -257,9 +268,8 @@ describe("setup workflow", () => {
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
     const result = await runSetup(options(true, true), host);
     expect(result.status).toBe("needs_human");
-    expect(result.remediation).toBe(
-      "Hopper installation failed; install Hopper manually or rerun setup after resolving the reported system error.",
-    );
+    expect(result.code).toBe("download_failed");
+    expect(result.remediation).toBe("Download failed.");
     expect(host.configurations).toBe(0);
   });
 
