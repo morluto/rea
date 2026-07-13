@@ -83,8 +83,9 @@ export const writeEvidenceBundle = async (
   if (bytes > policy.maxBytes)
     return err(new EvidenceFileError("write", "too-large"));
   try {
-    const canonicalParent = await realpath(dirname(resolve(path)));
-    const destination = resolve(canonicalParent, basename(resolve(path)));
+    const requestedPath = resolve(path);
+    const canonicalParent = await realpath(dirname(requestedPath));
+    const destination = resolve(canonicalParent, basename(requestedPath));
     if (!(await isApproved(destination, policy.roots)))
       return err(new EvidenceFileError("write", "outside-root"));
     const existing = await lstat(destination).catch((cause: unknown) => {
@@ -101,7 +102,7 @@ export const writeEvidenceBundle = async (
       mode: 0o600,
       fsync: true,
     });
-    return ok({ path: destination, bytes });
+    return ok({ path: requestedPath, bytes });
   } catch (cause: unknown) {
     return err(new EvidenceFileError("write", "io", { cause }));
   }
