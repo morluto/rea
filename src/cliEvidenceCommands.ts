@@ -9,7 +9,7 @@ import { parseConfig } from "./config.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "./logger.js";
 
-/** Register filesystem-gated Evidence v2 commands shared by package smoke tests. */
+/** Register filesystem-gated Evidence v2 commands. */
 export const registerEvidenceCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,

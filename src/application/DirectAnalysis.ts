@@ -13,6 +13,15 @@ const WORKFLOW_PROVIDER = {
   version: "1",
 } as const;
 
+type DirectAnalysisTool =
+  | "binary_overview"
+  | "procedure_pseudo_code"
+  | "analyze_function"
+  | "search_strings"
+  | "search_procedures"
+  | "xrefs"
+  | "trace_feature";
+
 /**
  * Open one binary, execute one tool, and always release the bridge session.
  * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
@@ -20,14 +29,7 @@ const WORKFLOW_PROVIDER = {
  */
 export const runDirectAnalysis = async (
   path: string,
-  tool:
-    | "binary_overview"
-    | "procedure_pseudo_code"
-    | "analyze_function"
-    | "search_strings"
-    | "search_procedures"
-    | "xrefs"
-    | "trace_feature",
+  tool: DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => runAnalysis(path, tool, arguments_, logger);
@@ -57,16 +59,7 @@ export const runSessionStatus = async (
 
 const runAnalysis = async (
   path: string,
-  tool:
-    | NativeToolName
-    | ArtifactToolName
-    | "binary_overview"
-    | "procedure_pseudo_code"
-    | "analyze_function"
-    | "search_strings"
-    | "search_procedures"
-    | "xrefs"
-    | "trace_feature",
+  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger,
 ): Promise<JsonValue> => {
