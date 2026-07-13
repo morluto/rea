@@ -3,8 +3,7 @@ import {
   hopperStartupFailure,
   type HopperStartupFailureCode,
 } from "./hopperStartupFailure.js";
-export { hopperStartupFailure } from "./hopperStartupFailure.js";
-export type { HopperStartupFailureCode } from "./hopperStartupFailure.js";
+export { hopperStartupFailure, type HopperStartupFailureCode };
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -349,6 +348,7 @@ export interface AnalysisErrorProjection
     | "execution_failure";
   readonly message: string;
   readonly code?: HopperStartupFailureCode;
+  readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -358,10 +358,21 @@ export const projectAnalysisError = (
   assertKnownTag(error._tag);
   const code =
     error instanceof HopperProcessError ? error.failureCode : undefined;
+  const artifact =
+    error instanceof ArtifactOperationError && error.artifactDetails;
+  const details = artifact
+    ? {
+        logical_path: artifact.logicalPath,
+        declared_sha256: artifact.declaredSha256,
+        calculated_sha256: artifact.calculatedSha256,
+        unpacked: artifact.unpacked,
+      }
+    : undefined;
   return {
     category: errorCategory(error),
     message: userMessage(error),
     ...(code === undefined ? {} : { code }),
+    ...(details === undefined ? {} : { details }),
   };
 };
 

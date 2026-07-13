@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,51 +17,75 @@ import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
 describe("artifact graph MCP integration", () => {
-  it("returns a safe ASAR integrity error without paths or hashes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-asar-integrity-mcp-"));
-    const source = join(root, "source");
-    const original = "console.log('ok');\n";
-    const changed = "changed();\n";
-    await mkdir(source);
-    await writeFile(join(source, "main.js"), original);
-    const archive = join(root, "fixture.asar");
-    await createPackageWithOptions(source, archive, { unpack: "*.js" });
-    await writeFile(join(`${archive}.unpacked`, "main.js"), changed);
+  it.each([
+    { unpacked: false, label: "embedded" },
+    { unpacked: true, label: "unpacked" },
+  ])(
+    "returns actionable local details for an $label ASAR integrity error",
+    async ({ unpacked }) => {
+      const root = await mkdtemp(join(tmpdir(), "rea-asar-integrity-mcp-"));
+      const source = join(root, "source");
+      const original = "console.log('ok');\n";
+      const changed = "console.log('no');\n";
+      await mkdir(source);
+      await writeFile(join(source, "main.js"), original);
+      const archive = join(root, "fixture.asar");
+      await createPackageWithOptions(
+        source,
+        archive,
+        unpacked ? { unpack: "*.js" } : {},
+      );
+      if (unpacked) {
+        await writeFile(join(`${archive}.unpacked`, "main.js"), changed);
+      } else {
+        const bytes = await readFile(archive);
+        const contentOffset = bytes.indexOf(original);
+        expect(contentOffset).toBeGreaterThanOrEqual(0);
+        bytes.write(changed, contentOffset, "utf8");
+        await writeFile(archive, bytes);
+      }
 
-    const session = new BinarySession(new ArtifactProvider());
-    const server = createServer(session, session);
-    const client = new Client({ name: "asar-integrity-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const opened = await client.callTool({
-        name: "open_binary",
-        arguments: { path: archive },
-      });
-      expect(opened.isError).not.toBe(true);
+      const session = new BinarySession(new ArtifactProvider());
+      const server = createServer(session, session);
+      const client = new Client({ name: "asar-integrity-test", version: "1" });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      try {
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const opened = await client.callTool({
+          name: "open_binary",
+          arguments: { path: archive },
+        });
+        expect(opened.isError).not.toBe(true);
 
-      const result = await client.callTool({
-        name: "inventory_artifact",
-        arguments: {},
-      });
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toEqual({
-        error: {
-          category: "integrity_mismatch",
-          message:
-            "Artifact is invalid or has changed. Get a fresh copy and try again.",
-        },
-      });
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
+        const result = await client.callTool({
+          name: "inventory_artifact",
+          arguments: {},
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toEqual({
+          error: {
+            category: "integrity_mismatch",
+            message:
+              "Artifact is invalid or has changed. Get a fresh copy and try again.",
+            details: {
+              logical_path: "main.js",
+              declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+              calculated_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+              unpacked,
+            },
+          },
+        });
+      } finally {
+        await Promise.allSettled([
+          client.close(),
+          server.close(),
+          session.close(),
+        ]);
+      }
+    },
+  );
 
   it("rejects altered payloads that reuse session Evidence IDs", async () => {
     const session = new BinarySession(() => ({
