@@ -12,6 +12,7 @@ import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
 import { createServer } from "./server/createServer.js";
 import { createLogger } from "./logger.js";
+import { projectAnalysisError } from "./domain/errors.js";
 
 /**
  * Start the long-lived MCP adapter and install idempotent shutdown handlers.
@@ -21,7 +22,7 @@ import { createLogger } from "./logger.js";
 export const run = async (): Promise<number> => {
   const config = parseConfig(process.env);
   if (!config.ok) {
-    process.stderr.write(`${config.error._tag}: ${config.error.message}\n`);
+    process.stderr.write(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
   const logger = createLogger("mcp", config.value.logLevel);
@@ -38,7 +39,7 @@ export const run = async (): Promise<number> => {
         { errorTag: opened.error._tag },
         "Initial target failed to open",
       );
-      process.stderr.write(`${opened.error._tag}: ${opened.error.message}\n`);
+      process.stderr.write(`${projectAnalysisError(opened.error).message}\n`);
       return 1;
     }
   }

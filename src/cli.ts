@@ -18,6 +18,7 @@ import { parseConfig } from "./config.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
+import { projectAnalysisError } from "./domain/errors.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -374,7 +375,10 @@ const registerReferenceSourceCommand = (
       logCliCommand(logger, "import-reference-source", async () => {
         const config = parseConfig(process.env);
         if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+          return {
+            error: "Import failed",
+            ...projectAnalysisError(config.error),
+          };
         const imported = await importReferenceSource({
           root: args.root,
           caller: "rea-cli",

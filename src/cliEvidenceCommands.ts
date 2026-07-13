@@ -8,6 +8,8 @@ import {
 import { parseConfig } from "./config.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "./logger.js";
+import type { JsonValue } from "./domain/jsonValue.js";
+import { projectAnalysisError, type AnalysisError } from "./domain/errors.js";
 
 /** Register filesystem-gated Evidence v2 commands. */
 export const registerEvidenceCommands = (
@@ -22,15 +24,12 @@ export const registerEvidenceCommands = (
     run: ({ args }) =>
       logCliCommand(logger, "evidence-import", async () => {
         const config = parseConfig(process.env);
-        if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+        if (!config.ok) return cliError(config.error);
         const imported = await importEvidenceBundleCommand(
           args.path,
           config.value.evidenceFilePolicy,
         );
-        return imported.ok
-          ? imported.value
-          : { error: imported.error._tag, message: imported.error.message };
+        return imported.ok ? imported.value : cliError(imported.error);
       }),
   });
   cli.command("evidence-export", {
@@ -45,17 +44,14 @@ export const registerEvidenceCommands = (
     run: ({ args, options }) =>
       logCliCommand(logger, "evidence-export", async () => {
         const config = parseConfig(process.env);
-        if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+        if (!config.ok) return cliError(config.error);
         const exported = await exportEvidenceBundleCommand(
           args.source,
           args.output,
           options.overwrite,
           config.value.evidenceFilePolicy,
         );
-        return exported.ok
-          ? exported.value
-          : { error: exported.error._tag, message: exported.error.message };
+        return exported.ok ? exported.value : cliError(exported.error);
       }),
   });
   cli.command("compare", {
@@ -72,8 +68,7 @@ export const registerEvidenceCommands = (
     run: ({ args, options }) =>
       logCliCommand(logger, "compare", async () => {
         const config = parseConfig(process.env);
-        if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+        if (!config.ok) return cliError(config.error);
         const compared = await compareEvidenceBundlesCommand({
           leftPath: args.left,
           rightPath: args.right,
@@ -81,9 +76,12 @@ export const registerEvidenceCommands = (
           limit: options.limit,
           policy: config.value.evidenceFilePolicy,
         });
-        return compared.ok
-          ? compared.value
-          : { error: compared.error._tag, message: compared.error.message };
+        return compared.ok ? compared.value : cliError(compared.error);
       }),
   });
 };
+
+const cliError = (error: AnalysisError): JsonValue => ({
+  error: "Analysis failed",
+  ...projectAnalysisError(error),
+});
