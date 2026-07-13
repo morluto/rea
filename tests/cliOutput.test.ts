@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
 import { sanitizeCliOutput } from "../src/cliOutput.js";
@@ -86,5 +90,29 @@ describe("CLI output boundary", () => {
       stdout:
         'ok: false\nerror:\n  code: VALIDATION_ERROR\n  message: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
     });
+  });
+
+  it("preserves artifact diagnostics in ordinary and full JSON output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-cli-diagnostics-"));
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "main.js"), "console.log('ok');\n");
+    const archive = join(root, "fixture.asar");
+    await createPackageWithOptions(source, archive, { unpack: "*.js" });
+    await writeFile(join(`${archive}.unpacked`, "main.js"), "changed();\n");
+
+    for (const flags of [["--json"], ["--full-output", "--json"]]) {
+      const { stdout } = await execFileAsync(process.execPath, [
+        "scripts/rea.mjs",
+        ...flags,
+        "inventory-artifact",
+        archive,
+      ]);
+      const output = JSON.stringify(JSON.parse(stdout) as unknown);
+      expect(output).toContain('"logical_path":"main.js"');
+      expect(output).toMatch(/"declared_sha256":"[a-f0-9]{64}"/u);
+      expect(output).toMatch(/"calculated_sha256":"[a-f0-9]{64}"/u);
+      expect(output).toContain('"unpacked":true');
+    }
   });
 });

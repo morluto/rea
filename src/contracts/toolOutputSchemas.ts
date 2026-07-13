@@ -191,6 +191,15 @@ const analysisErrorProjectionSchema = z
       "execution_failure",
     ]),
     message: z.string(),
+    details: z
+      .object({
+        logical_path: z.string(),
+        declared_sha256: z.string().nullable(),
+        calculated_sha256: z.string().nullable(),
+        unpacked: z.boolean(),
+      })
+      .strict()
+      .optional(),
     code: z
       .enum([
         "private_display_unavailable",

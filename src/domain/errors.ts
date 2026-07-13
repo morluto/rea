@@ -349,6 +349,7 @@ export interface AnalysisErrorProjection
     | "execution_failure";
   readonly message: string;
   readonly code?: HopperStartupFailureCode;
+  readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -358,10 +359,22 @@ export const projectAnalysisError = (
   assertKnownTag(error._tag);
   const code =
     error instanceof HopperProcessError ? error.failureCode : undefined;
+  const details =
+    error instanceof ArtifactOperationError ? error.artifactDetails : undefined;
   return {
     category: errorCategory(error),
     message: userMessage(error),
     ...(code === undefined ? {} : { code }),
+    ...(details === undefined
+      ? {}
+      : {
+          details: {
+            logical_path: details.logicalPath,
+            declared_sha256: details.declaredSha256,
+            calculated_sha256: details.calculatedSha256,
+            unpacked: details.unpacked,
+          },
+        }),
   };
 };
 
