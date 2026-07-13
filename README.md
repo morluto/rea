@@ -283,6 +283,7 @@ REA is already useful for native application investigation on macOS:
 - Verify finite behavioral and structural reconstruction specifications with pass, fail, and unknown kept distinct.
 - Track residual unknowns through immutable CAS revisions, evidence-qualified resolution, contradictions, probes, and validated dependency relationships.
 - With explicit `unknown_registry_approved: true`, record bounded trace/capture residuals, typed provider unavailability, and capture disagreements automatically.
+- Start six [guided MCP workflows](docs/mcp-prompts.md) with live, session-aware completion for documents, procedures, providers, evidence, captures, artifact IDs, and active unknowns.
 
 Hopper is the first provider, not the boundary of the project. Some current workflows still require Hopper and macOS; every evidence record identifies the provider and limitations behind its result.
 
@@ -319,6 +320,11 @@ Setup currently configures Claude Desktop and Cursor automatically. Any coding a
   }
 }
 ```
+
+MCP clients that support prompts can also discover six ordered investigation
+workflows through `prompts/list`. Their optional identifier arguments use the
+current session for bounded `completion/complete` suggestions; see
+[Guided MCP prompts and completion](docs/mcp-prompts.md).
 
 ## How it works
 
