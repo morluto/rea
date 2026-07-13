@@ -293,12 +293,12 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    "Search analyzed procedure names using literal matching by default or a structurally bounded regex. Returns a deterministic, offset-paginated page; continue at next_offset while has_more is true.",
+    "Search analyzed procedure names using literal matching by default or regex opt-in. Regex rejects unsupported constructs, more than 10,000 static backtracking paths, candidates over 4,096 characters, and searches over 1,000,000 work units. Results are deterministic and offset-paginated.",
     z.object(searchInput),
   ),
   official(
     "search_strings",
-    "Search analyzed strings using literal matching by default or a structurally bounded regex. Returns a deterministic, offset-paginated page with explicit value truncation; follow matches with xrefs.",
+    "Search analyzed strings using literal matching by default or regex opt-in. Regex rejects unsupported constructs, more than 10,000 static backtracking paths, candidates over 4,096 characters, and searches over 1,000,000 work units. Results are deterministic, offset-paginated, and explicitly truncated.",
     z.object(searchInput),
   ),
   official(

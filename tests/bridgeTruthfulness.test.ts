@@ -72,6 +72,11 @@ describe("Hopper bridge truthfulness", () => {
     );
     expect(bridgeSource).toContain("MAX_SEARCH_PATTERN_LENGTH = 256");
     expect(bridgeSource).toContain("MAX_SEARCH_VALUE_LENGTH = 4096");
+    expect(bridgeSource).toContain("MAX_REGEX_BACKTRACKING_PATHS = 10000");
+    expect(bridgeSource).toContain("MAX_REGEX_CANDIDATE_LENGTH = 4096");
+    expect(bridgeSource).toContain("MAX_REGEX_SEARCH_WORK_UNITS = 1000000");
+    expect(bridgeSource).toContain("_checked_regex_paths(");
+    expect(bridgeSource).toContain("_bounded_regex_matcher(");
     expect(bridgeSource).toContain('"value_truncated"');
     expect(bridgeSource).toContain("page_end = offset + limit");
     expect(bridgeSource).toContain("if offset <= total < page_end:");
