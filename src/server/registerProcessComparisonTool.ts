@@ -11,7 +11,7 @@ import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import {
   compareProcessCaptures,
   processCaptureSchema,
-  validateProcessCapture,
+  parseProcessCapture,
 } from "../domain/processCapture.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { err } from "../domain/result.js";
@@ -103,7 +103,12 @@ const validateCaptureSources = (
     [parsed.right_evidence_id, parsed.right],
   ] as const) {
     const evidence = session.evidenceById(evidenceId);
-    const result = processCaptureSchema.safeParse(evidence?.normalized_result);
+    let evidenceCapture: z.infer<typeof processCaptureSchema> | undefined;
+    try {
+      evidenceCapture = parseProcessCapture(evidence?.normalized_result);
+    } catch {
+      evidenceCapture = undefined;
+    }
     if (
       evidence === undefined ||
       evidence.operation !== "capture_process_scenario" ||
@@ -113,10 +118,8 @@ const validateCaptureSources = (
       evidence.provider.version !== PROCESS_PROVIDER.version ||
       evidence.confidence !== "observed" ||
       evidence.authority !== "controlled-replay" ||
-      !result.success ||
-      (result.success && validateProcessCapture(result.data).length > 0) ||
-      validateProcessCapture(capture).length > 0 ||
-      canonicalJson(result.data) !== canonicalJson(capture)
+      evidenceCapture === undefined ||
+      canonicalJson(evidenceCapture) !== canonicalJson(capture)
     )
       return err(
         new EvidenceIntegrityError(
