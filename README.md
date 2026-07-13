@@ -4,7 +4,7 @@
 
 # REA: Reverse Engineer Anything
 
-### One CLI and MCP server for coding agents to reverse engineer anything
+### One CLI and MCP server for agents to reverse engineer anything
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
@@ -24,7 +24,7 @@
 
 ---
 
-See a feature in an app that you want in your own product? Give the app to your coding agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
+See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
 REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, and controlled process capture. The longer-term toolkit extends the same agent workflow to packaged apps, JavaScript bundles, websites, APIs, protocols, mobile artifacts, firmware, runtime behavior, and differences between versions.
 
@@ -73,7 +73,7 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 |                          |                                                                                      |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.              |
-| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or coding agent.    |
+| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.           |
 | **Complexity handled**   | REA installs and manages the reverse-engineering tools behind the scenes.            |
 | **From insight to code** | Understand a feature, then build your own version in the same coding session.        |
 | **Local by design**      | Analysis runs on your Mac. REA does not upload the app to a hosted analysis service. |
@@ -88,7 +88,7 @@ npm install --global rea-agents
 rea setup
 ```
 
-Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or coding-agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
+Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
 
 REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
 
@@ -100,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 
 Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`, or `--version 1.0.0`. The curl wrapper never installs prerequisites or configures integrations itself. See [Installation and setup](docs/installation.md) for its exact mutation boundary.
 
-### With a coding agent — recommended
+### With an agent — recommended
 
 ```bash
 npx skills add morluto/rea
@@ -118,7 +118,7 @@ npx -y rea-agents doctor
 npx -y rea-agents analyze /Applications/Notes.app
 ```
 
-Review the setup plan before confirming it. Restart a configured coding agent so it loads REA.
+Review the setup plan before confirming it. Restart a configured agent so it loads REA.
 
 ### From Terminal — install the `rea` command
 
@@ -191,24 +191,39 @@ rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
 
 Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
 
-### CLI or coding agent?
+### CLI or agent?
 
-| If you want to…                                           | Use                                                            |
-| --------------------------------------------------------- | -------------------------------------------------------------- |
-| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent                     |
-| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`                               |
-| Validate, canonicalize, or compare Evidence v2 bundles    | `rea evidence-import`, `rea evidence-export`, or `rea compare` |
-| Import source as historical reference                     | `rea import-reference-source`                                  |
-| Capture or compare controlled process behavior            | `rea capture-process` or `rea compare-process-captures`        |
+| If you want to…                                                 | Use                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Ask an agent to investigate an app and build a feature          | Install the skill, then talk to your agent                                |
+| Inspect or decompile one part of an app from the Terminal       | `rea analyze` or `rea decompile`                                          |
+| Validate, canonicalize, or compare Evidence v2 bundles          | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
+| Run or resume a persistent two-version artifact analysis        | `rea investigate-versions`                                                |
+| Reuse immutable analysis results without relaunching a provider | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
+| Import source as historical reference                           | `rea import-reference-source`                                             |
+| Capture or compare controlled process behavior                  | `rea capture-process` or `rea compare-process-captures`                   |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
 ```bash
 export REA_EVIDENCE_ROOTS_JSON='["/absolute/path/to/evidence"]'
+export REA_INVESTIGATION_INPUT_ROOTS_JSON='["/absolute/path/to/releases"]'
 rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
+rea investigate-versions /absolute/path/to/releases/v1 /absolute/path/to/releases/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
 ```
+
+`investigate-versions` inventories both versions, checkpoints their observed
+Evidence, derives an artifact comparison, and records a changed-behavior report.
+Both input paths must resolve beneath `REA_INVESTIGATION_INPUT_ROOTS_JSON`;
+workspace files remain independently restricted by `REA_EVIDENCE_ROOTS_JSON`.
+The workspace uses deterministic content identities and monotonic CAS-linked
+revisions, so the same request resumes an interrupted run or reuses a completed
+run without replacing earlier investigations. It currently compares static
+artifact structure only; it does not execute either version, and its report
+keeps every difference labeled as a behavior candidate. See
+[Persistent investigation workspaces](docs/investigation-workspaces.md).
 
 Historical source import requires a separate allowlist and never treats source as current behavioral authority:
 
@@ -218,6 +233,30 @@ rea import-reference-source /absolute/path/to/source
 ```
 
 Exports never replace an existing file unless `--overwrite` is explicit. Imports are size/depth bounded, validate every Evidence v2 ID and manifest, and never execute bundle content.
+
+Provider-neutral analysis snapshots persist successful, immutable REA calls and
+their Evidence v2 records. They are exact caches rather than Hopper databases:
+REA reuses an entry only when the binary digest, format, architecture, operation
+parameters, loader arguments, and provider identity match. Custom Hopper loader
+overrides disable snapshots because their provider configuration cannot be
+replayed safely. Cursor-dependent and mutating calls are never cached. Snapshot
+files can contain proprietary analysis results and local
+paths, so REA keeps them local, writes them with owner-only permissions, and
+requires a separate approved root:
+
+```bash
+export REA_ANALYSIS_SNAPSHOT_ROOTS_JSON='["/absolute/path/to/analysis"]'
+rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
+# The same exact query can now be answered from the snapshot.
+rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
+```
+
+Exact CLI evidence replays happen before any provider starts. In MCP sessions,
+pass `snapshot_path` to `open_binary` to import a snapshot atomically while
+opening its matching target; MCP providers may still start before a cached call
+is replayed. Pass `snapshot_path` and, when required, `overwrite: true` to
+`close_binary` to save atomically before Hopper resources are released. If the
+save fails, REA deliberately leaves the session open.
 
 ## One prompt, a full investigation
 
@@ -246,7 +285,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Reconstruct an app's authentication, storage, update, or networking flow.
 - Recover enough structure to document an undocumented format or interface.
 - Trace a suspicious behavior from a string or symbol to the code that implements it.
-- Compare implementation paths across two app versions by switching targets in one session.
+- Run, checkpoint, resume, and reuse a content-addressed artifact investigation across two versions.
 - Turn recovered behavior into product features, tests, migration notes, ports, or interoperable replacements.
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
@@ -273,6 +312,7 @@ REA is already useful for native application investigation on macOS:
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
+- Persist automatic cross-version artifact runs as canonical, lock-protected workspaces with tamper-evident revision commitments.
 - Capture approved PTY scenarios as Process Capture v4 Evidence, including committed run manifests, raw and rendered terminal frames, scripted interactions, descendant settlement, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
 - Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
@@ -298,15 +338,15 @@ REA is growing into a toolkit for understanding software across static artifacts
 5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.
 6. **More static-analysis providers** — native platform utilities first, followed by Ghidra, IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, and other engines behind provider-neutral capabilities.
 7. **More targets and platforms** — Windows-native providers and ConPTY verification, Linux parity, websites and APIs, mobile artifacts, firmware, document formats, and other software-defined systems.
-8. **Differential reconstruction** — compare artifacts, functions, bundles, protocols, UIs, and process captures; track residual unknowns; verify a reconstruction against observed behavior.
+8. **Differential reconstruction expansion** — add automatic function matching, protocol/UI comparison, controlled replay, residual-unknown planning, and reconstruction verification to persistent version runs.
 
 Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
 See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the current research matrix and admission gate.
 
-## Using REA with other coding agents
+## Using REA with other agents
 
-Setup currently configures Claude Desktop and Cursor automatically. Any coding agent that supports local MCP servers can use REA with the configuration below.
+Setup currently configures Claude Desktop and Cursor automatically. Any agent that supports local MCP servers can use REA with the configuration below.
 
 ### Manual MCP configuration
 
@@ -330,7 +370,7 @@ current session for bounded `completion/complete` suggestions; see
 
 ```mermaid
 flowchart LR
-    Agent["Coding agent"] --> REA["REA<br/>CLI + MCP"]
+    Agent["Agent"] --> REA["REA<br/>CLI + MCP"]
     Terminal --> REA
     REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
     Workspace --> Router["Capability router"]
@@ -345,7 +385,7 @@ flowchart LR
     Artifact --> Target
 ```
 
-The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation.
+The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation. Approved persistent workspaces keep canonical Evidence and resumable run checkpoints across both process and session lifetimes.
 
 ## CLI
 
@@ -360,6 +400,7 @@ npx -y rea-agents function /Applications/Notes.app 0x1000
 npx -y rea-agents xrefs /Applications/Notes.app 0x1000
 npx -y rea-agents trace /Applications/Notes.app "offline"
 npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
+npx -y rea-agents investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes
 npx -y rea-agents capabilities
 npx -y rea-agents providers
 ```
@@ -448,7 +489,7 @@ No. Setup can install Hopper for you, but Hopper remains separate software with 
 <details>
 <summary><strong>Does REA upload the app?</strong></summary>
 
-REA has no hosted analysis service. Current providers analyze artifacts and capture behavior locally. Your coding agent or model provider may have its own data policy, so review that separately.
+REA has no hosted analysis service. Current providers analyze artifacts and capture behavior locally. Your agent or model provider may have its own data policy, so review that separately.
 
 </details>
 
@@ -462,7 +503,7 @@ No decompiler can guarantee the original source. REA gives an agent pseudocode, 
 <details>
 <summary><strong>Which agents can use REA?</strong></summary>
 
-Any coding agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
+Any agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
 
 </details>
 

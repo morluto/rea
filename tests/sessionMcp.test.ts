@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,13 @@ describe("target-free MCP lifecycle", () => {
         maxStringLength: 1024,
         maxNodes: 10_000,
       },
+      analysisSnapshotFilePolicy: {
+        roots: [directory],
+        maxBytes: 1024 * 1024,
+        maxDepth: 68,
+        maxStringLength: 1024,
+        maxNodes: 10_000,
+      },
     });
     const mcp = new Client({ name: "session-test", version: "1.0.0" });
     const [clientTransport, serverTransport] =
@@ -58,7 +65,9 @@ describe("target-free MCP lifecycle", () => {
       arguments: {},
     });
     expect(before.isError).toBe(true);
-    expect(text(before)).toContain("NoBinaryOpenError");
+    expect(text(before)).toBe(
+      "No app is open. Ask the user which app to investigate, then call open_binary with its local path.",
+    );
     expect((await mcp.listTools()).tools).toHaveLength(68);
     const deniedCapture = await mcp.callTool({
       name: "capture_process_scenario",
@@ -69,7 +78,14 @@ describe("target-free MCP lifecycle", () => {
       },
     });
     expect(deniedCapture.isError).toBe(true);
-    expect(text(deniedCapture)).toContain("process capture is disabled");
+    expect(structured(deniedCapture)).toMatchObject({
+      error: {
+        category: "permission_required",
+      },
+    });
+    expect(text(deniedCapture)).toBe(
+      "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.",
+    );
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
         .isError,
@@ -171,10 +187,42 @@ describe("target-free MCP lifecycle", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain("second.hop");
-    await mcp.callTool({ name: "close_binary", arguments: {} });
+    const snapshotPath = join(directory, "analysis.json");
+    expect(
+      structured(
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath },
+        }),
+      ).result,
+    ).toMatchObject({ path: snapshotPath, entries: 0 });
+    expect(JSON.parse(await readFile(snapshotPath, "utf8"))).toMatchObject({
+      evidence_bundle: { records: [], unknowns: [] },
+    });
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open": false');
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: first, snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      structured(await mcp.callTool({ name: "list_unknowns", arguments: {} }))
+        .result,
+    ).toEqual([]);
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: second, snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).not.toBe(true);
+    await mcp.callTool({ name: "close_binary", arguments: {} });
   }, 10_000);
 
   it("records approved process residuals in the unknown registry", async () => {
@@ -219,8 +267,7 @@ describe("target-free MCP lifecycle", () => {
         ),
       ).result;
     expect(listed).toContainEqual({
-      question:
-        "network: External network isolation is not enforced by this adapter.",
+      question: "Was network behavior fully observed during capture?",
       domain: "process-network",
     });
   });

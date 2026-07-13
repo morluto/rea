@@ -98,6 +98,8 @@ describe("CLI upgrade", () => {
     expect(await runUpgrade("0.5.0", host)).toMatchObject({
       status: "failed",
       reason: "install",
+      remediation:
+        "REA could not update through npm. Check npm registry access and global install permissions, then run: npm install --global rea-agents@latest",
     });
     expect(host.installs).toBe(1);
   });

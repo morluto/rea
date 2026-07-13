@@ -7,16 +7,33 @@ import {
   comparisonStatusSchema,
   processCaptureComparisonSchema,
 } from "./processCapture.js";
+import {
+  crossVersionInvestigationInputSchema,
+  investigationRunSummarySchema,
+} from "./investigationWorkspace.js";
 
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 
 /** Strict bounded input for aggregating existing comparison Evidence. */
-export const changedBehaviorInputSchema = z.object({
-  comparisons: z.array(evidenceSchema).min(1).max(100),
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(100).default(100),
-  unknown_registry_approved: z.literal(true).optional(),
-});
+export const changedBehaviorInputSchema = z
+  .object({
+    comparisons: z.array(evidenceSchema).max(100).default([]),
+    investigation_run: crossVersionInvestigationInputSchema.optional(),
+    offset: z.number().int().min(0).default(0),
+    limit: z.number().int().min(1).max(100).default(100),
+    unknown_registry_approved: z.literal(true).optional(),
+  })
+  .superRefine((input, context) => {
+    if (
+      input.comparisons.length > 0 ===
+      (input.investigation_run !== undefined)
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Supply either existing comparisons or one investigation_run, but not both",
+      });
+  });
 
 const findingSchema = z.object({
   scope: z.enum(["runtime", "protocol", "resource", "static_candidate"]),
@@ -56,6 +73,7 @@ export const changedBehaviorResultSchema = z.object({
   }),
   evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
   limitations: z.array(z.string()),
+  investigation_run: investigationRunSummarySchema.optional(),
 });
 
 export type ChangedBehaviorResult = z.infer<typeof changedBehaviorResultSchema>;
@@ -142,6 +160,7 @@ export const findChangedBehavior = (
       ...(runtimeStatuses.length === 0
         ? ["No process comparison Evidence was supplied."]
         : []),
+      ...evidence.flatMap(artifactPaginationLimitations),
     ]),
   });
 };
@@ -219,13 +238,9 @@ const parseResult = (evidence: Evidence): void => {
   const result = artifactComparisonResultSchema.parse(
     evidence.normalized_result,
   );
-  if (
-    result.changes.offset !== 0 ||
-    result.changes.next_offset !== null ||
-    result.changes.items.length !== result.changes.total
-  )
+  if (result.changes.offset !== 0)
     throw new TypeError(
-      "Changed-behavior analysis requires complete artifact comparison pagination",
+      "Changed-behavior analysis requires artifact comparison pagination from offset zero",
     );
   assertNestedLinks(
     evidence,
@@ -323,7 +338,9 @@ const artifactFindings = (evidence: Evidence): Finding[] => {
       links: change.evidence_links,
     }),
   );
-  return (result.status === "unknown" || result.status === "truncated") &&
+  return (result.status === "unknown" ||
+    result.status === "truncated" ||
+    result.changes.next_offset !== null) &&
     !changes.some(
       ({ classification }) => classification === "unresolved_branch",
     )
@@ -339,6 +356,18 @@ const artifactFindings = (evidence: Evidence): Finding[] => {
         }),
       ]
     : changes;
+};
+
+const artifactPaginationLimitations = (evidence: Evidence): string[] => {
+  if (evidence.operation !== "compare_artifacts") return [];
+  const result = artifactComparisonResultSchema.parse(
+    evidence.normalized_result,
+  );
+  return result.changes.next_offset === null
+    ? []
+    : [
+        `Artifact comparison reports ${String(result.changes.items.length)} of ${String(result.changes.total)} changes.`,
+      ];
 };
 
 const makeFinding = (input: {

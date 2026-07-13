@@ -1,7 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
-export const ANALYSIS_ERROR_TAGS = [
+const ANALYSIS_ERROR_TAGS = [
   "AnalysisProtocolError",
   "AnalysisInputError",
   "AnalysisOutputError",
@@ -15,6 +15,7 @@ export const ANALYSIS_ERROR_TAGS = [
   "EvidenceIntegrityError",
   "EvidenceLimitError",
   "EvidenceFileError",
+  "InvestigationWorkspaceError",
   "UnknownRegistryError",
   "HopperTimeoutError",
   "HopperCancelledError",
@@ -33,6 +34,9 @@ export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   abstract readonly _tag: AnalysisErrorTag;
+  readonly userMessage: string | undefined = undefined;
+  readonly userCategory: "permission_required" | "cancelled" | undefined =
+    undefined;
 }
 
 /** Base class for failures produced specifically by the Hopper provider. */
@@ -192,6 +196,29 @@ export class EvidenceFileError extends AnalysisError {
   }
 }
 
+/** Persistent investigation workspace access or CAS validation failed. */
+export class InvestigationWorkspaceError extends AnalysisError {
+  readonly _tag = "InvestigationWorkspaceError";
+
+  constructor(
+    readonly operation: "read" | "update",
+    readonly reason:
+      | "disabled"
+      | "outside-root"
+      | "not-file"
+      | "too-large"
+      | "invalid-json"
+      | "integrity"
+      | "locked"
+      | "revision-conflict"
+      | "name-conflict"
+      | "io",
+    options?: ErrorOptions,
+  ) {
+    super(`Investigation workspace ${operation} failed: ${reason}`, options);
+  }
+}
+
 /** Residual-unknown mutation failed a lifecycle, reference, or CAS invariant. */
 export class UnknownRegistryError extends AnalysisError {
   readonly _tag = "UnknownRegistryError";
@@ -299,9 +326,17 @@ export class BinaryTargetError extends AnalysisError {
 
 export interface AnalysisErrorProjection
   extends Readonly<Record<string, JsonValue>> {
-  readonly tag: AnalysisErrorTag;
+  readonly category:
+    | "invalid_input"
+    | "permission_required"
+    | "unsupported_provider"
+    | "integrity_mismatch"
+    | "truncated"
+    | "cancelled"
+    | "timeout"
+    | "unavailable"
+    | "execution_failure";
   readonly message: string;
-  readonly details: Readonly<Record<string, string | number | boolean | null>>;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -310,54 +345,185 @@ export const projectAnalysisError = (
 ): AnalysisErrorProjection => {
   assertKnownTag(error._tag);
   return {
-    tag: error._tag,
-    message: error.message,
-    details: safeDetails(error),
+    category: errorCategory(error),
+    message: userMessage(error),
   };
 };
 
-const safeDetails = (
+const errorCategory = (
   error: AnalysisError,
-): Readonly<Record<string, string | number | boolean | null>> => {
-  if (error instanceof AnalysisInputError)
-    return { operation: error.operation };
-  if (error instanceof AnalysisOutputError)
-    return { operation: error.operation, reason: error.reason };
-  if (error instanceof AnalysisCapabilityUnavailableError)
-    return {
-      providerId: error.providerId,
-      operation: error.operation,
-      reason: error.reason,
-    };
-  if (error instanceof AnalysisCancelledError)
-    return { operation: error.operation };
-  if (error instanceof AnalysisTimeoutError)
-    return { operation: error.operation, timeoutMs: error.timeoutMs };
-  if (error instanceof ProviderSelectionError)
-    return { operation: error.operation };
-  if (error instanceof ProviderAdapterError)
-    return { providerId: error.providerId, operation: error.operation };
+): AnalysisErrorProjection["category"] => {
+  if (error._tag === "ProcessCaptureError")
+    return error.userCategory ?? "execution_failure";
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "authorization"
+  )
+    return "permission_required";
   if (error instanceof ArtifactOperationError)
-    return {
-      operation: error.operation,
-      reason: error.reason,
-      ...error.artifactDetails,
-    };
+    return artifactErrorCategory(error.reason);
+  if (error instanceof EvidenceFileError && error.reason === "disabled")
+    return "unavailable";
+  if (error instanceof InvestigationWorkspaceError)
+    return investigationWorkspaceCategory(error.reason);
+  return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
+};
+
+const investigationWorkspaceCategory = (
+  reason: InvestigationWorkspaceError["reason"],
+): AnalysisErrorProjection["category"] => {
+  if (
+    reason === "disabled" ||
+    reason === "outside-root" ||
+    reason === "not-file"
+  )
+    return "unavailable";
+  if (reason === "too-large") return "truncated";
+  if (reason === "invalid-json" || reason === "integrity")
+    return "integrity_mismatch";
+  return "execution_failure";
+};
+
+const artifactErrorCategory = (
+  reason: ArtifactOperationError["reason"],
+): AnalysisErrorProjection["category"] => {
+  if (reason === "integrity") return "integrity_mismatch";
+  if (reason === "limit") return "truncated";
+  if (reason === "cancelled") return "cancelled";
+  if (reason === "unavailable") return "unavailable";
+  return "execution_failure";
+};
+
+const STATIC_ERROR_CATEGORIES: Readonly<
+  Partial<Record<AnalysisErrorTag, AnalysisErrorProjection["category"]>>
+> = {
+  AnalysisInputError: "invalid_input",
+  AnalysisCapabilityUnavailableError: "unsupported_provider",
+  ProviderSelectionError: "unsupported_provider",
+  EvidenceIntegrityError: "integrity_mismatch",
+  EvidenceLimitError: "truncated",
+  AnalysisCancelledError: "cancelled",
+  HopperCancelledError: "cancelled",
+  AnalysisTimeoutError: "timeout",
+  HopperTimeoutError: "timeout",
+  NoBinaryOpenError: "unavailable",
+  BinaryTargetError: "unavailable",
+};
+
+const userMessage = (error: AnalysisError): string => {
+  if (error instanceof AnalysisInputError)
+    return "Analysis input is invalid. Check the arguments and try again.";
+  if (UNREADABLE_OUTPUT_TAGS.has(error._tag))
+    return "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.";
+  if (UNSUPPORTED_PROVIDER_TAGS.has(error._tag))
+    return "This analysis is unavailable for the current target. Choose another analysis or target.";
+  if (CANCELLED_TAGS.has(error._tag))
+    return "Analysis was cancelled. Start it again when ready.";
+  if (TIMEOUT_TAGS.has(error._tag))
+    return "Analysis took too long. Try a smaller request, then run `rea doctor` if it continues.";
+  if (ADAPTER_FAILURE_TAGS.has(error._tag))
+    return "Analysis could not complete. Retry once; if it continues, run `rea doctor`.";
+  if (START_FAILURE_TAGS.has(error._tag))
+    return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
+  if (error instanceof ArtifactOperationError)
+    return artifactMessage(error.reason);
+  if (error instanceof EvidenceIntegrityError)
+    return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
   if (error instanceof EvidenceLimitError)
-    return { limit: error.limit, maximum: error.maximum };
+    return "Evidence is too large for this session. Reduce the evidence set and try again.";
   if (error instanceof EvidenceFileError)
-    return { operation: error.operation, reason: error.reason };
-  if (error instanceof UnknownRegistryError) return { reason: error.reason };
-  if (error instanceof HopperTimeoutError)
-    return { timeoutMs: error.timeoutMs };
-  if (error instanceof HopperRemoteError)
-    return {
-      code: error.code,
-      safeMessage: error.safeMessage,
-      diagnosticType: error.diagnosticType,
-    };
-  if (error instanceof HopperProcessError) return { exitCode: error.exitCode };
-  return {};
+    return evidenceFileMessage(error.reason);
+  if (error instanceof InvestigationWorkspaceError)
+    return investigationWorkspaceMessage(error.reason);
+  if (error instanceof UnknownRegistryError)
+    return "Evidence state changed before the update completed. Refresh the current state and try again.";
+  if (error instanceof ConfigurationError)
+    return "REA configuration is invalid. Run `rea doctor` and fix the reported setting.";
+  if (error instanceof NoBinaryOpenError) return error.message;
+  if (error instanceof BinaryTargetError)
+    return "REA could not open that app or binary. Check that the path exists, is readable, and points to a supported file.";
+  if (error._tag === "ProcessCaptureError")
+    return (
+      error.userMessage ??
+      "Process capture could not complete. Run `rea doctor`, then review capture policy and try again."
+    );
+  return "Analysis could not complete. Run `rea doctor`, then try again.";
+};
+
+const UNREADABLE_OUTPUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "AnalysisProtocolError",
+  "AnalysisOutputError",
+  "HopperProtocolError",
+]);
+const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "AnalysisCapabilityUnavailableError",
+  "ProviderSelectionError",
+]);
+const CANCELLED_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "AnalysisCancelledError",
+  "HopperCancelledError",
+]);
+const TIMEOUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "AnalysisTimeoutError",
+  "HopperTimeoutError",
+]);
+const ADAPTER_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "ProviderAdapterError",
+  "HopperRemoteError",
+]);
+const START_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+  "HopperProcessError",
+  "HopperStartError",
+]);
+
+const artifactMessage = (reason: ArtifactOperationError["reason"]): string => {
+  if (reason === "cancelled")
+    return "Artifact operation was cancelled. Start it again when ready.";
+  if (reason === "limit")
+    return "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.";
+  if (reason === "path")
+    return "Artifact path is not allowed. Choose a path inside the artifact and try again.";
+  if (reason === "unavailable")
+    return "Artifact format is not available on this system. Choose another artifact or supported environment.";
+  if (reason === "format" || reason === "integrity")
+    return "Artifact is invalid or has changed. Get a fresh copy and try again.";
+  return "Artifact could not be read or written. Check file access and try again.";
+};
+
+const evidenceFileMessage = (reason: EvidenceFileError["reason"]): string => {
+  if (reason === "disabled")
+    return "Evidence file access is disabled. Enable an evidence directory or use inline evidence.";
+  if (reason === "outside-root")
+    return "Evidence path is outside the allowed directory. Choose a path inside the configured evidence directory.";
+  if (reason === "not-file")
+    return "Evidence path does not point to a file. Choose an evidence file and try again.";
+  if (reason === "too-large")
+    return "Evidence file is too large. Reduce its size and try again.";
+  if (reason === "exists")
+    return "Evidence file already exists. Choose another path or allow overwrite.";
+  if (reason === "invalid-json")
+    return "Evidence file is not valid JSON. Repair or recreate the file and try again.";
+  return "Evidence file could not be accessed. Check file permissions and try again.";
+};
+
+const investigationWorkspaceMessage = (
+  reason: InvestigationWorkspaceError["reason"],
+): string => {
+  if (reason === "disabled")
+    return "Investigation workspace access is disabled. Configure a workspace directory and try again.";
+  if (reason === "outside-root")
+    return "Investigation workspace is outside the allowed directory. Choose a configured workspace directory and try again.";
+  if (reason === "not-file")
+    return "Investigation workspace path is not a file. Choose a workspace file and try again.";
+  if (reason === "too-large")
+    return "Investigation workspace is too large. Reduce its size and try again.";
+  if (reason === "invalid-json" || reason === "integrity")
+    return "Investigation workspace is invalid or has changed. Recreate or repair it, then try again.";
+  if (reason === "locked")
+    return "Another investigation update is in progress. Try again when it finishes.";
+  if (reason === "revision-conflict" || reason === "name-conflict")
+    return "Investigation workspace state changed. Refresh the current state and try again.";
+  return "Investigation workspace could not be accessed. Check file permissions and try again.";
 };
 
 const KNOWN_ERROR_TAGS = {
@@ -374,6 +540,7 @@ const KNOWN_ERROR_TAGS = {
   EvidenceIntegrityError: true,
   EvidenceLimitError: true,
   EvidenceFileError: true,
+  InvestigationWorkspaceError: true,
   UnknownRegistryError: true,
   HopperTimeoutError: true,
   HopperCancelledError: true,

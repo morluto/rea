@@ -15,6 +15,7 @@ import type {
 import { processScenarioSchema } from "../domain/processCapture.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
@@ -24,6 +25,10 @@ import {
   readEvidenceBundle,
   writeEvidenceBundle,
 } from "../application/EvidenceBundleFiles.js";
+import {
+  readAnalysisSnapshot,
+  writeAnalysisSnapshot,
+} from "../application/AnalysisSnapshotFiles.js";
 import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
 import {
   DENY_EVIDENCE_FILE_POLICY,
@@ -35,6 +40,11 @@ import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
+import {
+  closeBinaryInputSchema,
+  openBinaryInputSchema,
+} from "../contracts/sessionLifecycleInputs.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -46,7 +56,7 @@ const recordProcessResidualUnknowns = (
   for (const residual of residuals) {
     const unknown = session.recordUnknown({
       approved: true,
-      question: `${residual.scope}: ${residual.reason}`,
+      question: `Was ${residual.scope} behavior fully observed during capture?`,
       severity: "medium",
       domain: `process-${residual.scope}`,
       supporting_evidence_ids: [evidence.evidence_id],
@@ -305,16 +315,25 @@ const registerUnknownTools = ({
   );
 };
 
-const registerLifecycleTools = (
-  server: McpServer,
-  session: BinarySessionPort,
-  logger: Logger,
-  contracts: readonly [
+interface LifecycleToolRegistration {
+  readonly server: McpServer;
+  readonly session: BinarySessionPort;
+  readonly logger: Logger;
+  readonly contracts: readonly [
     (typeof SESSION_TOOL_CONTRACTS)[0],
     (typeof SESSION_TOOL_CONTRACTS)[1],
     (typeof SESSION_TOOL_CONTRACTS)[2],
-  ],
-): void => {
+  ];
+  readonly snapshotFilePolicy: EvidenceFilePolicy;
+}
+
+const registerLifecycleTools = ({
+  server,
+  session,
+  logger,
+  contracts,
+  snapshotFilePolicy,
+}: LifecycleToolRegistration): void => {
   const [openContract, closeContract, statusContract] = contracts;
   server.registerTool(
     openContract.name,
@@ -325,9 +344,21 @@ const registerLifecycleTools = (
       annotations: openContract.annotations,
     },
     async (input, context) => {
-      const parsed = z.object({ path: z.string().min(1) }).parse(input);
+      const parsed = openBinaryInputSchema.parse(input);
+      let snapshot: AnalysisSnapshot | undefined;
+      if (parsed.snapshot_path !== undefined) {
+        const loaded = await readAnalysisSnapshot(
+          parsed.snapshot_path,
+          snapshotFilePolicy,
+        );
+        if (!loaded.ok) return toCallToolResult(loaded, openContract);
+        snapshot = loaded.value;
+      }
       const opened = await logToolExecution(logger, openContract.name, () =>
-        session.open(parsed.path, { signal: context.mcpReq.signal }),
+        session.open(parsed.path, {
+          signal: context.mcpReq.signal,
+          ...(snapshot === undefined ? {} : { snapshot }),
+        }),
       );
       return opened.ok
         ? toCallToolResult(
@@ -355,31 +386,49 @@ const registerLifecycleTools = (
       outputSchema: closeContract.outputSchema,
       annotations: closeContract.annotations,
     },
-    async () =>
-      toCallToolResult(
+    async (input) => {
+      const parsed = closeBinaryInputSchema.parse(input);
+      if (parsed.snapshot_path !== undefined) {
+        const snapshot = session.exportAnalysisSnapshot();
+        if (!snapshot.ok) return toCallToolResult(snapshot, closeContract);
+        const written = await writeAnalysisSnapshot(
+          snapshot.value,
+          parsed.snapshot_path,
+          parsed.overwrite,
+          snapshotFilePolicy,
+        );
+        if (!written.ok) return toCallToolResult(written, closeContract);
+        const closed = await logToolExecution(logger, closeContract.name, () =>
+          session.close(),
+        );
+        return closed.ok
+          ? toCallToolResult(
+              ok({
+                path: written.value.path,
+                bytes: written.value.bytes,
+                entries: snapshot.value.entries.length,
+              }),
+              closeContract,
+            )
+          : toCallToolResult(closed, closeContract);
+      }
+      return toCallToolResult(
         await logToolExecution(logger, closeContract.name, () =>
           session.close(),
         ),
         closeContract,
-      ),
-  );
-  server.registerTool(
-    statusContract.name,
-    {
-      description: statusContract.description,
-      inputSchema: statusContract.inputSchema,
-      outputSchema: statusContract.outputSchema,
-      annotations: statusContract.annotations,
+      );
     },
-    () =>
-      toCallToolResult({ ok: true, value: session.status() }, statusContract),
   );
+  registerSessionStatusTool(server, session, statusContract);
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions {
   readonly processPolicy?: ProcessExecutionPolicy;
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
+  readonly investigationInputRoots?: readonly string[];
+  readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
 }
 
 export const registerSessionTools = (
@@ -391,6 +440,8 @@ export const registerSessionTools = (
   const processPolicy = options.processPolicy ?? DENY_PROCESS_POLICY;
   const evidenceFilePolicy =
     options.evidenceFilePolicy ?? DENY_EVIDENCE_FILE_POLICY;
+  const analysisSnapshotFilePolicy =
+    options.analysisSnapshotFilePolicy ?? DENY_EVIDENCE_FILE_POLICY;
   const [
     openContract,
     closeContract,
@@ -411,11 +462,13 @@ export const registerSessionTools = (
     updateUnknownContract,
     verifyUnknownContract,
   ] = SESSION_TOOL_CONTRACTS;
-  registerLifecycleTools(server, session, logger, [
-    openContract,
-    closeContract,
-    statusContract,
-  ]);
+  registerLifecycleTools({
+    server,
+    session,
+    logger,
+    contracts: [openContract, closeContract, statusContract],
+    snapshotFilePolicy: analysisSnapshotFilePolicy,
+  });
   registerEvidenceTools({
     server,
     session,
@@ -434,12 +487,16 @@ export const registerSessionTools = (
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerBundleComparisonTool(server, session, compareBundlesContract);
-  registerInvestigationTools(server, session, [
+  const investigationContracts = [
     changedBehaviorContract,
     callPathContract,
     staticRuntimeContract,
     reconstructionContract,
-  ]);
+  ] as const;
+  registerInvestigationTools(server, session, investigationContracts, {
+    evidenceFiles: evidenceFilePolicy,
+    inputRoots: options.investigationInputRoots ?? [],
+  });
   registerUnknownTools({
     server,
     session,

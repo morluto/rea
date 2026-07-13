@@ -382,7 +382,16 @@ export interface ProcessExecutionPolicy {
 /** Explicit authorization result; denial reasons are safe to show callers. */
 export type ProcessPolicyDecision =
   | { readonly allowed: true }
-  | { readonly allowed: false; readonly reason: string };
+  | {
+      readonly allowed: false;
+      readonly reason:
+        | "process capture is disabled"
+        | "host network access is not approved by operator policy"
+        | "executable is outside approved roots"
+        | "working directory is outside approved roots"
+        | "scenario requests an environment variable not allowed by policy"
+        | "filesystem root is outside approved roots";
+    };
 
 const isWithin = (candidate: string, root: string): boolean =>
   resolve(candidate) === resolve(root) ||

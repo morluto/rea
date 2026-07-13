@@ -2,7 +2,7 @@
 name: rea-analysis
 description: Reverse engineer apps with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "11"
+  version: "12"
   tool_count: 68
 ---
 
@@ -24,7 +24,7 @@ Notes is only a documentation example. Never select an app unless the user names
 2. If setup is needed, tell the user REA needs to install its local binary-analysis tools. Do not lead with implementation details or assume the user knows reverse-engineering products.
 3. Before installing external software, obtain approval and identify what will be installed. If deeper analysis needs Hopper, describe it as REA's local analysis engine and note that it is a separate Mac app with its own license. Then run `npx -y rea-agents setup --yes`.
 4. If macOS or an installer requests human input, tell the user exactly what needs attention. After they finish, rerun setup and doctor.
-5. If setup registers a new MCP server, tell the user to restart their coding agent to load all REA tools. Direct CLI commands remain available before restart.
+5. If setup registers a new MCP server, tell the user to restart their agent to load all REA tools. Direct CLI commands remain available before restart.
 
 ## Locate the app
 
@@ -109,6 +109,13 @@ bundle digests to anchor paginated reports.
 Use `find_changed_behavior` to combine existing comparison Evidence. Runtime
 process differences are observed changes; artifact and function differences
 remain static candidates, not causal proof. Supply complete comparison pages.
+For an automatic two-version artifact investigation, use its
+`investigation_run` mode with explicit write approval and a workspace beneath
+`REA_EVIDENCE_ROOTS_JSON`. It checkpoints inventory, comparison, and report
+Evidence in monotonic CAS-linked revisions. Repeating the same content and
+budgets resumes or reuses the run. This automatic mode does not execute either
+version or perform fuzzy function matching, so its behavior status remains
+unknown without separate controlled runtime Evidence.
 
 Use `build_call_path` with explicit `analyze_function` Evidence groups from one
 artifact and provider. Select endpoints by exact address. Missing dossiers,

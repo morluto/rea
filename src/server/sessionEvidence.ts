@@ -17,7 +17,7 @@ export const resolveSessionEvidence = (
   for (const item of supplied) {
     const parsed = parseEvidence(item);
     const owned = session.evidenceById(parsed.evidence_id);
-    if (owned === undefined || canonicalJson(owned) !== canonicalJson(parsed))
+    if (owned === undefined || canonicalize(owned) !== canonicalize(parsed))
       return err(
         new EvidenceIntegrityError(
           "Comparison input does not match its session-owned Evidence",
@@ -34,12 +34,5 @@ export const isSessionEvidence = (
   input: Evidence,
 ): boolean => {
   const owned = session.evidenceById(input.evidence_id);
-  return owned !== undefined && canonicalJson(owned) === canonicalJson(input);
-};
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Evidence could not be canonicalized");
-  return encoded;
+  return owned !== undefined && canonicalize(owned) === canonicalize(input);
 };

@@ -13,7 +13,7 @@ import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { UnknownRegistryError } from "../domain/errors.js";
 
@@ -69,15 +69,9 @@ const registerEnhancedTool = (
       annotations: contract.annotations,
     },
     async (input, context) => {
-      const parsedInput = jsonValueSchema.parse(
+      const parsedInput = jsonObjectSchema.parse(
         enhancedInputSchemas[name].parse(input),
       );
-      if (
-        typeof parsedInput !== "object" ||
-        parsedInput === null ||
-        Array.isArray(parsedInput)
-      )
-        throw new Error("Validated enhanced input was not a JSON object");
       const parameters: Record<string, JsonValue> = { ...parsedInput };
       const result = await logToolExecution(registration.logger, name, () =>
         services.execute(name, input, context.mcpReq.signal),

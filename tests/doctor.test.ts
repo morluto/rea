@@ -14,6 +14,28 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
 });
 
 describe("doctor", () => {
+  it("returns exact recovery for every failed diagnostic", async () => {
+    const result = await runDoctor(
+      "/missing/app",
+      host({
+        nodeVersion: "20.0.0",
+        macosVersion: () => Promise.resolve("11.7"),
+        executable: () => Promise.resolve(false),
+        validTarget: () => Promise.resolve(false),
+      }),
+    );
+    expect(
+      Object.fromEntries(
+        result.checks.map(({ name, remediation }) => [name, remediation]),
+      ),
+    ).toEqual({
+      node: "Install Node.js 22.19+ or 24.11+.",
+      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.",
+      hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
+      target: "Supply a readable local app or program path.",
+    });
+  });
+
   it.each(["11.7", undefined])(
     "rejects unsupported macOS version %s",
     async (version) => {

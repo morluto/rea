@@ -155,6 +155,25 @@ describe("analysis evidence", () => {
     expect(ledger.export().records).toEqual([]);
   });
 
+  it("treats canonical JSON key order as semantically irrelevant", () => {
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: { alpha: 1, beta: 2 },
+      result: { alpha: 1, beta: 2 },
+    });
+    const reordered = evidenceSchema.parse({
+      ...evidence,
+      parameters: { beta: 2, alpha: 1 },
+      normalized_result: { beta: 2, alpha: 1 },
+    });
+    const ledger = new EvidenceLedger({ maxRecords: 1, maxBytes: 1_000_000 });
+    expect(ledger.record(evidence)).toEqual({ ok: true, value: "added" });
+    expect(ledger.record(reordered)).toEqual({
+      ok: true,
+      value: "duplicate",
+    });
+  });
+
   it("returns typed record and byte limit failures without eviction", () => {
     const first = createEvidence(TARGET, PROVIDER, {
       operation: "health",

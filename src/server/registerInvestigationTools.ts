@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
+import { runCrossVersionInvestigation } from "../application/CrossVersionInvestigation.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import { buildCallPath, callPathInputSchema } from "../domain/callPath.js";
 import {
@@ -12,10 +13,12 @@ import {
   verifyReconstruction,
 } from "../domain/reconstructionVerification.js";
 import {
+  changedBehaviorResultSchema,
   changedBehaviorInputSchema,
   findChangedBehavior,
 } from "../domain/changedBehavior.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
+import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../domain/errors.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -38,69 +41,126 @@ export const registerInvestigationTools = (
     ToolContract<"correlate_static_and_runtime">,
     ToolContract<"verify_reconstruction">,
   ],
+  policies: InvestigationToolPolicies,
 ): void => {
-  registerChangedBehavior(server, session, contracts[0]);
+  registerChangedBehavior(server, session, contracts[0], policies);
   registerCallPath(server, session, contracts[1]);
   registerStaticRuntime(server, session, contracts[2]);
   registerReconstruction(server, session, contracts[3]);
 };
 
+interface InvestigationToolPolicies {
+  readonly evidenceFiles: EvidenceFilePolicy;
+  readonly inputRoots: readonly string[];
+}
+
+const investigationExecution = (
+  session: BinarySessionPort,
+  signal: AbortSignal,
+  inputRoots: readonly string[],
+) => ({ session, signal, inputRoots });
+
+const isIncomplete = (status: string): boolean =>
+  status === "unknown" || status === "truncated";
+
 const registerChangedBehavior = (
   server: McpServer,
   session: BinarySessionPort,
   contract: ToolContract<"find_changed_behavior">,
+  policies: InvestigationToolPolicies,
 ): void => {
-  server.registerTool(contract.name, contractOptions(contract), (input) => {
-    const parsed = changedBehaviorInputSchema.parse(input);
-    const closure = evidenceClosure(
-      session,
-      comparisonClosure(parsed.comparisons),
-    );
-    if (!closure.ok) return toCallToolResult(closure, contract);
-    const links = closure.value;
-    const result = findChangedBehavior(
-      parsed.comparisons,
-      parsed.offset,
-      parsed.limit,
-    );
-    const evidence = createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
-      predicateType: "rea.changed-behavior/v1",
-      operation: contract.name,
-      parameters: {
-        comparison_evidence_ids: parsed.comparisons.map(
-          ({ evidence_id: id }) => id,
-        ),
-        offset: parsed.offset,
-        limit: parsed.limit,
-      },
-      result: jsonValueSchema.parse(result),
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: links,
-    });
-    const recorded = recordWorkflowEvidence(
-      session,
-      evidence,
-      parsed.unknown_registry_approved,
-      result.behavior_status === "unknown" ||
-        result.behavior_status === "truncated",
-      {
-        question: `Changed behavior result ${evidence.evidence_id} remains ${result.behavior_status}`,
-        domain: "changed-behavior",
-        requiredAuthority: "controlled-replay",
-        requiredConfidence: "observed",
-        probes: [
-          {
-            operation: "capture_process_scenario",
-            rationale:
-              "Capture both versions under the same bounded scenario and environment.",
-          },
-        ],
-      },
-    );
-    return toCallToolResult(recorded, contract);
-  });
+  server.registerTool(
+    contract.name,
+    contractOptions(contract),
+    async (input, context) => {
+      const parsed = changedBehaviorInputSchema.parse(input);
+      if (parsed.investigation_run !== undefined) {
+        const investigated = await runCrossVersionInvestigation(
+          parsed.investigation_run,
+          policies.evidenceFiles,
+          investigationExecution(
+            session,
+            context.mcpReq.signal,
+            policies.inputRoots,
+          ),
+        );
+        if (!investigated.ok) return toCallToolResult(investigated, contract);
+        const result = changedBehaviorResultSchema.parse(
+          investigated.value.evidence.normalized_result,
+        );
+        return toCallToolResult(
+          recordWorkflowEvidence(
+            session,
+            investigated.value.evidence,
+            parsed.unknown_registry_approved,
+            isIncomplete(result.behavior_status),
+            {
+              question: `Automatic changed behavior run ${result.investigation_run?.run_id ?? "unknown"} remains ${result.behavior_status}`,
+              domain: "changed-behavior",
+              requiredAuthority: "controlled-replay",
+              requiredConfidence: "observed",
+              probes: [
+                {
+                  operation: "capture_process_scenario",
+                  rationale:
+                    "Capture both versions under the same bounded scenario and environment.",
+                },
+              ],
+            },
+          ),
+          contract,
+        );
+      }
+      const closure = evidenceClosure(
+        session,
+        comparisonClosure(parsed.comparisons),
+      );
+      if (!closure.ok) return toCallToolResult(closure, contract);
+      const links = closure.value;
+      const result = findChangedBehavior(
+        parsed.comparisons,
+        parsed.offset,
+        parsed.limit,
+      );
+      const evidence = createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
+        predicateType: "rea.changed-behavior/v1",
+        operation: contract.name,
+        parameters: {
+          comparison_evidence_ids: parsed.comparisons.map(
+            ({ evidence_id: id }) => id,
+          ),
+          offset: parsed.offset,
+          limit: parsed.limit,
+        },
+        result: jsonValueSchema.parse(result),
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: links,
+      });
+      const recorded = recordWorkflowEvidence(
+        session,
+        evidence,
+        parsed.unknown_registry_approved,
+        isIncomplete(result.behavior_status),
+        {
+          question:
+            "Did both versions behave the same under a complete controlled replay?",
+          domain: "changed-behavior",
+          requiredAuthority: "controlled-replay",
+          requiredConfidence: "observed",
+          probes: [
+            {
+              operation: "capture_process_scenario",
+              rationale:
+                "Capture both versions under the same bounded scenario and environment.",
+            },
+          ],
+        },
+      );
+      return toCallToolResult(recorded, contract);
+    },
+  );
 };
 
 const registerCallPath = (
@@ -140,7 +200,8 @@ const registerCallPath = (
       parsed.unknown_registry_approved,
       result.status === "unknown" || result.status === "truncated",
       {
-        question: `Call path ${parsed.start.address} → ${parsed.goal.address} is ${result.status}`,
+        question:
+          "Can the requested call path be established from complete analysis?",
         domain: "call-path",
         requiredAuthority: "shipped-artifact",
         requiredConfidence: "derived",
@@ -195,7 +256,8 @@ const registerStaticRuntime = (
         parsed.unknown_registry_approved,
         result.status === "unknown" || result.status === "truncated",
         {
-          question: `Static/runtime correlation result ${evidence.evidence_id} is ${result.status}`,
+          question:
+            "Does runtime behavior match the available static analysis?",
           domain: "static-runtime-correlation",
           requiredAuthority: null,
           requiredConfidence: "derived",
@@ -274,7 +336,7 @@ const registerReconstruction = (
         parsed.unknown_registry_approved,
         result.status === "unknown",
         {
-          question: `Reconstruction ${result.specification_sha256} has unknown claims`,
+          question: "Does the reconstruction satisfy every declared claim?",
           domain: "reconstruction-verification",
           requiredAuthority: null,
           requiredConfidence: "derived",

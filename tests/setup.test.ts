@@ -12,7 +12,7 @@ import type { LinuxDistribution } from "../src/application/LinuxHopper.js";
 
 class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
-  readonly nodeVersion = "25.1.0";
+  nodeVersion = "25.1.0";
   version: string | undefined = "14.5";
   distribution: LinuxDistribution | undefined;
   hopper: string | undefined;
@@ -22,6 +22,7 @@ class FakeSetupHost implements SetupHost {
   clientResults = new Map<string, ClientConfigurationResult>();
   hopperInstalls = 0;
   configurations = 0;
+  doctorHealthy: boolean | undefined;
 
   constructor(platform: NodeJS.Platform = "darwin") {
     this.platform = platform;
@@ -55,7 +56,7 @@ class FakeSetupHost implements SetupHost {
     checks: readonly DoctorCheck[];
   }> =>
     Promise.resolve({
-      healthy: this.hopper !== undefined,
+      healthy: this.doctorHealthy ?? this.hopper !== undefined,
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
       checks: [],
     });
@@ -80,6 +81,9 @@ describe("setup workflow", () => {
     ]);
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
+    expect(result.remediation).toBe(
+      "Review the setup plan, then rerun interactively or with --yes.",
+    );
   });
 
   it("applies an accepted interactive plan including Hopper", async () => {
@@ -95,6 +99,9 @@ describe("setup workflow", () => {
       "installed_skill",
     ]);
     expect(host.hopperInstalls).toBe(1);
+    expect(result.remediation).toBe(
+      "Open Hopper, complete its one-time activation, then rerun rea doctor --json.",
+    );
   });
 
   it("declines an interactive plan without mutation", async () => {
@@ -116,6 +123,9 @@ describe("setup workflow", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(result.appliedActions).toEqual(["installed_skill"]);
     expect(result.remediation).toContain("--install-hopper");
+    expect(result.remediation).toBe(
+      "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis.",
+    );
   });
 
   it("installs Hopper when unattended authorization is explicit", async () => {
@@ -151,8 +161,74 @@ describe("setup workflow", () => {
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
     const result = await runSetup(options(true, true), host);
     expect(result.status).toBe("needs_human");
-    expect(result.remediation).toContain("failed");
+    expect(result.remediation).toBe(
+      "Hopper installation failed; install Hopper manually or rerun setup after resolving the reported system error.",
+    );
     expect(host.configurations).toBe(0);
+  });
+
+  it.each([
+    [
+      "backup",
+      "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.",
+    ],
+    [
+      "write",
+      "Agent configuration could not be updated. Check file permissions, then rerun setup.",
+    ],
+    [
+      "readback",
+      "Agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.",
+    ],
+  ] as const)("explains %s configuration recovery", async (reason, message) => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [{ name: "internal_client_key", configPath: "/agent.json" }];
+    host.clientResults.set("internal_client_key", { status: "failed", reason });
+    const result = await runSetup(options(true), host);
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toBe(message);
+    expect(result.remediation).not.toContain("internal_client_key");
+  });
+
+  it("explains skill installation recovery", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "failed";
+    const result = await runSetup(options(true), host);
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toBe(
+      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+    );
+  });
+
+  it("delegates remaining unhealthy checks to doctor remediation", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.doctorHealthy = false;
+    const result = await runSetup(options(true), host);
+    expect(result.remediation).toBe(
+      "Run rea doctor and apply each reported remediation.",
+    );
+  });
+
+  it("explains unsupported Node and macOS recovery", async () => {
+    const platformHost = new FakeSetupHost("win32");
+    expect((await runSetup(options(true), platformHost)).remediation).toBe(
+      "REA supports Hopper on macOS and selected 64-bit Linux distributions.",
+    );
+
+    const nodeHost = new FakeSetupHost();
+    nodeHost.nodeVersion = "20.0.0";
+    expect((await runSetup(options(true), nodeHost)).remediation).toBe(
+      "Install Node.js 22.19+ or 24.11+ and rerun setup.",
+    );
+
+    const macHost = new FakeSetupHost();
+    macHost.version = "11.7";
+    expect((await runSetup(options(true), macHost)).remediation).toBe(
+      "Upgrade to macOS 12 or newer.",
+    );
   });
 
   it("rejects unsupported hosts before mutation", async () => {
@@ -166,5 +242,8 @@ describe("setup workflow", () => {
     const result = await runSetup(options(true, true), host);
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
+    expect(result.remediation).toBe(
+      "REA supports Hopper on Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.",
+    );
   });
 });

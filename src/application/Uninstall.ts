@@ -9,6 +9,28 @@ import { z } from "zod";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { supportedClients, type SetupClient } from "./Setup.js";
 
+interface ManagedPathStats {
+  isSymbolicLink(): boolean;
+}
+
+/** Injectable filesystem operations used to prove uninstall failure recovery. */
+export interface UninstallFileSystem {
+  readText(path: string): Promise<string>;
+  copy(source: string, destination: string): Promise<void>;
+  writeText(path: string, contents: string): Promise<void>;
+  stat(path: string): Promise<ManagedPathStats>;
+  remove(path: string): Promise<void>;
+}
+
+const systemFileSystem: UninstallFileSystem = {
+  readText: (path) => readFile(path, "utf8"),
+  copy: (source, destination) => copyFile(source, destination),
+  writeText: (path, contents) =>
+    writeFileAtomic(path, contents, { encoding: "utf8" }),
+  stat: (path) => lstat(path),
+  remove: (path) => rm(path, { recursive: true }),
+};
+
 /** One explicitly classified uninstall action. */
 export interface UninstallItem {
   readonly name: string;
@@ -54,21 +76,28 @@ export const runUninstall = async (
 };
 
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
-export const systemUninstallHost = (home = homedir()): UninstallHost => ({
+export const systemUninstallHost = (
+  home = homedir(),
+  fileSystem: UninstallFileSystem = systemFileSystem,
+): UninstallHost => ({
   clients: () => Promise.resolve(supportedClients(home)),
-  removeClient,
+  removeClient: (client) => removeClient(client, fileSystem),
   removeSkill: () =>
     removeManagedPath(
       join(home, ".agents/skills", PRODUCT_IDENTITY.skillName),
       "skill",
+      fileSystem,
     ),
   purgeData: async () => [
-    await removeManagedPath(join(home, ".rea/cache"), "cache"),
-    await removeManagedPath(join(home, ".rea/state"), "state"),
+    await removeManagedPath(join(home, ".rea/cache"), "cache", fileSystem),
+    await removeManagedPath(join(home, ".rea/state"), "state", fileSystem),
   ],
 });
 
-const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
+const removeClient = async (
+  client: SetupClient,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem> => {
   if (client.format === "unsupported")
     return item(
       client.name,
@@ -77,11 +106,15 @@ const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
     );
   let original: string;
   try {
-    original = await readFile(client.configPath, "utf8");
+    original = await fileSystem.readText(client.configPath);
   } catch (cause: unknown) {
     return isMissing(cause)
       ? item(client.name, "skipped", "Configuration does not exist.")
-      : item(client.name, "failed", "Configuration could not be read.");
+      : item(
+          client.name,
+          "failed",
+          "Configuration could not be read. Check file permissions, then rerun uninstall.",
+        );
   }
   let document: Record<string, unknown>;
   let key: "mcp_servers" | "mcpServers";
@@ -96,7 +129,7 @@ const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
     return item(
       client.name,
       "failed",
-      "Malformed configuration was preserved without mutation.",
+      `Configuration is not valid ${client.format === "toml" ? "TOML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
   const registration = servers[PRODUCT_IDENTITY.mcpServerKey];
@@ -113,12 +146,12 @@ const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
   document[key] = remaining;
   const backupPath = `${client.configPath}.rea.backup`;
   try {
-    await copyFile(client.configPath, backupPath);
+    await fileSystem.copy(client.configPath, backupPath);
   } catch {
     return item(
       client.name,
       "failed",
-      "Configuration backup failed; no mutation was attempted.",
+      "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
     );
   }
   try {
@@ -126,11 +159,11 @@ const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
       client.format === "toml"
         ? stringifyToml(document)
         : `${JSON.stringify(document, null, 2)}\n`;
-    await writeFileAtomic(client.configPath, encoded, { encoding: "utf8" });
+    await fileSystem.writeText(client.configPath, encoded);
     const readback = objectSchema.parse(
       client.format === "toml"
-        ? parseToml(await readFile(client.configPath, "utf8"))
-        : JSON.parse(await readFile(client.configPath, "utf8")),
+        ? parseToml(await fileSystem.readText(client.configPath))
+        : JSON.parse(await fileSystem.readText(client.configPath)),
     );
     if (PRODUCT_IDENTITY.mcpServerKey in optionalObject(readback[key]))
       throw new Error("registration readback mismatch");
@@ -140,13 +173,19 @@ const removeClient = async (client: SetupClient): Promise<UninstallItem> => {
       `Removed registration from ${client.configPath}.`,
     );
   } catch {
-    await writeFileAtomic(client.configPath, original, {
-      encoding: "utf8",
-    }).catch(() => undefined);
+    try {
+      await fileSystem.writeText(client.configPath, original);
+    } catch {
+      return item(
+        client.name,
+        "failed",
+        "Configuration could not be updated or restored. Restore its `.rea.backup` manually, then rerun uninstall.",
+      );
+    }
     return item(
       client.name,
       "failed",
-      `Configuration update failed; the original was restored and ${backupPath} was retained.`,
+      "Configuration could not be updated. The original was restored and its `.rea.backup` was retained. Repair the configuration or restore the backup, then rerun uninstall.",
     );
   }
 };
@@ -170,17 +209,26 @@ const isOwnedRegistration = (value: unknown): boolean => {
 const removeManagedPath = async (
   path: string,
   name: string,
+  fileSystem: UninstallFileSystem,
 ): Promise<UninstallItem> => {
   try {
-    const stats = await lstat(path);
+    const stats = await fileSystem.stat(path);
     if (stats.isSymbolicLink())
-      return item(name, "retained", `Refused to follow symlink ${path}.`);
-    await rm(path, { recursive: true });
+      return item(
+        name,
+        "retained",
+        "REA did not remove this item because its managed path is a symbolic link. Verify the link target before removing it manually.",
+      );
+    await fileSystem.remove(path);
     return item(name, "removed", `Removed ${path}.`);
   } catch (cause: unknown) {
     return isMissing(cause)
       ? item(name, "skipped", `${path} does not exist.`)
-      : item(name, "failed", `${path} could not be removed.`);
+      : item(
+          name,
+          "failed",
+          "This item could not be removed. Check file permissions, then rerun uninstall.",
+        );
   }
 };
 

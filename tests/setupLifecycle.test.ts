@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +18,7 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
+  type UninstallFileSystem,
 } from "../src/application/Uninstall.js";
 
 const roots: string[] = [];
@@ -110,7 +119,12 @@ describe("agent lifecycle", () => {
       mcpServers: { other: { command: "other" } },
     });
     expect(first.items).toContainEqual(
-      expect.objectContaining({ name: "cache", status: "retained" }),
+      expect.objectContaining({
+        name: "cache",
+        status: "retained",
+        detail:
+          "REA did not remove this item because its managed path is a symbolic link. Verify the link target before removing it manually.",
+      }),
     );
     expect((await runUninstall(true, systemUninstallHost(home))).status).toBe(
       "complete",
@@ -123,9 +137,111 @@ describe("agent lifecycle", () => {
     const config = join(home, ".cursor/mcp.json");
     await mkdir(dirname(config), { recursive: true });
     await writeFile(config, "not-json");
-    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
-      "failed",
+    const result = await runUninstall(false, systemUninstallHost(home));
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "cursor",
+        status: "failed",
+        detail:
+          "Configuration is not valid JSON and was not changed. Repair it, then rerun uninstall.",
+      }),
     );
     expect(await readFile(config, "utf8")).toBe("not-json");
   });
+
+  it.each([
+    [
+      "read",
+      "Configuration could not be read. Check file permissions, then rerun uninstall.",
+    ],
+    [
+      "backup",
+      "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
+    ],
+    [
+      "update",
+      "Configuration could not be updated. The original was restored and its `.rea.backup` was retained. Repair the configuration or restore the backup, then rerun uninstall.",
+    ],
+    [
+      "restore",
+      "Configuration could not be updated or restored. Restore its `.rea.backup` manually, then rerun uninstall.",
+    ],
+  ] as const)(
+    "reports an actionable client %s failure",
+    async (failure, detail) => {
+      const { home, config } = await uninstallFixture();
+      let writes = 0;
+      const fileSystem: UninstallFileSystem = {
+        ...testFileSystem,
+        readText: (path) =>
+          failure === "read" && path === config
+            ? Promise.reject(new Error("SECRET read failure"))
+            : readFile(path, "utf8"),
+        copy: (source, destination) =>
+          failure === "backup"
+            ? Promise.reject(new Error("SECRET backup failure"))
+            : copyFile(source, destination),
+        writeText: async (path, contents) => {
+          writes += 1;
+          if ((failure === "update" && writes === 1) || failure === "restore")
+            throw new Error("SECRET write failure");
+          await writeFile(path, contents);
+        },
+      };
+      const result = await runUninstall(
+        false,
+        systemUninstallHost(home, fileSystem),
+      );
+      expect(result.status).toBe("failed");
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ name: "cursor", status: "failed", detail }),
+      );
+      expect(JSON.stringify(result)).not.toContain("SECRET");
+    },
+  );
+
+  it("reports a managed-path removal failure", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-remove-"));
+    roots.push(home);
+    const skillRoot = join(home, ".agents/skills/rea-analysis");
+    await mkdir(skillRoot, { recursive: true });
+    const result = await runUninstall(
+      false,
+      systemUninstallHost(home, {
+        ...testFileSystem,
+        remove: () => Promise.reject(new Error("SECRET removal failure")),
+      }),
+    );
+    expect(result.items).toContainEqual({
+      name: "skill",
+      status: "failed",
+      detail:
+        "This item could not be removed. Check file permissions, then rerun uninstall.",
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
 });
+
+const testFileSystem: UninstallFileSystem = {
+  readText: (path) => readFile(path, "utf8"),
+  copy: (source, destination) => copyFile(source, destination),
+  writeText: (path, contents) => writeFile(path, contents),
+  stat: (path) => lstat(path),
+  remove: (path) => rm(path, { recursive: true }),
+};
+
+const uninstallFixture = async (): Promise<{
+  readonly home: string;
+  readonly config: string;
+}> => {
+  const home = await mkdtemp(join(tmpdir(), "rea-uninstall-failure-"));
+  roots.push(home);
+  const config = join(home, ".cursor/mcp.json");
+  await mkdir(dirname(config), { recursive: true });
+  await writeFile(
+    config,
+    JSON.stringify({ mcpServers: { rea: { command: "rea", args: ["mcp"] } } }),
+  );
+  return { home, config };
+};

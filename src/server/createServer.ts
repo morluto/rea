@@ -17,6 +17,8 @@ export interface CreateServerOptions {
   readonly logger?: Logger;
   readonly processPolicy?: ProcessExecutionPolicy;
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
+  readonly investigationInputRoots?: readonly string[];
+  readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
 }
 
 /**

@@ -1,3 +1,7 @@
+import { PROMPT_CONTRACTS } from "../dist/contracts/promptContracts.js";
+
+export const names = PROMPT_CONTRACTS.map(({ name }) => name);
+
 /** Extract the text payload used by packaged MCP smoke assertions. */
 export const mcpText = (result) => {
   const value = result.content?.find((item) => item.type === "text")?.text;
@@ -6,11 +10,7 @@ export const mcpText = (result) => {
 };
 
 /** Verify packaged prompt discovery and rendering through the public client. */
-export const verifyPackagedPromptCatalog = async (
-  client,
-  options,
-  expectedNames,
-) => {
+export const verifyPromptCatalog = async (client, options, expectedNames) => {
   const prompts = await client.listPrompts(undefined, options);
   if (
     JSON.stringify(prompts.prompts.map(({ name }) => name)) !==
@@ -37,11 +37,7 @@ export const verifyPackagedPromptCatalog = async (
 };
 
 /** Verify live completion through each installed stdio target state. */
-export const verifyPackagedPromptCompletion = async (
-  client,
-  options,
-  targetOpen,
-) => {
+export const verifyPromptCompletion = async (client, options, targetOpen) => {
   const expected = targetOpen ? ["fixture"] : [];
   const requests = [
     {

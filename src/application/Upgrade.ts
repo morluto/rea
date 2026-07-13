@@ -92,7 +92,7 @@ export const runUpgrade = async (
       currentVersion,
       latestVersion: latestVersion ?? null,
       reason: "install",
-      remediation: `${UPGRADE_COMMAND} failed.`,
+      remediation: `REA could not update through npm. Check npm registry access and global install permissions, then run: ${UPGRADE_COMMAND}`,
     };
 
   return {

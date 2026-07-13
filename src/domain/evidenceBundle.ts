@@ -104,6 +104,56 @@ export const createEvidenceBundle = (
   };
 };
 
+/** Restrict a bundle to records and complete unknown histories for one artifact. */
+export const evidenceBundleForTarget = (
+  bundle: EvidenceBundle,
+  sha256: string,
+): EvidenceBundle => {
+  const recordsById = new Map(
+    bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  let unknowns = bundle.unknowns.filter(
+    ({ scope_digest: scopeDigest }) => scopeDigest === sha256,
+  );
+  let changed = true;
+  while (changed) {
+    const ids = new Set(unknowns.map(({ unknown_id: id }) => id));
+    const retained = unknowns.filter(
+      (unknown) =>
+        unknown.relationships.every(({ unknown_id: id }) => ids.has(id)) &&
+        referencedEvidenceIds(unknown).every((id) => {
+          const record = recordsById.get(id);
+          return (
+            record?.subject?.digest.sha256 === sha256 ||
+            (unknown.mutation_evidence_ids.includes(id) &&
+              record?.subject === null &&
+              record.predicate_type === "rea.residual-unknown-mutation/v1")
+          );
+        }),
+    );
+    changed = retained.length !== unknowns.length;
+    unknowns = retained;
+  }
+  const mutationIds = new Set(
+    unknowns.flatMap(({ mutation_evidence_ids: ids }) => ids),
+  );
+  return createEvidenceBundle(
+    bundle.records.filter(
+      (record) =>
+        record.subject?.digest.sha256 === sha256 ||
+        mutationIds.has(record.evidence_id),
+    ),
+    unknowns,
+  );
+};
+
+const referencedEvidenceIds = (unknown: ResidualUnknown): readonly string[] => [
+  ...unknown.supporting_evidence_ids,
+  ...unknown.contradicting_evidence_ids,
+  ...unknown.mutation_evidence_ids,
+  ...(unknown.resolution?.evidence_ids ?? []),
+];
+
 /** Parse records, verify semantic IDs, and reject inconsistent manifests. */
 export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
   const parsed = evidenceBundleSchema.parse(input);

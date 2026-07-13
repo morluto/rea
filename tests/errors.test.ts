@@ -19,6 +19,7 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  InvestigationWorkspaceError,
   NoBinaryOpenError,
   ProviderAdapterError,
   ProviderSelectionError,
@@ -36,7 +37,7 @@ describe("analysis error projection", () => {
     );
   });
 
-  it("exhaustively projects stable tags without causes or local paths", () => {
+  it("projects every typed failure without internal details", () => {
     const secretCause = new Error("secret-token");
     const byTag = {
       AnalysisProtocolError: new AnalysisProtocolError("protocol failed"),
@@ -72,6 +73,11 @@ describe("analysis error projection", () => {
       EvidenceFileError: new EvidenceFileError("read", "outside-root", {
         cause: secretCause,
       }),
+      InvestigationWorkspaceError: new InvestigationWorkspaceError(
+        "update",
+        "revision-conflict",
+        { cause: secretCause },
+      ),
       UnknownRegistryError: new UnknownRegistryError("revision-conflict", {
         cause: secretCause,
       }),
@@ -97,17 +103,42 @@ describe("analysis error projection", () => {
     } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
-    expect(new Set(projected.map(({ tag }) => tag)).size).toBe(errors.length);
-    expect(projected).toHaveLength(23);
-    expect(JSON.stringify(projected)).not.toContain("secret-token");
-    expect(JSON.stringify(projected)).not.toContain("/secret/local/path");
+    expect(projected).toHaveLength(24);
+    const serialized = JSON.stringify(projected);
+    for (const hidden of [
+      "secret-token",
+      "/secret/local/path",
+      "fixture",
+      "overview",
+      "AnalysisCapabilityUnavailableError",
+      "main.js",
+      "declaredSha256",
+    ])
+      expect(serialized).not.toContain(hidden);
     expect(
-      projected.find(({ tag }) => tag === "HopperTimeoutError"),
-    ).toMatchObject({ details: { timeoutMs: 100 } });
-    expect(
-      projected.find(({ tag }) => tag === "ProviderAdapterError"),
+      projectAnalysisError(byTag.AnalysisCapabilityUnavailableError),
     ).toMatchObject({
-      details: { providerId: "fixture", operation: "overview" },
+      category: "unsupported_provider",
     });
+    expect(
+      projectAnalysisError(
+        new ArtifactOperationError("inventory_artifact", "integrity", {
+          logicalPath: "main.js",
+          declaredSha256: "a".repeat(64),
+          calculatedSha256: "b".repeat(64),
+          unpacked: true,
+        }),
+      ),
+    ).toMatchObject({
+      category: "integrity_mismatch",
+    });
+    expect(projected.every(({ message }) => message.length > 0)).toBe(true);
+    expect(
+      projected.every(({ message }) =>
+        /try again|run `rea doctor`|current target|when ready|smaller request|smaller artifact|fresh copy|re-import|reduce|inline evidence|configured evidence directory|evidence file|allow overwrite|refresh the current state|reported setting|call open_binary|supported file|review capture policy/u.test(
+          message,
+        ),
+      ),
+    ).toBe(true);
   });
 });
