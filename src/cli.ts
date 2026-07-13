@@ -9,6 +9,7 @@ import {
 } from "./application/DirectAnalysis.js";
 import { runSetup } from "./application/Setup.js";
 import { runUninstall } from "./application/Uninstall.js";
+import { runUpgrade, systemUpgradeHost } from "./application/Upgrade.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { createLogger, parseLogLevel, type Logger } from "./logger.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -100,6 +101,17 @@ const registerCoreCommands = (
     alias: { purgeData: "purge-data" },
     run: ({ options }) =>
       logCliCommand(logger, "uninstall", () => runUninstall(options.purgeData)),
+  });
+  cli.command("upgrade", {
+    description: "Upgrade a global npm installation to the latest REA release",
+    run: ({ formatExplicit }) =>
+      logCliCommand(logger, "upgrade", () =>
+        runUpgrade(
+          process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
+          systemUpgradeHost(),
+          formatExplicit ? "structured" : "human",
+        ),
+      ),
   });
   cli.command("analyze", {
     description: "Get an overview of an app",
