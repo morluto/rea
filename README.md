@@ -354,6 +354,7 @@ Or install the `rea` command globally:
 ```bash
 npm install --global rea-agents
 rea --help
+rea upgrade
 rea mcp
 ```
 
