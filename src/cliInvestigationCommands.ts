@@ -3,6 +3,7 @@ import { Cli, z } from "incur";
 import { runCrossVersionInvestigation } from "./application/CrossVersionInvestigation.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
+import { projectAnalysisError, type AnalysisError } from "./domain/errors.js";
 import type { Logger } from "./logger.js";
 
 const investigationOptionsSchema = z.object({
@@ -74,8 +75,7 @@ const runInvestigation = async (
       message: "Persistent workspace writes require explicit --yes approval.",
     };
   const config = parseConfig(process.env);
-  if (!config.ok)
-    return { error: config.error._tag, message: config.error.message };
+  if (!config.ok) return cliError(config.error);
   const investigated = await runCrossVersionInvestigation(
     {
       approved: true,
@@ -102,8 +102,10 @@ const runInvestigation = async (
   );
   return investigated.ok
     ? investigated.value.evidence
-    : {
-        error: investigated.error._tag,
-        message: investigated.error.message,
-      };
+    : cliError(investigated.error);
 };
+
+const cliError = (error: AnalysisError) => ({
+  error: "Analysis failed",
+  ...projectAnalysisError(error),
+});

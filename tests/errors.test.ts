@@ -58,7 +58,7 @@ describe("analysis error projection", () => {
     }
   });
 
-  it("projects every typed failure without internal details", () => {
+  it("projects every typed failure without secrets", () => {
     const secretCause = new Error("secret-token");
     const byTag = {
       AnalysisProtocolError: new AnalysisProtocolError("protocol failed"),
@@ -132,7 +132,6 @@ describe("analysis error projection", () => {
       "fixture",
       "overview",
       "AnalysisCapabilityUnavailableError",
-      "main.js",
       "declaredSha256",
     ])
       expect(serialized).not.toContain(hidden);
@@ -152,6 +151,12 @@ describe("analysis error projection", () => {
       ),
     ).toMatchObject({
       category: "integrity_mismatch",
+      details: {
+        logical_path: "main.js",
+        declared_sha256: "a".repeat(64),
+        calculated_sha256: "b".repeat(64),
+        unpacked: true,
+      },
     });
     expect(projected.every(({ message }) => message.length > 0)).toBe(true);
     expect(

@@ -13,6 +13,8 @@ Prioritize:
 
 Installers must not install or upgrade Homebrew, Node.js, npm, or other unrelated software. `rea setup` must print its planned changes and require approval before writing files or installing Hopper.
 
+REA is a local-only tool; do not sanitize actionable local diagnostics such as artifact paths, digests, mismatch locations, or analysis metadata, while continuing to redact genuine secrets such as credentials and authorization headers.
+
 ## Project Structure & Module Organization
 
 REA is a layered ESM TypeScript application. Dependencies flow inward: `domain` ← `contracts` ← `hopper` ← `application` ← `server` ← adapters.
