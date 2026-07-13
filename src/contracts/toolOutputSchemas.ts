@@ -178,8 +178,7 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
       [property]: z.array(addressedEntry),
     }),
   );
-/** Exact public projection of an expected analysis failure. */
-export const analysisErrorProjectionSchema = z
+const analysisErrorProjectionSchema = z
   .object({
     tag: z.enum(ANALYSIS_ERROR_TAGS),
     message: z.string(),
