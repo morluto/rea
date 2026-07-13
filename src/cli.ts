@@ -19,6 +19,7 @@ import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
 import { projectAnalysisError } from "./domain/errors.js";
+import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -388,7 +389,10 @@ const registerReferenceSourceCommand = (
         });
         return imported.ok
           ? imported.value
-          : { error: imported.error.code, message: imported.error.message };
+          : {
+              error: "Import failed",
+              ...projectReferenceSourceImportError(imported.error),
+            };
       }),
   });
 };

@@ -1,0 +1,39 @@
+import type {
+  ClientConfigurationResult,
+  SetupClient,
+  SetupHost,
+} from "./Setup.js";
+
+const failedConfigurationMessage = (
+  reason: "backup" | "write" | "readback",
+): string => {
+  if (reason === "backup")
+    return "Coding-agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
+  if (reason === "write")
+    return "Coding-agent configuration could not be updated. Check file permissions, then rerun setup.";
+  return "Coding-agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.";
+};
+
+/** Configure each detected coding agent, stopping after the first failed transaction. */
+export const configureDetectedClients = async (options: {
+  readonly host: SetupHost;
+  readonly detectedClients: readonly SetupClient[];
+  readonly hopperPath: string | undefined;
+  readonly command: readonly string[];
+  readonly clients: Record<string, ClientConfigurationResult>;
+  readonly appliedActions: string[];
+}): Promise<string | undefined> => {
+  for (const client of options.detectedClients) {
+    const result = await options.host.configureClient(
+      client,
+      options.hopperPath,
+      options.command,
+    );
+    options.clients[client.name] = result;
+    if (result.status === "failed")
+      return failedConfigurationMessage(result.reason);
+    if (result.status === "configured")
+      options.appliedActions.push(`configured_${client.name}`);
+  }
+  return undefined;
+};

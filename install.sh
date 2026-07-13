@@ -54,13 +54,13 @@ fi
 
 platform="$(uname -s)"
 [[ "$platform" == "Darwin" || "$platform" == "Linux" ]] || fail "REA supports macOS and selected 64-bit Linux distributions."
-command -v curl >/dev/null 2>&1 || fail "curl is required."
+command -v curl >/dev/null 2>&1 || fail "curl is required. Install curl, then rerun this installer."
 command -v node >/dev/null 2>&1 || fail "Node.js 22.19+ or 24.11+ is required; install it from https://nodejs.org and retry."
 command -v npm >/dev/null 2>&1 || fail "npm is required; install it with Node.js and retry."
 
 node_version="$(node -p 'process.versions.node' 2>/dev/null || true)"
 IFS=. read -r node_major node_minor _node_patch <<<"$node_version"
-[[ "$node_major" =~ ^[0-9]+$ && "$node_minor" =~ ^[0-9]+$ ]] || fail "could not determine the active Node.js version."
+[[ "$node_major" =~ ^[0-9]+$ && "$node_minor" =~ ^[0-9]+$ ]] || fail "the active Node.js version could not be read. Check that node works and is on PATH, then retry."
 if ! ((node_major == 22 && node_minor >= 19 || node_major >= 24)); then
   fail "Node.js $node_version is unsupported; use Node.js 22.19+ or 24.11+."
 fi
@@ -71,9 +71,9 @@ fi
 if [[ -n "$version" ]]; then
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "version must be an exact semantic version."
 else
-  release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPOSITORY/releases/latest")" || fail "could not resolve the latest GitHub release."
-  tag="$(printf '%s' "$release_json" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const v=JSON.parse(s).tag_name;if(typeof v!=="string")process.exit(1);process.stdout.write(v)})')" || fail "GitHub returned malformed release metadata."
-  [[ "$tag" =~ ^rea-agents-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]] || fail "latest release tag is not a valid rea-agents release."
+  release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPOSITORY/releases/latest")" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
+  tag="$(printf '%s' "$release_json" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const v=JSON.parse(s).tag_name;if(typeof v!=="string")process.exit(1);process.stdout.write(v)})' 2>/dev/null)" || fail "the release response was invalid. Retry later or pass --version VERSION."
+  [[ "$tag" =~ ^rea-agents-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]] || fail "the latest release tag was invalid. Retry later or pass --version VERSION."
   version="${BASH_REMATCH[1]}"
 fi
 
@@ -82,7 +82,7 @@ if [[ "$platform" == "Linux" ]]; then
   prefix_args=(--prefix "$HOME/.local")
   install_bin="$HOME/.local/bin/rea"
 else
-  npm_prefix="$(npm prefix --global)" || fail "could not determine the npm global prefix."
+  npm_prefix="$(npm prefix --global)" || fail "the npm global prefix could not be read. Repair the npm configuration, then retry."
   install_bin="$npm_prefix/bin/rea"
 fi
 
@@ -99,9 +99,9 @@ if [[ "$dry_run" == true ]]; then
 fi
 
 printf 'Installing %s@%s...\n' "$PACKAGE" "$version"
-npm install --global "${prefix_args[@]}" "$PACKAGE@$version" || fail "npm package installation failed."
-[[ -x "$install_bin" ]] || fail "the rea command was not installed at $install_bin."
-installed_version="$("$install_bin" --version 2>/dev/null | tr -d '[:space:]')" || fail "could not read the installed REA version."
+npm install --global "${prefix_args[@]}" "$PACKAGE@$version" || fail "npm could not install REA. Check registry access and npm permissions, then retry."
+[[ -x "$install_bin" ]] || fail "npm completed without installing the rea command. Check the npm global bin directory and PATH, then retry."
+installed_version="$("$install_bin" --version 2>/dev/null | tr -d '[:space:]')" || fail "the installed REA version could not be read. Reinstall the requested version, then retry."
 [[ "$installed_version" == "$version" ]] || fail "installed version $installed_version does not match $version."
 
 printf 'REA %s is installed.\n' "$version"

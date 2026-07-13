@@ -73,7 +73,6 @@ describe("target-free MCP lifecycle", () => {
     expect(deniedCapture.isError).toBe(true);
     expect(structured(deniedCapture)).toMatchObject({
       error: {
-        tag: "ProcessCaptureError",
         category: "permission_required",
       },
     });
@@ -229,8 +228,7 @@ describe("target-free MCP lifecycle", () => {
         ),
       ).result;
     expect(listed).toContainEqual({
-      question:
-        "network: External network isolation is not enforced by this adapter.",
+      question: "Was network behavior fully observed during capture?",
       domain: "process-network",
     });
   });

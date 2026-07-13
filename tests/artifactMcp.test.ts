@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +17,7 @@ import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
 describe("artifact graph MCP integration", () => {
-  it("returns ASAR integrity path and hashes as structured error data", async () => {
+  it("returns a safe ASAR integrity error without paths or hashes", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-asar-integrity-mcp-"));
     const source = join(root, "source");
     const original = "console.log('ok');\n";
@@ -50,20 +49,9 @@ describe("artifact graph MCP integration", () => {
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toEqual({
         error: {
-          tag: "ArtifactOperationError",
           category: "integrity_mismatch",
           message:
             "Artifact is invalid or has changed. Get a fresh copy and try again.",
-          details: {
-            operation: "inventory_artifact",
-            reason: "integrity",
-            logicalPath: "main.js",
-            declaredSha256: createHash("sha256").update(original).digest("hex"),
-            calculatedSha256: createHash("sha256")
-              .update(changed)
-              .digest("hex"),
-            unpacked: true,
-          },
         },
       });
     } finally {

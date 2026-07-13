@@ -46,7 +46,7 @@ const recordProcessResidualUnknowns = (
   for (const residual of residuals) {
     const unknown = session.recordUnknown({
       approved: true,
-      question: `${residual.scope}: ${residual.reason}`,
+      question: `Was ${residual.scope} behavior fully observed during capture?`,
       severity: "medium",
       domain: `process-${residual.scope}`,
       supporting_evidence_ids: [evidence.evidence_id],

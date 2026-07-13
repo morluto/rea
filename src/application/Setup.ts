@@ -22,6 +22,7 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { installMacHopper } from "./MacHopper.js";
+import { configureDetectedClients } from "./SetupClients.js";
 import { installCanonicalSkill } from "./SetupSkill.js";
 
 export { installCanonicalSkill } from "./SetupSkill.js";
@@ -140,28 +141,6 @@ const setupPlan = (
   },
 ];
 
-const configureDetectedClients = async (options: {
-  readonly host: SetupHost;
-  readonly detectedClients: readonly SetupClient[];
-  readonly hopperPath: string | undefined;
-  readonly clients: Record<string, ClientConfigurationResult>;
-  readonly appliedActions: string[];
-}): Promise<string | undefined> => {
-  for (const client of options.detectedClients) {
-    const result = await options.host.configureClient(
-      client,
-      options.hopperPath,
-      registrationCommand(),
-    );
-    options.clients[client.name] = result;
-    if (result.status === "failed")
-      return `${client.name} configuration ${result.reason} verification failed; no successful configuration was reported.`;
-    if (result.status === "configured")
-      options.appliedActions.push(`configured_${client.name}`);
-  }
-  return undefined;
-};
-
 /**
  * Install prerequisites and configure detected clients idempotently.
  * Discovery always precedes mutation. Interactive confirmation or explicit
@@ -226,13 +205,16 @@ export const runSetup = async (
     host,
     detectedClients,
     hopperPath,
+    command: registrationCommand(),
     clients,
     appliedActions,
   });
   if (clientFailure !== undefined) return fail(clientFailure);
   const skill = await host.installSkill();
   if (skill === "failed")
-    return fail("Agent skill installation or readback failed.");
+    return fail(
+      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+    );
   if (skill === "installed") appliedActions.push("installed_skill");
   const doctor = await host.doctor();
   const activationRequired = appliedActions.includes("installed_hopper");

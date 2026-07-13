@@ -11,9 +11,12 @@ const isMcpMode =
   args[0] === "--mcp" || (args.length === 1 && args[0] === "mcp");
 
 if (isMcpMode) {
-  const { run } = await import("../dist/main.js");
-  process.exitCode = await run();
+  const { runEntrypoint } = await import("../dist/main.js");
+  await runEntrypoint();
 } else {
   const { createCli } = await import("../dist/cli.js");
-  await createCli().serve(args);
+  const { sanitizeCliOutput } = await import("../dist/cliOutput.js");
+  await createCli().serve(args, {
+    stdout: (output) => process.stdout.write(sanitizeCliOutput(output)),
+  });
 }

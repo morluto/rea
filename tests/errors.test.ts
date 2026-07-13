@@ -99,18 +99,20 @@ describe("analysis error projection", () => {
     const projected = errors.map(projectAnalysisError);
     expect(projected).toHaveLength(23);
     const serialized = JSON.stringify(projected);
-    for (const hidden of ["secret-token", "/secret/local/path"])
+    for (const hidden of [
+      "secret-token",
+      "/secret/local/path",
+      "fixture",
+      "overview",
+      "AnalysisCapabilityUnavailableError",
+      "main.js",
+      "declaredSha256",
+    ])
       expect(serialized).not.toContain(hidden);
     expect(
       projectAnalysisError(byTag.AnalysisCapabilityUnavailableError),
     ).toMatchObject({
-      tag: "AnalysisCapabilityUnavailableError",
       category: "unsupported_provider",
-      details: {
-        providerId: "fixture",
-        operation: "overview",
-        reason: "absent",
-      },
     });
     expect(
       projectAnalysisError(
@@ -122,14 +124,7 @@ describe("analysis error projection", () => {
         }),
       ),
     ).toMatchObject({
-      tag: "ArtifactOperationError",
       category: "integrity_mismatch",
-      details: {
-        logicalPath: "main.js",
-        declaredSha256: "a".repeat(64),
-        calculatedSha256: "b".repeat(64),
-        unpacked: true,
-      },
     });
     expect(projected.every(({ message }) => message.length > 0)).toBe(true);
     expect(

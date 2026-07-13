@@ -1,7 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
-export const ANALYSIS_ERROR_TAGS = [
+const ANALYSIS_ERROR_TAGS = [
   "AnalysisProtocolError",
   "AnalysisInputError",
   "AnalysisOutputError",
@@ -302,7 +302,6 @@ export class BinaryTargetError extends AnalysisError {
 
 export interface AnalysisErrorProjection
   extends Readonly<Record<string, JsonValue>> {
-  readonly tag: AnalysisErrorTag;
   readonly category:
     | "invalid_input"
     | "permission_required"
@@ -314,7 +313,6 @@ export interface AnalysisErrorProjection
     | "unavailable"
     | "execution_failure";
   readonly message: string;
-  readonly details: Readonly<Record<string, string | number | boolean | null>>;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -323,10 +321,8 @@ export const projectAnalysisError = (
 ): AnalysisErrorProjection => {
   assertKnownTag(error._tag);
   return {
-    tag: error._tag,
     category: errorCategory(error),
     message: userMessage(error),
-    details: safeDetails(error),
   };
 };
 
@@ -371,50 +367,6 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   HopperTimeoutError: "timeout",
   NoBinaryOpenError: "unavailable",
   BinaryTargetError: "unavailable",
-};
-
-const safeDetails = (
-  error: AnalysisError,
-): Readonly<Record<string, string | number | boolean | null>> => {
-  if (error instanceof AnalysisInputError)
-    return { operation: error.operation };
-  if (error instanceof AnalysisOutputError)
-    return { operation: error.operation, reason: error.reason };
-  if (error instanceof AnalysisCapabilityUnavailableError)
-    return {
-      providerId: error.providerId,
-      operation: error.operation,
-      reason: error.reason,
-    };
-  if (error instanceof AnalysisCancelledError)
-    return { operation: error.operation };
-  if (error instanceof AnalysisTimeoutError)
-    return { operation: error.operation, timeoutMs: error.timeoutMs };
-  if (error instanceof ProviderSelectionError)
-    return { operation: error.operation };
-  if (error instanceof ProviderAdapterError)
-    return { providerId: error.providerId, operation: error.operation };
-  if (error instanceof ArtifactOperationError)
-    return {
-      operation: error.operation,
-      reason: error.reason,
-      ...error.artifactDetails,
-    };
-  if (error instanceof EvidenceLimitError)
-    return { limit: error.limit, maximum: error.maximum };
-  if (error instanceof EvidenceFileError)
-    return { operation: error.operation, reason: error.reason };
-  if (error instanceof UnknownRegistryError) return { reason: error.reason };
-  if (error instanceof HopperTimeoutError)
-    return { timeoutMs: error.timeoutMs };
-  if (error instanceof HopperRemoteError)
-    return {
-      code: error.code,
-      safeMessage: error.safeMessage,
-      diagnosticType: error.diagnosticType,
-    };
-  if (error instanceof HopperProcessError) return { exitCode: error.exitCode };
-  return {};
 };
 
 const userMessage = (error: AnalysisError): string => {

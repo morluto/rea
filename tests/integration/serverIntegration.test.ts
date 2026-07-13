@@ -254,13 +254,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(unavailable.isError).toBe(true);
     expect(structured(unavailable)).toMatchObject({
       error: {
-        tag: "AnalysisCapabilityUnavailableError",
         category: "unsupported_provider",
-        details: {
-          providerId: "partial",
-          operation: "procedure_pseudo_code",
-          reason: "Decompiler is not installed.",
-        },
       },
     });
     expect(received[0]).not.toHaveProperty("unknown_registry_approved");
@@ -271,9 +265,15 @@ describe("full MCP integration with multi-tool sequences", () => {
     ).toMatchObject({
       result: [
         {
-          domain: "provider-capability",
+          domain: "analysis-capability",
           question:
-            "procedure_pseudo_code is unavailable: Decompiler is not installed.",
+            "The requested analysis is unavailable for the current target.",
+          recommended_probes: [
+            {
+              rationale:
+                "Choose another analysis or target that can answer this question.",
+            },
+          ],
         },
       ],
     });
@@ -378,13 +378,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(result.isError).toBe(true);
     expect(structured(result)).toMatchObject({
       error: {
-        tag: "HopperRemoteError",
         category: "execution_failure",
-        details: {
-          code: -32000,
-          safeMessage: "bridge timeout",
-          diagnosticType: "remote",
-        },
       },
     });
     expect(text(result)).toBe(

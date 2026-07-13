@@ -11,7 +11,8 @@ import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_COMPARISON_EVIDENCE,
 } from "../src/contracts/investigationExamples.js";
-import { parseEvidence } from "../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../src/domain/evidence.js";
+import { jsonObjectSchema, jsonValueSchema } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
@@ -35,7 +36,7 @@ describe("investigation MCP workflows", () => {
           unknown_registry_approved: true,
         },
       });
-      expect(response.isError).not.toBe(true);
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
       const evidence = parseEvidence(
         z.object({ result: z.unknown() }).parse(response.structuredContent)
           .result,
@@ -44,9 +45,14 @@ describe("investigation MCP workflows", () => {
         provider: { id: "rea-changed-behavior" },
         normalized_result: { behavior_status: "unknown" },
       });
-      expect(session.listUnknowns({ domain: "changed-behavior" })).toHaveLength(
-        1,
-      );
+      expect(
+        session.listUnknowns({ domain: "changed-behavior" }),
+      ).toMatchObject([
+        {
+          question:
+            "Did both versions behave the same under a complete controlled replay?",
+        },
+      ]);
     } finally {
       await close(session, server, client);
     }
@@ -76,6 +82,66 @@ describe("investigation MCP workflows", () => {
         },
         evidence_links: [FUNCTION_COMPARISON_EXAMPLE.left.evidence_id],
       });
+    } finally {
+      await close(session, server, client);
+    }
+  });
+
+  it("records a safe unresolved call-path question", async () => {
+    const { session, server, client } = await connected();
+    const base = FUNCTION_COMPARISON_EXAMPLE.left;
+    if (base.subject === null) throw new Error("missing dossier subject");
+    const dossier = createEvidence(
+      {
+        path: base.subject.local_path,
+        sha256: base.subject.digest.sha256,
+        format: base.subject.format,
+        ...(base.subject.architecture === null
+          ? {}
+          : { architecture: base.subject.architecture }),
+      },
+      base.provider,
+      {
+        predicateType: base.predicate_type,
+        operation: base.operation,
+        parameters: base.parameters,
+        result: jsonValueSchema.parse({
+          ...jsonObjectSchema.parse(base.normalized_result),
+          callees: {
+            items: [{ address: "0x2000", name: "next" }],
+            total: 1,
+            returned: 1,
+            truncated: false,
+            next_offset: null,
+          },
+        }),
+        rawResult: base.raw_result,
+        confidence: base.confidence,
+        authority: base.authority,
+        limitations: base.limitations,
+        locations: base.locations,
+        evidenceLinks: base.evidence_links,
+      },
+    );
+    expect(session.recordEvidence(dossier).ok).toBe(true);
+    try {
+      const response = await client.callTool({
+        name: "build_call_path",
+        arguments: {
+          ...INVESTIGATION_EXAMPLES.build_call_path,
+          functions: [dossier],
+          start: { address: "0x1000" },
+          goal: { address: "0x3000" },
+          unknown_registry_approved: true,
+        },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([
+        {
+          question:
+            "Can the requested call path be established from complete analysis?",
+        },
+      ]);
     } finally {
       await close(session, server, client);
     }
@@ -115,6 +181,51 @@ describe("investigation MCP workflows", () => {
     }
   });
 
+  it("records a safe unresolved static/runtime question", async () => {
+    const { session, server, client } = await connected();
+    for (const evidence of [
+      FUNCTION_COMPARISON_EXAMPLE.left,
+      FUNCTION_COMPARISON_EXAMPLE.right,
+      FUNCTION_COMPARISON_EVIDENCE,
+      PROCESS_CAPTURE_REFERENCE,
+      PROCESS_CAPTURE_RECONSTRUCTION,
+      PROCESS_COMPARISON_EVIDENCE,
+    ])
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+    const mapping =
+      INVESTIGATION_EXAMPLES.correlate_static_and_runtime.mappings[0];
+    if (mapping === undefined) throw new Error("missing correlation fixture");
+    try {
+      const response = await client.callTool({
+        name: "correlate_static_and_runtime",
+        arguments: {
+          ...INVESTIGATION_EXAMPLES.correlate_static_and_runtime,
+          mappings: [
+            {
+              ...mapping,
+              static: {
+                ...mapping.static,
+                selector: { kind: "function", dimension: "assembly" },
+              },
+            },
+          ],
+          unknown_registry_approved: true,
+        },
+      });
+      expect(response.isError).not.toBe(true);
+      expect(
+        session.listUnknowns({ domain: "static-runtime-correlation" }),
+      ).toMatchObject([
+        {
+          question:
+            "Does runtime behavior match the available static analysis?",
+        },
+      ]);
+    } finally {
+      await close(session, server, client);
+    }
+  });
+
   it("passes only the finite declared reconstruction specification", async () => {
     const { session, server, client } = await connected();
     for (const evidence of [
@@ -126,7 +237,10 @@ describe("investigation MCP workflows", () => {
     try {
       const response = await client.callTool({
         name: "verify_reconstruction",
-        arguments: INVESTIGATION_EXAMPLES.verify_reconstruction,
+        arguments: {
+          ...INVESTIGATION_EXAMPLES.verify_reconstruction,
+          unknown_registry_approved: true,
+        },
       });
       expect(response.isError).not.toBe(true);
       const evidence = parseEvidence(
@@ -176,7 +290,10 @@ describe("investigation MCP workflows", () => {
     try {
       const response = await client.callTool({
         name: "verify_reconstruction",
-        arguments: INVESTIGATION_EXAMPLES.verify_reconstruction,
+        arguments: {
+          ...INVESTIGATION_EXAMPLES.verify_reconstruction,
+          unknown_registry_approved: true,
+        },
       });
       expect(response.isError).not.toBe(true);
       const evidence = parseEvidence(
@@ -187,6 +304,13 @@ describe("investigation MCP workflows", () => {
         status: "unknown",
         summary: { unknown: 1 },
       });
+      expect(
+        session.listUnknowns({ domain: "reconstruction-verification" }),
+      ).toContainEqual(
+        expect.objectContaining({
+          question: "Does the reconstruction satisfy every declared claim?",
+        }),
+      );
     } finally {
       await close(session, server, client);
     }

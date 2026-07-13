@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { ANALYSIS_ERROR_TAGS } from "../domain/errors.js";
 import { evidenceSchema } from "../domain/evidence.js";
 import {
   processCaptureComparisonSchema,
@@ -180,7 +179,6 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
   );
 const analysisErrorProjectionSchema = z
   .object({
-    tag: z.enum(ANALYSIS_ERROR_TAGS),
     category: z.enum([
       "invalid_input",
       "permission_required",
@@ -193,10 +191,6 @@ const analysisErrorProjectionSchema = z
       "execution_failure",
     ]),
     message: z.string(),
-    details: z.record(
-      z.string(),
-      z.union([z.string(), z.number(), z.boolean(), z.null()]),
-    ),
   })
   .strict();
 const graphNode = z.discriminatedUnion("status", [
