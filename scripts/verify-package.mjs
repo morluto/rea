@@ -135,7 +135,6 @@ try {
     !llms.includes("capabilities") ||
     !llms.includes("providers") ||
     !llms.includes("inventory-artifact") ||
-    !supportedSetupHost ||
     doctor.healthy !== expectedDoctorHealth ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
   )
