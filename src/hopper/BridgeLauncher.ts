@@ -141,28 +141,36 @@ export class HopperApplicationLauncher implements BridgeLauncher {
           { encoding: "utf8", mode: 0o600 },
         );
       } catch (cause: unknown) {
-        await cleanupOwnedProcessGroup({
-          runId: session.runId,
-          leaderPid: pid,
-          processGroupId: pid,
-        });
+        await cleanupOwnedProcessGroup(
+          ownedProcessGroup(session, pid, this.options.launcherPath),
+        );
         return err(new HopperStartError({ cause }));
       }
       return ok({
         process: child,
         ownsProcessLifetime: true,
         cleanup: () =>
-          cleanupOwnedProcessGroup({
-            runId: session.runId,
-            leaderPid: pid,
-            processGroupId: pid,
-          }),
+          cleanupOwnedProcessGroup(
+            ownedProcessGroup(session, pid, this.options.launcherPath),
+          ),
       });
     } catch (cause: unknown) {
       return err(new HopperStartError({ cause }));
     }
   }
 }
+
+const ownedProcessGroup = (
+  session: BridgeSession,
+  pid: number,
+  launcherPath: string,
+) => ({
+  runId: session.runId,
+  leaderPid: pid,
+  processGroupId: pid,
+  expectedCommand: launcherPath,
+  expectedParentPid: process.pid,
+});
 
 const prepareHopperApplication = async (
   launcherPath: string,

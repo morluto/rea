@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -8,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import {
   firstProcedureAddress,
+  requireDistinctTargetHashes,
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
@@ -253,6 +256,11 @@ const [targetA, targetB] = await Promise.all([
 ]);
 if (targetA === targetB)
   throw new Error("Real-Hopper verification requires two distinct targets");
+const [targetHashA, targetHashB] = await Promise.all([
+  sha256File(targetA),
+  sha256File(targetB),
+]);
+requireDistinctTargetHashes(targetHashA, targetHashB);
 const serverEnvironment = { ...process.env };
 delete serverEnvironment.HOPPER_TARGET_PATH;
 delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
@@ -377,6 +385,7 @@ try {
     diagnosticCount,
     dynamicSession: true,
     targets: [targetA, targetB],
+    targetHashes: [targetHashA, targetHashB],
     switched: true,
     secondOverview: verifiedSecondOverview,
   };
@@ -422,3 +431,9 @@ await new Promise((resolve, reject) => {
     },
   );
 });
+
+async function sha256File(path) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+}

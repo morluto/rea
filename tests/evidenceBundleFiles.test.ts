@@ -15,6 +15,7 @@ import {
   readEvidenceBundle,
   writeEvidenceBundle,
 } from "../src/application/EvidenceBundleFiles.js";
+import { compareEvidenceBundlesCommand } from "../src/application/EvidenceBundleCommands.js";
 import { createEvidence } from "../src/domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -65,6 +66,21 @@ describe("evidence bundle filesystem adapter", () => {
     expect(await readEvidenceBundle(path, policy(directory))).toEqual({
       ok: true,
       value: evidenceBundle,
+    });
+    expect(
+      await compareEvidenceBundlesCommand({
+        leftPath: path,
+        rightPath: path,
+        offset: 0,
+        limit: 100,
+        policy: policy(directory),
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        status: "unchanged",
+        summary: { records_unchanged: 1 },
+      },
     });
     expect(
       await writeEvidenceBundle(evidenceBundle, path, false, policy(directory)),

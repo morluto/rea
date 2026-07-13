@@ -6,6 +6,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
   AnalysisInputError,
+  AnalysisCancelledError,
   AnalysisOutputError,
   type AnalysisError,
 } from "../domain/errors.js";
@@ -472,6 +473,7 @@ export class EnhancedTools {
     arguments_: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
   ): Promise<Result<JsonValue, AnalysisError>> {
+    if (signal?.aborted === true) return err(new AnalysisCancelledError(name));
     const execution = await this.analysis.execute(
       name,
       arguments_,

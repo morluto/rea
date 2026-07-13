@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
+import { EnhancedTools } from "../src/application/EnhancedTools.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
@@ -304,6 +305,38 @@ describe("enhanced MCP tools", () => {
     expect(result).toMatchObject({ count: 2 });
   });
 
+  it("does not start another page after cancellation", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const analysis: AnalysisOperationPort = {
+      execute: () => {
+        calls += 1;
+        controller.abort();
+        return Promise.resolve(
+          ok({
+            items: [{ address: "0x1", value: "_TtC5First" }],
+            offset: 0,
+            limit: 500,
+            total: 2,
+            next_offset: 500,
+            has_more: true,
+          }),
+        );
+      },
+    };
+
+    const result = await new EnhancedTools(analysis).execute(
+      "swift_classes",
+      {},
+      controller.signal,
+    );
+
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+  });
+
   it("follows name pagination for exhaustive Objective-C discovery", async () => {
     const offsets: number[] = [];
     const client = await connect({
@@ -533,5 +566,37 @@ describe("enhanced MCP tools", () => {
     expect(text?.type === "text" ? text.text : "").toContain(
       "AnalysisOutputError",
     );
+  });
+
+  it("accepts a final dossier page whose total exceeds returned", async () => {
+    const malformedPort = fixturePort();
+    const client = await connect({
+      execute: async (name, arguments_, options) => {
+        const result = await malformedPort.execute(name, arguments_, options);
+        if (!result.ok || name !== "analyze_function") return result;
+        const dossier = result.value.result;
+        if (
+          typeof dossier !== "object" ||
+          dossier === null ||
+          Array.isArray(dossier)
+        )
+          return result;
+        return ok({
+          ...dossier,
+          callers: {
+            items: [],
+            total: 1,
+            returned: 0,
+            truncated: false,
+            next_offset: null,
+          },
+        });
+      },
+    });
+    const result = await client.callTool({
+      name: "analyze_function",
+      arguments: { procedure: "0x1" },
+    });
+    expect(result.isError).not.toBe(true);
   });
 });

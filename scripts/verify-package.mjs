@@ -122,7 +122,15 @@ try {
     !help.includes("inventory-artifact") ||
     !help.includes("extract-artifact") ||
     !help.includes("import-reference-source") ||
+    !help.includes("compare") ||
     !llms.includes("decompile") ||
+    !llms.includes("function") ||
+    !llms.includes("search") ||
+    !llms.includes("inspect") ||
+    !llms.includes("xrefs") ||
+    !llms.includes("trace") ||
+    !llms.includes("capabilities") ||
+    !llms.includes("providers") ||
     !llms.includes("inventory-artifact") ||
     doctor.healthy !== expectedDoctorHealth ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
@@ -156,6 +164,87 @@ try {
   )
     throw new Error(
       `packaged Hopper-backed analyze CLI failed: ${JSON.stringify(overview)}`,
+    );
+  const inspected = json(
+    await run(
+      cli,
+      [
+        "inspect",
+        process.execPath,
+        "--detail",
+        "detailed",
+        "--limit",
+        "1",
+        "--json",
+      ],
+      environment,
+    ),
+  );
+  if (
+    inspected.operation !== "binary_overview" ||
+    inspected.normalized_result?.detail !== "detailed"
+  )
+    throw new Error("packaged inspect CLI failed");
+  const functionResult = json(
+    await run(
+      cli,
+      ["function", process.execPath, "0x1000", "--json"],
+      environment,
+    ),
+  );
+  if (
+    functionResult.operation !== "analyze_function" ||
+    functionResult.provider?.id !== "hopper" ||
+    functionResult.normalized_result?.procedure?.address !== "0x1000"
+  )
+    throw new Error(
+      `packaged function CLI failed: ${JSON.stringify(functionResult)}`,
+    );
+  const xrefs = json(
+    await run(
+      cli,
+      ["xrefs", process.execPath, "0x1000", "--json"],
+      environment,
+    ),
+  );
+  if (
+    xrefs.operation !== "xrefs" ||
+    JSON.stringify(xrefs.normalized_result) !== JSON.stringify(["0x1000"])
+  )
+    throw new Error(`packaged xrefs CLI failed: ${JSON.stringify(xrefs)}`);
+  const trace = json(
+    await run(
+      cli,
+      ["trace", process.execPath, "fixture", "--json"],
+      environment,
+    ),
+  );
+  if (trace.operation !== "trace_feature")
+    throw new Error(`packaged trace CLI failed: ${JSON.stringify(trace)}`);
+  const capabilities = json(
+    await run(cli, ["capabilities", "--json"], environment),
+  );
+  if (!Array.isArray(capabilities.capabilities))
+    throw new Error("packaged capabilities CLI failed");
+  const providers = json(await run(cli, ["providers", "--json"], environment));
+  if (
+    !Array.isArray(providers.providers) ||
+    providers.providers.some(({ id }) => typeof id !== "string")
+  )
+    throw new Error("packaged providers CLI failed");
+  const searchResult = json(
+    await run(
+      cli,
+      ["search", process.execPath, "fixture", "--json"],
+      environment,
+    ),
+  );
+  if (
+    searchResult.operation !== "search_strings" ||
+    searchResult.normalized_result?.items?.length !== 1
+  )
+    throw new Error(
+      `packaged search CLI failed: ${JSON.stringify(searchResult)}`,
     );
   const referenceImport = json(
     await run(
@@ -201,14 +290,25 @@ try {
       environment,
     ),
   );
+  const comparedBundle = json(
+    await run(
+      cli,
+      ["compare", sourceBundlePath, canonicalBundlePath, "--json"],
+      environment,
+    ),
+  );
   if (
     importedBundle.imported !== 1 ||
     importedBundle.total !== 1 ||
     exportedBundle.records !== 1 ||
     (await readFile(canonicalBundlePath, "utf8")) !==
-      serializeEvidenceBundle(sourceBundle)
+      serializeEvidenceBundle(sourceBundle) ||
+    comparedBundle.status !== "unchanged" ||
+    comparedBundle.summary?.records_unchanged !== 1
   )
-    throw new Error("packaged CLI evidence bundle round trip failed");
+    throw new Error(
+      "packaged CLI evidence bundle comparison round trip failed",
+    );
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
   if (!mcpRegistration.includes("add-mcp npx -y rea-agents mcp --name rea"))

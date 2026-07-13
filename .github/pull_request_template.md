@@ -26,7 +26,7 @@
 ## Tool Contract Impact
 
 <!-- If this PR adds, removes, or modifies MCP tools, list them here. -->
-<!-- The current inventory is 42 tools (31 direct + 8 enhanced + 3 session). -->
+<!-- The current inventory is 68 tools (33 direct + 10 enhanced + 5 native + 2 artifact + 18 session). -->
 
 ## Related Issues
 

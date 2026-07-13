@@ -37,11 +37,31 @@ const segmentSchema = z.object({
   writable: z.boolean().nullable().default(null),
   executable: z.boolean().nullable().default(null),
 });
-const addressedPageSchema = z.object({
-  items: z.array(z.object({ address: z.string(), value: z.string() })),
-  next_offset: z.number().int().min(0).nullable(),
-  has_more: z.boolean(),
-});
+const addressedPageSchema = z
+  .object({
+    items: z.array(z.object({ address: z.string(), value: z.string() })),
+    offset: z.number().int().min(0),
+    limit: z.number().int().min(1),
+    total: z.number().int().min(0),
+    next_offset: z.number().int().min(0).nullable(),
+    has_more: z.boolean(),
+  })
+  .superRefine((value, context) => {
+    if (value.has_more && value.next_offset === null) {
+      context.addIssue({
+        code: "custom",
+        message: "a page with more results must provide next_offset",
+        path: ["next_offset"],
+      });
+    }
+    if (!value.has_more && value.next_offset !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "a complete page must not provide next_offset",
+        path: ["next_offset"],
+      });
+    }
+  });
 const unavailableSchema = z
   .object({ available: z.literal(false), reason: z.string() })
   .strict();

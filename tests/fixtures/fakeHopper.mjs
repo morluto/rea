@@ -26,9 +26,69 @@ const enhancedFixtureResult = (method) => {
         has_more: false,
       };
     case "list_strings":
-      return ["fixture"];
+      return {
+        items: [{ address: "0x1000", value: "fixture" }],
+        offset: 0,
+        limit: 500,
+        total: 1,
+        next_offset: null,
+        has_more: false,
+      };
     case "procedure_pseudo_code":
       return "return 0;";
+    case "analyze_function": {
+      const empty = () => ({
+        items: [],
+        total: 0,
+        returned: 0,
+        truncated: false,
+        next_offset: null,
+      });
+      return {
+        procedure: {
+          address: "0x1000",
+          name: "fixture",
+          signature: null,
+          locals: [],
+        },
+        pseudocode: {
+          text: "return 0;",
+          total_chars: 9,
+          returned_chars: 9,
+          truncated: false,
+          next_offset: null,
+        },
+        assembly: { ...empty(), items: ["ret"], total: 1, returned: 1 },
+        comments: empty(),
+        callers: empty(),
+        callees: empty(),
+        incoming_references: empty(),
+        outgoing_references: empty(),
+        referenced_strings: empty(),
+        referenced_names: empty(),
+        basic_blocks: {
+          ...empty(),
+          items: [{ start: "0x1000", end: "0x1001", successors: [] }],
+          total: 1,
+          returned: 1,
+        },
+        instruction_scan: { scanned: 1, truncated: false },
+      };
+    }
+    case "search_strings":
+    case "search_procedures":
+      return {
+        items: [
+          { address: "0x1000", value: "fixture", value_truncated: false },
+        ],
+        offset: 0,
+        limit: 100,
+        total: 1,
+        next_offset: null,
+        has_more: false,
+      };
+    case "xrefs":
+      return ["0x1000"];
     default:
       return undefined;
   }
@@ -79,7 +139,11 @@ const server = createServer((socket) => {
       } else if (request.method === "remote_error") {
         send({
           id: request.id,
-          error: { code: -32001, message: "safe fake failure" },
+          error: {
+            code: -32001,
+            message: "safe fake failure",
+            type: "bridge_exception",
+          },
         });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });

@@ -2,12 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import {
   firstProcedureAddress,
+  requireDistinctTargetHashes,
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
 } from "../src/application/RealHopperAssertions.js";
 
 describe("real Hopper semantic assertions", () => {
+  it("rejects two target paths containing the same binary", () => {
+    expect(() => requireDistinctTargetHashes("same", "same")).toThrow(
+      /distinct binaries/u,
+    );
+    expect(() => requireDistinctTargetHashes("", "other")).toThrow();
+    expect(() => requireDistinctTargetHashes("first", "second")).not.toThrow();
+  });
   it("extracts only a real procedure address from a structured page", () => {
     expect(
       firstProcedureAddress({

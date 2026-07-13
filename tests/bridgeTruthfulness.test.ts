@@ -73,11 +73,22 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain("MAX_SEARCH_PATTERN_LENGTH = 256");
     expect(bridgeSource).toContain("MAX_SEARCH_VALUE_LENGTH = 4096");
     expect(bridgeSource).toContain('"value_truncated"');
+    expect(bridgeSource).toContain("page_end = offset + limit");
+    expect(bridgeSource).toContain("if offset <= total < page_end:");
+    expect(bridgeSource).not.toContain(
+      "matching = [item for item in _search_inventory(document, kind)",
+    );
   });
 
   it("caches sorted search inventories and invalidates them after renames", () => {
     expect(bridgeSource).toContain("_search_inventory_cache");
     expect(bridgeSource).toContain("tuple(sorted(values.items()");
     expect(bridgeSource).toContain("_invalidate_search_inventory(document)");
+  });
+
+  it("classifies bridge exceptions without forwarding tracebacks", () => {
+    expect(bridgeSource).toContain("def _diagnostic_type(error):");
+    expect(bridgeSource).toContain('"type": _diagnostic_type(error)');
+    expect(bridgeSource).not.toContain("traceback.format_exc");
   });
 });

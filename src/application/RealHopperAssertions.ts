@@ -27,6 +27,23 @@ export const firstProcedureAddress = (input: unknown): string => {
   return first.address;
 };
 
+/** Reject two target paths that resolve to the same binary content. */
+export const requireDistinctTargetHashes = (
+  firstHash: unknown,
+  secondHash: unknown,
+): void => {
+  if (
+    typeof firstHash !== "string" ||
+    typeof secondHash !== "string" ||
+    firstHash.length === 0 ||
+    secondHash.length === 0
+  ) {
+    throw new TypeError("Target hashes must be non-empty strings");
+  }
+  if (firstHash === secondHash)
+    throw new TypeError("Real-Hopper verification requires distinct binaries");
+};
+
 /** Reject empty and success-shaped embedded decompilation failures. */
 export const requirePseudocode = (
   input: unknown,

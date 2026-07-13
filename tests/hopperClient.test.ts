@@ -131,6 +131,17 @@ describe("HopperClient", () => {
     if (!result.ok) expect(result.error._tag).toBe(expectedTag);
   });
 
+  it("preserves a sanitized bridge exception diagnostic", async () => {
+    const client = await startClient();
+    const result = await client.callTool("remote_error");
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatchObject({
+        _tag: "HopperRemoteError",
+        diagnosticType: "bridge_exception",
+      });
+  });
+
   it("cancels and ignores late responses without corrupting the session", async () => {
     const client = await startClient();
     const controller = new AbortController();

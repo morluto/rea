@@ -11,7 +11,18 @@ const responseSchema = z.union([
   }),
   z.object({
     id: z.number().int().nonnegative(),
-    error: z.object({ code: z.number().int(), message: z.string() }),
+    error: z.object({
+      code: z.number().int(),
+      message: z.string(),
+      type: z
+        .enum([
+          "remote",
+          "authorization",
+          "invalid_request",
+          "bridge_exception",
+        ])
+        .default("remote"),
+    }),
   }),
 ]);
 
@@ -46,5 +57,11 @@ export const responseResult = (
   response: HopperResponse,
 ): Result<JsonValue, HopperRemoteError> =>
   "error" in response
-    ? err(new HopperRemoteError(response.error.code, response.error.message))
+    ? err(
+        new HopperRemoteError(
+          response.error.code,
+          response.error.message,
+          response.error.type,
+        ),
+      )
     : ok(response.result);
