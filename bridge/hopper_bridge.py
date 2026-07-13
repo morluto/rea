@@ -628,13 +628,13 @@ def _dispatch(method, params):
     global _selected_document
     if method == "health":
         return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
-    if method == "shutdown":
+    if method in ("shutdown", "shutdown_document"):
         document = _session_document()
         if document is None:
             return {"shutdown": True, "analysis_stopped": True, "document_closed": True}
         if document.backgroundProcessActive():
             document.requestBackgroundProcessStop()
-        if REA_OWNS_PROCESS_LIFETIME:
+        if method == "shutdown" and REA_OWNS_PROCESS_LIFETIME:
             return {
                 "shutdown": True,
                 "analysis_stopped": not document.backgroundProcessActive(),
@@ -813,7 +813,9 @@ def _serve_connection(connection):
             if not isinstance(request["token"], str) or not hmac.compare_digest(request["token"], REA_TOKEN):
                 raise PermissionError("Invalid bridge capability")
             result = _dispatch(request["method"], request["params"])
-            should_stop = request["method"] == "shutdown"
+            should_stop = request["method"] == "shutdown_document" or (
+                request["method"] == "shutdown" and not result.get("cleanup_required", False)
+            )
             response = {"id": request_id, "result": _json_safe(result)}
         except Exception as error:
             response = {"id": request_id if isinstance(request_id, int) else 0, "error": {"code": -32000, "message": str(error)[:512], "type": _diagnostic_type(error)}}

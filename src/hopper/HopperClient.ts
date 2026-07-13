@@ -167,6 +167,7 @@ export class HopperClient {
     this.#closing = true;
     try {
       const socket = this.#socket;
+      let cleanupAttempted = false;
       if (socket !== undefined && !socket.destroyed) {
         const shutdown = await this.#request(
           "shutdown",
@@ -174,12 +175,23 @@ export class HopperClient {
           { timeoutMs: SHUTDOWN_TIMEOUT_MS },
         ).catch(() => err(new HopperProcessError(null)));
         if (
-          !shutdown.ok ||
-          !isShutdownAcknowledgement(
-            shutdown.value,
-            this.#launch?.shutdownByCleanup === true,
-          )
-        )
+          shutdown.ok &&
+          isCleanupRequired(shutdown.value) &&
+          this.#launch?.shutdownByCleanup === true &&
+          this.#launch.cleanup !== undefined
+        ) {
+          cleanupAttempted = true;
+          const cleanup = await this.#launch.cleanup();
+          if (!cleanup.cleaned) {
+            await this.#fallbackDocumentShutdown();
+            const retried = await this.#launch.cleanup();
+            if (!retried.cleaned)
+              this.#logger.warn(
+                { reason: retried.reason },
+                "Owned launcher cleanup failed closed",
+              );
+          }
+        } else if (!shutdown.ok || !isShutdownAcknowledgement(shutdown.value))
           this.#logger.warn(
             { status: shutdown.ok ? "invalid-acknowledgement" : "failed" },
             "Hopper document shutdown was not confirmed",
@@ -189,7 +201,7 @@ export class HopperClient {
       socket?.destroy();
       this.#socket = undefined;
       if (this.#launch?.ownsProcessLifetime === true) {
-        if (this.#launch.cleanup !== undefined) {
+        if (this.#launch.cleanup !== undefined && !cleanupAttempted) {
           const cleanup = await this.#launch.cleanup();
           if (!cleanup.cleaned)
             this.#logger.warn(
@@ -209,6 +221,19 @@ export class HopperClient {
       this.#closing = false;
       this.#closePromise = undefined;
     }
+  }
+
+  async #fallbackDocumentShutdown(): Promise<void> {
+    const fallback = await this.#request(
+      "shutdown_document",
+      {},
+      { timeoutMs: SHUTDOWN_TIMEOUT_MS },
+    ).catch(() => err(new HopperProcessError(null)));
+    if (!fallback.ok || !isShutdownAcknowledgement(fallback.value))
+      this.#logger.warn(
+        { status: fallback.ok ? "invalid-acknowledgement" : "failed" },
+        "Hopper document shutdown fallback was not confirmed",
+      );
   }
 
   async #connect(
@@ -418,17 +443,21 @@ const connectOnce = async (
     });
   });
 
-const isShutdownAcknowledgement = (
-  value: JsonValue,
-  ownsProcessLifetime: boolean,
-): boolean => {
+const isShutdownAcknowledgement = (value: JsonValue): boolean => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
   if (value.shutdown !== true) return false;
   if (value.analysis_stopped === true && value.document_closed === true)
     return true;
-  return ownsProcessLifetime && value.cleanup_required === true;
+  return false;
 };
+
+const isCleanupRequired = (value: JsonValue): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  value.shutdown === true &&
+  value.cleanup_required === true;
 
 const parseServerInfo = (
   value: JsonValue,
