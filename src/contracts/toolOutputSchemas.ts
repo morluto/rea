@@ -385,7 +385,16 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
     }),
   ),
-  close_binary: lifecycleResultOf(z.null()),
+  close_binary: lifecycleResultOf(
+    z.union([
+      z.null(),
+      z.object({
+        path: z.string(),
+        bytes: z.number().int().min(0),
+        entries: z.number().int().min(0),
+      }),
+    ]),
+  ),
   binary_session: lifecycleResultOf(
     z.union([
       sessionProvider.extend({ open: z.literal(false) }),

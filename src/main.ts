@@ -88,6 +88,7 @@ export const run = async (
           logger,
           processPolicy: config.value.processExecutionPolicy,
           evidenceFilePolicy: config.value.evidenceFilePolicy,
+          analysisSnapshotFilePolicy: config.value.analysisSnapshotFilePolicy,
         }),
       {
         onerror: () => {

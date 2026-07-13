@@ -21,5 +21,6 @@ export const createBinarySession = (
       new NativeMacOSProvider(),
       new HopperProvider(config, logger),
     ]),
+    { snapshotsEnabled: config.hopperLoaderArgs.length === 0 },
   );
 };

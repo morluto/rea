@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +39,13 @@ describe("target-free MCP lifecycle", () => {
     const server = createServer(session, session, {
       logger: silentLogger,
       evidenceFilePolicy: {
+        roots: [directory],
+        maxBytes: 1024 * 1024,
+        maxDepth: 68,
+        maxStringLength: 1024,
+        maxNodes: 10_000,
+      },
+      analysisSnapshotFilePolicy: {
         roots: [directory],
         maxBytes: 1024 * 1024,
         maxDepth: 68,
@@ -180,10 +187,42 @@ describe("target-free MCP lifecycle", () => {
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain("second.hop");
-    await mcp.callTool({ name: "close_binary", arguments: {} });
+    const snapshotPath = join(directory, "analysis.json");
+    expect(
+      structured(
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath },
+        }),
+      ).result,
+    ).toMatchObject({ path: snapshotPath, entries: 0 });
+    expect(JSON.parse(await readFile(snapshotPath, "utf8"))).toMatchObject({
+      evidence_bundle: { records: [], unknowns: [] },
+    });
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
     ).toContain('"open": false');
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: first, snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      structured(await mcp.callTool({ name: "list_unknowns", arguments: {} }))
+        .result,
+    ).toEqual([]);
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: second, snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).not.toBe(true);
+    await mcp.callTool({ name: "close_binary", arguments: {} });
   }, 10_000);
 
   it("records approved process residuals in the unknown registry", async () => {

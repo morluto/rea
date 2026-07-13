@@ -74,6 +74,11 @@ const registerCoreCommands = (
   const overviewOptions = z.object({
     detail: z.enum(["concise", "detailed"]).default("concise"),
     limit: z.number().int().min(1).max(50).default(10),
+    snapshot: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Load and update a local analysis snapshot"),
   });
   cli.command("analyze", {
     description: "Get an overview of an app",
@@ -87,7 +92,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -103,7 +108,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -113,13 +118,14 @@ const registerCoreCommands = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Procedure address"),
     }),
-    run: ({ args }) =>
+    options: z.object({ snapshot: z.string().min(1).optional() }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "decompile", () =>
         runDirectAnalysis(
           args.path,
           "procedure_pseudo_code",
           { procedure: args.address },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -222,13 +228,14 @@ const registerXrefsCommand = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Hexadecimal address"),
     }),
-    run: ({ args }) =>
+    options: z.object({ snapshot: z.string().min(1).optional() }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "xrefs", () =>
         runDirectAnalysis(
           args.path,
           "xrefs",
           { address: args.address },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -248,6 +255,7 @@ const registerTraceCommand = (
       caseSensitive: z.boolean().default(false),
       limit: z.number().int().min(1).max(100).default(20),
       maxOperations: z.number().int().min(1).max(100).default(20),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: {
       caseSensitive: "case-sensitive",
@@ -264,7 +272,7 @@ const registerTraceCommand = (
             limit: options.limit,
             max_operations: options.maxOperations,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -300,6 +308,7 @@ const registerFunctionCommand = (
       limit: z.number().int().min(1).max(500).default(100),
       maxPseudocodeChars: z.number().int().min(1).max(100_000).default(20_000),
       maxInstructions: z.number().int().min(1).max(5_000).default(500),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: {
       includeAssembly: "include-assembly",
@@ -318,7 +327,7 @@ const registerFunctionCommand = (
             max_pseudocode_chars: options.maxPseudocodeChars,
             max_instructions: options.maxInstructions,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });
@@ -340,6 +349,7 @@ const registerSearchCommand = (
       caseSensitive: z.boolean().default(false),
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(100).default(100),
+      snapshot: z.string().min(1).optional(),
     }),
     alias: { caseSensitive: "case-sensitive" },
     run: ({ args, options }) =>
@@ -354,7 +364,7 @@ const registerSearchCommand = (
             offset: options.offset,
             limit: options.limit,
           },
-          logger,
+          { logger, snapshotPath: options.snapshot },
         ),
       ),
   });

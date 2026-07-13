@@ -23,6 +23,7 @@ describe("configuration parsing integration", () => {
       HOPPER_TARGET_KIND: "executable",
       HOPPER_LOADER_ARGS_JSON: '["-l","Mach-O","--aarch64"]',
       REA_EVIDENCE_ROOTS_JSON: '["/tmp/evidence"]',
+      REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: '["/tmp/analysis"]',
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
@@ -34,6 +35,9 @@ describe("configuration parsing integration", () => {
       "--aarch64",
     ]);
     expect(result.value.evidenceFilePolicy.roots).toEqual(["/tmp/evidence"]);
+    expect(result.value.analysisSnapshotFilePolicy.roots).toEqual([
+      "/tmp/analysis",
+    ]);
   });
 
   it("rejects target kind values outside the enum", () => {

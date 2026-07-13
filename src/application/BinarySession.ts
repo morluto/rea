@@ -13,6 +13,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Evidence } from "../domain/evidence.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import { evidenceBundleForTarget } from "../domain/evidenceBundle.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -33,62 +34,22 @@ import { UnknownRegistryError } from "../domain/errors.js";
 import type { AnalysisOperation } from "./AnalysisProvider.js";
 import { enhancedToolNameSchema } from "../contracts/enhancedInputs.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-
-const REGISTRY_PROVIDER: ProviderIdentity = {
-  id: "rea-unknown-registry",
-  name: "REA residual unknown registry",
-  version: "1",
-};
+import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { snapshotMatchesTarget } from "../domain/analysisSnapshot.js";
+import {
+  AnalysisSnapshotCache,
+  isSnapshotCacheable,
+} from "./AnalysisSnapshotCache.js";
+import {
+  UNKNOWN_REGISTRY_PROVIDER,
+  unknownEvidenceLinks,
+  unknownMutationEvidence,
+} from "./UnknownEvidence.js";
+import type { BinarySessionPort } from "./BinarySessionPort.js";
+export type { BinarySessionPort } from "./BinarySessionPort.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
-
-/** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
-export interface BinarySessionPort extends AnalysisOperationPort {
-  open(
-    path: string,
-    options?: {
-      readonly signal?: AbortSignal;
-      readonly targetKind?: BinaryTarget["kind"];
-    },
-  ): Promise<Result<BinaryTarget, AnalysisError>>;
-  close(): Promise<Result<null, AnalysisError>>;
-  status(): JsonValue;
-  activeTarget(): BinaryTarget | undefined;
-  recordEvidence(
-    evidence: Evidence,
-  ): Result<"added" | "duplicate", EvidenceIntegrityError | EvidenceLimitError>;
-  hasEvidence(evidenceId: string): boolean;
-  evidenceById(evidenceId: string): Evidence | undefined;
-  exportEvidenceBundle(): EvidenceBundle;
-  importEvidenceBundle(
-    bundle: unknown,
-  ): Result<number, EvidenceIntegrityError | EvidenceLimitError>;
-  recordUnknown(
-    input: RecordUnknownInput,
-  ): Result<ResidualUnknown, AnalysisError>;
-  recordEvidenceWithUnknown(
-    evidence: Evidence,
-    input: RecordUnknownInput,
-  ): Result<ResidualUnknown | null, AnalysisError>;
-  updateUnknown(
-    input: UpdateUnknownInput,
-  ): Result<ResidualUnknown, AnalysisError>;
-  listUnknowns(filters?: {
-    readonly status?: UnknownStatus;
-    readonly severity?: ResidualUnknown["severity"];
-    readonly domain?: string;
-  }): ResidualUnknown[];
-  verifyUnknownResolution(unknownId: string): Result<
-    {
-      readonly valid: boolean;
-      readonly truthVerified: boolean;
-      readonly unknown: ResidualUnknown;
-    },
-    UnknownRegistryError
-  >;
-  providerIdentity(operation?: AnalysisOperation): ProviderIdentity;
-}
 
 /**
  * Owns the single active target shared by CLI and MCP adapters.
@@ -111,8 +72,15 @@ export class BinarySession implements BinarySessionPort {
     maxRecords: 10_000,
     maxBytes: 64 * 1024 * 1024,
   });
+  readonly #snapshot = new AnalysisSnapshotCache();
+  readonly #snapshotsEnabled: boolean;
+  #snapshotInvalidated = false;
 
-  constructor(readonly provider: AnalysisProvider | AnalysisClientFactory) {
+  constructor(
+    readonly provider: AnalysisProvider | AnalysisClientFactory,
+    options: { readonly snapshotsEnabled?: boolean } = {},
+  ) {
+    this.#snapshotsEnabled = options.snapshotsEnabled ?? true;
     this.#createClient =
       typeof provider === "function"
         ? provider
@@ -185,6 +153,44 @@ export class BinarySession implements BinarySessionPort {
     return this.#evidence.import(bundle);
   }
 
+  /** Export immutable cached calls and session evidence for the active target. */
+  exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError> {
+    if (!this.#snapshotsEnabled)
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshots are unavailable with custom Hopper loader arguments",
+        ),
+      );
+    if (this.#snapshotInvalidated)
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshots are unavailable after analysis metadata mutations",
+        ),
+      );
+    const target = this.#active?.target;
+    return this.#snapshot.export(
+      target,
+      target === undefined
+        ? this.#evidence.export()
+        : evidenceBundleForTarget(this.#evidence.export(), target.sha256),
+    );
+  }
+
+  /** Stage validated cached calls for an identical binary and merge its evidence. */
+  importAnalysisSnapshot(
+    snapshot: AnalysisSnapshot,
+  ): Result<number, AnalysisError> {
+    if (!this.#snapshotsEnabled)
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshots are unavailable with custom Hopper loader arguments",
+        ),
+      );
+    return this.#snapshot.import(snapshot, this.#active?.target, (bundle) =>
+      this.#evidence.import(bundle),
+    );
+  }
+
   /** Create an approved residual unknown and immutable mutation evidence. */
   recordUnknown(
     input: RecordUnknownInput,
@@ -209,21 +215,25 @@ export class BinarySession implements BinarySessionPort {
   updateUnknown(
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
-    const evidence = createEvidence(this.#active?.target, REGISTRY_PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation/v1",
-      operation: "update_unknown",
-      parameters: {
-        unknown_id: input.unknown_id,
-        expected_revision: input.expected_revision,
+    const evidence = createEvidence(
+      this.#active?.target,
+      UNKNOWN_REGISTRY_PROVIDER,
+      {
+        predicateType: "rea.residual-unknown-mutation/v1",
+        operation: "update_unknown",
+        parameters: {
+          unknown_id: input.unknown_id,
+          expected_revision: input.expected_revision,
+        },
+        result: { action: "update", status: input.status },
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: unknownEvidenceLinks(input),
+        limitations: [
+          "Registry mutation evidence records analyst intent, not proof of the answer.",
+        ],
       },
-      result: { action: "update", status: input.status },
-      confidence: "derived",
-      authority: "analyst-inference",
-      evidenceLinks: unknownEvidenceLinks(input),
-      limitations: [
-        "Registry mutation evidence records analyst intent, not proof of the answer.",
-      ],
-    });
+    );
     return this.#evidence.updateUnknown(input, evidence);
   }
 
@@ -259,6 +269,7 @@ export class BinarySession implements BinarySessionPort {
     options: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
+      readonly snapshot?: AnalysisSnapshot;
     } = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async () => {
@@ -271,10 +282,30 @@ export class BinarySession implements BinarySessionPort {
         options.targetKind,
       );
       if (!parsed.ok) return parsed;
+      if (
+        options.snapshot !== undefined &&
+        !snapshotMatchesTarget(options.snapshot.target, parsed.value)
+      )
+        return err(
+          new EvidenceIntegrityError(
+            "Analysis snapshot target does not match the requested binary",
+          ),
+        );
+      if (this.#active === undefined && !this.#snapshot.matches(parsed.value))
+        return err(
+          new EvidenceIntegrityError(
+            "Analysis snapshot target does not match the requested binary",
+          ),
+        );
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
-      if (this.#active?.target.path === parsed.value.path)
+      if (this.#active?.target.path === parsed.value.path) {
+        if (options.snapshot !== undefined) {
+          const imported = this.importAnalysisSnapshot(options.snapshot);
+          if (!imported.ok) return imported;
+        }
         return ok(parsed.value);
+      }
       await this.#drainCalls();
       const previous = this.#active;
       this.#active = undefined;
@@ -292,6 +323,17 @@ export class BinarySession implements BinarySessionPort {
         return err(new AnalysisCancelledError("open_binary"));
       }
       this.#active = { target: parsed.value, client };
+      this.#snapshot.select(parsed.value);
+      if (options.snapshot !== undefined) {
+        const imported = this.importAnalysisSnapshot(options.snapshot);
+        if (!imported.ok) {
+          this.#active = undefined;
+          await client.close();
+          await this.#restore(previous);
+          return imported;
+        }
+      }
+      this.#snapshotInvalidated = false;
       return ok(parsed.value);
     });
   }
@@ -304,6 +346,8 @@ export class BinarySession implements BinarySessionPort {
       await this.#drainCalls();
       await previous?.client.close();
       this.#evidence.clear();
+      this.#snapshot.clear();
+      this.#snapshotInvalidated = false;
       return ok(null);
     });
   }
@@ -398,10 +442,27 @@ export class BinarySession implements BinarySessionPort {
       );
     const active = this.#active;
     if (active === undefined) return err(new NoBinaryOpenError());
+    const cacheable = isSnapshotCacheable(name, capability, arguments_);
+    const cached = cacheable
+      ? this.#snapshot.lookup(
+          active.target,
+          name,
+          arguments_,
+          capability.provider,
+        )
+      : undefined;
+    if (cached !== undefined) return ok(cached);
     const call = active.client.execute(name, arguments_, options);
     this.#calls.add(call);
     try {
-      return await call;
+      const result = await call;
+      if (result.ok && cacheable)
+        this.#snapshot.record(active.target, name, arguments_, result.value);
+      else if (result.ok && capability?.effects.mutatesArtifact === true) {
+        this.#snapshot.clear();
+        this.#snapshotInvalidated = true;
+      }
+      return result;
     } finally {
       this.#calls.delete(call);
     }
@@ -468,42 +529,6 @@ export class BinarySession implements BinarySessionPort {
     });
   }
 }
-
-const unknownMutationEvidence = (
-  target: BinaryTarget | undefined,
-  input: RecordUnknownInput,
-): Evidence =>
-  createEvidence(target, REGISTRY_PROVIDER, {
-    predicateType: "rea.residual-unknown-mutation/v1",
-    operation: "record_unknown",
-    parameters: {
-      domain: input.domain,
-      severity: input.severity,
-    },
-    result: {
-      action: "record",
-      question: input.question,
-      required_authority: input.required_authority,
-      required_confidence: input.required_confidence,
-    },
-    confidence: "derived",
-    authority: "analyst-inference",
-    evidenceLinks: unknownEvidenceLinks(input),
-    limitations: [
-      "Registry mutation evidence records analyst intent, not proof of the answer.",
-    ],
-  });
-
-const unknownEvidenceLinks = (
-  input: RecordUnknownInput | UpdateUnknownInput,
-): string[] =>
-  [
-    ...input.supporting_evidence_ids,
-    ...input.contradicting_evidence_ids,
-    ...("resolution" in input && input.resolution !== null
-      ? input.resolution.evidence_ids
-      : []),
-  ].filter((id, index, values) => values.indexOf(id) === index);
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
