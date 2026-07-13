@@ -420,6 +420,27 @@ rea mcp
 
 REA accepts a Mac `.app` folder directly. If an agent cannot find an app by name, tell it where the app is installed.
 
+### CLI exit status
+
+| Status    | Meaning                                                                                                                                                                                                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`       | The requested operation completed. Truthful unknowns, warnings, and bounded or truncated evidence remain successful results.                                                                                                                                             |
+| `1`       | Arguments, policy, permission, provider analysis, integrity checking, cancellation, timeout, setup, diagnostics, update, uninstall, output encoding, or output writing prevented completion. Structured output identifies the failure category when REA could encode it. |
+| `128 + N` | The process ended from signal `N`, where the shell or runtime preserves the conventional signal-derived status.                                                                                                                                                          |
+
+`setup` returns `1` for `planned`, `needs_confirmation`, or `needs_human`
+because configuration is not ready; rerun it after approval or remediation.
+`doctor` returns `1` when any check is unhealthy. Output format, full envelopes,
+filters, and token controls never change the operation status.
+
+When REA feeds a shell pipeline, enable `pipefail` so a downstream formatter
+cannot hide its failure:
+
+```bash
+set -o pipefail
+rea inventory-artifact ./app.asar --json | jq . > inventory.json
+```
+
 ## Current Hopper provider
 
 REA starts Hopper when needed; Hopper does not need to be running first. Hopper's launcher internally activates the application, so opening a target may bring Hopper to the foreground. REA asks macOS to start Hopper hidden and in the background when possible, but cannot guarantee that it will remain behind the current application.

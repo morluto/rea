@@ -102,17 +102,69 @@ describe("CLI output boundary", () => {
     await writeFile(join(`${archive}.unpacked`, "main.js"), "changed();\n");
 
     for (const flags of [["--json"], ["--full-output", "--json"]]) {
-      const { stdout } = await execFileAsync(process.execPath, [
+      const execution = execFileAsync(process.execPath, [
         "scripts/rea.mjs",
         ...flags,
         "inventory-artifact",
         archive,
       ]);
+      const failure = await execution.catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({ code: 1 });
+      const { stdout } = failure as { readonly stdout: string };
       const output = JSON.stringify(JSON.parse(stdout) as unknown);
       expect(output).toContain('"logical_path":"main.js"');
       expect(output).toMatch(/"declared_sha256":"[a-f0-9]{64}"/u);
       expect(output).toMatch(/"calculated_sha256":"[a-f0-9]{64}"/u);
       expect(output).toContain('"unpacked":true');
     }
+  }, 20_000);
+
+  it("keeps operation failure status independent of output controls", async () => {
+    const variants = [
+      ["--format", "toon"],
+      ["--format", "json"],
+      ["--format", "yaml"],
+      ["--format", "md"],
+      ["--format", "jsonl"],
+      ["--full-output", "--json"],
+      ["--filter-output", "category", "--json"],
+      ["--token-limit", "5", "--json"],
+      ["--token-count", "--json"],
+    ];
+
+    for (const flags of variants) {
+      await expect(
+        execFileAsync(process.execPath, [
+          "scripts/rea.mjs",
+          ...flags,
+          "investigate-versions",
+          "/tmp/left",
+          "/tmp/right",
+          "/tmp/workspace.json",
+        ]),
+      ).rejects.toMatchObject({ code: 1, stdout: expect.any(String) });
+    }
+  }, 20_000);
+
+  it("keeps failure logs out of structured stdout", async () => {
+    const execution = execFileAsync(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "--json",
+        "investigate-versions",
+        "/tmp/left",
+        "/tmp/right",
+        "/tmp/workspace.json",
+      ],
+      { env: { ...process.env, REA_LOG_LEVEL: "error" } },
+    );
+    const failure = await execution.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('"status":"error"'),
+    });
+    const { stdout } = failure as { readonly stdout: string };
+    expect(JSON.parse(stdout)).toMatchObject({ error: "ApprovalRequired" });
   }, 20_000);
 });
