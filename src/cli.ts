@@ -51,6 +51,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
     },
   });
 
+  registerSetupCommands(cli, logger);
   registerCoreCommands(cli, logger);
   registerFunctionCommand(cli, logger);
   registerSearchCommand(cli, logger);
@@ -73,6 +74,60 @@ const registerCoreCommands = (
     detail: z.enum(["concise", "detailed"]).default("concise"),
     limit: z.number().int().min(1).max(50).default(10),
   });
+  cli.command("analyze", {
+    description: "Get an overview of an app",
+    args: z.object({
+      path: z.string().describe("App, program, or Hopper database path"),
+    }),
+    options: overviewOptions,
+    run: ({ args, options }) =>
+      logCliCommand(logger, "analyze", () =>
+        runDirectAnalysis(
+          args.path,
+          "binary_overview",
+          { detail: options.detail, limit: options.limit },
+          logger,
+        ),
+      ),
+  });
+  cli.command("inspect", {
+    description: "Inspect an app overview with evidence",
+    args: z.object({
+      path: z.string().describe("App, program, or Hopper database path"),
+    }),
+    options: overviewOptions,
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect", () =>
+        runDirectAnalysis(
+          args.path,
+          "binary_overview",
+          { detail: options.detail, limit: options.limit },
+          logger,
+        ),
+      ),
+  });
+  cli.command("decompile", {
+    description: "Read one part of an app as code",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      address: z.string().describe("Procedure address"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "decompile", () =>
+        runDirectAnalysis(
+          args.path,
+          "procedure_pseudo_code",
+          { procedure: args.address },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerSetupCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
   cli.command("setup", {
     description: "Install requirements and configure coding agents",
     options: z.object({
@@ -129,54 +184,6 @@ const registerCoreCommands = (
           process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
           systemUpgradeHost(),
           formatExplicit ? "structured" : "human",
-        ),
-      ),
-  });
-  cli.command("analyze", {
-    description: "Get an overview of an app",
-    args: z.object({
-      path: z.string().describe("App, program, or Hopper database path"),
-    }),
-    options: overviewOptions,
-    run: ({ args, options }) =>
-      logCliCommand(logger, "analyze", () =>
-        runDirectAnalysis(
-          args.path,
-          "binary_overview",
-          { detail: options.detail, limit: options.limit },
-          logger,
-        ),
-      ),
-  });
-  cli.command("inspect", {
-    description: "Inspect an app overview with evidence",
-    args: z.object({
-      path: z.string().describe("App, program, or Hopper database path"),
-    }),
-    options: overviewOptions,
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect", () =>
-        runDirectAnalysis(
-          args.path,
-          "binary_overview",
-          { detail: options.detail, limit: options.limit },
-          logger,
-        ),
-      ),
-  });
-  cli.command("decompile", {
-    description: "Read one part of an app as code",
-    args: z.object({
-      path: z.string().describe("App or program path"),
-      address: z.string().describe("Procedure address"),
-    }),
-    run: ({ args }) =>
-      logCliCommand(logger, "decompile", () =>
-        runDirectAnalysis(
-          args.path,
-          "procedure_pseudo_code",
-          { procedure: args.address },
-          logger,
         ),
       ),
   });

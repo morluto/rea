@@ -33,11 +33,11 @@ const comparison = (
       name: process
         ? "REA deterministic process harness"
         : "REA artifact comparison",
-      version: operation === "compare_process_captures" ? "2" : "1",
+      version: operation === "compare_process_captures" ? "3" : "1",
     },
     {
       predicateType: process
-        ? "rea.process-comparison/v2"
+        ? "rea.process-comparison/v3"
         : "rea.artifact-comparison/v1",
       operation,
       parameters: {},

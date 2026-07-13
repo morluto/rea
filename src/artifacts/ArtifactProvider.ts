@@ -35,6 +35,8 @@ const IDENTITY: ProviderIdentity = Object.freeze({
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
+  constructor(private readonly nativeMountEnabled = false) {}
+
   readonly #capabilities: readonly CapabilityDescriptor[] = Object.freeze(
     ARTIFACT_TOOL_CONTRACTS.map((contract) =>
       Object.freeze({
@@ -61,8 +63,8 @@ export class ArtifactProvider implements AnalysisProvider {
           timeoutMs: 120_000,
         }),
         limitations: Object.freeze([
-          "DMG and PKG child inventory requires a future native read-only adapter.",
-          "Nested containers are recorded but not recursively expanded implicitly.",
+          "DMG child inventory is macOS-only and requires per-call approval plus operator policy; PKG remains root-hash-only.",
+          "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
         ]),
       }),
     ),
@@ -77,12 +79,15 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(target);
+    return new ArtifactClient(target, this.nativeMountEnabled);
   }
 }
 
 class ArtifactClient implements AnalysisClient {
-  constructor(private readonly target: BinaryTarget) {}
+  constructor(
+    private readonly target: BinaryTarget,
+    private readonly nativeMountEnabled: boolean,
+  ) {}
 
   async execute(
     operation: AnalysisOperation,
@@ -143,7 +148,13 @@ class ArtifactClient implements AnalysisClient {
           edgeOffset: parsed.edge_offset,
           edgeLimit: parsed.edge_limit,
         },
-        options?.signal,
+        {
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+          nativeMount: {
+            nativeMountApproved: parsed.native_mount_approved === true,
+            nativeMountEnabled: this.nativeMountEnabled,
+          },
+        },
       );
       return ok(
         createAnalysisExecution(result, IDENTITY, {
