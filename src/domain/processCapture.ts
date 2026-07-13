@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonValueSchema } from "./jsonValue.js";
 
 import {
   LEGACY_PROCESS_CAPTURE_MESSAGE,
@@ -200,10 +201,10 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
     pty_backend: z.literal("node-pty"),
     started_at: z.iso.datetime(),
     completed_at: z.iso.datetime(),
-    scenario: z.record(z.string(), z.unknown()),
-    comparison_contract: z.record(z.string(), z.unknown()),
-    shim_plan: z.array(z.unknown()),
-    replay_plan: z.record(z.string(), z.unknown()),
+    scenario: z.record(z.string(), jsonValueSchema),
+    comparison_contract: z.record(z.string(), jsonValueSchema),
+    shim_plan: z.array(jsonValueSchema),
+    replay_plan: z.record(z.string(), jsonValueSchema),
     full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),

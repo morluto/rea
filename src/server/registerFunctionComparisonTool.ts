@@ -94,7 +94,7 @@ const functionUnknownInput = ({
       {
         operation: "analyze_function",
         rationale:
-          "Capture complete dossiers with equal providers and analysis limits.",
+          "Capture complete dossiers for both functions under the same target context and analysis limits.",
       },
     ],
     relationships: [],

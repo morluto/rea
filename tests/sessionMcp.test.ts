@@ -58,7 +58,9 @@ describe("target-free MCP lifecycle", () => {
       arguments: {},
     });
     expect(before.isError).toBe(true);
-    expect(text(before)).toContain("NoBinaryOpenError");
+    expect(text(before)).toBe(
+      "No app is open. Ask the user which app to investigate, then call open_binary with its local path.",
+    );
     expect((await mcp.listTools()).tools).toHaveLength(68);
     const deniedCapture = await mcp.callTool({
       name: "capture_process_scenario",
@@ -69,7 +71,14 @@ describe("target-free MCP lifecycle", () => {
       },
     });
     expect(deniedCapture.isError).toBe(true);
-    expect(text(deniedCapture)).toContain("process capture is disabled");
+    expect(structured(deniedCapture)).toMatchObject({
+      error: {
+        category: "permission_required",
+      },
+    });
+    expect(text(deniedCapture)).toBe(
+      "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.",
+    );
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
         .isError,
@@ -219,8 +228,7 @@ describe("target-free MCP lifecycle", () => {
         ),
       ).result;
     expect(listed).toContainEqual({
-      question:
-        "network: External network isolation is not enforced by this adapter.",
+      question: "Was network behavior fully observed during capture?",
       domain: "process-network",
     });
   });

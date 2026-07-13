@@ -119,7 +119,7 @@ const validateCaptureSources = (
       evidence.confidence !== "observed" ||
       evidence.authority !== "controlled-replay" ||
       evidenceCapture === undefined ||
-      canonicalJson(evidenceCapture) !== canonicalJson(capture)
+      canonicalize(evidenceCapture) !== canonicalize(capture)
     )
       return err(
         new EvidenceIntegrityError(
@@ -128,13 +128,6 @@ const validateCaptureSources = (
       );
   }
   return { ok: true as const, value: null };
-};
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Process capture could not be canonicalized");
-  return encoded;
 };
 
 const comparisonUnknownInput = (

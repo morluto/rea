@@ -1,6 +1,6 @@
 # Installation roadmap
 
-REA setup currently configures the capabilities that exist today: its coding-agent integrations, bundled skill, and optional Hopper provider.
+REA setup currently configures the capabilities that exist today: its agent integrations, bundled skill, and optional Hopper provider.
 
 When REA has at least two real optional toolchains, setup can evolve into a capability-oriented wizard. It may ask whether the operator wants to investigate native binaries, websites, mobile applications, firmware, or runtime protocols, then propose only the tools needed for the selected work.
 

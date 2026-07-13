@@ -10,10 +10,50 @@ export interface ReferenceSourceImportError {
     | "invalid-root"
     | "io"
     | "parse"
-    | "policy"
-    | "limit";
+    | "policy";
   readonly message: string;
 }
+
+/** Safe CLI projection for a historical-source import failure. */
+export const projectReferenceSourceImportError = (
+  error: ReferenceSourceImportError,
+): Readonly<{ category: string; message: string }> => {
+  if (error.code === "cancelled")
+    return {
+      category: "cancelled",
+      message:
+        "Reference source import was cancelled. Start it again when ready.",
+    };
+  if (error.code === "invalid-limits")
+    return {
+      category: "invalid_input",
+      message:
+        "Reference source limits are invalid. Use positive integer limits, then try again.",
+    };
+  if (error.code === "invalid-root")
+    return {
+      category: "invalid_input",
+      message:
+        "Reference source directory could not be opened. Check that the path exists, is readable, and points to a directory.",
+    };
+  if (error.code === "policy")
+    return {
+      category: "permission_required",
+      message:
+        "Reference source directory is not approved. Add its directory to `REA_REFERENCE_ROOTS_JSON`, restart REA, then try again.",
+    };
+  if (error.code === "io")
+    return {
+      category: "execution_failure",
+      message:
+        "Reference source files could not be read. Check directory permissions and try again.",
+    };
+  return {
+    category: "execution_failure",
+    message:
+      "Reference source could not be indexed. Check that the source tree is readable, then try again.",
+  };
+};
 
 /** Bounded import request paired with mandatory operator policy. */
 export interface ReferenceSourceImportOptions {

@@ -1,7 +1,7 @@
 {
   "name": "rea-agents",
   "version": "1.2.0",
-  "description": "Reverse engineer anything from your terminal or coding agent with one CLI and MCP server.",
+  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,7 +14,7 @@
   "keywords": [
     "reverse-engineering",
     "binary-analysis",
-    "coding-agents",
+    "agents",
     "agent-skills",
     "cli",
     "mcp-server",

@@ -18,6 +18,8 @@ import { parseConfig } from "./config.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
+import { projectAnalysisError } from "./domain/errors.js";
+import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -33,8 +35,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
-    description:
-      "Reverse engineer anything from your terminal or coding agent.",
+    description: "Reverse engineer anything from your terminal or agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
       instructions:
@@ -129,7 +130,7 @@ const registerSetupCommands = (
   logger: Logger,
 ): void => {
   cli.command("setup", {
-    description: "Install requirements and configure coding agents",
+    description: "Install requirements and configure agents",
     options: z.object({
       yes: z
         .boolean()
@@ -374,7 +375,10 @@ const registerReferenceSourceCommand = (
       logCliCommand(logger, "import-reference-source", async () => {
         const config = parseConfig(process.env);
         if (!config.ok)
-          return { error: config.error._tag, message: config.error.message };
+          return {
+            error: "Import failed",
+            ...projectAnalysisError(config.error),
+          };
         const imported = await importReferenceSource({
           root: args.root,
           caller: "rea-cli",
@@ -384,7 +388,10 @@ const registerReferenceSourceCommand = (
         });
         return imported.ok
           ? imported.value
-          : { error: imported.error.code, message: imported.error.message };
+          : {
+              error: "Import failed",
+              ...projectReferenceSourceImportError(imported.error),
+            };
       }),
   });
 };

@@ -6,6 +6,7 @@ import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
+import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
 
 const WORKFLOW_PROVIDER = {
   id: "rea-workflow",
@@ -47,8 +48,7 @@ export const runSessionStatus = async (
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => {
   const config = parseConfig(process.env);
-  if (!config.ok)
-    return { error: config.error._tag, message: config.error.message };
+  if (!config.ok) return cliError(config.error);
   const session = createBinarySession(config.value, logger);
   try {
     return session.status();
@@ -64,13 +64,11 @@ const runAnalysis = async (
   logger: Logger,
 ): Promise<JsonValue> => {
   const config = parseConfig(process.env);
-  if (!config.ok)
-    return { error: config.error._tag, message: config.error.message };
+  if (!config.ok) return cliError(config.error);
   const session = createBinarySession(config.value, logger);
   try {
     const opened = await session.open(path);
-    if (!opened.ok)
-      return { error: opened.error._tag, message: opened.error.message };
+    if (!opened.ok) return cliError(opened.error);
     if (
       tool === "binary_overview" ||
       tool === "analyze_function" ||
@@ -91,7 +89,7 @@ const runAnalysis = async (
               limitations: ["Derived by an REA composed workflow."],
             },
           )
-        : { error: result.error._tag, message: result.error.message };
+        : cliError(result.error);
     }
     const result = await session.execute(tool, arguments_);
     return result.ok
@@ -107,8 +105,13 @@ const runAnalysis = async (
             locations: result.value.locations,
           },
         )
-      : { error: result.error._tag, message: result.error.message };
+      : cliError(result.error);
   } finally {
     await session.close();
   }
 };
+
+const cliError = (error: AnalysisError): JsonValue => ({
+  error: "Analysis failed",
+  ...projectAnalysisError(error),
+});

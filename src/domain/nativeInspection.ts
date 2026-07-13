@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonValueSchema } from "./jsonValue.js";
 
 const hexAddress = z.string().regex(/^0x[a-fA-F0-9]+$/u);
 const coverage = <Schema extends z.ZodType>(item: Schema) =>
@@ -112,7 +113,7 @@ export const inspectSignatureSchema = z.object({
   hash_algorithms: z.array(z.string()),
   authorities: z.array(z.string()),
   designated_requirement: z.string().nullable(),
-  entitlements: z.unknown().nullable(),
+  entitlements: jsonValueSchema.nullable(),
   timestamp: z.string().nullable(),
   hardened_runtime: z.boolean().nullable(),
   provenance: z.array(nativeCommandInvocationSchema),
@@ -121,7 +122,7 @@ export const inspectSignatureSchema = z.object({
 
 export const inspectPlistSchema = z.object({
   format: z.enum(["xml", "binary", "json", "unknown"]),
-  value: z.unknown(),
+  value: jsonValueSchema,
   bundle: z.object({
     identifier: z.string().nullable(),
     executable: z.string().nullable(),

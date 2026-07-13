@@ -86,7 +86,8 @@ const registerChangedBehavior = (
       result.behavior_status === "unknown" ||
         result.behavior_status === "truncated",
       {
-        question: `Changed behavior result ${evidence.evidence_id} remains ${result.behavior_status}`,
+        question:
+          "Did both versions behave the same under a complete controlled replay?",
         domain: "changed-behavior",
         requiredAuthority: "controlled-replay",
         requiredConfidence: "observed",
@@ -140,7 +141,8 @@ const registerCallPath = (
       parsed.unknown_registry_approved,
       result.status === "unknown" || result.status === "truncated",
       {
-        question: `Call path ${parsed.start.address} → ${parsed.goal.address} is ${result.status}`,
+        question:
+          "Can the requested call path be established from complete analysis?",
         domain: "call-path",
         requiredAuthority: "shipped-artifact",
         requiredConfidence: "derived",
@@ -195,7 +197,8 @@ const registerStaticRuntime = (
         parsed.unknown_registry_approved,
         result.status === "unknown" || result.status === "truncated",
         {
-          question: `Static/runtime correlation result ${evidence.evidence_id} is ${result.status}`,
+          question:
+            "Does runtime behavior match the available static analysis?",
           domain: "static-runtime-correlation",
           requiredAuthority: null,
           requiredConfidence: "derived",
@@ -274,7 +277,7 @@ const registerReconstruction = (
         parsed.unknown_registry_approved,
         result.status === "unknown",
         {
-          question: `Reconstruction ${result.specification_sha256} has unknown claims`,
+          question: "Does the reconstruction satisfy every declared claim?",
           domain: "reconstruction-verification",
           requiredAuthority: null,
           requiredConfidence: "derived",

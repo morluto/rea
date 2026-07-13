@@ -4,7 +4,10 @@ import type {
   ProcessExecutionPolicy,
   ProcessScenario,
 } from "../domain/processCapture.js";
-import { ProcessCaptureError } from "./ProcessCaptureError.js";
+import {
+  ProcessCaptureError,
+  processCaptureCancelled,
+} from "./ProcessCaptureError.js";
 
 const isWithin = (candidate: string, root: string): boolean =>
   candidate === root ||
@@ -41,8 +44,7 @@ export const assertRealPathAuthority = async (
 
 /** Expected refusal or runtime failure from the process capture adapter. */
 export const assertNotCancelled = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted === true)
-    throw new ProcessCaptureError("process capture was cancelled");
+  if (signal?.aborted === true) throw processCaptureCancelled();
 };
 
 /** Runtime availability of the native PTY adapter on this host. */

@@ -8,7 +8,7 @@ import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -32,7 +32,9 @@ export const registerEvidenceTools = (
       contract.name,
       toolRegistrationOptions(contract),
       async (input, context) => {
-        const parameters = jsonObject(contract.inputSchema.parse(input));
+        const parameters = jsonObjectSchema.parse(
+          contract.inputSchema.parse(input),
+        );
         const execution = await logToolExecution(
           options.logger,
           contract.name,
@@ -61,11 +63,4 @@ export const registerEvidenceTools = (
       },
     );
   }
-};
-
-const jsonObject = (input: unknown): Readonly<Record<string, JsonValue>> => {
-  const parsed = jsonValueSchema.parse(input);
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new TypeError("Provider tool input was not an object");
-  return parsed;
 };
