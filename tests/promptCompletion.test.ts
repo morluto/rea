@@ -168,6 +168,73 @@ describe("guided prompt completion", () => {
     });
     expect(await completion.complete("procedure", "")).toEqual(["0x1000"]);
   });
+
+  it("bounds procedure scans and rejects non-advancing continuation metadata", async () => {
+    let calls = 0;
+    const bounded = createPromptCompletionSource({
+      execute(_operation, parameters) {
+        calls += 1;
+        const offset = Number(parameters.offset);
+        const items = Array.from({ length: 500 }, (_, index) => {
+          const address = offset + index;
+          return {
+            address: `0x${address.toString(16).padStart(8, "0")}`,
+            value: `procedure_${String(address)}`,
+          };
+        });
+        return Promise.resolve(
+          observed({
+            items,
+            offset,
+            limit: 500,
+            total: 6_000,
+            next_offset: offset + 500,
+            has_more: true,
+          }),
+        );
+      },
+    });
+    const values = await bounded.complete("procedure", "");
+    expect(calls).toBe(10);
+    expect(values).toHaveLength(5_000);
+    expect(values.every((value) => value.startsWith("0x"))).toBe(true);
+
+    let nonAdvancingCalls = 0;
+    const nonAdvancing = createPromptCompletionSource({
+      execute() {
+        nonAdvancingCalls += 1;
+        return Promise.resolve(
+          observed(page(0, [{ address: "0x5000", value: "unsafe_name" }], 0)),
+        );
+      },
+    });
+    expect(await nonAdvancing.complete("procedure", "")).toEqual(["0x5000"]);
+    expect(nonAdvancingCalls).toBe(1);
+  });
+
+  it("normalizes Unicode prefixes while preserving distinct exact identifiers", async () => {
+    const completion = createPromptCompletionSource({
+      execute(operation) {
+        return Promise.resolve(
+          observed(
+            operation === "list_documents"
+              ? ["Ａpp", "App", "app", "Zulu"]
+              : null,
+          ),
+        );
+      },
+    });
+    expect(await completion.complete("document", "ＡＰ")).toEqual([
+      "App",
+      "app",
+      "Ａpp",
+    ]);
+
+    const malformed = createPromptCompletionSource({
+      execute: () => Promise.resolve(observed(["valid", 1])),
+    });
+    expect(await malformed.complete("document", "")).toEqual([]);
+  });
 });
 
 const fixtureProvider = { id: "fixture", name: "Fixture", version: "1" };

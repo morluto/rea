@@ -430,6 +430,7 @@ try {
     )
       throw new Error("packaged MCP tool inventory diverged from contracts");
     await verifyPackagedPromptCatalog(client, mcpOptions, expectedPromptNames);
+    await verifyPackagedPromptCompletion(client, mcpOptions, false);
     const result = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
@@ -442,7 +443,7 @@ try {
     );
     if (opened.isError === true)
       throw new Error("packaged MCP could not open a binary");
-    await verifyPackagedPromptCompletion(client, mcpOptions);
+    await verifyPackagedPromptCompletion(client, mcpOptions, true);
     const current = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
@@ -472,6 +473,7 @@ try {
     );
     if (closed.isError === true)
       throw new Error("packaged MCP could not close its binary");
+    await verifyPackagedPromptCompletion(client, mcpOptions, false);
     const mcpBundlePath = join(evidenceRoot, "mcp.json");
     const mcpExport = await client.callTool(
       { name: "export_evidence_bundle", arguments: { path: mcpBundlePath } },
@@ -493,7 +495,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, mcpPrompts: expectedPromptNames.length, promptCompletion: true, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, mcpPrompts: expectedPromptNames.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

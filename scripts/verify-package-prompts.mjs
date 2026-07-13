@@ -36,19 +36,31 @@ export const verifyPackagedPromptCatalog = async (
     throw new Error("packaged MCP guided prompt rendering failed");
 };
 
-/** Verify live completion through the installed stdio MCP artifact. */
-export const verifyPackagedPromptCompletion = async (client, options) => {
-  const result = await client.complete(
+/** Verify live completion through each installed stdio target state. */
+export const verifyPackagedPromptCompletion = async (
+  client,
+  options,
+  targetOpen,
+) => {
+  const expected = targetOpen ? ["fixture"] : [];
+  const requests = [
     {
       ref: { type: "ref/prompt", name: "investigate_feature" },
       argument: { name: "document", value: "fix" },
     },
-    options,
-  );
-  if (
-    JSON.stringify(result.completion.values) !== JSON.stringify(["fixture"]) ||
-    result.completion.total !== 1 ||
-    result.completion.hasMore !== false
-  )
-    throw new Error("packaged MCP prompt completion failed");
+    {
+      ref: { type: "ref/prompt", name: "investigate_feature" },
+      argument: { name: "procedure", value: "fix" },
+      context: { arguments: { document: "fixture" } },
+    },
+  ];
+  for (const request of requests) {
+    const result = await client.complete(request, options);
+    if (
+      JSON.stringify(result.completion.values) !== JSON.stringify(expected) ||
+      result.completion.total !== expected.length ||
+      result.completion.hasMore !== false
+    )
+      throw new Error("packaged MCP prompt completion lifecycle failed");
+  }
 };
