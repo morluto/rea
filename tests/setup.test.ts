@@ -170,15 +170,15 @@ describe("setup workflow", () => {
   it.each([
     [
       "backup",
-      "Coding-agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.",
+      "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.",
     ],
     [
       "write",
-      "Coding-agent configuration could not be updated. Check file permissions, then rerun setup.",
+      "Agent configuration could not be updated. Check file permissions, then rerun setup.",
     ],
     [
       "readback",
-      "Coding-agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.",
+      "Agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.",
     ],
   ] as const)("explains %s configuration recovery", async (reason, message) => {
     const host = new FakeSetupHost();

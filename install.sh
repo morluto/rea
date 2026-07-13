@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [--version VERSION] [--dry-run] [--no-setup] [--no-prompt] [--verbose]
 
-Installs only the REA CLI. Run `rea setup` separately to configure Hopper and coding agents.
+Installs only the REA CLI. Run `rea setup` separately to configure Hopper and agents.
 EOF
 }
 
@@ -109,5 +109,5 @@ if [[ "$start_setup" == true && -r /dev/tty && -w /dev/tty && -t 1 ]]; then
   printf 'Starting REA setup...\n'
   "$install_bin" setup </dev/tty >/dev/tty
 else
-  printf 'Run %s setup to configure Hopper and coding agents.\n' "$install_bin"
+  printf 'Run %s setup to configure Hopper and agents.\n' "$install_bin"
 fi

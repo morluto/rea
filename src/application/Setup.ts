@@ -283,7 +283,7 @@ const systemSetupHost = (): SetupHost => {
   };
 };
 
-/** Detect supported coding agents from stable per-user installation markers. */
+/** Detect supported agents from stable per-user installation markers. */
 export const detectClients = async (
   home: string,
 ): Promise<readonly SetupClient[]> => {

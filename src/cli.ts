@@ -35,8 +35,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
-    description:
-      "Reverse engineer anything from your terminal or coding agent.",
+    description: "Reverse engineer anything from your terminal or agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
       instructions:
@@ -131,7 +130,7 @@ const registerSetupCommands = (
   logger: Logger,
 ): void => {
   cli.command("setup", {
-    description: "Install requirements and configure coding agents",
+    description: "Install requirements and configure agents",
     options: z.object({
       yes: z
         .boolean()

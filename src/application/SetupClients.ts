@@ -8,13 +8,13 @@ const failedConfigurationMessage = (
   reason: "backup" | "write" | "readback",
 ): string => {
   if (reason === "backup")
-    return "Coding-agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
+    return "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
   if (reason === "write")
-    return "Coding-agent configuration could not be updated. Check file permissions, then rerun setup.";
-  return "Coding-agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.";
+    return "Agent configuration could not be updated. Check file permissions, then rerun setup.";
+  return "Agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.";
 };
 
-/** Configure each detected coding agent, stopping after the first failed transaction. */
+/** Configure each detected agent, stopping after the first failed transaction. */
 export const configureDetectedClients = async (options: {
   readonly host: SetupHost;
   readonly detectedClients: readonly SetupClient[];

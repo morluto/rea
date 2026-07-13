@@ -4,7 +4,7 @@
 
 # REA: Reverse Engineer Anything
 
-### One CLI and MCP server for coding agents to reverse engineer anything
+### One CLI and MCP server for agents to reverse engineer anything
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
@@ -24,7 +24,7 @@
 
 ---
 
-See a feature in an app that you want in your own product? Give the app to your coding agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
+See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
 REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, and controlled process capture. The longer-term toolkit extends the same agent workflow to packaged apps, JavaScript bundles, websites, APIs, protocols, mobile artifacts, firmware, runtime behavior, and differences between versions.
 
@@ -73,7 +73,7 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 |                          |                                                                                      |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.              |
-| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or coding agent.    |
+| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.           |
 | **Complexity handled**   | REA installs and manages the reverse-engineering tools behind the scenes.            |
 | **From insight to code** | Understand a feature, then build your own version in the same coding session.        |
 | **Local by design**      | Analysis runs on your Mac. REA does not upload the app to a hosted analysis service. |
@@ -88,7 +88,7 @@ npm install --global rea-agents
 rea setup
 ```
 
-Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or coding-agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
+Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
 
 REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
 
@@ -100,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
 
 Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`, or `--version 1.0.0`. The curl wrapper never installs prerequisites or configures integrations itself. See [Installation and setup](docs/installation.md) for its exact mutation boundary.
 
-### With a coding agent — recommended
+### With an agent — recommended
 
 ```bash
 npx skills add morluto/rea
@@ -118,7 +118,7 @@ npx -y rea-agents doctor
 npx -y rea-agents analyze /Applications/Notes.app
 ```
 
-Review the setup plan before confirming it. Restart a configured coding agent so it loads REA.
+Review the setup plan before confirming it. Restart a configured agent so it loads REA.
 
 ### From Terminal — install the `rea` command
 
@@ -191,7 +191,7 @@ rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
 
 Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
 
-### CLI or coding agent?
+### CLI or agent?
 
 | If you want to…                                           | Use                                                            |
 | --------------------------------------------------------- | -------------------------------------------------------------- |
@@ -303,9 +303,9 @@ Roadmap items describe direction, not shipped support. New providers must produc
 
 See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the current research matrix and admission gate.
 
-## Using REA with other coding agents
+## Using REA with other agents
 
-Setup currently configures Claude Desktop and Cursor automatically. Any coding agent that supports local MCP servers can use REA with the configuration below.
+Setup currently configures Claude Desktop and Cursor automatically. Any agent that supports local MCP servers can use REA with the configuration below.
 
 ### Manual MCP configuration
 
@@ -324,7 +324,7 @@ Setup currently configures Claude Desktop and Cursor automatically. Any coding a
 
 ```mermaid
 flowchart LR
-    Agent["Coding agent"] --> REA["REA<br/>CLI + MCP"]
+    Agent["Agent"] --> REA["REA<br/>CLI + MCP"]
     Terminal --> REA
     REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
     Workspace --> Router["Capability router"]
@@ -442,7 +442,7 @@ No. Setup can install Hopper for you, but Hopper remains separate software with 
 <details>
 <summary><strong>Does REA upload the app?</strong></summary>
 
-REA has no hosted analysis service. Current providers analyze artifacts and capture behavior locally. Your coding agent or model provider may have its own data policy, so review that separately.
+REA has no hosted analysis service. Current providers analyze artifacts and capture behavior locally. Your agent or model provider may have its own data policy, so review that separately.
 
 </details>
 
@@ -456,7 +456,7 @@ No decompiler can guarantee the original source. REA gives an agent pseudocode, 
 <details>
 <summary><strong>Which agents can use REA?</strong></summary>
 
-Any coding agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
+Any agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
 
 </details>
 
