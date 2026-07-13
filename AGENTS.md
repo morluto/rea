@@ -1,5 +1,18 @@
 # Repository Guidelines
 
+## Product Direction
+
+REA exposes reverse-engineering tools through a CLI and MCP server. Hopper is its current binary-analysis provider; keep provider-specific code out of the domain and application layers.
+
+Prioritize:
+
+- tool results that distinguish observations, inferences, and unknowns;
+- equivalent behavior through the CLI and MCP;
+- additive, idempotent configuration with backups;
+- end-to-end tests for packaged artifacts and real Hopper claims.
+
+Installers must not install or upgrade Homebrew, Node.js, npm, or other unrelated software. `rea setup` must print its planned changes and require approval before writing files or installing Hopper.
+
 ## Project Structure & Module Organization
 
 REA is a layered ESM TypeScript application. Dependencies flow inward: `domain` ← `contracts` ← `hopper` ← `application` ← `server` ← adapters.
@@ -14,7 +27,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
 - `src/hopper/`: Hopper launch and Unix-socket protocol mechanics. `BridgeLauncher.ts` spawns the Hopper app with the in-process bridge, `HopperClient.ts` correlates request/response over the socket with timeouts and cancellation, `protocol.ts` frames bridge messages.
 - `bridge/hopper_bridge.py`: runs inside Hopper and adapts declared operations to Hopper's public Python API. Hopper's bundled MCP server is not used.
-- `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and the 8 enhanced workflows.
+- `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows.
 - `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
 - `tests/`: Vitest suite. `tests/fixtures/` holds the fake launcher and fake Hopper bridge used as production seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
