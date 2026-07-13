@@ -148,10 +148,12 @@ class ArtifactClient implements AnalysisClient {
           edgeOffset: parsed.edge_offset,
           edgeLimit: parsed.edge_limit,
         },
-        options?.signal,
         {
-          nativeMountApproved: parsed.native_mount_approved === true,
-          nativeMountEnabled: this.nativeMountEnabled,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+          nativeMount: {
+            nativeMountApproved: parsed.native_mount_approved === true,
+            nativeMountEnabled: this.nativeMountEnabled,
+          },
         },
       );
       return ok(

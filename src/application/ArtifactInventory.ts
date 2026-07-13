@@ -79,14 +79,16 @@ export const inventoryArtifact = async (
   inputPath: string,
   limits: ArtifactLimits,
   page: InventoryPageInput,
-  signal?: AbortSignal,
-  nativeMount: ArtifactNativeMountPolicy = NATIVE_MOUNT_DISABLED,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly nativeMount?: ArtifactNativeMountPolicy;
+  } = {},
 ): Promise<ArtifactInventoryResult> => {
   const snapshot = await scanArtifactInventory(
     inputPath,
     limits,
-    signal,
-    nativeMount,
+    options.signal,
+    options.nativeMount ?? NATIVE_MOUNT_DISABLED,
   );
   return paginateArtifactInventory(snapshot, page);
 };
@@ -250,6 +252,29 @@ const createReader = async (
   }
 };
 
+const visitNestedAsar = async (
+  adapterKey: string,
+  logicalPath: string,
+  visit: (reader: ArtifactReader, prefix: string) => Promise<void>,
+): Promise<void> => {
+  const nested = new AsarArtifactReader(adapterKey);
+  try {
+    await visit(nested, logicalPath);
+  } finally {
+    await nested.close();
+  }
+};
+
+const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>
+  entry.kind === "file" &&
+  logicalPath.toLowerCase().endsWith(".asar") &&
+  entry.adapterKey.startsWith("/");
+
+const emptyScan = (): {
+  readonly nodes: Map<string, ArtifactNode>;
+  readonly occurrences: MutableOccurrence[];
+} => ({ nodes: new Map(), occurrences: [] });
+
 const scanReader = async (
   reader: ArtifactReader | undefined,
   limits: ArtifactLimits,
@@ -258,12 +283,60 @@ const scanReader = async (
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
 }> => {
-  const nodes = new Map<string, ArtifactNode>();
-  const occurrences: MutableOccurrence[] = [];
+  const { nodes, occurrences } = emptyScan();
   if (reader === undefined) return { nodes, occurrences };
   const occurrenceByPath = new Map<string, MutableOccurrence>();
   const registry = new ArtifactPathRegistry();
   let totalBytes = 0;
+  const digestEntry = async (
+    currentReader: ArtifactReader,
+    entry: ArtifactEntry,
+    logicalPath: string,
+  ): Promise<ArtifactNode | undefined> => {
+    if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
+      return undefined;
+    const remainingBytes = limits.maxTotalBytes - totalBytes;
+    if (remainingBytes <= 0)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "Artifact total byte limit exceeded",
+      );
+    if (entry.declaredSize !== null && entry.declaredSize > remainingBytes)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "Declared artifact bytes exceed remaining cumulative limit",
+      );
+    const digest = await hashReadable(
+      await currentReader.open(entry, signal),
+      Math.min(limits.maxEntryBytes, remainingBytes),
+      signal,
+    );
+    totalBytes += digest.bytes;
+    if (entry.declaredSha256 !== null && entry.declaredSha256 !== digest.sha256)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+        undefined,
+        {
+          logicalPath,
+          declaredSha256: entry.declaredSha256,
+          calculatedSha256: digest.sha256,
+          unpacked: entry.unpacked,
+        },
+      );
+    const classified =
+      entry.kind === "slice"
+        ? ({ kind: "universal-slice", format: "mach-o" } as const)
+        : classifyArtifactContent(logicalPath, digest.prefix);
+    return createArtifactNode({
+      sha256: digest.sha256,
+      size: digest.bytes,
+      kind: classified.kind,
+      format: classified.format,
+      executable: entry.executable,
+      contentState: "embedded",
+    });
+  };
   const visit = async (
     currentReader: ArtifactReader,
     prefix: string,
@@ -278,10 +351,7 @@ const scanReader = async (
         prefix.length === 0 ? entry.path : `${prefix}/${entry.path}`,
         limits,
       );
-      const expandableAsar =
-        entry.kind === "file" &&
-        logicalPath.toLowerCase().endsWith(".asar") &&
-        entry.adapterKey.startsWith("/");
+      const expandableAsar = isExpandableAsar(entry, logicalPath);
       registry.add(logicalPath, expandableAsar ? "directory" : entry.kind);
       preflightEntry(entry, limits);
       const parent = nearestParent(logicalPath, occurrenceByPath);
@@ -290,73 +360,16 @@ const scanReader = async (
         logicalPath,
         parent?.occurrence_id ?? null,
       );
-      if (
-        (entry.kind === "file" || entry.kind === "slice") &&
-        !entry.encrypted
-      ) {
-        const remainingBytes = limits.maxTotalBytes - totalBytes;
-        if (remainingBytes <= 0)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "Artifact total byte limit exceeded",
-          );
-        if (entry.declaredSize !== null && entry.declaredSize > remainingBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "Declared artifact bytes exceed remaining cumulative limit",
-          );
-        const digest = await hashReadable(
-          await currentReader.open(entry, signal),
-          Math.min(limits.maxEntryBytes, remainingBytes),
-          signal,
-        );
-        totalBytes += digest.bytes;
-        if (
-          entry.declaredSha256 !== null &&
-          entry.declaredSha256 !== digest.sha256
-        )
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-            undefined,
-            {
-              logicalPath,
-              declaredSha256: entry.declaredSha256,
-              calculatedSha256: digest.sha256,
-              unpacked: entry.unpacked,
-            },
-          );
-        if (totalBytes > limits.maxTotalBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "Artifact total byte limit exceeded",
-          );
-        const classified =
-          entry.kind === "slice"
-            ? ({ kind: "universal-slice", format: "mach-o" } as const)
-            : classifyArtifactContent(logicalPath, digest.prefix);
-        const node = createArtifactNode({
-          sha256: digest.sha256,
-          size: digest.bytes,
-          kind: classified.kind,
-          format: classified.format,
-          executable: entry.executable,
-          contentState: "embedded",
-        });
+      const node = await digestEntry(currentReader, entry, logicalPath);
+      if (node !== undefined) {
         nodes.set(node.artifact_id, node);
         occurrence.artifact_id = node.artifact_id;
         occurrence.hash_status = "verified";
       }
       occurrences.push(occurrence);
       occurrenceByPath.set(logicalPath, occurrence);
-      if (expandableAsar) {
-        const nested = new AsarArtifactReader(entry.adapterKey);
-        try {
-          await visit(nested, logicalPath);
-        } finally {
-          await nested.close();
-        }
-      }
+      if (expandableAsar)
+        await visitNestedAsar(entry.adapterKey, logicalPath, visit);
     }
   };
   await visit(reader, "");
