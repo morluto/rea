@@ -114,7 +114,12 @@ try {
   const cli = join(prefix, "bin", "rea");
   const help = await run(cli, ["--help"], environment);
   const llms = await run(cli, ["--llms"], environment);
-  const doctor = json(await run(cli, ["doctor", "--json"], environment));
+  const doctorExecution = await runWithStatus(
+    cli,
+    ["doctor", "--json"],
+    environment,
+  );
+  const doctor = json(doctorExecution.stdout);
   const supportedSetupHost =
     doctor.checks?.find(({ name }) => name === "host")?.ok === true;
   const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
@@ -136,6 +141,7 @@ try {
     !llms.includes("providers") ||
     !llms.includes("inventory-artifact") ||
     doctor.healthy !== expectedDoctorHealth ||
+    doctorExecution.status !== (expectedDoctorHealth ? 0 : 1) ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
   )
     throw new Error(
@@ -328,10 +334,16 @@ try {
     await writeFile(skillPath, "stale managed skill\n");
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }
-  const planned = json(await run(cli, ["setup", "--json"], environment));
+  const plannedExecution = await runWithStatus(
+    cli,
+    ["setup", "--json"],
+    environment,
+  );
+  const planned = json(plannedExecution.stdout);
   if (supportedSetupHost) {
     if (
       planned.status !== "needs_confirmation" ||
+      plannedExecution.status !== 1 ||
       planned.appliedActions.length !== 0 ||
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
       !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
@@ -341,19 +353,25 @@ try {
     )
       throw new Error("packaged setup plan mutated files before approval");
   }
-  const first = json(await run(cli, ["setup", "--yes", "--json"], environment));
-  const second = json(
-    await run(
-      cli,
-      ["setup", "--yes", "--install-hopper", "--json"],
-      environment,
-    ),
+  const firstExecution = await runWithStatus(
+    cli,
+    ["setup", "--yes", "--json"],
+    environment,
   );
+  const first = json(firstExecution.stdout);
+  const secondExecution = await runWithStatus(
+    cli,
+    ["setup", "--yes", "--install-hopper", "--json"],
+    environment,
+  );
+  const second = json(secondExecution.stdout);
   if (supportedSetupHost) {
     const status = process.platform === "linux" ? "needs_human" : "ready";
     if (
       first.status !== status ||
       second.status !== status ||
+      firstExecution.status !== (status === "ready" ? 0 : 1) ||
+      secondExecution.status !== (status === "ready" ? 0 : 1) ||
       second.appliedActions.length !== 0
     )
       throw new Error("packaged setup was not ready and idempotent");
@@ -387,19 +405,29 @@ try {
       throw new Error("packaged stale-skill upgrade was not isolated");
 
     await writeFile(cursorConfig, "malformed");
-    const failed = json(
-      await run(cli, ["setup", "--yes", "--json"], environment),
+    const failedExecution = await runWithStatus(
+      cli,
+      ["setup", "--yes", "--json"],
+      environment,
     );
+    const failed = json(failedExecution.stdout);
     if (
       failed.status !== "needs_human" ||
+      failedExecution.status !== 1 ||
       (await readFile(cursorConfig, "utf8")) !== "malformed"
     )
       throw new Error("packaged setup failure recovery did not preserve input");
     await writeFile(cursorConfig, "{}\n");
-    const recovered = json(
-      await run(cli, ["setup", "--yes", "--json"], environment),
+    const recoveredExecution = await runWithStatus(
+      cli,
+      ["setup", "--yes", "--json"],
+      environment,
     );
-    if (recovered.status !== status)
+    const recovered = json(recoveredExecution.stdout);
+    if (
+      recovered.status !== status ||
+      recoveredExecution.status !== (status === "ready" ? 0 : 1)
+    )
       throw new Error("packaged setup did not recover");
   } else if (
     first.status !== "needs_human" ||
@@ -502,6 +530,20 @@ try {
 
 async function run(command, args, env) {
   return (await exec(command, args, { env })).stdout;
+}
+async function runWithStatus(command, args, env) {
+  try {
+    return { stdout: await run(command, args, env), status: 0 };
+  } catch (cause) {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      cause.code === 1 &&
+      typeof cause.stdout === "string"
+    )
+      return { stdout: cause.stdout, status: 1 };
+    throw cause;
+  }
 }
 function json(text) {
   return JSON.parse(text);

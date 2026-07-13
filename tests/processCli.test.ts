@@ -40,7 +40,7 @@ describe("process CLI errors", () => {
       ),
     ).rejects.toMatchObject({
       code: 1,
-      stdout: expect.stringContaining("PROCESS_COMMAND_FAILED"),
+      stdout: expect.stringContaining("category: invalid_input"),
     });
   });
 

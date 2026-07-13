@@ -25,19 +25,6 @@ export interface ProcessCliErrorOutput {
   readonly message: string;
 }
 
-/** Distinguish a safe process-command failure from successful Evidence. */
-export const isProcessCliErrorOutput = (
-  value: unknown,
-): value is ProcessCliErrorOutput =>
-  typeof value === "object" &&
-  value !== null &&
-  "error" in value &&
-  value.error === "Process command failed" &&
-  "category" in value &&
-  typeof value.category === "string" &&
-  "message" in value &&
-  typeof value.message === "string";
-
 /** Capture one JSON scenario through the same policy and evidence contract as MCP. */
 export const captureProcessScenarioFile = async (path: string) => {
   try {

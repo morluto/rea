@@ -12,7 +12,7 @@ const logLevelSchema = z
 export const parseLogLevel = (value: unknown): LogLevel =>
   logLevelSchema.parse(value);
 
-/** Create a JSON logger whose destination cannot corrupt MCP stdout frames. */
+/** Create a JSON logger on stderr so protocol and CLI result stdout stay valid. */
 export const createLogger = (mode: "mcp" | "cli", level: LogLevel): Logger =>
   pino(
     {
@@ -32,7 +32,7 @@ export const createLogger = (mode: "mcp" | "cli", level: LogLevel): Logger =>
         censor: "[Redacted]",
       },
     },
-    pino.destination({ dest: mode === "mcp" ? 2 : 1, sync: false }),
+    pino.destination({ dest: 2, sync: false }),
   );
 
 /** Logger used by embedders that have not opted into process output. */
