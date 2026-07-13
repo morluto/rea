@@ -106,10 +106,10 @@ export type SetupConfirmation = (
 
 const setupPlan = (
   platform: NodeJS.Platform,
-  hopperPath: string | undefined,
+  installHopper: boolean,
   clients: readonly SetupClient[],
 ): readonly SetupAction[] => [
-  ...(hopperPath === undefined
+  ...(installHopper
     ? [
         {
           kind: "install_hopper" as const,
@@ -118,7 +118,9 @@ const setupPlan = (
               ? "~/Applications/Hopper Disassembler.app"
               : "system package manager",
           detail:
-            "Download the official Hopper package, verify it, install it, and open Hopper for activation.",
+            platform === "linux"
+              ? "Download, verify, and install Hopper plus its Xvfb demo-session dependencies. For the supported demo build, REA uses a private display and selects Hopper's offered demo mode for each analysis session."
+              : "Download the official Hopper package, verify it, and install it. Hopper may show its demo or license prompt when first opened.",
           external: true,
         },
       ]
@@ -165,8 +167,16 @@ export const runSetup = async (
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
+  const initialDoctor = await host.doctor();
+  const linuxHopperRepairNeeded = initialDoctor.checks.some(
+    ({ name, ok, detail }) =>
+      !ok &&
+      (name === "hopper-demo-runtime" ||
+        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
+  );
+  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
   const detectedClients = await host.detectedClients();
-  plannedActions = setupPlan(host.platform, hopperPath, detectedClients);
+  plannedActions = setupPlan(host.platform, installHopper, detectedClients);
   let approved = options.approved;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
@@ -184,10 +194,7 @@ export const runSetup = async (
         "Review the setup plan, then rerun interactively or with --yes.",
     };
 
-  if (
-    hopperPath === undefined &&
-    (interactiveApproval || options.installHopper)
-  ) {
+  if (installHopper && (interactiveApproval || options.installHopper)) {
     hopperPath = await host.installHopper();
     if (hopperPath === undefined)
       return {
@@ -217,24 +224,34 @@ export const runSetup = async (
     );
   if (skill === "installed") appliedActions.push("installed_skill");
   const doctor = await host.doctor();
-  const activationRequired = appliedActions.includes("installed_hopper");
-  const ready = doctor.healthy && !activationRequired;
+  const remediation = finalSetupRemediation(
+    host.platform,
+    appliedActions.includes("installed_hopper"),
+    doctor.healthy,
+    hopperPath,
+  );
   return {
-    status: ready ? "ready" : "needs_human",
+    status: remediation === undefined ? "ready" : "needs_human",
     plannedActions,
     appliedActions,
     clients,
     doctor,
-    ...(ready
-      ? {}
-      : {
-          remediation: activationRequired
-            ? "Open Hopper, complete its one-time activation, then rerun rea doctor --json."
-            : hopperPath === undefined
-              ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
-              : "Run rea doctor and apply each reported remediation.",
-        }),
+    ...(remediation === undefined ? {} : { remediation }),
   };
+};
+
+const finalSetupRemediation = (
+  platform: NodeJS.Platform,
+  installedHopper: boolean,
+  healthy: boolean,
+  hopperPath: string | undefined,
+): string | undefined => {
+  if (platform === "darwin" && installedHopper)
+    return "Open Hopper, choose its demo mode or activate a license, then rerun rea doctor --json.";
+  if (healthy) return undefined;
+  return hopperPath === undefined
+    ? "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis."
+    : "Run rea doctor and apply each reported remediation.";
 };
 
 const hostRemediation = async (

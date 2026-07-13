@@ -43,6 +43,7 @@
     "scripts/rea.mjs",
     "scripts/prepare-node-pty.mjs",
     "scripts/rebuild-native.mjs",
+    "scripts/hopper-demo-x11.py",
     "skills",
     "README.md",
     "LICENSE"

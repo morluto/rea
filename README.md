@@ -108,7 +108,7 @@ npx skills add morluto/rea
 
 Ask your agent to set up REA. It will check your Mac, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
 
-Review the setup plan, approve it if appropriate, complete Hopper's one-time activation when prompted, then describe the app or feature you want to understand.
+Review the setup plan, approve it if appropriate, then describe the app or feature you want to understand. Hopper can run in its free demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
 
 ### From Terminal — no installation
 
@@ -157,13 +157,13 @@ If something is not working, run:
 npx -y rea-agents doctor
 ```
 
-`rea doctor --json` is read-only and distinguishes unsupported hosts, missing dependencies, a missing local analysis engine, configuration drift, and healthy checks. Fresh-install activation is reported by setup because Hopper does not expose a reliable noninteractive activation probe.
+`rea doctor --json` is read-only and distinguishes unsupported hosts, missing dependencies, a missing local analysis engine, configuration drift, and healthy checks. Paid-license activation is optional: on Linux, REA runs the supported Hopper demo build on a private Xvfb display and selects Hopper's offered demo mode for each analysis session.
 
 ### Linux installation and troubleshooting
 
-On macOS, approved setup downloads Hopper's official DMG, verifies it, and installs the app into `~/Applications` without Homebrew or administrator privileges. It opens Hopper once for activation; no manual drag-and-drop is required.
+On macOS, approved setup downloads Hopper's official DMG, verifies it, and installs the app into `~/Applications` without Homebrew or administrator privileges. Hopper may show its demo or license prompt when first opened; no manual drag-and-drop is required.
 
-On Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux, approved setup downloads the matching official Hopper package, restricts downloads to Hopper's public origin, verifies the published size and checksum, and invokes `apt-get`, `dnf`, or `pacman`. When REA is not already running as root, `pkexec` presents the system authorization prompt. REA never invokes `sudo`.
+On Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux, approved setup downloads the pinned official Hopper 6.4.2 package, restricts downloads to Hopper's public origin, verifies the published size and checksum, and invokes `apt-get`, `dnf`, or `pacman` to install Hopper and the Xvfb, Python, X11, and XTEST packages used by demo sessions. When REA is not already running as root, `pkexec` presents the system authorization prompt. REA never invokes `sudo`. Demo sessions run on an isolated 1280×1024 Xvfb display. REA verifies the exact supported Hopper binary, its owned process ancestry, the expected dialog geometry, and bridge state before selecting `Try the Demo`; any mismatch fails closed.
 
 The normal Linux launcher is `/opt/hopper/bin/Hopper`. If Hopper was installed elsewhere:
 
@@ -178,7 +178,7 @@ If doctor reports a missing analysis engine even though the file exists, inspect
 ldd /opt/hopper/bin/Hopper | grep 'not found'
 ```
 
-Install the missing distribution packages and rerun `rea setup`. Hopper is a desktop application: real analysis requires an active `DISPLAY` or `WAYLAND_DISPLAY`, plus one-time license activation. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
+Install the missing distribution packages and rerun `rea setup`. Linux demo automation requires `Xvfb`, Python 3, `libX11.so.6`, and `libXtst.so.6`; approved setup installs those direct runtime dependencies and does not interact with the user's desktop display. Hopper's free demo supports analysis with vendor-defined limits, and a paid license is optional. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
 
 REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
 

@@ -37,6 +37,13 @@ describe("analysis error projection", () => {
     );
   });
 
+  it("projects a safe explanation for an unsupported Linux demo dialog", () => {
+    expect(projectAnalysisError(new HopperProcessError(78))).toMatchObject({
+      message:
+        "This Hopper demo build or dialog is not supported for unattended Linux analysis. Update REA or use a supported Hopper build.",
+    });
+  });
+
   it("projects every typed failure without internal details", () => {
     const secretCause = new Error("secret-token");
     const byTag = {

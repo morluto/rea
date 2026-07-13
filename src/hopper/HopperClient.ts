@@ -70,6 +70,7 @@ export class HopperClient {
   #nextId = 1;
   #buffer = "";
   #closing = false;
+  #launcherExitCode: number | null | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
   #closePromise: Promise<void> | undefined;
 
@@ -102,6 +103,7 @@ export class HopperClient {
     }
     const socketPath = join(this.#directory, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
+    this.#launcherExitCode = undefined;
     const runId = randomUUID();
     const launched = await this.#options.launcher.launch(
       {
@@ -210,6 +212,8 @@ export class HopperClient {
     while (Date.now() < deadline) {
       if (signal?.aborted === true) return err(new HopperCancelledError());
       if (this.#closing) return err(new HopperProcessError(null));
+      if (this.#launcherExitCode === 78)
+        return err(new HopperProcessError(this.#launcherExitCode));
       try {
         await access(socketPath);
       } catch {
@@ -305,6 +309,7 @@ export class HopperClient {
       });
     });
     launch.process.on("exit", (code) => {
+      this.#launcherExitCode = code;
       this.#options.onDiagnostic?.({ type: "launcher-exit", code });
       if (launch.ownsProcessLifetime && !this.#closing) {
         this.#failAll(new HopperProcessError(code));

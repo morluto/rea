@@ -23,6 +23,8 @@ class FakeSetupHost implements SetupHost {
   hopperInstalls = 0;
   configurations = 0;
   doctorHealthy: boolean | undefined;
+  linuxDemoRuntimeMissing = false;
+  unsupportedHopperVersion = false;
 
   constructor(platform: NodeJS.Platform = "darwin") {
     this.platform = platform;
@@ -35,6 +37,7 @@ class FakeSetupHost implements SetupHost {
   hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
   installHopper = (): Promise<string | undefined> => {
     this.hopperInstalls += 1;
+    this.linuxDemoRuntimeMissing = false;
     if (this.hopperInstallSucceeds) this.hopper = "/manual/Hopper";
     return Promise.resolve(this.hopper);
   };
@@ -54,12 +57,38 @@ class FakeSetupHost implements SetupHost {
     healthy: boolean;
     hopperPath?: string;
     checks: readonly DoctorCheck[];
-  }> =>
-    Promise.resolve({
-      healthy: this.doctorHealthy ?? this.hopper !== undefined,
+  }> => {
+    const checks: DoctorCheck[] = [
+      ...(this.linuxDemoRuntimeMissing
+        ? ([
+            {
+              name: "hopper-demo-runtime",
+              ok: false,
+              classification: "missing_dependency",
+            },
+          ] as const)
+        : []),
+      ...(this.unsupportedHopperVersion
+        ? ([
+            {
+              name: "hopper-version",
+              ok: false,
+              classification: "config_drift",
+              detail: this.hopper ?? "",
+            },
+          ] as const)
+        : []),
+    ];
+    return Promise.resolve({
+      healthy:
+        this.doctorHealthy ??
+        (this.hopper !== undefined &&
+          !this.linuxDemoRuntimeMissing &&
+          !this.unsupportedHopperVersion),
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
-      checks: [],
+      checks,
     });
+  };
 }
 
 const options = (approved: boolean, installHopper = false): SetupOptions => ({
@@ -86,7 +115,29 @@ describe("setup workflow", () => {
     );
   });
 
-  it("applies an accepted interactive plan including Hopper", async () => {
+  it("reports ready after an accepted Linux plan installs healthy Hopper", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
+    const result = await runSetup(
+      { ...options(false), structured: false },
+      host,
+      () => Promise.resolve(true),
+    );
+    expect(result.status).toBe("ready");
+    expect(result.appliedActions).toEqual([
+      "installed_hopper",
+      "installed_skill",
+    ]);
+    expect(host.hopperInstalls).toBe(1);
+    expect(result.remediation).toBeUndefined();
+  });
+
+  it("requires first-run activation after installing Hopper on macOS", async () => {
     const host = new FakeSetupHost();
     const result = await runSetup(
       { ...options(false), structured: false },
@@ -94,14 +145,7 @@ describe("setup workflow", () => {
       () => Promise.resolve(true),
     );
     expect(result.status).toBe("needs_human");
-    expect(result.appliedActions).toEqual([
-      "installed_hopper",
-      "installed_skill",
-    ]);
-    expect(host.hopperInstalls).toBe(1);
-    expect(result.remediation).toBe(
-      "Open Hopper, complete its one-time activation, then rerun rea doctor --json.",
-    );
+    expect(result.remediation).toContain("choose its demo mode");
   });
 
   it("declines an interactive plan without mutation", async () => {
@@ -129,13 +173,21 @@ describe("setup workflow", () => {
   });
 
   it("installs Hopper when unattended authorization is explicit", async () => {
-    const host = new FakeSetupHost();
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
     const result = await runSetup(options(true, true), host);
     expect(result.appliedActions).toEqual([
       "installed_hopper",
       "installed_skill",
     ]);
     expect(host.hopperInstalls).toBe(1);
+    expect(result.status).toBe("ready");
+    expect(result.remediation).toBeUndefined();
   });
 
   it("reuses existing Hopper and configures detected clients", async () => {
@@ -153,6 +205,50 @@ describe("setup workflow", () => {
       "installed_skill",
     ]);
     expect(host.hopperInstalls).toBe(0);
+  });
+
+  it("installs missing Linux demo dependencies for existing Hopper", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
+    host.hopper = "/opt/hopper/bin/Hopper";
+    host.linuxDemoRuntimeMissing = true;
+    const result = await runSetup(
+      { ...options(false), structured: false },
+      host,
+      () => Promise.resolve(true),
+    );
+    expect(result.status).toBe("ready");
+    expect(host.hopperInstalls).toBe(1);
+    expect(result.plannedActions.map(({ kind }) => kind)).toContain(
+      "install_hopper",
+    );
+  });
+
+  it("does not reinstall Hopper for an unsupported configured path", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
+    host.hopper = "/custom/Hopper";
+    host.unsupportedHopperVersion = true;
+    const result = await runSetup(
+      { ...options(false), structured: false },
+      host,
+      () => Promise.resolve(true),
+    );
+    expect(result.status).toBe("needs_human");
+    expect(host.hopperInstalls).toBe(0);
+    expect(result.plannedActions.map(({ kind }) => kind)).not.toContain(
+      "install_hopper",
+    );
   });
 
   it("reports a failed Hopper installation without configuring clients", async () => {
