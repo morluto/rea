@@ -72,8 +72,12 @@ describe("process capture domain", () => {
   });
 
   it("requires explicit operator approval for host network access", () => {
+    const scenario = parseProcessScenario({
+      ...base,
+      network_access: "host",
+    });
     expect(
-      authorizeProcessScenario(parseProcessScenario(base), {
+      authorizeProcessScenario(scenario, {
         enabled: true,
         executableRoots: ["/bin"],
         workingRoots: ["/tmp"],
@@ -84,6 +88,20 @@ describe("process capture domain", () => {
       allowed: false,
       reason: "host network access is not approved by operator policy",
     });
+  });
+
+  it("allows loopback replay without external network approval", () => {
+    const scenario = parseProcessScenario(base);
+    expect(scenario.network_access).toBe("loopback");
+    expect(
+      authorizeProcessScenario(scenario, {
+        enabled: true,
+        executableRoots: ["/bin"],
+        workingRoots: ["/tmp"],
+        allowedEnvironment: [],
+        allowExternalNetwork: false,
+      }),
+    ).toEqual({ allowed: true });
   });
 
   it("refuses paths and environment outside operator policy", () => {

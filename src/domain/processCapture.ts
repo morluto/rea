@@ -42,7 +42,7 @@ export const processScenarioSchema = z
     environment: z.record(environmentName, z.string()).default({}),
     inherit_environment: z.array(environmentName).max(64).default([]),
     secret_aliases: z.array(environmentName).max(64).default([]),
-    network_access: z.literal("host").default("host"),
+    network_access: z.enum(["loopback", "host"]).default("loopback"),
     filesystem_roots: z.array(z.string().startsWith("/")).max(16).default([]),
     events: z
       .array(
