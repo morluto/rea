@@ -272,6 +272,13 @@ const scanReader = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+          undefined,
+          {
+            logicalPath,
+            declaredSha256: entry.declaredSha256,
+            calculatedSha256: digest.sha256,
+            unpacked: entry.unpacked,
+          },
         );
       if (totalBytes > limits.maxTotalBytes)
         throw new ArtifactReaderFailure(

@@ -195,7 +195,7 @@ const translateFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof ArtifactReaderFailure)
-    return new ArtifactOperationError(operation, cause.reason);
+    return new ArtifactOperationError(operation, cause.reason, cause.details);
   return new ArtifactOperationError(operation, "io");
 };
 

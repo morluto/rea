@@ -62,6 +62,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         encrypted: false,
         byteOffset: architecture.file_offset,
         declaredSha256: null,
+        unpacked: false,
         limitations: [],
         adapterKey: `${String(architecture.file_offset)}:${String(architecture.size)}`,
       };

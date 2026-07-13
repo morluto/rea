@@ -69,6 +69,7 @@ export class ZipArtifactReader implements ArtifactReader {
         encrypted: entry.encrypted,
         byteOffset: null,
         declaredSha256: null,
+        unpacked: false,
         limitations: symlink ? ["Archive symlink target was not read."] : [],
         adapterKey: entry.filename,
       };

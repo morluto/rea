@@ -43,6 +43,7 @@ export class AsarArtifactReader implements ArtifactReader {
           /^[a-f0-9]{64}$/u.test(metadata.integrity.hash)
             ? metadata.integrity.hash
             : null,
+        unpacked: "unpacked" in metadata && metadata.unpacked === true,
         limitations:
           kind === "symlink"
             ? ["ASAR symlink target was not followed or disclosed."]
