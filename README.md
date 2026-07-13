@@ -361,9 +361,9 @@ Closing a REA session shuts down its bridge and removes its private socket direc
 Process capture is disabled by default. Enabling it requires
 `REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
 `REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
-environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Scenarios use the
-owned loopback replay by default; a scenario requesting host networking also
-requires `REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
+environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
+adapter uses host networking, it also requires
+`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
 
 If the native PTY backend is unavailable, install Xcode command-line tools and
 run `npm run rebuild:native`. Linux source builds require Python, `make`, and a
