@@ -274,9 +274,15 @@ def _search_page(document, kind, params):
             raise ValueError("Invalid regex pattern") from error
         matches = lambda value: expression.search(value) is not None
 
-    matching = [item for item in _search_inventory(document, kind) if matches(item[1])]
-    selected = matching[offset:offset + limit]
-    total = len(matching)
+    selected = []
+    total = 0
+    page_end = offset + limit
+    for item in _search_inventory(document, kind):
+        if not matches(item[1]):
+            continue
+        if offset <= total < page_end:
+            selected.append(item)
+        total += 1
     next_offset = offset + len(selected)
     has_more = next_offset < total
     return {
@@ -654,13 +660,21 @@ def _serve_connection(connection):
             should_stop = request["method"] == "shutdown"
             response = {"id": request_id, "result": _json_safe(result)}
         except Exception as error:
-            response = {"id": request_id if isinstance(request_id, int) else 0, "error": {"code": -32000, "message": str(error)[:512]}}
+            response = {"id": request_id if isinstance(request_id, int) else 0, "error": {"code": -32000, "message": str(error)[:512], "type": _diagnostic_type(error)}}
         file.write((json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8"))
         file.flush()
         if should_stop:
             break
     file.close()
     connection.close()
+
+
+def _diagnostic_type(error):
+    if isinstance(error, PermissionError):
+        return "authorization"
+    if isinstance(error, (ValueError, TypeError, KeyError)):
+        return "invalid_request"
+    return "bridge_exception"
 
 
 def _run():

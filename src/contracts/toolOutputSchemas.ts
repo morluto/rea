@@ -87,12 +87,14 @@ const providerCapability = z.object({
   }),
   limitations: z.array(z.string()),
 });
+const providerIdentity = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string().nullable(),
+});
 const sessionProvider = z.object({
-  provider: z.object({
-    id: z.string(),
-    name: z.string(),
-    version: z.string().nullable(),
-  }),
+  provider: providerIdentity,
+  providers: z.array(providerIdentity),
   capabilities: z.array(providerCapability),
 });
 const nullableText = z.string().nullable();

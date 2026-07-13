@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseDocuments,
+  parseAddressedPage,
   parseListCount,
   parseNames,
   parseProcedures,
@@ -60,6 +61,29 @@ describe("Hopper boundary values", () => {
       ok: true,
       value: ["fixture"],
     });
+  });
+
+  it.each([
+    {
+      items: [],
+      offset: 0,
+      limit: 100,
+      total: 1,
+      next_offset: null,
+      has_more: true,
+    },
+    {
+      items: [],
+      offset: 0,
+      limit: 100,
+      total: 0,
+      next_offset: 100,
+      has_more: false,
+    },
+  ])("rejects contradictory page continuation metadata", (page) => {
+    const result = parseAddressedPage(page);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("HopperProtocolError");
   });
 
   it.each([

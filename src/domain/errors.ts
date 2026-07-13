@@ -216,6 +216,12 @@ export class HopperProtocolError extends HopperError {
   readonly _tag = "HopperProtocolError";
 }
 
+export type HopperDiagnosticType =
+  | "remote"
+  | "authorization"
+  | "invalid_request"
+  | "bridge_exception";
+
 /** Hopper's JSON-RPC endpoint returned an expected remote error response. */
 export class HopperRemoteError extends HopperError {
   readonly _tag = "HopperRemoteError";
@@ -223,6 +229,7 @@ export class HopperRemoteError extends HopperError {
   constructor(
     readonly code: number,
     readonly safeMessage: string,
+    readonly diagnosticType: HopperDiagnosticType = "remote",
   ) {
     super(`Hopper request failed (${String(code)}): ${safeMessage}`);
   }
@@ -322,7 +329,11 @@ const safeDetails = (
   if (error instanceof HopperTimeoutError)
     return { timeoutMs: error.timeoutMs };
   if (error instanceof HopperRemoteError)
-    return { code: error.code, safeMessage: error.safeMessage };
+    return {
+      code: error.code,
+      safeMessage: error.safeMessage,
+      diagnosticType: error.diagnosticType,
+    };
   if (error instanceof HopperProcessError) return { exitCode: error.exitCode };
   return {};
 };
