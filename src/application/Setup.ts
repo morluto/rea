@@ -30,10 +30,7 @@ import {
   type SetupFailureCode,
   type SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
-export type {
-  SetupFailureCode,
-  SetupHopperInstallResult,
-} from "./SetupInstallFailure.js";
+export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 
 export { installCanonicalSkill } from "./SetupSkill.js";
 
