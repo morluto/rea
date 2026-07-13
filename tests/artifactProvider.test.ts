@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createPackage } from "@electron/asar";
+import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
@@ -136,6 +136,36 @@ describe("artifact graph provider", () => {
         expect.objectContaining({ logical_path: "main.js" }),
       ]),
     );
+
+    const unpackedPath = join(root, "unpacked.asar");
+    await createPackageWithOptions(source, unpackedPath, { unpack: "*.js" });
+    const unpackedResult = await inventory(target(unpackedPath, "asar"));
+    expect(unpackedResult.occurrences.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          logical_path: "main.js",
+          hash_status: "verified",
+        }),
+      ]),
+    );
+    await writeFile(
+      join(`${unpackedPath}.unpacked`, "main.js"),
+      "changed();\n",
+    );
+    const corrupted = await new ArtifactProvider()
+      .createClient(target(unpackedPath, "asar"))
+      .execute("inventory_artifact", artifactInventoryInputSchema.parse({}));
+    expect(corrupted).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ArtifactOperationError",
+        reason: "integrity",
+        artifactDetails: {
+          logicalPath: "main.js",
+          unpacked: true,
+        },
+      },
+    });
   });
 
   it("rejects unsafe, colliding, and over-ratio entries", async () => {

@@ -14,8 +14,7 @@ import type {
 } from "../domain/processCapture.js";
 import { processScenarioSchema } from "../domain/processCapture.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { Evidence } from "../domain/evidence.js";
 import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
@@ -29,8 +28,8 @@ import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
 import {
   DENY_EVIDENCE_FILE_POLICY,
   DENY_PROCESS_POLICY,
-  PROCESS_PROVIDER,
 } from "./sessionToolPolicies.js";
+import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
 import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
@@ -76,16 +75,6 @@ const recordProcessResidualUnknowns = (
   return ok(null);
 };
 
-const processEvidenceParameters = (
-  scenario: ProcessScenario,
-): Readonly<Record<string, JsonValue>> => ({
-  executable_name: scenario.executable.split("/").at(-1) ?? scenario.executable,
-  argument_count: scenario.arguments.length,
-  event_count: scenario.events.length,
-  filesystem_root_count: scenario.filesystem_roots.length,
-  normalization: scenario.normalization,
-});
-
 interface ProcessToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
@@ -122,21 +111,7 @@ const registerProcessTools = ({
           ),
       );
       if (!captured.ok) return toCallToolResult(captured, captureContract);
-      const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-capture/v2",
-        operation: captureContract.name,
-        parameters: processEvidenceParameters(scenario),
-        result: jsonValueSchema.parse(captured.value),
-        confidence: "observed",
-        authority: "controlled-replay",
-        environment: {
-          id: `${process.platform}-${process.arch}`,
-          platform: process.platform,
-          architecture: process.arch,
-          isolation: "process",
-        },
-        limitations: captured.value.limitations,
-      });
+      const evidence = createProcessCaptureEvidence(scenario, captured.value);
       const recorded = session.recordEvidence(evidence);
       if (!recorded.ok) return toCallToolResult(recorded, captureContract);
       const unknowns = recordProcessResidualUnknowns(

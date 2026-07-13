@@ -11,6 +11,7 @@ export interface ArtifactEntry {
   readonly encrypted: boolean;
   readonly byteOffset: number | null;
   readonly declaredSha256: string | null;
+  readonly unpacked: boolean;
   readonly limitations: readonly string[];
   readonly adapterKey: string;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
@@ -51,6 +52,12 @@ export class ArtifactReaderFailure extends Error {
       | "unavailable",
     message: string,
     options?: ErrorOptions,
+    readonly details?: Readonly<{
+      logicalPath: string;
+      declaredSha256: string | null;
+      calculatedSha256: string | null;
+      unpacked: boolean;
+    }>,
   ) {
     super(message, options);
     this.name = "ArtifactReaderFailure";

@@ -9,6 +9,8 @@ const PROC_READ_CONCURRENCY = 64;
 interface ProcessRow {
   readonly pid: number;
   readonly parent_pid: number;
+  readonly process_group_id: number | null;
+  readonly session_id: number | null;
   readonly command: string;
   readonly startTime: string | undefined;
 }
@@ -21,7 +23,6 @@ interface SampleProcessContext {
   readonly rootPid: number;
   readonly elapsedMs: number;
   readonly limit: number;
-  readonly sampledPids: Set<number>;
   readonly identities: Map<number, string>;
   readonly signal: AbortSignal;
 }
@@ -51,12 +52,18 @@ const parseProcStat = (
     .split(/\s+/);
   const pid = Number(identifier);
   const parentPid = Number(fields[1]);
+  const processGroupId = Number(fields[2]);
+  const sessionId = Number(fields[3]);
   const startTime = fields[19];
   if (
     !Number.isSafeInteger(pid) ||
     pid <= 0 ||
     !Number.isSafeInteger(parentPid) ||
     parentPid < 0 ||
+    !Number.isSafeInteger(processGroupId) ||
+    processGroupId <= 0 ||
+    !Number.isSafeInteger(sessionId) ||
+    sessionId <= 0 ||
     startTime === undefined ||
     !/^\d+$/.test(startTime)
   )
@@ -64,6 +71,8 @@ const parseProcStat = (
   return {
     pid,
     parent_pid: parentPid,
+    process_group_id: processGroupId,
+    session_id: sessionId,
     command: "",
     startTime,
   };
@@ -153,6 +162,8 @@ const inspectProcess = async (
   return {
     pid: before.pid,
     parent_pid: before.parent_pid,
+    process_group_id: before.process_group_id,
+    session_id: before.session_id,
     startTime: before.startTime,
     command,
     children: children ?? [],
@@ -162,7 +173,7 @@ const inspectProcess = async (
 const sampleLinux = async (
   context: SampleProcessContext,
 ): Promise<readonly ProcessRow[]> => {
-  const { rootPid, limit, signal, sampledPids, identities } = context;
+  const { rootPid, limit, signal, identities } = context;
   if (limit <= 0) return [];
 
   const rootStat = await readProcessStat(rootPid, signal);
@@ -192,10 +203,8 @@ const sampleLinux = async (
     for (const node of batchResults) {
       if (node === undefined) continue;
 
-      if (!sampledPids.has(node.pid)) {
-        if (rows.length >= limit) break;
-        rows.push(node);
-      }
+      if (rows.length >= limit) break;
+      rows.push(node);
       if (rows.length >= limit) break;
 
       for (const child of node.children) {
@@ -217,17 +226,19 @@ const readPsRows = async (
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileAsync(
     "ps",
-    ["-axo", "pid=,ppid=,command="],
+    ["-axo", "pid=,ppid=,pgid=,sess=,command="],
     { signal },
   );
   return stdout
     .split("\n")
-    .map((line) => /\s*(\d+)\s+(\d+)\s+(.*)/u.exec(line))
+    .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)/u.exec(line))
     .filter((match): match is RegExpExecArray => match !== null)
     .map((match) => ({
       pid: Number(match[1]),
       parent_pid: Number(match[2]),
-      command: match[3] ?? "",
+      process_group_id: Number(match[3]),
+      session_id: Number(match[4]),
+      command: match[5] ?? "",
       startTime: undefined,
     }))
     .filter(
@@ -243,7 +254,7 @@ const readPsRows = async (
 const samplePs = async (
   context: SampleProcessContext,
 ): Promise<readonly ProcessRow[]> => {
-  const { rootPid, limit, signal, sampledPids } = context;
+  const { rootPid, limit, signal } = context;
   if (limit <= 0) return [];
 
   const rows = await readPsRows(signal);
@@ -268,9 +279,7 @@ const samplePs = async (
     visited.add(pid);
 
     const row = rowByPid.get(pid);
-    if (row !== undefined && !sampledPids.has(row.pid)) {
-      result.push(row);
-    }
+    if (row !== undefined) result.push(row);
     if (result.length >= limit) break;
 
     for (const child of childrenByParent.get(pid) ?? []) {
@@ -291,10 +300,9 @@ const sampleProcesses = async (
       ? await sampleLinux(context)
       : await samplePs(context);
 
-  const { elapsedMs, sampledPids, identities } = context;
+  const { elapsedMs, identities } = context;
   const samples: ProcessSample[] = [];
   for (const row of rows) {
-    if (sampledPids.has(row.pid)) continue;
     if (row.startTime !== undefined) {
       const existing = identities.get(row.pid);
       if (existing !== undefined && existing !== row.startTime) continue;
@@ -305,6 +313,8 @@ const sampleProcesses = async (
       pid: row.pid,
       parent_pid: row.parent_pid,
       command: row.command,
+      process_group_id: row.process_group_id,
+      session_id: row.session_id,
     });
   }
   return samples;
@@ -318,30 +328,38 @@ export const startProcessSampler = (
   samples: ProcessSample[],
 ): (() => Promise<{ readonly partial: boolean }>) => {
   const identities = new Map<number, string>();
-  const sampledPids = new Set<number>(samples.map(({ pid }) => pid));
+  const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
   let stopped = false;
   let abortCurrent: (() => void) | undefined;
   let partial = false;
 
   const sample = (): void => {
-    if (stopped || pending !== undefined || sampledPids.size >= limit) return;
+    if (stopped || pending !== undefined) return;
 
     const controller = new AbortController();
     abortCurrent = () => controller.abort();
     pending = sampleProcesses({
       rootPid,
       elapsedMs: Date.now() - started,
-      limit: limit - sampledPids.size,
-      sampledPids,
+      limit: limit + 1,
       identities,
       signal: controller.signal,
     })
       .then((values) => {
         for (const value of values) {
-          if (sampledPids.size >= limit) break;
-          if (sampledPids.has(value.pid)) continue;
-          sampledPids.add(value.pid);
+          const observation = JSON.stringify({
+            parent_pid: value.parent_pid,
+            command: value.command,
+            process_group_id: value.process_group_id,
+            session_id: value.session_id,
+          });
+          if (lastObservations.get(value.pid) === observation) continue;
+          if (samples.length >= limit) {
+            partial = true;
+            continue;
+          }
+          lastObservations.set(value.pid, observation);
           samples.push(value);
         }
       })

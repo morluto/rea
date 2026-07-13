@@ -45,12 +45,12 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
 const PROCESS_PROVIDER = {
   id: "rea-process",
   name: "REA deterministic process harness",
-  version: "1",
+  version: "2",
 } as const;
 const capture = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 const captureEvidence = (scenario: string) =>
   createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.process-capture/v2",
+    predicateType: "rea.process-capture/v3",
     operation: "capture_process_scenario",
     parameters: { scenario },
     result: jsonValueSchema.parse(capture),
@@ -69,7 +69,7 @@ export const PROCESS_COMPARISON_EVIDENCE = createEvidence(
   undefined,
   PROCESS_PROVIDER,
   {
-    predicateType: "rea.process-comparison/v1",
+    predicateType: "rea.process-comparison/v2",
     operation: "compare_process_captures",
     parameters: {
       left_evidence_id: PROCESS_CAPTURE_REFERENCE.evidence_id,

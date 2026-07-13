@@ -46,7 +46,12 @@ export const normalizeProcessSamples = (
 ): readonly ProcessSample[] => {
   const identifiers = [
     rootPid,
-    ...samples.flatMap((sample) => [sample.pid, sample.parent_pid]),
+    ...samples.flatMap((sample) => [
+      sample.pid,
+      sample.parent_pid,
+      sample.process_group_id ?? 0,
+      sample.session_id ?? 0,
+    ]),
   ];
   const mapping = new Map<number, number>();
   for (const identifier of identifiers)
@@ -58,6 +63,12 @@ export const normalizeProcessSamples = (
       scenario.normalization.time_bucket_ms,
     pid: mapping.get(sample.pid) ?? 1,
     parent_pid: mapping.get(sample.parent_pid) ?? 0,
+    process_group_id:
+      sample.process_group_id === null
+        ? null
+        : (mapping.get(sample.process_group_id) ?? 0),
+    session_id:
+      sample.session_id === null ? null : (mapping.get(sample.session_id) ?? 0),
     command: normalizeProcessText(
       sample.command,
       scenario,

@@ -2,7 +2,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Minimal valid process capture used only in public contract examples. */
 export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
-  schema_version: 2,
+  schema_version: 3,
   normalization: {
     paths: true,
     pids: true,
@@ -11,8 +11,12 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
     patterns: [],
   },
   frames: [],
+  rendered_frames: [],
+  interaction_events: [],
   exit: { code: 0, signal: null, reason: "exited" },
   process_samples: [],
+  filesystem_checkpoints: [],
+  shim_events: [],
   protocol_events: [],
   files_before: [],
   files_after: [],

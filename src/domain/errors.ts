@@ -140,8 +140,18 @@ export class ArtifactOperationError extends AnalysisError {
       | "path"
       | "unavailable"
       | "io",
+    readonly artifactDetails?: Readonly<{
+      logicalPath: string;
+      declaredSha256: string | null;
+      calculatedSha256: string | null;
+      unpacked: boolean;
+    }>,
   ) {
-    super(`Artifact ${operation} failed: ${reason}`);
+    super(
+      artifactDetails === undefined
+        ? `Artifact ${operation} failed: ${reason}`
+        : `Artifact ${operation} failed: ${reason} at ${artifactDetails.logicalPath} (declared_sha256=${artifactDetails.declaredSha256 ?? "unavailable"}, calculated_sha256=${artifactDetails.calculatedSha256 ?? "unavailable"}, unpacked=${String(artifactDetails.unpacked)})`,
+    );
   }
 }
 
@@ -291,7 +301,7 @@ export interface AnalysisErrorProjection
   extends Readonly<Record<string, JsonValue>> {
   readonly tag: AnalysisErrorTag;
   readonly message: string;
-  readonly details: Readonly<Record<string, string | number | null>>;
+  readonly details: Readonly<Record<string, string | number | boolean | null>>;
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -308,7 +318,7 @@ export const projectAnalysisError = (
 
 const safeDetails = (
   error: AnalysisError,
-): Readonly<Record<string, string | number | null>> => {
+): Readonly<Record<string, string | number | boolean | null>> => {
   if (error instanceof AnalysisInputError)
     return { operation: error.operation };
   if (error instanceof AnalysisOutputError)
@@ -328,7 +338,11 @@ const safeDetails = (
   if (error instanceof ProviderAdapterError)
     return { providerId: error.providerId, operation: error.operation };
   if (error instanceof ArtifactOperationError)
-    return { operation: error.operation, reason: error.reason };
+    return {
+      operation: error.operation,
+      reason: error.reason,
+      ...error.artifactDetails,
+    };
   if (error instanceof EvidenceLimitError)
     return { limit: error.limit, maximum: error.maximum };
   if (error instanceof EvidenceFileError)

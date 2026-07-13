@@ -41,7 +41,7 @@ export const registerProcessComparisonTool = (
       if (!validated.ok) return toCallToolResult(validated, contract);
       const comparison = compareProcessCaptures(parsed.left, parsed.right);
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-comparison/v1",
+        predicateType: "rea.process-comparison/v2",
         operation: contract.name,
         parameters: {
           left_evidence_id: parsed.left_evidence_id,
@@ -85,7 +85,7 @@ const validateCaptureSources = (
     if (
       evidence === undefined ||
       evidence.operation !== "capture_process_scenario" ||
-      evidence.predicate_type !== "rea.process-capture/v2" ||
+      evidence.predicate_type !== "rea.process-capture/v3" ||
       evidence.provider.id !== PROCESS_PROVIDER.id ||
       evidence.provider.name !== PROCESS_PROVIDER.name ||
       evidence.provider.version !== PROCESS_PROVIDER.version ||

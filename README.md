@@ -199,6 +199,7 @@ Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots
 | Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`                               |
 | Validate, canonicalize, or compare Evidence v2 bundles    | `rea evidence-import`, `rea evidence-export`, or `rea compare` |
 | Import source as historical reference                     | `rea import-reference-source`                                  |
+| Capture or compare controlled process behavior            | `rea capture-process` or `rea compare-process-captures`        |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
@@ -272,7 +273,7 @@ REA is already useful for native application investigation on macOS:
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
-- Capture approved PTY scenarios, child processes, filesystem changes, and loopback HTTP/WebSocket exchanges, then compare normalized captures.
+- Capture approved PTY scenarios as Process Capture v3 Evidence, including raw and rendered terminal frames, scripted interactions, child-process lifecycle, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
 - Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
 - Compare canonical Evidence bundles by exact membership, explicit observation pairs, and residual-unknown histories without turning omissions into behavioral absence.
@@ -389,9 +390,27 @@ environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
 adapter uses host networking, it also requires
 `REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
 
+Capture a scenario or compare two saved Process Capture v3 Evidence records:
+
+```bash
+rea capture-process ./scenario.json > authority.json
+rea capture-process ./reconstruction.json > reconstruction.json
+rea compare-process-captures authority.json reconstruction.json
+```
+
+The comparison reports each observed dimension separately and identifies the
+first terminal, interaction, exit, filesystem, protocol, process, or shim
+divergence. See [Process Capture v3](docs/process-capture.md) for scenario
+fields, command-shim replay, checkpoint triggers, limits, and safety behavior.
+
 If the native PTY backend is unavailable, install Xcode command-line tools and
 run `npm run rebuild:native`. Linux source builds require Python, `make`, and a
 C++ toolchain. Compatible packaged binaries do not require this rebuild.
+
+ASAR inventory verifies Electron integrity metadata for both archive entries
+and `.asar.unpacked` companion files. Integrity failures identify the logical
+path, declared and calculated SHA-256 values, and whether the entry was
+unpacked; REA does not silently accept the mismatched artifact.
 
 ## Security model
 

@@ -59,6 +59,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
           encrypted: false,
           byteOffset: null,
           declaredSha256: null,
+          unpacked: false,
           limitations:
             kind === "symlink"
               ? ["Symlink target was not followed or disclosed."]

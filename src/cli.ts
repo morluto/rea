@@ -17,6 +17,7 @@ import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
 import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
+import { registerProcessCommands } from "./cliProcessCommands.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -60,6 +61,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerArtifactCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
   registerReferenceSourceCommand(cli, logger);
+  registerProcessCommands(cli, logger);
   return cli;
 };
 
