@@ -15,13 +15,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import * as prompts from "./verify-package-prompts.mjs";
 import { verifyPackagedInvestigation } from "./verify-package-investigation.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 
-const expectedToolCount = TOOL_CONTRACTS.length;
-
-// Exercise the packed artifact in isolated HOME and prefix directories so the
-// verifier cannot mutate real MCP registrations or rely on checkout-only files.
 const exec = promisify(execFile);
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
@@ -426,9 +423,11 @@ try {
     const mcpOptions = { timeout: 15_000 };
     if (
       (await client.listTools(undefined, mcpOptions)).tools.length !==
-      expectedToolCount
+      TOOL_CONTRACTS.length
     )
       throw new Error("packaged MCP tool inventory diverged from contracts");
+    await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
+    await prompts.verifyPromptCompletion(client, mcpOptions, false);
     const result = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
@@ -441,20 +440,21 @@ try {
     );
     if (opened.isError === true)
       throw new Error("packaged MCP could not open a binary");
+    await prompts.verifyPromptCompletion(client, mcpOptions, true);
     const current = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
     );
     if (
       current.isError === true ||
-      json(text(current)).normalized_result !== "fixture"
+      json(prompts.mcpText(current)).normalized_result !== "fixture"
     )
       throw new Error("packaged MCP bridge call failed");
     const batch = await client.callTool(
       { name: "batch_decompile", arguments: { addresses: ["0x1000"] } },
       mcpOptions,
     );
-    const batchResult = json(text(batch)).normalized_result;
+    const batchResult = json(prompts.mcpText(batch)).normalized_result;
     if (
       batch.isError === true ||
       batchResult?.total !== 1 ||
@@ -470,6 +470,7 @@ try {
     );
     if (closed.isError === true)
       throw new Error("packaged MCP could not close its binary");
+    await prompts.verifyPromptCompletion(client, mcpOptions, false);
     const mcpBundlePath = join(evidenceRoot, "mcp.json");
     const mcpExport = await client.callTool(
       { name: "export_evidence_bundle", arguments: { path: mcpBundlePath } },
@@ -491,7 +492,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: expectedToolCount, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
@@ -503,10 +504,4 @@ async function run(command, args, env) {
 }
 function json(text) {
   return JSON.parse(text);
-}
-
-function text(result) {
-  const value = result.content?.find((item) => item.type === "text")?.text;
-  if (typeof value !== "string") throw new Error("MCP result omitted text");
-  return value;
 }

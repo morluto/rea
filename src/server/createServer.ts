@@ -11,6 +11,7 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
+import { registerGuidedPrompts } from "./registerPrompts.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -77,6 +78,7 @@ export const createServer = (
     activeTarget,
     recordEvidence,
   });
+  registerGuidedPrompts(server, analysis, session);
   if (session !== undefined)
     registerSessionTools(server, session, toolLogger, options);
   return server;
