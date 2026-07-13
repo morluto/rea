@@ -193,13 +193,14 @@ Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots
 
 ### CLI or agent?
 
-| If you want to…                                           | Use                                                            |
-| --------------------------------------------------------- | -------------------------------------------------------------- |
-| Ask an agent to investigate an app and build a feature    | Install the skill, then talk to your agent                     |
-| Inspect or decompile one part of an app from the Terminal | `rea analyze` or `rea decompile`                               |
-| Validate, canonicalize, or compare Evidence v2 bundles    | `rea evidence-import`, `rea evidence-export`, or `rea compare` |
-| Import source as historical reference                     | `rea import-reference-source`                                  |
-| Capture or compare controlled process behavior            | `rea capture-process` or `rea compare-process-captures`        |
+| If you want to…                                                 | Use                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Ask an agent to investigate an app and build a feature          | Install the skill, then talk to your agent                                |
+| Inspect or decompile one part of an app from the Terminal       | `rea analyze` or `rea decompile`                                          |
+| Validate, canonicalize, or compare Evidence v2 bundles          | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
+| Reuse immutable analysis results without relaunching a provider | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
+| Import source as historical reference                           | `rea import-reference-source`                                             |
+| Capture or compare controlled process behavior                  | `rea capture-process` or `rea compare-process-captures`                   |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
@@ -218,6 +219,30 @@ rea import-reference-source /absolute/path/to/source
 ```
 
 Exports never replace an existing file unless `--overwrite` is explicit. Imports are size/depth bounded, validate every Evidence v2 ID and manifest, and never execute bundle content.
+
+Provider-neutral analysis snapshots persist successful, immutable REA calls and
+their Evidence v2 records. They are exact caches rather than Hopper databases:
+REA reuses an entry only when the binary digest, format, architecture, operation
+parameters, loader arguments, and provider identity match. Custom Hopper loader
+overrides disable snapshots because their provider configuration cannot be
+replayed safely. Cursor-dependent and mutating calls are never cached. Snapshot
+files can contain proprietary analysis results and local
+paths, so REA keeps them local, writes them with owner-only permissions, and
+requires a separate approved root:
+
+```bash
+export REA_ANALYSIS_SNAPSHOT_ROOTS_JSON='["/absolute/path/to/analysis"]'
+rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
+# The same exact query can now be answered from the snapshot.
+rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
+```
+
+Exact CLI evidence replays happen before any provider starts. In MCP sessions,
+pass `snapshot_path` to `open_binary` to import a snapshot atomically while
+opening its matching target; MCP providers may still start before a cached call
+is replayed. Pass `snapshot_path` and, when required, `overwrite: true` to
+`close_binary` to save atomically before Hopper resources are released. If the
+save fails, REA deliberately leaves the session open.
 
 ## One prompt, a full investigation
 

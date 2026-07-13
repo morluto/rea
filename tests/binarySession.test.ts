@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
-import type { AnalysisProvider } from "../src/application/AnalysisProvider.js";
+import type {
+  AnalysisProvider,
+  CapabilityDescriptor,
+} from "../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../src/domain/errors.js";
 import { err } from "../src/domain/result.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
@@ -93,6 +96,97 @@ describe("binary session", () => {
       ],
     });
     expect(operations).toEqual(["health", "address_name"]);
+    await session.close();
+  });
+
+  it("replays exact immutable calls from a matching provider-neutral snapshot", async () => {
+    const [first, second] = await targets();
+    const initialCalls: string[] = [];
+    const initial = new BinarySession(cacheProvider(initialCalls));
+    expect((await initial.open(first)).ok).toBe(true);
+    expect(
+      (
+        await initial.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    const snapshot = initial.exportAnalysisSnapshot();
+    expect(snapshot.ok).toBe(true);
+    if (!snapshot.ok) return;
+    expect(snapshot.value.entries).toHaveLength(1);
+    await initial.close();
+
+    const replayCalls: string[] = [];
+    const replay = new BinarySession(cacheProvider(replayCalls));
+    expect(replay.importAnalysisSnapshot(snapshot.value)).toEqual({
+      ok: true,
+      value: 1,
+    });
+    expect((await replay.open(first)).ok).toBe(true);
+    const cached = await replay.execute("address_name", {
+      address: "0x1000",
+      document: "first",
+    });
+    expect(cached.ok).toBe(true);
+    if (cached.ok)
+      expect(cached.value.limitations).toContainEqual(
+        expect.stringContaining("local REA analysis snapshot"),
+      );
+    expect(
+      (
+        await replay.execute("set_address_name", {
+          address: "0x1000",
+          name: "renamed",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await replay.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(replayCalls).toEqual(["health", "set_address_name", "address_name"]);
+    expect(replay.exportAnalysisSnapshot().ok).toBe(false);
+    await replay.close();
+
+    const mismatch = new BinarySession(cacheProvider([]));
+    expect(mismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
+    const opened = await mismatch.open(second);
+    expect(opened.ok).toBe(false);
+    if (!opened.ok) expect(opened.error._tag).toBe("EvidenceIntegrityError");
+    await mismatch.close();
+  });
+
+  it("does not snapshot reads that depend on the provider cursor", async () => {
+    const [first] = await targets();
+    const calls: string[] = [];
+    const session = new BinarySession(cacheProvider(calls));
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect(calls).toEqual(["health", "address_name", "address_name"]);
+    expect(session.exportAnalysisSnapshot()).toMatchObject({
+      ok: true,
+      value: { entries: [] },
+    });
+    await session.close();
+  });
+
+  it("does not replay operations with filesystem side effects", async () => {
+    const [first] = await targets();
+    const calls: string[] = [];
+    const session = new BinarySession(cacheProvider(calls, true));
+    expect((await session.open(first)).ok).toBe(true);
+    const input = { address: "0x1000", document: "first" };
+    expect((await session.execute("address_name", input)).ok).toBe(true);
+    expect((await session.execute("address_name", input)).ok).toBe(true);
+    expect(calls).toEqual(["health", "address_name", "address_name"]);
     await session.close();
   });
 
@@ -304,6 +398,62 @@ describe("binary session", () => {
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
   close: () => Promise.resolve(),
+});
+
+const cacheProvider = (
+  calls: string[],
+  mayWriteFilesystem = false,
+): AnalysisProvider => {
+  const identity = {
+    id: "fixture",
+    name: "Fixture analysis provider",
+    version: "1",
+  } as const;
+  return {
+    identity: () => identity,
+    capabilities: () => [
+      cacheCapability(identity, "address_name", false, mayWriteFilesystem),
+      cacheCapability(identity, "set_address_name", true),
+    ],
+    createClient: () => ({
+      execute: (operation) => {
+        calls.push(operation);
+        return Promise.resolve(ok(operation));
+      },
+      close: () => Promise.resolve(),
+    }),
+  };
+};
+
+const cacheCapability = (
+  provider: CapabilityDescriptor["provider"],
+  operation: "address_name" | "set_address_name",
+  mutatesArtifact: boolean,
+  mayWriteFilesystem = false,
+): CapabilityDescriptor => ({
+  provider,
+  operation,
+  inputContractVersion: 1,
+  outputContractVersion: 1,
+  available: true,
+  reason: null,
+  pagination: "none",
+  exhaustive: true,
+  effects: {
+    mutatesArtifact,
+    launchesProcess: false,
+    mayShowUi: false,
+    mayAccessNetwork: false,
+    mayWriteFilesystem,
+    changesPermissions: false,
+    requiresRoot: false,
+  },
+  limits: {
+    maxResults: null,
+    maxPayloadBytes: null,
+    timeoutMs: null,
+  },
+  limitations: [],
 });
 
 class TestClient implements AnalysisClient {

@@ -7,7 +7,8 @@ import type { BinaryTarget } from "./binaryTarget.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const providerSchema = z.object({
+/** Provider identity schema shared by evidence-bearing persistence formats. */
+export const providerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().nullable(),
@@ -40,7 +41,8 @@ const subjectSchema = z.object({
   local_path: z.string(),
 });
 /** Source location attached to an evidence observation. */
-const evidenceLocationSchema = z.discriminatedUnion("kind", [
+/** Source-location schema shared by evidence-bearing persistence formats. */
+export const evidenceLocationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("address"), address: z.string().min(1) }),
   z.object({
     kind: z.literal("address-range"),

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   processCaptureSchema,
   processScenarioSchema,
@@ -26,6 +26,22 @@ import {
 import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import {
+  closeBinaryInputSchema,
+  openBinaryInputSchema,
+} from "./sessionLifecycleInputs.js";
+import type {
+  ToolAnnotations,
+  ToolContract,
+  ToolExample,
+  ToolKind,
+} from "./toolContractTypes.js";
+
+export type {
+  ToolAnnotations,
+  ToolContract,
+  ToolExample,
+} from "./toolContractTypes.js";
 
 const document = z.string().optional().describe("The document name");
 const address = z.string().describe("A Hopper address");
@@ -53,37 +69,6 @@ const searchInput = {
   document,
 };
 
-export interface ToolAnnotations {
-  readonly readOnlyHint: boolean;
-  readonly destructiveHint: boolean;
-  readonly idempotentHint: boolean;
-  readonly openWorldHint: boolean;
-}
-
-export interface ToolExample {
-  readonly title: string;
-  readonly input: Readonly<Record<string, JsonValue>>;
-}
-
-/** Adapter family responsible for implementing a public MCP tool. */
-type ToolKind =
-  | "official-proxy"
-  | "enhanced"
-  | "native-provider"
-  | "artifact-provider"
-  | "session";
-
-/** Single source of truth for a public tool's name, description, and input. */
-export interface ToolContract<Name extends string = string> {
-  readonly name: Name;
-  readonly description: string;
-  readonly kind: ToolKind;
-  readonly inputSchema: z.ZodObject;
-  readonly outputSchema: z.ZodObject;
-  readonly annotations: ToolAnnotations;
-  readonly examples: readonly ToolExample[];
-}
-
 const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 const examplesFor = (
   name: string,
@@ -106,12 +91,16 @@ const annotations = (name: string, kind: ToolKind): ToolAnnotations => ({
     name === "verify_unknown_resolution",
   destructiveHint:
     name === "export_evidence_bundle" ||
+    name === "close_binary" ||
     name === "unset_bookmark" ||
     name === "set_address_name" ||
     name === "set_addresses_names" ||
     name === "set_comment" ||
     name === "set_inline_comment",
-  idempotentHint: name !== "record_unknown" && name !== "update_unknown",
+  idempotentHint:
+    name !== "close_binary" &&
+    name !== "record_unknown" &&
+    name !== "update_unknown",
   openWorldHint: name === "capture_process_scenario",
 });
 
@@ -404,13 +393,13 @@ export const ENHANCED_TOOL_CONTRACTS = [
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or Hopper database after validation. Providers start lazily: inventory_artifact does not launch Hopper; deep native operations may show Hopper UI.",
-    z.object({ path: z.string().min(1) }),
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or Hopper database after validation. An optional provider-neutral snapshot is imported atomically and must match the binary digest, format, and architecture exactly; provider resources may still start before an MCP cache replay.",
+    openBinaryInputSchema,
   ),
   session(
     "close_binary",
-    "Close the active target and every provider resource started for it. The operation is idempotent; call binary_session to verify the session is closed.",
-    z.object({}),
+    "Optionally write a provider-neutral analysis snapshot atomically, then close the active target and every provider resource started for it. Snapshot files require an operator-approved root and explicit overwrite; a failed save leaves the session open so cached analysis is not lost.",
+    closeBinaryInputSchema,
   ),
   session(
     "binary_session",
