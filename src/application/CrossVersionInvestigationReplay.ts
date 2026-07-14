@@ -95,6 +95,13 @@ const inventoryEvidenceMatches = (
     const inventory = parseArtifactInventoryEvidence(evidence).inventory;
     return (
       inventory.complete &&
+      evidence.length ===
+        expectedInventoryPageCount(
+          inventory.manifest.node_count,
+          inventory.manifest.occurrence_count,
+          inventory.manifest.edge_count,
+          expectation.input.options.page_size,
+        ) &&
       inventory.manifest.root_sha256 === expectation.target.root_sha256 &&
       inventory.manifest.graph_sha256 === expectation.target.graph_sha256 &&
       inventory.manifest.manifest_id === expectation.target.manifest_id &&
@@ -143,13 +150,61 @@ const inventoryResultPageMatches = (
   offset: number,
   input: CrossVersionInvestigationInput,
 ): boolean =>
-  page.nodes.offset === offset &&
-  page.nodes.limit === input.options.page_size &&
-  page.occurrences.offset === offset &&
-  page.occurrences.limit === input.options.page_size &&
-  page.edges.offset === offset &&
-  page.edges.limit === input.options.page_size &&
+  collectionPageMatches(
+    page.nodes,
+    offset,
+    input.options.page_size,
+    page.manifest.node_count,
+  ) &&
+  collectionPageMatches(
+    page.occurrences,
+    offset,
+    input.options.page_size,
+    page.manifest.occurrence_count,
+  ) &&
+  collectionPageMatches(
+    page.edges,
+    offset,
+    input.options.page_size,
+    page.manifest.edge_count,
+  ) &&
   valuesMatch(page.limits, traversalLimits(input));
+
+const collectionPageMatches = (
+  page: {
+    readonly items: readonly unknown[];
+    readonly offset: number;
+    readonly limit: number;
+    readonly total: number;
+    readonly next_offset: number | null;
+  },
+  offset: number,
+  limit: number,
+  total: number,
+): boolean => {
+  const expectedItems = Math.max(0, Math.min(limit, total - offset));
+  const nextOffset = offset + limit < total ? offset + limit : null;
+  return (
+    page.offset === offset &&
+    page.limit === limit &&
+    page.total === total &&
+    page.items.length === expectedItems &&
+    page.next_offset === nextOffset
+  );
+};
+
+const expectedInventoryPageCount = (
+  nodeCount: number,
+  occurrenceCount: number,
+  edgeCount: number,
+  pageSize: number,
+): number =>
+  Math.max(
+    1,
+    Math.ceil(nodeCount / pageSize),
+    Math.ceil(occurrenceCount / pageSize),
+    Math.ceil(edgeCount / pageSize),
+  );
 
 const inventoryParametersMatch = (
   parameters: Readonly<Record<string, unknown>>,

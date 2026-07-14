@@ -22,6 +22,7 @@ import {
   writeInvestigationWorkspace,
 } from "../src/application/InvestigationWorkspaceStore.js";
 import { compareArtifacts } from "../src/domain/artifactComparison.js";
+import { artifactInventoryResultSchema } from "../src/domain/artifactGraph.js";
 import {
   changedBehaviorResultSchema,
   findChangedBehavior,
@@ -338,112 +339,176 @@ describe("persistent cross-version investigation workspace", () => {
         record,
       ]),
     );
-    const leftPages = run.left_inventory_evidence_ids.map((id) => byId.get(id));
-    const rightPages = run.right_inventory_evidence_ids.map((id) =>
-      byId.get(id),
-    );
-    if (
-      leftPages.some((record) => record === undefined) ||
-      rightPages.some((record) => record === undefined)
-    )
-      throw new Error("missing inventory fixture Evidence");
-    const forgedFirstPage = recreateEvidence(leftPages[0]!, {
-      parameters: {
-        ...leftPages[0]!.parameters,
-        max_entries: input.options.max_entries - 1,
-      },
-    });
-    const forgedLeftPages = [forgedFirstPage, ...leftPages.slice(1)];
+    const evidenceFor = (ids: readonly string[]): Evidence[] =>
+      ids.map((id) => {
+        const evidence = byId.get(id);
+        if (evidence === undefined)
+          throw new Error("missing inventory fixture Evidence");
+        return evidence;
+      });
+    const leftPages = evidenceFor(run.left_inventory_evidence_ids);
+    const rightPages = evidenceFor(run.right_inventory_evidence_ids);
     const comparison = byId.get(run.comparison_evidence_id ?? "");
     const result = byId.get(run.result_evidence_id ?? "");
     if (comparison === undefined || result === undefined)
       throw new Error("missing completed fixture Evidence");
-    const comparisonResult = compareArtifacts(
-      forgedLeftPages,
-      rightPages,
-      0,
-      run.options.change_limit,
-    );
-    const forgedComparison = recreateEvidence(comparison, {
-      parameters: {
-        left_evidence_ids: forgedLeftPages.map(({ evidence_id: id }) => id),
-        right_evidence_ids: rightPages.map(({ evidence_id: id }) => id),
-        offset: 0,
-        limit: run.options.change_limit,
-      },
-      result: comparisonResult,
-      evidenceLinks: [
-        ...forgedLeftPages.map(({ evidence_id: id }) => id),
-        ...rightPages.map(({ evidence_id: id }) => id),
-      ],
-    });
-    const resultLimit = Math.min(run.options.change_limit, 100);
-    const changed = findChangedBehavior([forgedComparison], 0, resultLimit);
-    const summary = investigationRunSummarySchema.parse({
-      schema_version: 1,
-      workspace_id: completed.value.workspace.workspace_id,
-      run_id: run.run_id,
-      left_manifest_id: run.left.manifest_id,
-      right_manifest_id: run.right.manifest_id,
-      inventory_evidence_count: forgedLeftPages.length + rightPages.length,
-      comparison_evidence_id: forgedComparison.evidence_id,
-      limitations: run.limitations,
-    });
-    const forgedResult = recreateEvidence(result, {
-      parameters: {
+    const forgeWorkspace = (forgedLeftPages: readonly Evidence[]) => {
+      const comparisonResult = compareArtifacts(
+        forgedLeftPages,
+        rightPages,
+        0,
+        run.options.change_limit,
+      );
+      const forgedComparison = recreateEvidence(comparison, {
+        parameters: {
+          left_evidence_ids: forgedLeftPages.map(({ evidence_id: id }) => id),
+          right_evidence_ids: rightPages.map(({ evidence_id: id }) => id),
+          offset: 0,
+          limit: run.options.change_limit,
+        },
+        result: comparisonResult,
+        evidenceLinks: [
+          ...forgedLeftPages.map(({ evidence_id: id }) => id),
+          ...rightPages.map(({ evidence_id: id }) => id),
+        ],
+      });
+      const resultLimit = Math.min(run.options.change_limit, 100);
+      const changed = findChangedBehavior([forgedComparison], 0, resultLimit);
+      const summary = investigationRunSummarySchema.parse({
+        schema_version: 1,
         workspace_id: completed.value.workspace.workspace_id,
         run_id: run.run_id,
-        comparison_evidence_ids: [forgedComparison.evidence_id],
-        offset: 0,
-        limit: resultLimit,
-      },
-      result: { ...changed, investigation_run: summary },
-      evidenceLinks: changed.evidence_links,
-    });
-    const forgedRun = investigationRunSchema.parse({
-      ...run,
-      left_inventory_evidence_ids: forgedLeftPages.map(
-        ({ evidence_id: id }) => id,
-      ),
-      comparison_evidence_id: forgedComparison.evidence_id,
-      result_evidence_id: forgedResult.evidence_id,
-    });
-    const forgedWorkspace = createInvestigationWorkspace(
-      input.workspace_name,
-      createEvidenceBundle([
-        ...completed.value.workspace.bundle.records,
-        forgedFirstPage,
-        forgedComparison,
-        forgedResult,
-      ]),
-      [forgedRun],
-    );
-    const forgedPath = join(directory, "forged-controls.json");
-    expect(
-      await writeInvestigationWorkspace(
-        forgedWorkspace,
-        forgedPath,
-        null,
-        policy(directory),
-      ),
-    ).toMatchObject({ ok: true });
-    await expect(
-      runCrossVersionInvestigation(
-        {
-          ...input,
-          workspace_path: forgedPath,
-          replay_run_id: run.run_id,
+        left_manifest_id: run.left.manifest_id,
+        right_manifest_id: run.right.manifest_id,
+        inventory_evidence_count: forgedLeftPages.length + rightPages.length,
+        comparison_evidence_id: forgedComparison.evidence_id,
+        limitations: run.limitations,
+      });
+      const forgedResult = recreateEvidence(result, {
+        parameters: {
+          workspace_id: completed.value.workspace.workspace_id,
+          run_id: run.run_id,
+          comparison_evidence_ids: [forgedComparison.evidence_id],
+          offset: 0,
+          limit: resultLimit,
         },
-        policy(directory),
-        { inputRoots: [], authorizeInputRead },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: {
-        _tag: "InvestigationWorkspaceError",
-        reason: "revision-conflict",
+        result: { ...changed, investigation_run: summary },
+        evidenceLinks: changed.evidence_links,
+      });
+      const forgedRun = investigationRunSchema.parse({
+        ...run,
+        left_inventory_evidence_ids: forgedLeftPages.map(
+          ({ evidence_id: id }) => id,
+        ),
+        comparison_evidence_id: forgedComparison.evidence_id,
+        result_evidence_id: forgedResult.evidence_id,
+      });
+      const records = new Map(
+        [
+          ...completed.value.workspace.bundle.records,
+          ...forgedLeftPages,
+          forgedComparison,
+          forgedResult,
+        ].map((record) => [record.evidence_id, record]),
+      );
+      return createInvestigationWorkspace(
+        input.workspace_name,
+        createEvidenceBundle([...records.values()]),
+        [forgedRun],
+      );
+    };
+    const firstPage = leftPages[0]!;
+    const firstPageResult = artifactInventoryResultSchema.parse(
+      firstPage.normalized_result,
+    );
+    const extraOffset = leftPages.length * input.options.page_size;
+    const extraPage = recreateEvidence(firstPage, {
+      parameters: {
+        ...firstPage.parameters,
+        node_offset: extraOffset,
+        occurrence_offset: extraOffset,
+        edge_offset: extraOffset,
+      },
+      result: {
+        ...firstPageResult,
+        nodes: {
+          ...firstPageResult.nodes,
+          items: [],
+          offset: extraOffset,
+          next_offset: null,
+        },
+        occurrences: {
+          ...firstPageResult.occurrences,
+          items: [],
+          offset: extraOffset,
+          next_offset: null,
+        },
+        edges: {
+          ...firstPageResult.edges,
+          items: [],
+          offset: extraOffset,
+          next_offset: null,
+        },
       },
     });
+    const forgedVariants = [
+      {
+        name: "controls",
+        pages: [
+          recreateEvidence(firstPage, {
+            parameters: {
+              ...firstPage.parameters,
+              max_entries: input.options.max_entries - 1,
+            },
+          }),
+          ...leftPages.slice(1),
+        ],
+      },
+      {
+        name: "page-total",
+        pages: [
+          recreateEvidence(firstPage, {
+            result: {
+              ...firstPageResult,
+              nodes: {
+                ...firstPageResult.nodes,
+                total: firstPageResult.nodes.total + 1,
+              },
+            },
+          }),
+          ...leftPages.slice(1),
+        ],
+      },
+      { name: "page-count", pages: [...leftPages, extraPage] },
+    ] as const;
+    for (const variant of forgedVariants) {
+      const forgedPath = join(directory, `forged-${variant.name}.json`);
+      expect(
+        await writeInvestigationWorkspace(
+          forgeWorkspace(variant.pages),
+          forgedPath,
+          null,
+          policy(directory),
+        ),
+      ).toMatchObject({ ok: true });
+      await expect(
+        runCrossVersionInvestigation(
+          {
+            ...input,
+            workspace_path: forgedPath,
+            replay_run_id: run.run_id,
+          },
+          policy(directory),
+          { inputRoots: [], authorizeInputRead },
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          _tag: "InvestigationWorkspaceError",
+          reason: "revision-conflict",
+        },
+      });
+    }
     expect(authorizeInputRead).not.toHaveBeenCalled();
   });
 
