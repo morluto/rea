@@ -33,6 +33,7 @@ interface FakeOptions {
   readonly navigateDuringCaptureUrl?: string;
   readonly extraCollections?: boolean;
   readonly foreignSessionEvents?: boolean;
+  readonly redirectToDisallowedOrigin?: boolean;
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -487,9 +488,22 @@ const emitEvents = (
         ],
       },
     });
+    if (options.redirectToDisallowedOrigin === true)
+      event(socket, "Network.requestWillBeSent", command.sessionId, {
+        requestId: "request-1",
+        type: "Fetch",
+        request: {
+          url: "https://private.example.test/redirected",
+          method: "GET",
+        },
+      });
     event(socket, "Network.responseReceived", command.sessionId, {
       requestId: "request-1",
       response: {
+        url:
+          options.redirectToDisallowedOrigin === true
+            ? "https://private.example.test/redirected"
+            : url,
         status: 200,
         mimeType: "application/json",
         headers: { "Set-Cookie": "response-secret" },

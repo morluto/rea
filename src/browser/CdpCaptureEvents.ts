@@ -139,13 +139,11 @@ export class CdpCaptureEvents {
     const requestId = stringValue(params.requestId);
     const request = recordValue(params.request);
     const sanitized = allowedSanitizedUrl(request?.url, this.allowedOrigins);
-    if (
-      requestId === undefined ||
-      requestId.length > 256 ||
-      request === undefined ||
-      sanitized === undefined
-    )
+    if (requestId === undefined || requestId.length > 256) return;
+    if (request === undefined || sanitized === undefined) {
+      this.network.delete(requestId);
       return;
+    }
     if (
       this.network.size >= this.input.limits.max_network_events &&
       !this.network.has(requestId)
@@ -181,7 +179,12 @@ export class CdpCaptureEvents {
     if (requestId === undefined || requestId.length > 256) return;
     const current = this.network.get(requestId);
     const response = recordValue(params.response);
-    if (current === undefined || response === undefined) return;
+    const sanitized = allowedSanitizedUrl(response?.url, this.allowedOrigins);
+    if (current === undefined) return;
+    if (response === undefined || sanitized === undefined) {
+      this.network.delete(requestId);
+      return;
+    }
     this.network.set(requestId, {
       ...current,
       status: numberValue(response.status) ?? null,

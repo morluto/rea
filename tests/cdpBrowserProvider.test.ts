@@ -127,6 +127,25 @@ describe("CdpBrowserProvider", () => {
     expect(methods).not.toContain("Runtime.evaluate");
   });
 
+  it("drops network evidence when a request redirects outside the approved origin", async () => {
+    const browser = await startFakeCdpBrowser({
+      redirectToDisallowedOrigin: true,
+    });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.network.requests).toEqual([]);
+  });
+
   it("includes allowed script source only after explicit approval", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);
