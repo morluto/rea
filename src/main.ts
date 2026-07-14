@@ -33,7 +33,7 @@ interface RuntimeDependencies {
   readonly serve: typeof serveStdio;
   readonly writeStderr: (text: string) => void;
   readonly setExitCode: (code: number) => void;
-  readonly registerShutdown: (handler: () => void) => void;
+  readonly registerShutdown: (handler: () => void) => () => void;
   readonly registerReload?: (handler: () => void) => () => void;
 }
 
@@ -49,6 +49,12 @@ const runtimeDependencies = (): RuntimeDependencies => ({
     process.once("SIGTERM", handler);
     process.stdin.once("end", handler);
     process.stdin.once("close", handler);
+    return () => {
+      process.off("SIGINT", handler);
+      process.off("SIGTERM", handler);
+      process.stdin.off("end", handler);
+      process.stdin.off("close", handler);
+    };
   },
   registerReload: (handler) => {
     process.on("SIGHUP", handler);
@@ -242,9 +248,11 @@ export const run = async (
     }) ?? (() => undefined);
 
   let shutdownPromise: Promise<void> | undefined;
+  let unregisterShutdown = (): void => undefined;
   const shutdown = (): Promise<void> => {
     shutdownPromise ??= (async () => {
       unregisterReload();
+      unregisterShutdown();
       await handle.close();
       await session.close();
       permissionAuthority.value.clearSessionGrants();
@@ -259,7 +267,7 @@ export const run = async (
     });
   };
 
-  dependencies.registerShutdown(requestShutdown);
+  unregisterShutdown = dependencies.registerShutdown(requestShutdown);
   return 0;
 };
 

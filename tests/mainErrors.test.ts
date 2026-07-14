@@ -13,18 +13,23 @@ const dependencies = (
   output: string[],
   shutdown: Array<() => void>,
   exitCodes: number[],
+  shutdownUnregistrations: string[] = [],
 ): RuntimeDependencies => ({
   env: {},
   serve,
   writeStderr: (text) => output.push(text),
   setExitCode: (code) => exitCodes.push(code),
-  registerShutdown: (handler) => shutdown.push(handler),
+  registerShutdown: (handler) => {
+    shutdown.push(handler);
+    return () => shutdownUnregistrations.push("shutdown");
+  },
 });
 
 describe("MCP runtime errors", () => {
   it("reports connection loss without the transport cause", async () => {
     const output: string[] = [];
     const shutdown: Array<() => void> = [];
+    const shutdownUnregistrations: string[] = [];
     let options: ServeStdioOptions | undefined;
     let closeCalls = 0;
     const close = (): Promise<void> => {
@@ -42,6 +47,7 @@ describe("MCP runtime errors", () => {
           output,
           shutdown,
           exitCodes,
+          shutdownUnregistrations,
         ),
       ),
     ).toBe(0);
@@ -52,6 +58,7 @@ describe("MCP runtime errors", () => {
     shutdown[0]?.();
     await nextTurn();
     expect(closeCalls).toBe(1);
+    expect(shutdownUnregistrations).toEqual(["shutdown"]);
   });
 
   it("reports transport startup failure without its cause", async () => {
