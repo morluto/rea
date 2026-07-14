@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1162,14 +1163,15 @@ describe("process capture adapter", () => {
     async () => {
       const capability = await probeProcessCaptureCapability();
       if (!capability.available) return;
+      const runMarker = `rea-tree-${randomUUID()}`;
       const result = await captureProcessScenario(
         parseProcessScenario({
           approved: true,
           executable: process.execPath,
-          arguments: [processFixture, "tree"],
+          arguments: [processFixture, "tree", runMarker],
           working_directory: dirname(processFixture),
-          timeout_ms: 2_000,
-          idle_timeout_ms: 2_000,
+          timeout_ms: 5_000,
+          idle_timeout_ms: 5_000,
         }),
         {
           enabled: true,
@@ -1196,8 +1198,7 @@ describe("process capture adapter", () => {
         dirname(processFixture),
       );
       const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
-      expect(stdout).not.toContain(`${processFixture} tree-child`);
-      expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
+      expect(stdout).not.toContain(runMarker);
     },
     PROCESS_CAPTURE_INTEGRATION_TIMEOUT_MS,
   );

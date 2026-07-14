@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 
 const mode = process.argv[2];
+const treeRunMarker = process.argv[3];
+const treeRunArguments = (childMode) => [
+  process.argv[1],
+  childMode,
+  ...(treeRunMarker === undefined ? [] : [treeRunMarker]),
+];
 
 if (mode === "interactive") {
   process.stdin.setRawMode?.(true);
@@ -32,14 +38,14 @@ if (mode === "interactive") {
     process.exit(0);
   }, 25);
 } else if (mode === "tree-child") {
-  spawn(process.execPath, [process.argv[1], "tree-grandchild"], {
+  spawn(process.execPath, treeRunArguments("tree-grandchild"), {
     stdio: "ignore",
   });
   setInterval(() => undefined, 1_000);
 } else if (mode === "tree-grandchild") {
   setInterval(() => undefined, 1_000);
 } else if (mode === "tree") {
-  spawn(process.execPath, [process.argv[1], "tree-child"], { stdio: "ignore" });
+  spawn(process.execPath, treeRunArguments("tree-child"), { stdio: "ignore" });
   process.stdout.write("tree-ready\n");
   setInterval(() => undefined, 1_000);
 } else if (mode === "crash") {
