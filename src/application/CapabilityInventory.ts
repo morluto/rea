@@ -55,6 +55,7 @@ export const buildCapabilityInventory = (
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
+    readonly electronObservationEnabled?: boolean;
   },
 ) => {
   const status = statusSchema.parse(sessionStatus);
@@ -99,6 +100,7 @@ const availabilityFor = (
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
+    readonly electronObservationEnabled?: boolean;
   },
 ): {
   readonly reason: ToolAvailabilityReason;
@@ -122,6 +124,14 @@ const availabilityFor = (
           reason: "policy_disabled",
           remediation:
             "Enable browser observation and configure exact CDP endpoint and page origins.",
+        };
+  if (kind === "electron-provider")
+    return policy.electronObservationEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "policy_disabled",
+          remediation:
+            "Enable Electron observation and configure a loopback CDP endpoint and canonical file roots.",
         };
   if (kind === "session") return { reason: "available", remediation: null };
   if (!targetOpen)

@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![70 MCP tools](https://img.shields.io/badge/MCP_tools-70-5c4ee5?style=flat-square)](#70-个工具组成的工作台)
+[![78 MCP tools](https://img.shields.io/badge/MCP_tools-78-5c4ee5?style=flat-square)](#78-个工具组成的工作台)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [70 个工具](#70-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
+[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [78 个工具](#78-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
 
 <br />
 
@@ -145,7 +145,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 - 分析 Swift 和 Objective-C 元数据。
 - 在 Hopper 中留下名称、注释与书签，使人与智能体的分析互相增强。
 
-## 70 个工具组成的工作台
+## 78 个工具组成的工作台
 
 | 工具类别       | 数量 | 示例                                                                                                                 |
 | -------------- | ---: | -------------------------------------------------------------------------------------------------------------------- |
@@ -153,7 +153,8 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 | 组合分析       |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
 | macOS 原生工具 |    5 | Mach-O 元数据、代码签名、plist、架构与 Swift 符号还原，无需启动 Hopper                                               |
 | 制品图谱       |    2 | 确定性目录、ZIP/APK/IPA 与 ASAR 清单，以及显式选择的事务式提取                                                       |
-| 浏览器观察     |    2 | 基于精确来源范围的 CDP 页面发现，以及被动 DOM、无障碍树、脚本、网络、控制台与存储检查                                |
+| 浏览器观察     |    8 | 精确来源 CDP 抓取、bundle/source map 分析、WebMCP 发现、会话时间线、capture diff 与视觉证据                          |
+| Electron 观察  |    2 | 限定 canonical 文件根的页面发现，以及被动 DOM、资源与另行批准的脚本源码检查                                          |
 | 二进制会话     |   18 | `open_binary`、`binary_session`、证据包、进程、制品与函数比较、残余未知项注册表                                      |
 
 ## 与其他编程智能体一起使用

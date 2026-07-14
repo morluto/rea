@@ -27,6 +27,7 @@ import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import {
   closeBinaryInputSchema,
   openBinaryInputSchema,
@@ -520,5 +521,6 @@ export const TOOL_CONTRACTS = [
   ...NATIVE_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
   ...BROWSER_TOOL_CONTRACTS,
+  ...ELECTRON_TOOL_CONTRACTS,
   ...SESSION_TOOL_CONTRACTS,
 ] as const;

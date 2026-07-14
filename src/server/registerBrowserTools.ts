@@ -4,14 +4,28 @@ import type { BrowserObservationPort } from "../application/BrowserObservationPo
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import {
+  analyzeWebBundle,
+  captureWebScreenshot,
+  compareWebCaptureEvidence,
+  compareWebScreenshotEvidence,
+  discoverWebMcpTools,
   inspectWebPage,
   listBrowserTargets,
+  observeWebSession,
 } from "../application/BrowserObservationService.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
 } from "../domain/browserObservation.js";
+import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import { observeWebSessionInputSchema } from "../domain/browserSession.js";
+import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
+import { compareWebCapturesInputSchema } from "../domain/webCaptureDiff.js";
+import {
+  captureWebScreenshotInputSchema,
+  compareWebScreenshotsInputSchema,
+} from "../domain/webScreenshot.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -30,7 +44,16 @@ export const registerBrowserTools = (
   server: McpServer,
   options: BrowserToolRegistration,
 ): void => {
-  const [listContract, inspectContract] = BROWSER_TOOL_CONTRACTS;
+  const [
+    listContract,
+    inspectContract,
+    analyzeContract,
+    sessionContract,
+    webMcpContract,
+    captureDiffContract,
+    screenshotContract,
+    screenshotDiffContract,
+  ] = BROWSER_TOOL_CONTRACTS;
   server.registerTool(
     listContract.name,
     toolRegistrationOptions(listContract),
@@ -67,6 +90,126 @@ export const registerBrowserTools = (
       );
       if (!result.ok) return toCallToolResult(result, inspectContract);
       return evidenceResult(options, inspectContract, result.value);
+    },
+  );
+  server.registerTool(
+    analyzeContract.name,
+    toolRegistrationOptions(analyzeContract),
+    async (input, context) => {
+      const parsed = analyzeWebBundleInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        analyzeContract.name,
+        () =>
+          analyzeWebBundle(
+            options.browser,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
+      );
+      if (!result.ok) return toCallToolResult(result, analyzeContract);
+      return evidenceResult(options, analyzeContract, result.value);
+    },
+  );
+  server.registerTool(
+    sessionContract.name,
+    toolRegistrationOptions(sessionContract),
+    async (input, context) => {
+      const parsed = observeWebSessionInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        sessionContract.name,
+        () =>
+          observeWebSession(
+            options.browser,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
+      );
+      if (!result.ok) return toCallToolResult(result, sessionContract);
+      return evidenceResult(options, sessionContract, result.value);
+    },
+  );
+  server.registerTool(
+    webMcpContract.name,
+    toolRegistrationOptions(webMcpContract),
+    async (input, context) => {
+      const parsed = discoverWebMcpToolsInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        webMcpContract.name,
+        () =>
+          discoverWebMcpTools(
+            options.browser,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
+      );
+      if (!result.ok) return toCallToolResult(result, webMcpContract);
+      return evidenceResult(options, webMcpContract, result.value);
+    },
+  );
+  server.registerTool(
+    captureDiffContract.name,
+    toolRegistrationOptions(captureDiffContract),
+    async (input) => {
+      const parsed = compareWebCapturesInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        captureDiffContract.name,
+        () => compareWebCaptureEvidence(options.browser, parsed),
+      );
+      if (!result.ok) return toCallToolResult(result, captureDiffContract);
+      return evidenceResult(options, captureDiffContract, result.value);
+    },
+  );
+  server.registerTool(
+    screenshotContract.name,
+    toolRegistrationOptions(screenshotContract),
+    async (input, context) => {
+      const parsed = captureWebScreenshotInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        screenshotContract.name,
+        () =>
+          captureWebScreenshot(
+            options.browser,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
+      );
+      if (!result.ok) return toCallToolResult(result, screenshotContract);
+      return evidenceResult(options, screenshotContract, result.value);
+    },
+  );
+  server.registerTool(
+    screenshotDiffContract.name,
+    toolRegistrationOptions(screenshotDiffContract),
+    async (input) => {
+      const parsed = compareWebScreenshotsInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        screenshotDiffContract.name,
+        () => compareWebScreenshotEvidence(options.browser, parsed),
+      );
+      if (!result.ok) return toCallToolResult(result, screenshotDiffContract);
+      return evidenceResult(options, screenshotDiffContract, result.value);
     },
   );
 };

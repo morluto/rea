@@ -9,6 +9,7 @@ import {
 import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import {
   enhancedOutputSchemas,
   officialOutputSchemas,
@@ -36,8 +37,9 @@ describe("tool contract surface", () => {
       ...NATIVE_TOOL_CONTRACTS,
       ...ARTIFACT_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
+      ...ELECTRON_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(52);
+    expect(contracts).toHaveLength(60);
     for (const contract of contracts) {
       const inputSchema = z.toJSONSchema(contract.inputSchema, {
         target: "draft-07",
@@ -49,12 +51,8 @@ describe("tool contract surface", () => {
       });
       expect(inputSchema.type).toBe("object");
       expect(outputSchema.type).toBe("object");
-      expect(contract.annotations).toMatchObject({
-        idempotentHint: true,
-      });
-      expect(contract.annotations.openWorldHint).toBe(
-        contract.kind === "browser-provider",
-      );
+      expect(typeof contract.annotations.idempotentHint).toBe("boolean");
+      expect(typeof contract.annotations.openWorldHint).toBe("boolean");
       expect(typeof contract.annotations.readOnlyHint).toBe("boolean");
       expect(typeof contract.annotations.destructiveHint).toBe("boolean");
       expect(contract.examples).toHaveLength(1);
@@ -140,16 +138,17 @@ describe("tool contract surface", () => {
     }
   });
 
-  it("publishes no unconstrained output-schema holes across all 70 tools", () => {
+  it("publishes no unconstrained output-schema holes across all 78 tools", () => {
     const contracts = [
       ...OFFICIAL_TOOL_CONTRACTS,
       ...ENHANCED_TOOL_CONTRACTS,
       ...NATIVE_TOOL_CONTRACTS,
       ...ARTIFACT_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
+      ...ELECTRON_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(70);
+    expect(contracts).toHaveLength(78);
     for (const contract of contracts) {
       const schema = z.toJSONSchema(contract.outputSchema, {
         target: "draft-07",

@@ -2,16 +2,18 @@
 name: rea-analysis
 description: Reverse engineer apps and websites with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "13"
-  tool_count: 70
+  version: "14"
+  tool_count: 78
 ---
 
 # REA
 
 Use REA when the user wants to understand how an app or feature works, compare app versions, decompile code, or build a similar feature.
 
-For a website already open in a user-owned Chrome-family browser, use
-`list_browser_targets` and `inspect_web_page` instead of opening a binary. Ask
+For a website already open in a user-owned Chrome-family browser, start with
+`list_browser_targets` and `inspect_web_page` instead of opening a binary. Use
+`analyze_web_bundle`, `observe_web_session`, `discover_webmcp_tools`, capture
+comparison, or screenshot tools only for the corresponding investigation. Ask
 the user to approve the exact page origins and loopback CDP endpoint before the
 first call. Browser observation is disabled unless the operator configured
 `REA_BROWSER_OBSERVE_ENABLED`, `REA_BROWSER_CDP_ENDPOINTS_JSON`, and
@@ -19,11 +21,19 @@ first call. Browser observation is disabled unless the operator configured
 
 Browser inspection is passive. Never claim that it clicked, navigated,
 evaluated page JavaScript, captured prior activity, or contained the page's
-network. Query values, headers, bodies, cookies, storage values, console values,
-and WebSocket payloads are deliberately absent. Request script sources or
-storage key names only when the user separately approves those more sensitive
-outputs. Treat truncation and attach-window coverage as explicit limitations,
-and cite the returned Evidence v2 IDs.
+network. Query values, credentials, cookies, authorization headers, storage
+values, and raw WebSocket or JSON values are deliberately absent. Accessibility
+text, bounded redacted console primitives, value-free JSON/WebSocket shapes,
+script sources, storage key names, source-map fetches, and screenshot pixels
+each require their documented independent opt-in or approval. Treat truncation,
+policy filtering, and attach-window coverage as explicit limitations, and cite
+the returned Evidence v2 IDs. WebMCP declarations are page-declared untrusted;
+REA inventories them but never invokes them.
+
+Electron `file://` pages use `list_electron_targets` and
+`inspect_electron_page` with a separate loopback endpoint and canonical
+filesystem-root authority. Never claim that Electron inspection invoked IPC,
+evaluated renderer JavaScript, navigated, or escaped an approved root.
 
 ## Understand the request
 

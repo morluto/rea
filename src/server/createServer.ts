@@ -17,6 +17,8 @@ import { createServerIdentity } from "../serverIdentity.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
+import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import { registerElectronTools } from "./registerElectronTools.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -26,11 +28,13 @@ export interface CreateServerOptions {
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
   readonly permissionAuthority?: PermissionAuthority;
   readonly browserObservation?: BrowserObservationPort;
+  readonly electronObservation?: ElectronObservationPort;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
+    readonly electronObservationEnabled?: boolean;
   };
 }
 
@@ -143,6 +147,12 @@ export const createServer = (
   registerBrowserTools(server, {
     logger: toolLogger,
     browser: options.browserObservation,
+    permissionAuthority: options.permissionAuthority,
+    recordEvidence,
+  });
+  registerElectronTools(server, {
+    logger: toolLogger,
+    electron: options.electronObservation,
     permissionAuthority: options.permissionAuthority,
     recordEvidence,
   });

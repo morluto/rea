@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
-
 import {
   AnalysisCancelledError,
   BrowserObservationError,
 } from "../domain/errors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 
 export type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -64,11 +63,9 @@ export const allowedSanitizedUrl = (
 
 export const sourceResult = (
   source: string,
-): { included: true; sha256: string; bytes: number; content: string } => ({
+): { included: true; artifact: ReturnType<typeof createWebTextArtifact> } => ({
   included: true,
-  sha256: createHash("sha256").update(source).digest("hex"),
-  bytes: Buffer.byteLength(source),
-  content: source,
+  artifact: createWebTextArtifact(source, "text/javascript"),
 });
 
 export const sourceExcluded = (

@@ -345,17 +345,22 @@ try {
   );
   const planned = json(plannedExecution.stdout);
   if (supportedSetupHost) {
+    const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
+    const plannedCursorConfig = await readFile(cursorConfig, "utf8");
+    const plannedSkill = await readFile(skillPath, "utf8");
     if (
       planned.status !== "needs_confirmation" ||
       plannedExecution.status !== 1 ||
       planned.appliedActions.length !== 0 ||
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
       !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
-      (await readFile(claudeConfig, "utf8")) !== '{"existing":true}\n' ||
-      (await readFile(cursorConfig, "utf8")) !== '{"existing":true}\n' ||
-      (await readFile(skillPath, "utf8")) !== "stale managed skill\n"
+      plannedClaudeConfig !== '{"existing":true}\n' ||
+      plannedCursorConfig !== '{"existing":true}\n' ||
+      plannedSkill !== "stale managed skill\n"
     )
-      throw new Error("packaged setup plan mutated files before approval");
+      throw new Error(
+        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, cursorConfig: plannedCursorConfig, skill: plannedSkill })}`,
+      );
   }
   const firstExecution = await runWithStatus(
     cli,

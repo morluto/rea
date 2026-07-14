@@ -7,6 +7,7 @@ import {
   AnalysisError,
   AnalysisTimeoutError,
   BrowserObservationError,
+  type BrowserObservationOperation,
 } from "../domain/errors.js";
 
 const HTTP_TIMEOUT_MS = 5_000;
@@ -45,12 +46,10 @@ export interface CdpEndpointDiscovery {
   readonly targets: readonly CdpEndpointTarget[];
 }
 
-type BrowserOperation = "list_browser_targets" | "inspect_web_page";
-
 /** Read bounded CDP discovery endpoints without following redirects. */
 export const discoverCdpEndpoint = async (
   endpoint: string,
-  operation: BrowserOperation,
+  operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<CdpEndpointDiscovery> => {
   const versionInput = await readJson(
@@ -95,7 +94,7 @@ export const discoverCdpEndpoint = async (
 const parseEndpointValue = <Output>(
   schema: z.ZodType<Output>,
   input: unknown,
-  operation: BrowserOperation,
+  operation: BrowserObservationOperation,
 ): Output => {
   const parsed = schema.safeParse(input);
   if (!parsed.success)
@@ -108,7 +107,7 @@ const parseEndpointValue = <Output>(
 const safeBrowserWebSocketUrl = (
   endpoint: string,
   reported: string,
-  operation: BrowserOperation,
+  operation: BrowserObservationOperation,
 ): string => {
   let parsed: URL;
   try {
@@ -136,7 +135,7 @@ const safeBrowserWebSocketUrl = (
 const readJson = async (
   url: URL,
   maximumBytes: number,
-  operation: BrowserOperation,
+  operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<unknown> =>
   await new Promise((resolve, reject) => {
@@ -196,7 +195,7 @@ const readJson = async (
 
 const endpointFailure = (
   cause: unknown,
-  operation: BrowserOperation,
+  operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;

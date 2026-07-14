@@ -20,6 +20,7 @@ export const registerSessionStatusTool = (
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
+    readonly electronObservationEnabled?: boolean;
   },
 ): void => {
   server.registerTool(
