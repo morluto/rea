@@ -51,8 +51,12 @@ export const observeCdpSession = async (
     initialUrl,
   );
   const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId === context.sessionId) capture.ingest(event);
+    if (observationEventMatches(event, context.sessionId))
+      capture.ingest(event);
   });
+  const removeDisconnectListener = context.connection.onDisconnect(() =>
+    capture.targetTerminated(),
+  );
   try {
     await context.connection.send(
       "Page.enable",
@@ -118,6 +122,7 @@ export const observeCdpSession = async (
     };
   } finally {
     removeListener();
+    removeDisconnectListener();
   }
 };
 
@@ -165,8 +170,7 @@ class TimelineCapture {
         break;
       case "Inspector.targetCrashed":
       case "Target.detachedFromTarget":
-        this.#add("target_terminated", params, null, null, "target_terminated");
-        this.end("target_terminated");
+        this.targetTerminated();
         break;
     }
   }
@@ -182,6 +186,12 @@ class TimelineCapture {
     this.#endReason = reason;
     for (const listener of this.#listeners) listener(reason);
     this.#listeners.clear();
+  }
+
+  targetTerminated(): void {
+    if (this.#endReason !== undefined) return;
+    this.#add("target_terminated", {}, null, null, "target_terminated");
+    this.end("target_terminated");
   }
 
   setFinalUrl(rawUrl: string): void {
@@ -302,6 +312,18 @@ class TimelineCapture {
     });
   }
 }
+
+const observationEventMatches = (
+  event: CdpEvent,
+  sessionId: string | undefined,
+): boolean => {
+  if (event.method !== "Target.detachedFromTarget")
+    return event.sessionId === sessionId;
+  return (
+    sessionId !== undefined &&
+    stringValue(recordValue(event.params)?.sessionId) === sessionId
+  );
+};
 
 const waitForWindow = async (
   durationMs: number,
