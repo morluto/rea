@@ -1,4 +1,5 @@
 import { Cli, z } from "incur";
+import { createInterface } from "node:readline/promises";
 
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import {
@@ -30,6 +31,24 @@ const capabilitySchema = z.enum([
   "reference_read",
 ]);
 
+type PolicyRevocationApproval =
+  | { readonly approved: true }
+  | { readonly approved: false; readonly reason: "cancelled" | "required" };
+
+/** Require an explicit decision before a project permission grant is removed. */
+export const approvePolicyRevocation = async (options: {
+  readonly approved: boolean;
+  readonly interactive: boolean;
+  readonly grantId: string;
+  readonly confirm: (grantId: string) => Promise<boolean>;
+}): Promise<PolicyRevocationApproval> => {
+  if (options.approved) return { approved: true };
+  if (!options.interactive) return { approved: false, reason: "required" };
+  return (await options.confirm(options.grantId))
+    ? { approved: true }
+    : { approved: false, reason: "cancelled" };
+};
+
 /** Register inspectable, dry-run, and revocation policy UX for the CLI. */
 export const registerPolicyCommands = (
   cli: ReturnType<typeof Cli.create>,
@@ -49,9 +68,13 @@ export const registerPolicyCommands = (
       network: z.enum(["none", "loopback", "external"]).default("none"),
       mount: z.boolean().default(false),
       write: z.boolean().default(false),
+      yes: z
+        .boolean()
+        .default(false)
+        .describe("Confirm project permission revocation without prompting"),
     }),
-    alias: { environmentNames: "environment-names" },
-    run: ({ args, options }) =>
+    alias: { environmentNames: "environment-names", yes: "y" },
+    run: ({ agent, args, formatExplicit, options }) =>
       logCliCommand(logger, "policy", async () => {
         const config = parseConfig(process.env);
         if (!config.ok) return failure(config.error);
@@ -76,6 +99,24 @@ export const registerPolicyCommands = (
             permissionProjectStore === undefined
           )
             return { error: "Project policy is not configured" };
+          const approval = await approvePolicyRevocation({
+            approved: options.yes,
+            interactive:
+              !agent && !formatExplicit && process.stdin.isTTY === true,
+            grantId: args.value,
+            confirm: confirmPolicyRevocation,
+          });
+          if (!approval.approved)
+            return approval.reason === "required"
+              ? {
+                  error:
+                    "Policy revoke requires confirmation. Rerun interactively or with --yes.",
+                  grant_id: args.value,
+                }
+              : {
+                  error: "Policy revocation was cancelled",
+                  grant_id: args.value,
+                };
           const revoked = await revokeProjectPermissionGrant(
             permissionProjectStore,
             permissionProjectRoot,
@@ -98,6 +139,21 @@ export const registerPolicyCommands = (
         return explain(config.value, capability.data, options);
       }),
   });
+};
+
+const confirmPolicyRevocation = async (grantId: string): Promise<boolean> => {
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await prompt.question(
+      `Revoke project permission grant ${JSON.stringify(grantId)}? [y/N] `,
+    );
+    return ["y", "yes"].includes(answer.trim().toLowerCase());
+  } finally {
+    prompt.close();
+  }
 };
 
 const explain = async (
