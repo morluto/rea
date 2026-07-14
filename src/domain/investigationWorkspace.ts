@@ -100,7 +100,7 @@ const stageSchema = z.enum([
   "find_changed_behavior",
 ]);
 
-export const investigationRunSchema = z.object({
+const investigationRunBaseSchema = z.object({
   schema_version: z.literal(1),
   run_id: z.string().regex(/^run_[a-f0-9]{64}$/u),
   request_sha256: digestSchema,
@@ -118,6 +118,31 @@ export const investigationRunSchema = z.object({
   result_evidence_id: evidenceIdSchema.nullable(),
   limitations: z.array(z.string().max(4_096)).max(100),
 });
+
+export const investigationRunSchema = z
+  .union([
+    investigationRunBaseSchema.extend({
+      legacy_request_identity: z.literal(true),
+    }),
+    investigationRunBaseSchema,
+  ])
+  .superRefine((run, context) => {
+    if (!("legacy_request_identity" in run)) return;
+    const legacyIdentity = createLegacyInvestigationRunIdentity(run);
+    if (
+      run.integrity_policy !== "fail" ||
+      run.integrity_continue_approved ||
+      run.max_integrity_mismatches !== 10 ||
+      run.run_id !== legacyIdentity.runId ||
+      run.request_sha256 !== legacyIdentity.requestSha256
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["legacy_request_identity"],
+        message:
+          "Legacy request identity is valid only for migrated strict runs",
+      });
+  });
 
 export type InvestigationRun = z.infer<typeof investigationRunSchema>;
 
@@ -145,6 +170,20 @@ const investigationWorkspaceSchema = z.object({
   bundle: evidenceBundleSchema,
   runs: z.array(investigationRunSchema).max(1_000),
 });
+
+const legacyInvestigationRunSchema = investigationRunBaseSchema
+  .omit({
+    integrity_policy: true,
+    integrity_continue_approved: true,
+    max_integrity_mismatches: true,
+  })
+  .strict();
+
+const legacyInvestigationWorkspaceSchema = investigationWorkspaceSchema
+  .extend({
+    runs: z.array(legacyInvestigationRunSchema).max(1_000),
+  })
+  .strict();
 
 export type InvestigationWorkspace = z.infer<
   typeof investigationWorkspaceSchema
@@ -207,6 +246,7 @@ export const reviseInvestigationWorkspace = (
 export const parseInvestigationWorkspace = (
   input: unknown,
 ): InvestigationWorkspace => {
+  if (isLegacyWorkspace(input)) return migrateLegacyWorkspace(input);
   const parsed = investigationWorkspaceSchema.parse(input);
   const bundle = parseEvidenceBundle(parsed.bundle);
   const canonical = buildWorkspace({
@@ -268,9 +308,16 @@ const validateRunReferences = (workspace: InvestigationWorkspace): void => {
   );
   for (const run of workspace.runs) {
     const expectedIdentity = createInvestigationRunIdentity(run);
+    const legacyIdentity = createLegacyInvestigationRunIdentity(run);
     if (
-      run.run_id !== expectedIdentity.runId ||
-      run.request_sha256 !== expectedIdentity.requestSha256
+      (run.run_id !== expectedIdentity.runId ||
+        run.request_sha256 !== expectedIdentity.requestSha256) &&
+      (!("legacy_request_identity" in run) ||
+        run.integrity_policy !== "fail" ||
+        run.integrity_continue_approved ||
+        run.max_integrity_mismatches !== 10 ||
+        run.run_id !== legacyIdentity.runId ||
+        run.request_sha256 !== legacyIdentity.requestSha256)
     )
       throw new TypeError("Investigation run identity is invalid");
     validateRunStages(run);
@@ -285,6 +332,85 @@ const validateRunReferences = (workspace: InvestigationWorkspace): void => {
     if (references.some((evidenceId) => !evidenceIds.has(evidenceId)))
       throw new TypeError("Investigation run references missing Evidence");
   }
+};
+
+/** Derive the pre-integrity-policy run identity for strict workspace migration. */
+export const createLegacyInvestigationRunIdentity = (input: {
+  readonly left: InvestigationRunTarget;
+  readonly right: InvestigationRunTarget;
+  readonly options: InvestigationRunOptions;
+}): { readonly runId: string; readonly requestSha256: string } => {
+  const requestSha256 = digestCanonical({
+    schema: "rea.cross-version-investigation-request/v1",
+    left: input.left,
+    right: input.right,
+    options: input.options,
+  });
+  return { runId: `run_${requestSha256}`, requestSha256 };
+};
+
+const isLegacyWorkspace = (input: unknown): boolean => {
+  if (typeof input !== "object" || input === null || !("runs" in input))
+    return false;
+  const runs = input.runs;
+  return (
+    Array.isArray(runs) &&
+    runs.some(
+      (run) =>
+        typeof run === "object" && run !== null && !("integrity_policy" in run),
+    )
+  );
+};
+
+const migrateLegacyWorkspace = (input: unknown): InvestigationWorkspace => {
+  const parsed = legacyInvestigationWorkspaceSchema.parse(input);
+  const bundle = parseEvidenceBundle(parsed.bundle);
+  const runs = [...parsed.runs].sort((left, right) =>
+    left.run_id.localeCompare(right.run_id),
+  );
+  const semantic = {
+    workspace_version: 1,
+    workspace_id: parsed.workspace_id,
+    name: parsed.name,
+    revision: parsed.revision,
+    previous_revision_digest: parsed.previous_revision_digest,
+    bundle,
+    runs,
+  } satisfies JsonValue;
+  if (parsed.workspace_id !== workspaceIdFor(parsed.name))
+    throw new TypeError("Investigation workspace ID does not match its name");
+  if (parsed.revision_digest !== `wrev_${digestCanonical(semantic)}`)
+    throw new TypeError("Investigation workspace revision digest is invalid");
+  const canonical = legacyInvestigationWorkspaceSchema.parse({
+    ...semantic,
+    revision_digest: parsed.revision_digest,
+  });
+  if (JSON.stringify(parsed) !== JSON.stringify(canonical))
+    throw new TypeError("Investigation workspace is not canonical");
+  for (const run of runs) {
+    const identity = createLegacyInvestigationRunIdentity(run);
+    if (
+      run.run_id !== identity.runId ||
+      run.request_sha256 !== identity.requestSha256
+    )
+      throw new TypeError("Investigation run identity is invalid");
+  }
+  const migrated = buildWorkspace({
+    workspaceId: parsed.workspace_id,
+    name: parsed.name,
+    revision: parsed.revision + 1,
+    previousRevisionDigest: parsed.revision_digest,
+    bundle,
+    runs: runs.map((run) => ({
+      ...run,
+      legacy_request_identity: true as const,
+      integrity_policy: "fail" as const,
+      integrity_continue_approved: false,
+      max_integrity_mismatches: 10,
+    })),
+  });
+  validateRunReferences(migrated);
+  return migrated;
 };
 
 const validateRunStages = (run: InvestigationRun): void => {
