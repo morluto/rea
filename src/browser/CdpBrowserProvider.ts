@@ -47,12 +47,17 @@ import {
   type BrowserObservationOperation,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { CdpConnection } from "./CdpConnection.js";
 import {
   discoverCdpEndpoint,
+  hasCdpTargetWebSocket,
   type CdpEndpointDiscovery,
   type CdpEndpointTarget,
 } from "./CdpEndpoint.js";
+import {
+  closeCdpTargetSession,
+  openCdpTargetSession,
+  type CdpTargetSession,
+} from "./CdpTargetSession.js";
 import { capturePage, type CapturedPage } from "./CdpPageCapture.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
@@ -65,6 +70,7 @@ const IDENTITY: ProviderIdentity = {
   name: "REA Chrome DevTools Protocol observation provider",
   version: "2",
 };
+const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
 
 /** Passive, origin-scoped browser observation through a user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
@@ -105,6 +111,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           excluded: selected.excluded,
           limitations: [
             "Only page targets whose current URL matches an approved exact origin are listed.",
+            ...(selected.unconnectable === 0
+              ? []
+              : [
+                  `${String(selected.unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
+                ]),
           ],
         }),
       );
@@ -118,7 +129,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<WebPageInspection, AnalysisError>> {
     try {
-      const captured = await this.#capture(input, options);
+      const captured = await this.#capture(input, options, "inspect_web_page");
       return ok(webPageInspectionSchema.parse(captured.inspection));
     } catch (cause: unknown) {
       return err(providerError(cause, "inspect_web_page"));
@@ -130,7 +141,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     try {
-      const captured = await this.#capture(input, options);
+      const captured = await this.#capture(
+        input,
+        options,
+        "analyze_web_bundle",
+      );
       const sourceMaps = input.fetch_source_maps
         ? await fetchWebSourceMaps(
             captured.sourceMapRequests,
@@ -152,31 +167,25 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: ObserveWebSessionInput,
     options: ExecutionOptions = {},
   ): Promise<Result<WebObservationSession, AnalysisError>> {
-    let connection: CdpConnection | undefined;
-    let sessionId: string | undefined;
+    let targetSession: CdpTargetSession | undefined;
     try {
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "inspect_web_page",
+        "observe_web_session",
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
-      connection = await CdpConnection.connect(
-        discovery.browserWebSocketUrl,
+      targetSession = await openCdpTargetSession(
+        discovery,
+        target,
+        "observe_web_session",
         options.signal,
       );
-      const attached = await connection.send(
-        "Target.attachToTarget",
-        { targetId: target.id, flatten: true },
-        undefined,
-        options.signal,
-      );
-      sessionId = attachedSessionId(attached);
       return ok(
         webObservationSessionSchema.parse(
           await observeCdpSession({
-            connection,
-            sessionId,
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
             discovery,
             target,
             input,
@@ -190,11 +199,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     } catch (cause: unknown) {
       return err(providerError(cause, "observe_web_session"));
     } finally {
-      if (connection !== undefined) {
-        if (sessionId !== undefined)
-          await bestEffortCleanup(connection, sessionId);
-        await connection.close();
-      }
+      if (targetSession !== undefined)
+        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
     }
   }
 
@@ -202,31 +208,25 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: DiscoverWebMcpToolsInput,
     options: ExecutionOptions = {},
   ): Promise<Result<WebMcpDiscovery, AnalysisError>> {
-    let connection: CdpConnection | undefined;
-    let sessionId: string | undefined;
+    let targetSession: CdpTargetSession | undefined;
     try {
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "inspect_web_page",
+        "discover_webmcp_tools",
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
-      connection = await CdpConnection.connect(
-        discovery.browserWebSocketUrl,
+      targetSession = await openCdpTargetSession(
+        discovery,
+        target,
+        "discover_webmcp_tools",
         options.signal,
       );
-      const attached = await connection.send(
-        "Target.attachToTarget",
-        { targetId: target.id, flatten: true },
-        undefined,
-        options.signal,
-      );
-      sessionId = attachedSessionId(attached);
       return ok(
         webMcpDiscoverySchema.parse(
           await discoverWebMcp({
-            connection,
-            sessionId,
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
             discovery,
             target,
             input,
@@ -240,11 +240,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     } catch (cause: unknown) {
       return err(providerError(cause, "discover_webmcp_tools"));
     } finally {
-      if (connection !== undefined) {
-        if (sessionId !== undefined)
-          await bestEffortCleanup(connection, sessionId);
-        await connection.close();
-      }
+      if (targetSession !== undefined)
+        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
     }
   }
 
@@ -262,31 +259,25 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: CaptureWebScreenshotInput,
     options: ExecutionOptions = {},
   ): Promise<Result<WebScreenshot, AnalysisError>> {
-    let connection: CdpConnection | undefined;
-    let sessionId: string | undefined;
+    let targetSession: CdpTargetSession | undefined;
     try {
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "inspect_web_page",
+        "capture_web_screenshot",
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
-      connection = await CdpConnection.connect(
-        discovery.browserWebSocketUrl,
+      targetSession = await openCdpTargetSession(
+        discovery,
+        target,
+        "capture_web_screenshot",
         options.signal,
       );
-      const attached = await connection.send(
-        "Target.attachToTarget",
-        { targetId: target.id, flatten: true },
-        undefined,
-        options.signal,
-      );
-      sessionId = attachedSessionId(attached);
       return ok(
         webScreenshotSchema.parse(
           await captureCdpScreenshot({
-            connection,
-            sessionId,
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
             discovery,
             target,
             input,
@@ -300,11 +291,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     } catch (cause: unknown) {
       return err(providerError(cause, "capture_web_screenshot"));
     } finally {
-      if (connection !== undefined) {
-        if (sessionId !== undefined)
-          await bestEffortCleanup(connection, sessionId);
-        await connection.close();
-      }
+      if (targetSession !== undefined)
+        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
     }
   }
 
@@ -321,30 +309,25 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   async #capture(
     input: InspectWebPageInput,
     options: ExecutionOptions,
+    operation: "inspect_web_page" | "analyze_web_bundle",
   ): Promise<CapturedPage> {
-    let connection: CdpConnection | undefined;
-    let sessionId: string | undefined;
+    let targetSession: CdpTargetSession | undefined;
     try {
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "inspect_web_page",
+        operation,
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
-      connection = await CdpConnection.connect(
-        discovery.browserWebSocketUrl,
+      targetSession = await openCdpTargetSession(
+        discovery,
+        target,
+        operation,
         options.signal,
       );
-      const attached = await connection.send(
-        "Target.attachToTarget",
-        { targetId: target.id, flatten: true },
-        undefined,
-        options.signal,
-      );
-      sessionId = attachedSessionId(attached);
       return await capturePage({
-        connection,
-        sessionId,
+        connection: targetSession.connection,
+        sessionId: targetSession.sessionId,
         discovery,
         target,
         input,
@@ -354,11 +337,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           : { progress: options.progress }),
       });
     } finally {
-      if (connection !== undefined) {
-        if (sessionId !== undefined)
-          await bestEffortCleanup(connection, sessionId);
-        await connection.close();
-      }
+      if (targetSession !== undefined)
+        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
     }
   }
 }
@@ -369,11 +349,13 @@ const selectTargets = (
 ): {
   readonly allowed: readonly BrowserTargetList["targets"]["items"][number][];
   readonly excluded: BrowserTargetList["excluded"];
+  readonly unconnectable: number;
 } => {
   const allowed = [];
   let disallowedOrigin = 0;
   let unsupportedUrl = 0;
   let nonPage = 0;
+  let unconnectable = 0;
   for (const target of discovery.targets) {
     if (target.type !== "page") {
       nonPage += 1;
@@ -386,6 +368,10 @@ const selectTargets = (
     }
     if (!allowedOrigins.has(url.origin)) {
       disallowedOrigin += 1;
+      continue;
+    }
+    if (!hasCdpTargetWebSocket(discovery, target)) {
+      unconnectable += 1;
       continue;
     }
     allowed.push({
@@ -405,6 +391,7 @@ const selectTargets = (
       unsupported_url: unsupportedUrl,
       non_page: nonPage,
     },
+    unconnectable,
   };
 };
 
@@ -425,37 +412,6 @@ const authorizeTarget = (
   )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return target;
-};
-
-const attachedSessionId = (value: unknown): string => {
-  if (typeof value !== "object" || value === null || !("sessionId" in value))
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  if (typeof value.sessionId !== "string" || value.sessionId.length > 256)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return value.sessionId;
-};
-
-const bestEffortCleanup = async (
-  connection: CdpConnection,
-  sessionId: string,
-): Promise<void> => {
-  for (const method of [
-    "Network.disable",
-    "Debugger.disable",
-    "Runtime.disable",
-    "Page.disable",
-  ]) {
-    try {
-      await connection.send(method, {}, sessionId);
-    } catch {
-      // Cleanup continues so detach is still attempted.
-    }
-  }
-  try {
-    await connection.send("Target.detachFromTarget", { sessionId });
-  } catch {
-    // Closing REA's socket is the final non-destructive cleanup boundary.
-  }
 };
 
 const providerError = (

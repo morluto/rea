@@ -106,7 +106,7 @@ export class CdpConnection {
           id,
           method,
           params,
-          ...(sessionId ? { sessionId } : {}),
+          ...(sessionId === undefined ? {} : { sessionId }),
         }),
         (error) => {
           if (error === undefined || error === null) return;

@@ -15,7 +15,7 @@ import {
 export const captureStorage = async (
   context: {
     readonly connection: CdpConnection;
-    readonly sessionId: string;
+    readonly sessionId: string | undefined;
     readonly input: InspectWebPageInput;
     readonly signal?: AbortSignal;
   },

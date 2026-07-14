@@ -27,6 +27,11 @@ interface FakeOptions {
   readonly malformedDiscovery?: boolean;
   readonly oversizedDiscovery?: boolean;
   readonly invalidBrowserWebSocket?: boolean;
+  readonly pageScopedVersionWebSocket?: boolean;
+  readonly omitTargetWebSocket?: boolean;
+  readonly additionalPageWithWebSocket?: boolean;
+  readonly additionalPageWithoutWebSocket?: boolean;
+  readonly invalidAttachedSession?: boolean;
   readonly malformedMessageOnMethod?: string;
   readonly malformedEventOnMethod?: string;
   readonly malformedEventShapeOnMethod?: string;
@@ -98,8 +103,10 @@ export const startFakeCdpBrowser = async (
                 "WebKit-Version": "fake-revision",
                 webSocketDebuggerUrl:
                   options.invalidBrowserWebSocket === true
-                    ? `ws://localhost:${String(port)}/devtools/page/not-browser`
-                    : `ws://localhost:${String(port)}/devtools/browser/fake`,
+                    ? `ws://localhost:${String(port)}/devtools/invalid/fake`
+                    : options.pageScopedVersionWebSocket === true
+                      ? `ws://localhost:${String(port)}/devtools/page/${versionTargetId(options)}`
+                      : `ws://localhost:${String(port)}/devtools/browser/fake`,
               }),
       );
       return;
@@ -113,7 +120,12 @@ export const startFakeCdpBrowser = async (
   });
   const webSockets = new WebSocketServer({ noServer: true });
   http.on("upgrade", (request, socket, head) => {
-    if (request.url !== "/devtools/browser/fake") {
+    if (
+      request.url !== "/devtools/browser/fake" &&
+      request.url !== "/devtools/page/allowed-page" &&
+      request.url !== "/devtools/page/allowed-page-with-socket" &&
+      request.url !== "/devtools/page/electron-page"
+    ) {
       socket.destroy();
       return;
     }
@@ -122,7 +134,7 @@ export const startFakeCdpBrowser = async (
     );
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
-    void request;
+    const directPage = request.url?.startsWith("/devtools/page/") === true;
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("message", (raw) => {
@@ -142,6 +154,19 @@ export const startFakeCdpBrowser = async (
           JSON.stringify({
             id: command.id,
             error: { code: -32_601, message: "Method not found" },
+          }),
+        );
+        return;
+      }
+      if (
+        directPage &&
+        (command.method === "Target.attachToTarget" ||
+          command.sessionId !== undefined)
+      ) {
+        socket.send(
+          JSON.stringify({
+            id: command.id,
+            error: { code: -32_600, message: "Direct page socket expected" },
           }),
         );
         return;
@@ -197,7 +222,11 @@ const targets = (
     title: "Inspectable application",
     url: `http://127.0.0.1:${String(port)}/app?token=page-secret#fragment`,
     attached: false,
-    webSocketDebuggerUrl: `ws://localhost:${String(port)}/devtools/page/allowed-page`,
+    ...(options.omitTargetWebSocket === true
+      ? {}
+      : {
+          webSocketDebuggerUrl: `ws://localhost:${String(port)}/devtools/page/allowed-page`,
+        }),
   },
   {
     id: "disallowed-page",
@@ -206,6 +235,29 @@ const targets = (
     url: "https://private.example.test/app?token=forbidden",
     attached: false,
   },
+  ...(options.additionalPageWithWebSocket === true
+    ? [
+        {
+          id: "allowed-page-with-socket",
+          type: "page",
+          title: "Second inspectable application page",
+          url: `http://127.0.0.1:${String(port)}/second`,
+          attached: false,
+          webSocketDebuggerUrl: `ws://localhost:${String(port)}/devtools/page/allowed-page-with-socket`,
+        },
+      ]
+    : []),
+  ...(options.additionalPageWithoutWebSocket === true
+    ? [
+        {
+          id: "allowed-page-without-socket",
+          type: "page",
+          title: "Unavailable application page",
+          url: `http://127.0.0.1:${String(port)}/unavailable`,
+          attached: false,
+        },
+      ]
+    : []),
   {
     id: "unsupported-page",
     type: "page",
@@ -254,6 +306,11 @@ const targets = (
           title: "Electron application",
           url: options.electronFileUrl,
           attached: false,
+          ...(options.omitTargetWebSocket === true
+            ? {}
+            : {
+                webSocketDebuggerUrl: `ws://localhost:${String(port)}/devtools/page/electron-page`,
+              }),
         },
       ]),
 ];
@@ -289,7 +346,7 @@ const resultFor = (
 ): Readonly<Record<string, unknown>> => {
   switch (command.method) {
     case "Target.attachToTarget":
-      return { sessionId: "session-1" };
+      return { sessionId: options.invalidAttachedSession ? "" : "session-1" };
     case "Page.getFrameTree":
       return frameTree(
         port,
@@ -365,6 +422,9 @@ const resultFor = (
       return {};
   }
 };
+
+const versionTargetId = (options: FakeOptions): string =>
+  options.electronFileUrl === undefined ? "allowed-page" : "electron-page";
 
 const endpointTargetToInfo = (
   target: Readonly<Record<string, unknown>>,

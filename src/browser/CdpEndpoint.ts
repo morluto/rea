@@ -29,13 +29,34 @@ const endpointTargetSchema = z.object({
   title: z.string().max(16_384).default(""),
   url: z.string().max(65_536),
   attached: z.boolean().default(false),
+  webSocketDebuggerUrl: z.string().min(1).max(2_048).optional(),
 });
 const endpointTargetsSchema = z.array(endpointTargetSchema).max(1_000);
 
-export type CdpEndpointTarget = z.infer<typeof endpointTargetSchema>;
+/** Validated direct CDP WebSocket bound to one discovered page target. */
+export interface CdpPageWebSocketEndpoint {
+  readonly scope: "page";
+  readonly targetId: string;
+  readonly url: string;
+}
+
+/** Validated CDP discovery socket and its command-routing scope. */
+export type CdpWebSocketEndpoint =
+  | { readonly scope: "browser"; readonly url: string }
+  | CdpPageWebSocketEndpoint;
+
+/** Bounded discovery target with an optional validated direct transport. */
+export interface CdpEndpointTarget {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  readonly url: string;
+  readonly attached: boolean;
+  readonly webSocket?: CdpPageWebSocketEndpoint;
+}
 
 export interface CdpEndpointDiscovery {
-  readonly browserWebSocketUrl: string;
+  readonly webSocket: CdpWebSocketEndpoint;
   readonly version: {
     readonly product: string;
     readonly protocol_version: string;
@@ -75,7 +96,7 @@ export const discoverCdpEndpoint = async (
     operation,
   );
   return {
-    browserWebSocketUrl: safeBrowserWebSocketUrl(
+    webSocket: safeCdpWebSocketEndpoint(
       endpoint,
       version.webSocketDebuggerUrl,
       operation,
@@ -87,8 +108,43 @@ export const discoverCdpEndpoint = async (
       user_agent: version["User-Agent"],
       js_version: version["V8-Version"],
     },
-    targets,
+    targets: targets.map((target) => ({
+      id: target.id,
+      type: target.type,
+      title: target.title,
+      url: target.url,
+      attached: target.attached,
+      ...targetWebSocket(endpoint, target, operation),
+    })),
   };
+};
+
+/** Select a browser attachment socket or a direct socket for one page target. */
+export const cdpTargetWebSocket = (
+  discovery: CdpEndpointDiscovery,
+  target: CdpEndpointTarget,
+  operation: BrowserObservationOperation,
+): CdpWebSocketEndpoint => {
+  const webSocket = availableCdpTargetWebSocket(discovery, target);
+  if (webSocket !== undefined) return webSocket;
+  throw new BrowserObservationError(operation, "invalid_endpoint_response");
+};
+
+/** Report whether discovery contains a validated transport for one target. */
+export const hasCdpTargetWebSocket = (
+  discovery: CdpEndpointDiscovery,
+  target: CdpEndpointTarget,
+): boolean => availableCdpTargetWebSocket(discovery, target) !== undefined;
+
+const availableCdpTargetWebSocket = (
+  discovery: CdpEndpointDiscovery,
+  target: CdpEndpointTarget,
+): CdpWebSocketEndpoint | undefined => {
+  if (discovery.webSocket.scope === "browser") return discovery.webSocket;
+  if (target.webSocket !== undefined) return target.webSocket;
+  return discovery.webSocket.targetId === target.id
+    ? discovery.webSocket
+    : undefined;
 };
 
 const parseEndpointValue = <Output>(
@@ -104,11 +160,11 @@ const parseEndpointValue = <Output>(
   return parsed.data;
 };
 
-const safeBrowserWebSocketUrl = (
+const safeCdpWebSocketEndpoint = (
   endpoint: string,
   reported: string,
   operation: BrowserObservationOperation,
-): string => {
+): CdpWebSocketEndpoint => {
   let parsed: URL;
   try {
     parsed = new URL(reported);
@@ -118,6 +174,7 @@ const safeBrowserWebSocketUrl = (
     });
   }
   const trustedEndpoint = new URL(endpoint);
+  const path = cdpWebSocketPath(parsed.pathname);
   if (
     parsed.protocol !== "ws:" ||
     parsed.port !== trustedEndpoint.port ||
@@ -125,11 +182,59 @@ const safeBrowserWebSocketUrl = (
     parsed.password !== "" ||
     parsed.search !== "" ||
     parsed.hash !== "" ||
-    !parsed.pathname.startsWith("/devtools/browser/")
+    path === undefined
   )
     throw new BrowserObservationError(operation, "invalid_endpoint_response");
   parsed.hostname = trustedEndpoint.hostname;
-  return parsed.href;
+  return path.scope === "browser"
+    ? { scope: "browser", url: parsed.href }
+    : { scope: "page", targetId: path.targetId, url: parsed.href };
+};
+
+const cdpWebSocketPath = (
+  pathname: string,
+):
+  | { readonly scope: "browser" }
+  | { readonly scope: "page"; targetId: string }
+  | undefined => {
+  const browserId = pathIdentifier(pathname, "/devtools/browser/", 1_024);
+  if (browserId !== undefined) return { scope: "browser" };
+  const targetId = pathIdentifier(pathname, "/devtools/page/", 256);
+  return targetId === undefined ? undefined : { scope: "page", targetId };
+};
+
+const pathIdentifier = (
+  pathname: string,
+  prefix: string,
+  maximumLength: number,
+): string | undefined => {
+  if (!pathname.startsWith(prefix)) return undefined;
+  const identifier = pathname.slice(prefix.length);
+  return identifier.length > 0 &&
+    identifier.length <= maximumLength &&
+    !identifier.includes("/")
+    ? identifier
+    : undefined;
+};
+
+const targetWebSocket = (
+  endpoint: string,
+  target: z.infer<typeof endpointTargetSchema>,
+  operation: BrowserObservationOperation,
+): { readonly webSocket?: CdpPageWebSocketEndpoint } => {
+  if (target.webSocketDebuggerUrl === undefined) return {};
+  try {
+    const webSocket = safeCdpWebSocketEndpoint(
+      endpoint,
+      target.webSocketDebuggerUrl,
+      operation,
+    );
+    return webSocket.scope === "page" && webSocket.targetId === target.id
+      ? { webSocket }
+      : {};
+  } catch {
+    return {};
+  }
 };
 
 const readJson = async (

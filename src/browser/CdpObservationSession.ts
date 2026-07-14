@@ -20,7 +20,7 @@ import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 
 interface ObservationContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: ObserveWebSessionInput;

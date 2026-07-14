@@ -114,6 +114,34 @@ describe("CdpElectronProvider", () => {
     });
   });
 
+  it("inspects a page-scoped Electron endpoint without browser attachment", async () => {
+    const root = await electronFixture();
+    const index = join(root, "index.html");
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(index).href,
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_file_roots: [root],
+        target_id: "electron-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.target.file_path).toBe(index);
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Target.attachToTarget",
+    );
+    expect(
+      browser.commands.every(({ sessionId }) => sessionId === undefined),
+    ).toBe(true);
+  });
+
   it("captures Electron script source only after separate approval", async () => {
     const root = await electronFixture();
     const browser = await startFakeCdpBrowser({

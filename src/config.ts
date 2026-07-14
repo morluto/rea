@@ -13,6 +13,7 @@ import type {
 import {
   browserEndpointSchema,
   browserOriginSchema,
+  isLiteralLoopbackHostname,
 } from "./domain/browserObservation.js";
 import { electronFileRootsSchema } from "./domain/electronObservation.js";
 
@@ -406,7 +407,7 @@ const browserNetworkScope = (
 ): "loopback" | "external" =>
   origins.every((origin) => {
     const hostname = new URL(origin).hostname;
-    return hostname === "127.0.0.1" || hostname === "[::1]";
+    return isLiteralLoopbackHostname(hostname);
   })
     ? "loopback"
     : "external";

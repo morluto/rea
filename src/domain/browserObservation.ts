@@ -46,7 +46,8 @@ export const browserOriginSchema = z
     return origin;
   });
 
-const isLiteralLoopback = (hostname: string): boolean =>
+/** Recognize the URL API's bracketed IPv6 form and normalized bare literals. */
+export const isLiteralLoopbackHostname = (hostname: string): boolean =>
   hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 
 /** Loopback-only HTTP endpoint accepted for a user-owned CDP browser. */
@@ -64,7 +65,7 @@ export const browserEndpointSchema = z
     }
     if (
       url.protocol !== "http:" ||
-      !isLiteralLoopback(url.hostname) ||
+      !isLiteralLoopbackHostname(url.hostname) ||
       url.port === "" ||
       url.username !== "" ||
       url.password !== "" ||

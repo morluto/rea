@@ -25,7 +25,7 @@ import { boundedSensitiveText } from "./SensitiveTextCapture.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: DiscoverWebMcpToolsInput;

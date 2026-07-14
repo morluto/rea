@@ -37,7 +37,7 @@ import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 interface CaptureContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: InspectWebPageInput;
@@ -330,7 +330,7 @@ const authorizedFrameTree = async (
 
 const enableObservationDomains = async (
   connection: CdpConnection,
-  sessionId: string,
+  sessionId: string | undefined,
   signal?: AbortSignal,
 ): Promise<void> => {
   await connection.send("Runtime.enable", {}, sessionId, signal);
