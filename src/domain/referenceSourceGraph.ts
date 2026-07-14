@@ -225,6 +225,11 @@ export type HistoricalSourceManifest = z.infer<
   typeof historicalSourceManifestBaseSchema
 >;
 
+/** Stable identity used to sort and deduplicate source parse failures. */
+export const historicalSourceParseFailureKey = (
+  failure: HistoricalSourceGraphInput["parse_failures"][number],
+): string => `${failure.path}\u0000${failure.parser}\u0000${failure.reason}`;
+
 const canonicalJson = (value: unknown): string => {
   const serialized = canonicalize(value);
   if (serialized === undefined)
@@ -400,7 +405,7 @@ function checkGraphInvariants(
     context,
   );
   checkSortedUnique(
-    graph.parse_failures.map(({ path, parser }) => `${path}\u0000${parser}`),
+    graph.parse_failures.map(historicalSourceParseFailureKey),
     "parse_failures",
     context,
   );

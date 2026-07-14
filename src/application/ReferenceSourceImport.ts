@@ -1,6 +1,7 @@
 import { isSecretLikePath } from "../domain/referenceSourceClassification.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceParseFailureKey,
   type HistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
@@ -205,16 +206,20 @@ export const importReferenceSource = async (
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = [...parseFailures]
-    .sort((left, right) => {
-      const byPath = byCodePoint(left.path, right.path);
-      if (byPath !== 0) return byPath;
-      return byCodePoint(left.parser, right.parser);
-    })
+    .sort((left, right) =>
+      byCodePoint(
+        historicalSourceParseFailureKey(left),
+        historicalSourceParseFailureKey(right),
+      ),
+    )
     .filter((value, index, array) => {
       if (index === 0) return true;
       const previous = array[index - 1];
       if (previous === undefined) return true;
-      return value.path !== previous.path || value.parser !== previous.parser;
+      return (
+        historicalSourceParseFailureKey(value) !==
+        historicalSourceParseFailureKey(previous)
+      );
     });
 
   const sortedEntries = [...entries].sort((left, right) =>
