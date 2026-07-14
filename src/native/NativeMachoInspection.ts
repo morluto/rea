@@ -32,7 +32,7 @@ interface NativeMachoInspectionContext {
   ) => NativeCommandInvocation;
 }
 
-const COMMANDS = [
+const REQUIRED_COMMANDS = [
   ["file", ["-b"]],
   ["lipo", ["-detailed_info"]],
   ["otool", ["-l"]],
@@ -40,15 +40,18 @@ const COMMANDS = [
   ["dyld_info", ["-imports"]],
   ["dyld_info", ["-exports"]],
   ["dwarfdump", ["--uuid"]],
-  ["vtool", ["-show-build"]],
 ] as const;
+
+const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
+const VTOOL_UNAVAILABLE_LIMITATION =
+  "vtool is unavailable; build metadata is normalized from otool only.";
 
 /** Inspect one Mach-O with bounded native commands and normalized output. */
 export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
 ): Promise<Result<NativeMachoObservation, AnalysisError>> => {
   const captures: NativeCommandCapture[] = [];
-  for (const [tool, prefix] of COMMANDS) {
+  for (const [tool, prefix] of REQUIRED_COMMANDS) {
     const captured = await context.run(
       tool,
       [...prefix, context.target.path],
@@ -57,7 +60,18 @@ export const inspectNativeMacho = async (
     if (!captured.ok) return err(captured.error);
     captures.push(captured.value);
   }
-  const result = normalizeMacho(captures, context.invocation);
+  const limitations: string[] = [];
+  const [tool, prefix] = OPTIONAL_VTOOL_COMMAND;
+  const optional = await context.run(
+    tool,
+    [...prefix, context.target.path],
+    context.signal,
+  );
+  if (optional.ok) captures.push(optional.value);
+  else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
+    limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
+  else return err(optional.error);
+  const result = normalizeMacho(captures, context.invocation, limitations);
   return ok({
     result: jsonValueSchema.parse(result),
     provenance: result.provenance,
@@ -69,6 +83,7 @@ export const inspectNativeMacho = async (
 const normalizeMacho = (
   captures: readonly NativeCommandCapture[],
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
+  additionalLimitations: readonly string[],
 ) => {
   const byTool = captureLookup(captures);
   const architectures = parseLipoArchitectures(byTool("lipo").stdout);
@@ -88,7 +103,12 @@ const normalizeMacho = (
   const provenance = captures.map(toInvocation);
   const limitations = [
     "Imports and exports combine dyld_info and nm; stripped or toolchain-hidden symbols may be absent.",
-    "vtool output is retained as provenance but only otool build metadata is normalized.",
+    ...(captures.some(({ tool }) => tool === "vtool")
+      ? [
+          "vtool output is retained as provenance but only otool build metadata is normalized.",
+        ]
+      : []),
+    ...additionalLimitations,
   ];
   return inspectMachoSchema.parse({
     format: "mach-o",

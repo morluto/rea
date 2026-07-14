@@ -16,8 +16,10 @@ export interface NativeCommandCapture {
   readonly stderr: string;
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
-  readonly stdoutTruncated: boolean;
-  readonly stderrTruncated: boolean;
+  /** Successful captures are exhaustive; output-limit exits return a failure. */
+  readonly stdoutTruncated: false;
+  /** Successful captures are exhaustive; output-limit exits return a failure. */
+  readonly stderrTruncated: false;
   readonly exitCode: number | null;
   readonly signal: string | null;
 }

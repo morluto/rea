@@ -41,6 +41,22 @@ describe("native macOS provider", () => {
     expect(resolutions).toBe(2);
   });
 
+  it("fails closed when a native command exceeds its output limit", async () => {
+    const runner = new XcrunCommandRunner(() =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    const captured = await runner.run(
+      "file",
+      ["-e", "process.stdout.write('x'.repeat(4096))"],
+      { timeoutMs: 1_000, maxOutputBytes: 64 },
+    );
+
+    expect(captured).toMatchObject({
+      ok: false,
+      error: { reason: "output-limit" },
+    });
+  });
+
   it("normalizes comprehensive Mach-O inspection with exact bounded provenance", async () => {
     const runner = new FixtureRunner();
     const client = new NativeMacOSProvider(runner, "darwin").createClient(
@@ -77,6 +93,41 @@ describe("native macOS provider", () => {
       kind: "file-offset-range",
       start: 16384,
       end: 20480,
+    });
+  });
+
+  it("keeps Mach-O inspection available when optional vtool is unavailable", async () => {
+    const client = new NativeMacOSProvider(
+      new VtoolFailingRunner("unavailable"),
+      "darwin",
+    ).createClient(machoTarget("/private/fixture"));
+
+    const execution = await client.execute("inspect_macho", {});
+
+    expect(execution.ok).toBe(true);
+    if (!execution.ok) return;
+    expect(execution.value.limitations).toEqual(
+      expect.arrayContaining([expect.stringMatching(/vtool.*unavailable/iu)]),
+    );
+    expect(execution.value.result).toMatchObject({
+      architectures: { total: 2 },
+      provenance: expect.not.arrayContaining([
+        expect.objectContaining({ tool: "vtool" }),
+      ]),
+    });
+  });
+
+  it("propagates optional vtool failures other than unavailability", async () => {
+    const client = new NativeMacOSProvider(
+      new VtoolFailingRunner("timeout"),
+      "darwin",
+    ).createClient(machoTarget("/private/fixture"));
+
+    const execution = await client.execute("inspect_macho", {});
+
+    expect(execution).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisTimeoutError" },
     });
   });
 
@@ -205,6 +256,18 @@ class FailingRunner implements NativeCommandRunner {
 
   run(tool: string) {
     return Promise.resolve(err(new NativeCommandFailure(tool, this.reason)));
+  }
+}
+
+class VtoolFailingRunner implements NativeCommandRunner {
+  readonly #fixture = new FixtureRunner();
+
+  constructor(private readonly reason: NativeCommandFailure["reason"]) {}
+
+  run(tool: string, arguments_: readonly string[]) {
+    return tool === "vtool"
+      ? Promise.resolve(err(new NativeCommandFailure(tool, this.reason)))
+      : this.#fixture.run(tool, arguments_);
   }
 }
 
