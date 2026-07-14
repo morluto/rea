@@ -164,7 +164,7 @@ const startRuntime = async (
     },
     writeStderr: () => undefined,
     setExitCode: () => undefined,
-    registerShutdown: () => undefined,
+    registerShutdown: () => () => undefined,
     registerReload: (handler) => {
       reload = handler;
       return () => undefined;
