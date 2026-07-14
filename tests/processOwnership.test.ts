@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
+  observeOwnedProcessGroup,
   parseProcessEnvironment,
   type ProcessOwnershipHost,
 } from "../src/application/ProcessOwnership.js";
@@ -26,6 +27,7 @@ const host = (
             pid: Number(pid),
             parentPid: Number(pid) === 100 ? 1 : 100,
             processGroupId: 100,
+            state: "S",
             command: "fixture",
           })),
         ),
@@ -63,8 +65,106 @@ describe("owned process-group cleanup", () => {
     expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
       cleaned: false,
       reason: "process group contains an unowned or PID-reused process",
+      failures: [{ pid: 101, reason: "run-token-mismatch" }],
     });
     expect(signalGroup).not.toHaveBeenCalled();
+  });
+
+  it("checks every member and aggregates ownership read failures", async () => {
+    const environment = vi.fn((pid: number) => {
+      if (pid === 100)
+        return Promise.reject(new Error("transient procfs read"));
+      return Promise.resolve(
+        pid === 101
+          ? { REA_PROCESS_RUN_ID: "different-run" }
+          : { REA_PROCESS_RUN_ID: "run-token" },
+      );
+    });
+    const signalGroup = vi.fn();
+    const adapter: ProcessOwnershipHost = {
+      listMembers: () =>
+        Promise.resolve(
+          [100, 101, 102].map((pid) => ({
+            pid,
+            parentPid: pid === 100 ? 1 : 100,
+            processGroupId: 100,
+            state: "S",
+            command: "fixture",
+          })),
+        ),
+      environment,
+      signalGroup,
+    };
+
+    expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
+      cleaned: false,
+      reason: "process group contains an unowned or PID-reused process",
+      failures: [
+        { pid: 100, reason: "environment-unreadable" },
+        { pid: 101, reason: "run-token-mismatch" },
+      ],
+    });
+    expect(environment.mock.calls.map(([pid]) => pid)).toEqual([100, 101, 102]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+
+  it("ignores exited zombie members during live ownership checks", async () => {
+    const environment = vi.fn((pid: number) =>
+      Promise.resolve(pid === 101 ? {} : { REA_PROCESS_RUN_ID: "run-token" }),
+    );
+    const signalGroup = vi.fn();
+    const adapter: ProcessOwnershipHost = {
+      listMembers: () =>
+        Promise.resolve([
+          {
+            pid: 100,
+            parentPid: 1,
+            processGroupId: 100,
+            state: "S",
+            command: "fixture",
+          },
+          {
+            pid: 101,
+            parentPid: 100,
+            processGroupId: 100,
+            state: "Z",
+            command: "[node] <defunct>",
+          },
+        ]),
+      environment,
+      signalGroup,
+    };
+
+    expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
+      cleaned: true,
+      signaled: true,
+    });
+    expect(environment).toHaveBeenCalledTimes(1);
+    expect(environment).toHaveBeenCalledWith(100);
+    expect(signalGroup).toHaveBeenCalledWith(100, "SIGKILL");
+  });
+
+  it("observes a zombie-only group as settled", async () => {
+    const environment = vi.fn(() => Promise.resolve({}));
+    const adapter: ProcessOwnershipHost = {
+      listMembers: () =>
+        Promise.resolve([
+          {
+            pid: 101,
+            parentPid: 1,
+            processGroupId: 100,
+            state: "Z+",
+            command: "[node] <defunct>",
+          },
+        ]),
+      environment,
+      signalGroup: vi.fn(),
+    };
+
+    expect(await observeOwnedProcessGroup(ownership, adapter)).toEqual({
+      state: "empty",
+    });
+    expect(environment).not.toHaveBeenCalled();
   });
 
   it("is idempotent when the owned group has already exited", async () => {
