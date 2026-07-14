@@ -54,6 +54,9 @@ describe("CLI upgrade", () => {
       versionCheck: "available",
       installMethod: "npm",
       command: "npm install --global rea-agents@latest",
+      clientRestartRequired: true,
+      remediation:
+        "Rerun rea setup to refresh registrations and the skill, then restart clients that may retain an older MCP server.",
     });
     expect(host.installs).toBe(1);
   });

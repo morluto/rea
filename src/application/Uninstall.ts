@@ -7,7 +7,7 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { supportedClients, type SetupClient } from "./Setup.js";
+import { supportedClients, type SetupClient } from "./SupportedClients.js";
 
 interface ManagedPathStats {
   isSymbolicLink(): boolean;

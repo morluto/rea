@@ -1,6 +1,5 @@
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
-import { readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -16,6 +15,12 @@ import {
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import { CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
+import {
+  readClientRegistrationStatuses,
+  type ClientRegistrationStatus,
+} from "./ClientRegistrationStatus.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_HOPPER =
@@ -48,6 +53,9 @@ export interface DoctorHost {
   linuxDemoRuntimeReady(): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
+  installationPaths?(): Promise<readonly string[]>;
+  installedSkillVersion?(): Promise<string | undefined>;
+  clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
 }
 
 /**
@@ -62,6 +70,26 @@ export const runDoctor = async (
   readonly healthy: boolean;
   readonly hopperPath?: string;
   readonly checks: readonly DoctorCheck[];
+  readonly identity?: {
+    readonly cli_package_version: string;
+    readonly expected_skill_version: string;
+    readonly sdk: typeof SDK_IDENTITY;
+    readonly catalog: typeof CATALOG_IDENTITY;
+    readonly live_server: {
+      readonly state: "unknown";
+      readonly remediation: string;
+    };
+    readonly installations: {
+      readonly paths: readonly string[];
+      readonly state: "single" | "multiple" | "unknown";
+    };
+    readonly skill: {
+      readonly installed_version: string | null;
+      readonly state: "aligned" | "stale" | "unknown";
+      readonly remediation: string | null;
+    };
+    readonly registrations: readonly ClientRegistrationStatus[];
+  };
 }> => {
   const checks: DoctorCheck[] = [];
   checks.push(
@@ -148,10 +176,59 @@ export const runDoctor = async (
         classification: "config_drift",
       }),
     );
+  const installationPaths = (await host.installationPaths?.()) ?? [];
+  const installedSkillVersion = await host.installedSkillVersion?.();
+  const registrations = (await host.clientRegistrations?.()) ?? [];
+  for (const registration of registrations)
+    if (registration.state !== "aligned")
+      checks.push({
+        name: `registration:${registration.client}`,
+        ok: false,
+        classification: "config_drift",
+        detail: registration.config_path,
+        remediation:
+          registration.remediation ??
+          "Run rea setup, then restart the affected client.",
+      });
   return {
     healthy: checks.every(({ ok }) => ok),
     ...(hopperPath === undefined ? {} : { hopperPath }),
     checks,
+    identity: {
+      cli_package_version: PRODUCT_IDENTITY.packageVersion,
+      expected_skill_version: PRODUCT_IDENTITY.skillVersion,
+      sdk: SDK_IDENTITY,
+      catalog: CATALOG_IDENTITY,
+      live_server: {
+        state: "unknown",
+        remediation:
+          "Compare rea://server/identity or binary_session from the active client; an on-disk registration cannot prove the running server version.",
+      },
+      installations: {
+        paths: installationPaths,
+        state:
+          installationPaths.length === 0
+            ? "unknown"
+            : installationPaths.length === 1
+              ? "single"
+              : "multiple",
+      },
+      skill: {
+        installed_version: installedSkillVersion ?? null,
+        state:
+          installedSkillVersion === undefined
+            ? "unknown"
+            : installedSkillVersion === PRODUCT_IDENTITY.skillVersion
+              ? "aligned"
+              : "stale",
+        remediation:
+          installedSkillVersion === undefined ||
+          installedSkillVersion === PRODUCT_IDENTITY.skillVersion
+            ? null
+            : "Run rea setup to update the installed REA skill.",
+      },
+      registrations,
+    },
   };
 };
 
@@ -241,10 +318,44 @@ export const systemDoctorHost = (): DoctorHost => ({
     }
     return paths;
   },
+  async installationPaths() {
+    try {
+      const command = process.platform === "win32" ? "where" : "which";
+      const arguments_ = process.platform === "win32" ? ["rea"] : ["-a", "rea"];
+      return uniqueLines((await execFileAsync(command, arguments_)).stdout);
+    } catch {
+      return [];
+    }
+  },
+  async installedSkillVersion() {
+    try {
+      const content = await readFile(
+        join(
+          homedir(),
+          ".agents/skills",
+          PRODUCT_IDENTITY.skillName,
+          "SKILL.md",
+        ),
+        "utf8",
+      );
+      return /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1];
+    } catch {
+      return undefined;
+    }
+  },
+  clientRegistrations: () => readClientRegistrationStatuses(homedir()),
 });
 
 const parseMajor = (version: string): number =>
   Number.parseInt(version.split(".")[0] ?? "0", 10);
+const uniqueLines = (value: string): string[] => [
+  ...new Set(
+    value
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  ),
+];
 const check = (
   name: string,
   ok: boolean,

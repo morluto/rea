@@ -59,6 +59,57 @@ describe("doctor", () => {
     expect(result.hopperPath).toBe("/manual/Hopper");
     expect(result.healthy).toBe(true);
   });
+
+  it("distinguishes stale skills, path shadowing, and unobservable live state", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installationPaths: () =>
+          Promise.resolve(["/usr/local/bin/rea", "/home/user/bin/rea"]),
+        installedSkillVersion: () => Promise.resolve("10"),
+      }),
+    );
+
+    expect(result.identity).toMatchObject({
+      live_server: { state: "unknown" },
+      installations: { state: "multiple" },
+      skill: {
+        installed_version: "10",
+        state: "stale",
+        remediation: "Run rea setup to update the installed REA skill.",
+      },
+    });
+  });
+  it("reports stale client registration paths without claiming live state", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              client: "codex",
+              config_path: "/home/user/.codex/config.toml",
+              command: ["/old/rea", "mcp"],
+              state: "stale",
+              remediation:
+                "Run rea setup to refresh this registration, then restart the client.",
+            },
+          ]),
+      }),
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.identity).toMatchObject({
+      live_server: { state: "unknown" },
+      registrations: [{ client: "codex", state: "stale" }],
+    });
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:codex",
+        classification: "config_drift",
+      }),
+    );
+  });
   it("accepts an officially supported Linux distribution", async () => {
     const path = "/home/user/.local/share/rea/hopper/bin/Hopper";
     const result = await runDoctor(

@@ -52,6 +52,8 @@ export type UpgradeResult =
       readonly versionCheck: "available" | "unavailable";
       readonly installMethod: "npm";
       readonly command: typeof UPGRADE_COMMAND;
+      readonly clientRestartRequired: true;
+      readonly remediation: string;
     }
   | {
       readonly status: "failed";
@@ -102,6 +104,9 @@ export const runUpgrade = async (
     versionCheck: latestVersion === undefined ? "unavailable" : "available",
     installMethod: "npm",
     command: UPGRADE_COMMAND,
+    clientRestartRequired: true,
+    remediation:
+      "Rerun rea setup to refresh registrations and the skill, then restart clients that may retain an older MCP server.",
   };
 };
 

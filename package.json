@@ -49,6 +49,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "prebuild": "node scripts/generate-package-metadata.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "format": "prettier --write .",
@@ -76,7 +77,8 @@
     "verify:package": "npm run build && node scripts/verify-package.mjs",
     "verify:published": "node scripts/verify-published-package.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
-    "docs:generate": "typedoc",
+    "docs:generate": "npm run build && typedoc && node scripts/generate-error-schema.mjs",
+    "docs:error-schema": "npm run build && node scripts/generate-error-schema.mjs",
     "prepack": "npm run build",
     "prepare": "husky",
     "rebuild:native": "node scripts/rebuild-native.mjs"
@@ -89,7 +91,7 @@
     "@babel/parser": "8.0.4",
     "@babel/types": "8.0.4",
     "@electron/asar": "4.2.0",
-    "@modelcontextprotocol/server": "2.0.0-beta.3",
+    "@modelcontextprotocol/server": "2.0.0-beta.4",
     "@xterm/addon-serialize": "0.14.0",
     "@xterm/headless": "6.0.0",
     "@zip.js/zip.js": "2.8.26",
@@ -110,7 +112,7 @@
   },
   "devDependencies": {
     "@fast-check/vitest": "0.4.1",
-    "@modelcontextprotocol/client": "2.0.0-beta.3",
+    "@modelcontextprotocol/client": "2.0.0-beta.4",
     "@types/node": "24.10.1",
     "@types/write-file-atomic": "4.0.3",
     "@types/ws": "8.18.1",
