@@ -108,9 +108,12 @@ const parseStringArray = (
     return parsed.success
       ? ok(parsed.data)
       : err(
-          new ConfigurationError(`${name} must encode an array of strings`, {
-            cause: parsed.error,
-          }),
+          new ConfigurationError(
+            parsed.error.issues.some(({ code }) => code === "too_big")
+              ? `${name} must encode at most 128 strings`
+              : `${name} must encode an array of strings`,
+            { cause: parsed.error },
+          ),
         );
   } catch (cause: unknown) {
     return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));

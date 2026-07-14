@@ -19,6 +19,10 @@ describe("setup installer failure projection", () => {
     ["runtime_dependencies", "runtime_dependency_unavailable"],
     ["unsupported_hopper_build", "unsupported_hopper_build"],
     ["cancelled", "setup_cancelled"],
+    ["destination_exists", "destination_exists"],
+    ["mount", "mount_failed"],
+    ["bundle", "bundle_invalid"],
+    ["copy", "copy_failed"],
   ] as const)("maps %s to %s", (reason, code) => {
     const result = setupInstallFailure(reason as HopperInstallFailureReason);
     expect(result).toMatchObject({ status: "failed", code });
