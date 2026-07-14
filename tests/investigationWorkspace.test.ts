@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
 import canonicalize from "canonicalize";
 
@@ -31,6 +31,7 @@ import {
   parseInvestigationWorkspace,
   serializeInvestigationWorkspace,
 } from "../src/domain/investigationWorkspace.js";
+import { ok } from "../src/domain/result.js";
 
 const digestCanonical = (value: unknown): string => {
   const encoded = canonicalize(value);
@@ -239,6 +240,110 @@ describe("persistent cross-version investigation workspace", () => {
     });
   });
 
+  it("replays only an explicitly selected and fully verified complete run", async () => {
+    const { left, right, input } = await fixture();
+    if (directory === undefined) throw new Error("missing fixture root");
+    const completed = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
+    if (!completed.ok) throw completed.error;
+    const run = completed.value.workspace.runs[0];
+    if (run === undefined || run.comparison_evidence_id === null)
+      throw new Error("missing completed run");
+
+    const defaultAuthorization = vi.fn(() => Promise.resolve(ok(null)));
+    await expect(
+      runCrossVersionInvestigation(input, policy(directory), {
+        inputRoots: [directory],
+        authorizeInputRead: defaultAuthorization,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { reused: true } });
+    expect(defaultAuthorization).toHaveBeenCalledOnce();
+
+    const inconsistentRun = investigationRunSchema.parse({
+      ...run,
+      result_evidence_id: run.comparison_evidence_id,
+    });
+    const inconsistent = createInvestigationWorkspace(
+      input.workspace_name,
+      completed.value.workspace.bundle,
+      [inconsistentRun],
+    );
+    const inconsistentPath = join(directory, "inconsistent.json");
+    expect(
+      await writeInvestigationWorkspace(
+        inconsistent,
+        inconsistentPath,
+        null,
+        policy(directory),
+      ),
+    ).toMatchObject({ ok: true });
+    await expect(
+      runCrossVersionInvestigation(
+        {
+          ...input,
+          workspace_path: inconsistentPath,
+          replay_run_id: run.run_id,
+        },
+        policy(directory),
+        { inputRoots: [] },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+
+    await Promise.all([
+      rm(left, { recursive: true, force: true }),
+      rm(right, { recursive: true, force: true }),
+    ]);
+    const replayAuthorization = vi.fn(() => Promise.resolve(ok(null)));
+    await expect(
+      runCrossVersionInvestigation(
+        {
+          ...input,
+          expected_workspace_revision: completed.value.workspace.revision,
+          replay_run_id: run.run_id,
+        },
+        policy(directory),
+        { inputRoots: [], authorizeInputRead: replayAuthorization },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        reused: true,
+        evidence: { evidence_id: completed.value.evidence.evidence_id },
+        workspace: { revision: completed.value.workspace.revision },
+      },
+    });
+    expect(replayAuthorization).not.toHaveBeenCalled();
+
+    for (const replayInput of [
+      { ...input, replay_run_id: `run_${"f".repeat(64)}` },
+      { ...input, right_path: `${right}-other`, replay_run_id: run.run_id },
+      {
+        ...input,
+        options: { ...input.options, change_limit: 99 },
+        replay_run_id: run.run_id,
+      },
+    ])
+      await expect(
+        runCrossVersionInvestigation(replayInput, policy(directory), {
+          inputRoots: [],
+          authorizeInputRead: replayAuthorization,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          _tag: "InvestigationWorkspaceError",
+          reason: "revision-conflict",
+        },
+      });
+    expect(replayAuthorization).not.toHaveBeenCalled();
+  });
+
   it("enforces shared JSON depth limits while reading workspaces", async () => {
     const { path, input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");
@@ -299,6 +404,26 @@ describe("persistent cross-version investigation workspace", () => {
         policy(directory),
       ),
     ).toMatchObject({ ok: true });
+
+    const replayAuthorization = vi.fn(() => Promise.resolve(ok(null)));
+    await expect(
+      runCrossVersionInvestigation(
+        {
+          ...input,
+          workspace_path: resumePath,
+          replay_run_id: partialRun.run_id,
+        },
+        policy(directory),
+        { inputRoots: [], authorizeInputRead: replayAuthorization },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "InvestigationWorkspaceError",
+        reason: "revision-conflict",
+      },
+    });
+    expect(replayAuthorization).not.toHaveBeenCalled();
 
     const resumed = await runCrossVersionInvestigation(
       { ...input, workspace_path: resumePath },

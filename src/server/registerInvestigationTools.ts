@@ -19,7 +19,10 @@ import {
 } from "../domain/changedBehavior.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
+import {
+  EvidenceIntegrityError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -93,14 +96,19 @@ const registerChangedBehavior = (
     contractOptions(contract),
     async (input, context) => {
       const parsed = changedBehaviorInputSchema.parse(input);
-      if (parsed.investigation_run !== undefined) {
+      const investigationRun = parsed.investigation_run;
+      if (investigationRun !== undefined) {
         const progress = mcpProgressReporter(context);
         let workspaceAuthorization: DeferredFileWriteAuthorization | undefined;
+        let authorizeInputRead:
+          | (() => Promise<Result<null, AnalysisError>>)
+          | undefined;
         if (policies.permissionAuthority !== undefined) {
+          const authority = policies.permissionAuthority;
           const authorizedWorkspace = await authorizeFileReadWithDeferredWrite(
-            policies.permissionAuthority,
+            authority,
             {
-              path: parsed.investigation_run.workspace_path,
+              path: investigationRun.workspace_path,
               readCapability: "investigation_workspace_read",
               writeCapability: "investigation_workspace_write",
               operation: contract.name,
@@ -109,23 +117,16 @@ const registerChangedBehavior = (
           if (!authorizedWorkspace.ok)
             return toCallToolResult(authorizedWorkspace, contract);
           workspaceAuthorization = authorizedWorkspace.value;
-          const authorizedInput = await authorizeRootPermission(
-            policies.permissionAuthority,
-            {
+          authorizeInputRead = () =>
+            authorizeRootPermission(authority, {
               capability: "investigation_input",
-              roots: [
-                parsed.investigation_run.left_path,
-                parsed.investigation_run.right_path,
-              ],
+              roots: [investigationRun.left_path, investigationRun.right_path],
               access: "read",
               operation: contract.name,
-            },
-          );
-          if (!authorizedInput.ok)
-            return toCallToolResult(authorizedInput, contract);
+            });
         }
         const investigated = await runCrossVersionInvestigation(
-          parsed.investigation_run,
+          investigationRun,
           policies.evidenceFiles,
           {
             ...investigationExecution(
@@ -141,6 +142,7 @@ const registerChangedBehavior = (
                   authorizeWorkspaceWrite:
                     workspaceAuthorization.authorizeWrite,
                 }),
+            ...(authorizeInputRead === undefined ? {} : { authorizeInputRead }),
           },
         );
         if (!investigated.ok) return toCallToolResult(investigated, contract);
