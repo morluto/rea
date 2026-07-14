@@ -59,6 +59,17 @@ class SilentLauncher implements BridgeLauncher {
   }
 }
 
+class CancelThenFixtureLauncher implements BridgeLauncher {
+  #launches = 0;
+
+  launch(session: BridgeSession) {
+    this.#launches += 1;
+    return this.#launches === 1
+      ? new SilentLauncher().launch()
+      : new FixtureLauncher().launch(session);
+  }
+}
+
 class ExitingLauncher implements BridgeLauncher {
   constructor(readonly code: number) {}
 
@@ -182,7 +193,7 @@ describe("HopperClient", () => {
 
   it("cancels bridge startup without waiting for the startup timeout", async () => {
     const client = new HopperClient({
-      launcher: new SilentLauncher(),
+      launcher: new CancelThenFixtureLauncher(),
       startupTimeoutMs: 10_000,
     });
     clients.push(client);
@@ -196,6 +207,16 @@ describe("HopperClient", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
     expect(Date.now() - startedAt).toBeLessThan(500);
+    await expect(client.start()).resolves.toEqual({
+      ok: true,
+      value: { name: "REA Hopper bridge", version: "1.0.0" },
+    });
+    await expect(
+      client.callTool("echo", { value: "retried" }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { value: "retried" },
+    });
   });
 
   it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
