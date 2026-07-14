@@ -7,10 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalizePermissionCeilings,
   canonicalizePermissionRequest,
+  createPermissionAuthority,
+  type PermissionAuthority,
 } from "../src/application/PermissionAuthority.js";
 import {
   createPermissionPolicy,
   evaluatePermission,
+  type PermissionGrant,
+  type PermissionScope,
 } from "../src/domain/permissionPolicy.js";
 
 describe("permission authority", () => {
@@ -99,4 +103,79 @@ describe("permission authority", () => {
     if (result.ok)
       expect(result.value.roots).toEqual([join(sandbox, "new.json")]);
   });
+
+  it("commits a configured policy only after every grant validates", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-reload-"));
+    const oldRoot = join(sandbox, "old");
+    const newRoot = join(sandbox, "new");
+    const outsideRoot = join(sandbox, "outside");
+    await Promise.all([mkdir(oldRoot), mkdir(newRoot), mkdir(outsideRoot)]);
+    const oldScope = evidenceScope(oldRoot);
+    const newScope = evidenceScope(newRoot);
+    const authority = await createPermissionAuthority(
+      [oldScope],
+      [administratorGrant(oldScope)],
+    );
+    expect(authority.ok).toBe(true);
+    if (!authority.ok) return;
+
+    const reloaded = await authority.value.replaceConfiguredPolicy({
+      ceilings: [newScope],
+      administratorGrants: [administratorGrant(newScope)],
+      projectGrants: [
+        {
+          ...evidenceScope(outsideRoot),
+          grant_id: "project:outside-ceiling",
+          lifetime: "project",
+          operation_identity: null,
+          expires_at: null,
+        },
+      ],
+    });
+
+    expect(reloaded.ok).toBe(false);
+    expect(await canRead(authority.value, oldRoot)).toBe(true);
+    expect(await canRead(authority.value, newRoot)).toBe(false);
+
+    expect(
+      await authority.value.replaceConfiguredPolicy({
+        ceilings: [newScope],
+        administratorGrants: [administratorGrant(newScope)],
+        projectGrants: [],
+      }),
+    ).toEqual({ ok: true, value: null });
+    expect(await canRead(authority.value, oldRoot)).toBe(false);
+    expect(await canRead(authority.value, newRoot)).toBe(true);
+  });
 });
+
+const evidenceScope = (root: string): PermissionScope => ({
+  capability: "evidence_read",
+  roots: [root],
+  executables: [],
+  environment_names: [],
+  network: "none",
+  mount: false,
+});
+
+const administratorGrant = (scope: PermissionScope): PermissionGrant => ({
+  ...scope,
+  grant_id: "administrator:evidence_read",
+  lifetime: "administrator",
+  operation_identity: null,
+  expires_at: null,
+});
+
+const canRead = async (
+  authority: PermissionAuthority,
+  root: string,
+): Promise<boolean> =>
+  (
+    await authority.explain(
+      {
+        ...evidenceScope(root),
+        operation_identity: `read:${root}`,
+      },
+      "read",
+    )
+  ).ok;
