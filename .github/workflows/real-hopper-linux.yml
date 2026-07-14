@@ -57,7 +57,7 @@ jobs:
           npm install --global --prefix "${prefix}" "./${tarball}"
           echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
           echo 'REA_VERIFY_SERVER_ARGS_JSON=["mcp"]' >> "${GITHUB_ENV}"
-      - name: Verify two binaries through the in-process bridge
+      - name: Verify two binaries through an alternate launcher symlink
         env:
           HOPPER_TARGET_PATH: ${{ inputs.first_target }}
           HOPPER_SECOND_TARGET_PATH: ${{ inputs.second_target }}

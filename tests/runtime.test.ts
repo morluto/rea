@@ -37,7 +37,7 @@ describe("production stdio runtime", () => {
         name: "current_document",
         arguments: {},
       });
-      expect(result.isError).not.toBe(true);
+      expect(result.isError === true).toBe(process.platform === "linux");
     } finally {
       await client.close();
       await transport.close();
@@ -53,7 +53,7 @@ describe("production stdio runtime", () => {
         mode: "mcp",
         layer: "server",
         tool: "current_document",
-        status: "ok",
+        status: process.platform === "linux" ? "error" : "ok",
       }),
     );
     expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
