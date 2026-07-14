@@ -131,6 +131,7 @@ const captureAuthorizedPage = async (
   const workerCapture = await captureWorkers(
     context,
     allowedOrigins,
+    new Set(frames.map((frame) => frame.frame_id)),
     limitations,
   );
   if (workerCapture.total > workerCapture.items.length)
@@ -384,6 +385,7 @@ const captureScripts = async (
 const captureWorkers = async (
   context: CaptureContext,
   allowedOrigins: ReadonlySet<string>,
+  frameIds: ReadonlySet<string>,
   limitations: string[],
 ): Promise<{
   readonly total: number;
@@ -400,7 +402,12 @@ const captureWorkers = async (
   for (const target of recordsValue(recordValue(result)?.targetInfos)) {
     const type = stringValue(target.type) ?? "";
     const url = allowedSanitizedUrl(target.url, allowedOrigins);
-    if (!type.includes("worker") || url === undefined) continue;
+    const relatedToPage =
+      stringValue(target.openerId) === context.target.id ||
+      (stringValue(target.parentFrameId) !== undefined &&
+        frameIds.has(stringValue(target.parentFrameId) ?? ""));
+    if (!type.includes("worker") || url === undefined || !relatedToPage)
+      continue;
     total += 1;
     if (items.length >= context.input.limits.max_workers) continue;
     items.push({

@@ -242,11 +242,15 @@ export class CdpCaptureEvents {
     }
     const response = recordValue(params.response);
     const payload = stringValue(response?.payloadData) ?? "";
+    const opcode = Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0));
     this.websockets.push({
       request_id: requestId,
       direction,
-      opcode: Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0)),
-      payload_bytes: Buffer.byteLength(payload),
+      opcode,
+      payload_bytes:
+        opcode === 1
+          ? Buffer.byteLength(payload)
+          : Buffer.from(payload, "base64").byteLength,
     });
   }
 

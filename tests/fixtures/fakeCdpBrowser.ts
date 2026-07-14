@@ -34,6 +34,8 @@ interface FakeOptions {
   readonly extraCollections?: boolean;
   readonly foreignSessionEvents?: boolean;
   readonly redirectToDisallowedOrigin?: boolean;
+  readonly unrelatedWorker?: boolean;
+  readonly binaryWebSocketEvent?: boolean;
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -180,6 +182,7 @@ const targets = (
     title: "Worker",
     url: `http://127.0.0.1:${String(port)}/worker.js?secret=worker`,
     attached: false,
+    openerId: "allowed-page",
   },
   ...(options.extraCollections === true
     ? [
@@ -189,6 +192,19 @@ const targets = (
           title: "Second worker",
           url: `http://127.0.0.1:${String(port)}/worker-2.js`,
           attached: false,
+          openerId: "allowed-page",
+        },
+      ]
+    : []),
+  ...(options.unrelatedWorker === true
+    ? [
+        {
+          id: "worker-other-page",
+          type: "dedicated_worker",
+          title: "Other page worker",
+          url: `http://127.0.0.1:${String(port)}/other-page-worker.js`,
+          attached: false,
+          openerId: "other-page",
         },
       ]
     : []),
@@ -285,6 +301,10 @@ const endpointTargetToInfo = (
   title: target.title,
   url: target.url,
   attached: target.attached,
+  ...(target.openerId === undefined ? {} : { openerId: target.openerId }),
+  ...(target.parentFrameId === undefined
+    ? {}
+    : { parentFrameId: target.parentFrameId }),
 });
 
 const frameTree = (
@@ -521,6 +541,11 @@ const emitEvents = (
       requestId: "websocket-1",
       response: { opcode: 1, payloadData: "websocket-secret" },
     });
+    if (options.binaryWebSocketEvent === true)
+      event(socket, "Network.webSocketFrameReceived", command.sessionId, {
+        requestId: "websocket-1",
+        response: { opcode: 2, payloadData: "AQID" },
+      });
   }
   if (command.method === "Runtime.enable") {
     event(socket, "Runtime.consoleAPICalled", command.sessionId, {

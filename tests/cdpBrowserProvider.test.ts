@@ -50,7 +50,11 @@ describe("CdpBrowserProvider", () => {
   });
 
   it("captures bounded passive evidence without retaining sensitive values", async () => {
-    const browser = await startFakeCdpBrowser({ foreignSessionEvents: true });
+    const browser = await startFakeCdpBrowser({
+      binaryWebSocketEvent: true,
+      foreignSessionEvents: true,
+      unrelatedWorker: true,
+    });
     browsers.push(browser);
     const provider = new CdpBrowserProvider();
     const result = await provider.inspectPage(
@@ -84,6 +88,12 @@ describe("CdpBrowserProvider", () => {
         direction: "sent",
         opcode: 1,
         payload_bytes: Buffer.byteLength("websocket-secret"),
+      },
+      {
+        request_id: "websocket-1",
+        direction: "received",
+        opcode: 2,
+        payload_bytes: 3,
       },
     ]);
     expect(result.value.console.events[0]?.argument_types).toEqual(["string"]);
