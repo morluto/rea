@@ -142,6 +142,28 @@ describe("CdpElectronProvider", () => {
     ).toBe(true);
   });
 
+  it("maps cancelled Electron discovery to the Electron operation", async () => {
+    const root = await electronFixture();
+    const controller = new AbortController();
+    controller.abort();
+    const result = await new CdpElectronProvider().listTargets(
+      listElectronTargetsInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        allowed_file_roots: [root],
+        approved: true,
+      }),
+      { signal: controller.signal },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "list_electron_targets",
+      },
+    });
+  });
+
   it("captures Electron script source only after separate approval", async () => {
     const root = await electronFixture();
     const browser = await startFakeCdpBrowser({

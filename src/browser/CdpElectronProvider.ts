@@ -54,7 +54,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
       const roots = await canonicalElectronRoots(input.allowed_file_roots);
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "list_browser_targets",
+        "list_electron_targets",
         options.signal,
       );
       const allowed = [];
