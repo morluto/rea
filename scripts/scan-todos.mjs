@@ -6,21 +6,15 @@ import { relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 
-// Collect all TS, MJS, and Python source files, excluding generated and third-party dirs.
-const sourceFiles = [
-  ...globSync("src/**/*.ts", {
+// Native globSync is available throughout the Node versions in package.engines.
+// Its exclusion option is `exclude`; `ignore` and `nodir` belong to npm glob.
+const sourceFiles = globSync(
+  ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "bridge/**/*.py"],
+  {
     cwd: root,
-    nodir: true,
-    ignore: ["dist/**", "node_modules/**"],
-  }),
-  ...globSync("tests/**/*.ts", {
-    cwd: root,
-    nodir: true,
-    ignore: ["node_modules/**"],
-  }),
-  ...globSync("scripts/**/*.mjs", { cwd: root, nodir: true }),
-  ...globSync("bridge/**/*.py", { cwd: root, nodir: true }),
-];
+    exclude: (path) => path.split(/[\\/]/u).includes("node_modules"),
+  },
+);
 
 const patterns = [
   { regex: /TODO(?::\s*(.*))?$/gm, label: "TODO" },
