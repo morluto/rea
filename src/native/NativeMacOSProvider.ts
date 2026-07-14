@@ -199,10 +199,11 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!capture.ok) return capture;
     const provenance = [invocation(capture.value, this.target.path)];
+    const architectures = parseLipoArchitectures(capture.value.stdout);
     const result = listArchitecturesSchema.parse({
       architectures: {
-        items: parseLipoArchitectures(capture.value.stdout),
-        total: parseLipoArchitectures(capture.value.stdout).length,
+        items: architectures,
+        total: architectures.length,
         exhaustive: true,
         limitations: [],
       },
