@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
@@ -23,6 +23,8 @@ import {
 } from "./LinuxHopper.js";
 import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
+import { supportedClients, type SetupClient } from "./SupportedClients.js";
+export type { SetupClient } from "./SupportedClients.js";
 import { installCanonicalSkill } from "./SetupSkill.js";
 import { setupPlan } from "./SetupPlan.js";
 import {
@@ -39,13 +41,6 @@ const registrationCommand = (): readonly string[] =>
     ? ["npx", "-y", PRODUCT_IDENTITY.packageName, "mcp"]
     : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
 
-/** A detected agent configuration owned by setup. */
-export interface SetupClient {
-  readonly name: string;
-  readonly configPath: string;
-  readonly markerPath?: string;
-  readonly format?: "json" | "toml" | "unsupported";
-}
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
   | {
@@ -281,50 +276,6 @@ export const detectClients = async (
       detected.push(candidate);
   return detected;
 };
-
-/** Describe every client location that setup or uninstall may own. */
-export const supportedClients = (home: string): readonly SetupClient[] => [
-  {
-    name: "claude_code",
-    configPath: join(home, ".claude.json"),
-    markerPath: join(home, ".claude"),
-  },
-  {
-    name: "claude_desktop",
-    configPath: join(
-      home,
-      "Library/Application Support/Claude/claude_desktop_config.json",
-    ),
-    markerPath: join(home, "Library/Application Support/Claude"),
-  },
-  {
-    name: "codex",
-    configPath: join(home, ".codex/config.toml"),
-    markerPath: join(home, ".codex"),
-    format: "toml" as const,
-  },
-  {
-    name: "cursor",
-    configPath: join(home, ".cursor/mcp.json"),
-    markerPath: join(home, ".cursor"),
-  },
-  {
-    name: "gemini_cli",
-    configPath: join(home, ".gemini/settings.json"),
-    markerPath: join(home, ".gemini"),
-  },
-  {
-    name: "windsurf",
-    configPath: join(home, ".codeium/windsurf/mcp_config.json"),
-    markerPath: join(home, ".codeium/windsurf"),
-  },
-  {
-    name: "devin",
-    configPath: join(home, ".devin"),
-    markerPath: join(home, ".devin"),
-    format: "unsupported" as const,
-  },
-];
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
