@@ -20,6 +20,7 @@ interface ProcessGroupMember {
   readonly pid: number;
   readonly parentPid: number;
   readonly processGroupId: number;
+  readonly state: string;
   readonly command: string;
 }
 
@@ -31,9 +32,19 @@ export interface ProcessOwnershipHost {
 }
 
 /** Cleanup succeeds only when the group is absent or every member is owned. */
+interface ProcessOwnershipValidationFailure {
+  readonly pid: number;
+  readonly reason: "environment-unreadable" | "run-token-mismatch";
+}
+
+/** Cleanup outcome with per-member diagnostics when ownership is uncertain. */
 export type ProcessCleanupResult =
   | { readonly cleaned: true; readonly signaled: boolean }
-  | { readonly cleaned: false; readonly reason: string };
+  | {
+      readonly cleaned: false;
+      readonly reason: string;
+      readonly failures?: readonly ProcessOwnershipValidationFailure[];
+    };
 
 /** Token-verified liveness result used by post-root-exit settlement. */
 export type ProcessGroupObservation =
@@ -76,17 +87,18 @@ const systemHost: ProcessOwnershipHost = {
     if (process.platform === "win32") return [];
     const { stdout } = await execFileAsync("ps", [
       "-axo",
-      "pid=,ppid=,pgid=,command=",
+      "pid=,ppid=,pgid=,stat=,command=",
     ]);
     return stdout
       .split("\n")
-      .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)/u.exec(line))
+      .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line))
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => ({
         pid: Number(match[1]),
         parentPid: Number(match[2]),
         processGroupId: Number(match[3]),
-        command: match[4] ?? "",
+        state: match[4] ?? "",
+        command: match[5] ?? "",
       }))
       .filter((member) => member.processGroupId === processGroupId);
   },
@@ -126,8 +138,11 @@ export const cleanupOwnedProcessGroup = async (
   } catch {
     return { cleaned: false, reason: "process group could not be inspected" };
   }
-  if (members.length === 0) return { cleaned: true, signaled: false };
-  const leader = members.find((member) => member.pid === ownership.leaderPid);
+  const liveMembers = liveProcessGroupMembers(members);
+  if (liveMembers.length === 0) return { cleaned: true, signaled: false };
+  const leader = liveMembers.find(
+    (member) => member.pid === ownership.leaderPid,
+  );
   if (leader !== undefined) {
     if (
       ownership.expectedParentPid !== undefined &&
@@ -146,23 +161,24 @@ export const cleanupOwnedProcessGroup = async (
         reason: "owned launcher command identity did not match",
       };
   }
-  for (const member of members) {
-    let environment: Readonly<Record<string, string>>;
+  const failures: ProcessOwnershipValidationFailure[] = [];
+  for (const member of liveMembers) {
     try {
-      environment = await host.environment(member.pid);
+      const environment = await host.environment(member.pid);
+      if (environment.REA_PROCESS_RUN_ID !== ownership.runId)
+        failures.push({ pid: member.pid, reason: "run-token-mismatch" });
     } catch {
-      return {
-        cleaned: false,
-        reason: "process ownership could not be revalidated",
-      };
-    }
-    if (environment.REA_PROCESS_RUN_ID !== ownership.runId) {
-      return {
-        cleaned: false,
-        reason: "process group contains an unowned or PID-reused process",
-      };
+      failures.push({ pid: member.pid, reason: "environment-unreadable" });
     }
   }
+  if (failures.length > 0)
+    return {
+      cleaned: false,
+      reason: failures.some(({ reason }) => reason === "run-token-mismatch")
+        ? "process group contains an unowned or PID-reused process"
+        : "process ownership could not be revalidated",
+      failures,
+    };
   try {
     host.signalGroup(ownership.processGroupId, "SIGKILL");
   } catch (cause: unknown) {
@@ -188,8 +204,9 @@ export const observeOwnedProcessGroup = async (
       reason: "process group could not be inspected",
     };
   }
-  if (members.length === 0) return { state: "empty" };
-  for (const member of members) {
+  const liveMembers = liveProcessGroupMembers(members);
+  if (liveMembers.length === 0) return { state: "empty" };
+  for (const member of liveMembers) {
     try {
       if (
         (await host.environment(member.pid)).REA_PROCESS_RUN_ID !==
@@ -208,6 +225,11 @@ export const observeOwnedProcessGroup = async (
   }
   return { state: "alive" };
 };
+
+const liveProcessGroupMembers = (
+  members: readonly ProcessGroupMember[],
+): readonly ProcessGroupMember[] =>
+  members.filter(({ state }) => !state.startsWith("Z"));
 
 const commandMatches = (actual: string, expected: string): boolean => {
   const normalizedActual = actual.trim();

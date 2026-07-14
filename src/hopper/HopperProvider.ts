@@ -114,9 +114,14 @@ export class HopperProvider implements AnalysisProvider {
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/hopper_bridge.py", import.meta.url),
         ),
-        demoHelperPath: fileURLToPath(
-          new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
-        ),
+        ...(process.platform === "linux"
+          ? {
+              launchMode: "verified_linux_demo" as const,
+              demoHelperPath: fileURLToPath(
+                new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
+              ),
+            }
+          : { launchMode: "native" as const }),
       }),
       logger: this.logger.child({ layer: "bridge" }),
     });
