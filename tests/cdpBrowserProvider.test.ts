@@ -720,6 +720,58 @@ describe("CdpBrowserProvider", () => {
     );
   });
 
+  it("ends a browser session when its flat target session detaches", async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "target_detached",
+    });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "target_terminated",
+      detail: "target_terminated",
+    });
+  });
+
+  it("ends a direct page session when its transport disconnects", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+      closeAfterMethod: "Page.setLifecycleEventsEnabled",
+    });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "target_terminated",
+      detail: "target_terminated",
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
+  });
+
   it("discovers untrusted WebMCP declarations without registering or invoking them", async () => {
     const browser = await startFakeCdpBrowser({ webMcpTools: true });
     browsers.push(browser);

@@ -30,6 +30,7 @@ const MAX_PENDING_COMMANDS = 128;
 export class CdpConnection {
   readonly #pending = new Map<number, PendingCommand>();
   readonly #listeners = new Set<(event: CdpEvent) => void>();
+  readonly #disconnectListeners = new Set<() => void>();
   #nextId = 1;
   #closed = false;
   #protocolFailed = false;
@@ -39,8 +40,8 @@ export class CdpConnection {
     private readonly operation: BrowserObservationOperation,
   ) {
     socket.on("message", (data) => this.#receive(data));
-    socket.on("close", () => this.#failPending("disconnected"));
-    socket.on("error", () => this.#failPending("disconnected"));
+    socket.on("close", () => this.#disconnect());
+    socket.on("error", () => this.#disconnect());
   }
 
   /** Connect to one already-validated loopback CDP WebSocket. */
@@ -63,6 +64,16 @@ export class CdpConnection {
   onEvent(listener: (event: CdpEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  /** Subscribe to an unexpected transport loss while an operation is active. */
+  onDisconnect(listener: () => void): () => void {
+    if (this.#closed) {
+      listener();
+      return () => undefined;
+    }
+    this.#disconnectListeners.add(listener);
+    return () => this.#disconnectListeners.delete(listener);
   }
 
   /** Execute one bounded command, optionally within a flat target session. */
@@ -213,6 +224,14 @@ export class CdpConnection {
       this.#complete(id, pending);
       pending.reject(new BrowserObservationError(this.operation, reason));
     }
+  }
+
+  #disconnect(): void {
+    const wasClosed = this.#closed;
+    this.#failPending("disconnected");
+    if (wasClosed) return;
+    for (const listener of this.#disconnectListeners) listener();
+    this.#disconnectListeners.clear();
   }
 }
 

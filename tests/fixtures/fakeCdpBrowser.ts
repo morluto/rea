@@ -51,7 +51,11 @@ interface FakeOptions {
   readonly binaryWebSocketEvent?: boolean;
   readonly invalidBinaryWebSocketEvent?: boolean;
   readonly sourceMapBody?: string;
-  readonly sessionTimeline?: "same_origin" | "outside_policy";
+  readonly sessionTimeline?:
+    | "same_origin"
+    | "outside_policy"
+    | "target_detached";
+  readonly closeAfterMethod?: string;
   readonly sensitiveShapes?: boolean;
   readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
@@ -183,6 +187,8 @@ export const startFakeCdpBrowser = async (
       if (options.malformedEventShapeOnMethod === command.method)
         socket.send(JSON.stringify({ method: 42 }));
       emitEvents(socket, command, port, options);
+      if (options.closeAfterMethod === command.method)
+        setImmediate(() => socket.close());
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -963,6 +969,11 @@ const emitEvents = (
       name: "networkIdle",
       timestamp: 15,
     });
+    if (options.sessionTimeline === "target_detached")
+      event(socket, "Target.detachedFromTarget", undefined, {
+        sessionId: command.sessionId,
+        targetId: "allowed-page",
+      });
   }
 };
 
