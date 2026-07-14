@@ -368,6 +368,12 @@ try {
     environment,
   );
   const first = json(firstExecution.stdout);
+  const alignedExecution = await runWithStatus(
+    cli,
+    ["setup", "--json"],
+    environment,
+  );
+  const aligned = json(alignedExecution.stdout);
   const secondExecution = await runWithStatus(
     cli,
     ["setup", "--yes", "--install-hopper", "--json"],
@@ -381,9 +387,15 @@ try {
       second.status !== status ||
       firstExecution.status !== (status === "ready" ? 0 : 1) ||
       secondExecution.status !== (status === "ready" ? 0 : 1) ||
+      aligned.status !== "ready" ||
+      alignedExecution.status !== 0 ||
+      aligned.plannedActions.length !== 0 ||
+      aligned.appliedActions.length !== 0 ||
       second.appliedActions.length !== 0
     )
-      throw new Error("packaged setup was not ready and idempotent");
+      throw new Error(
+        `packaged setup was not ready and idempotent without confirmation: ${JSON.stringify({ first, aligned, second })}`,
+      );
     for (const configPath of [claudeConfig, cursorConfig]) {
       const config = json(await readFile(configPath, "utf8"));
       if (
@@ -440,6 +452,7 @@ try {
       throw new Error("packaged setup did not recover");
   } else if (
     first.status !== "needs_human" ||
+    aligned.status !== "needs_human" ||
     second.status !== "needs_human"
   ) {
     throw new Error("packaged setup did not reject an unsupported host");
