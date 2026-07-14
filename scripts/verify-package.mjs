@@ -413,7 +413,8 @@ try {
     )
       throw new Error("packaged stale-skill upgrade was not isolated");
 
-    await writeFile(cursorConfig, "malformed");
+    await writeFile(claudeConfig, "malformed");
+    await writeFile(cursorConfig, "{}\n");
     const failedExecution = await runWithStatus(
       cli,
       ["setup", "--yes", "--json"],
@@ -423,10 +424,17 @@ try {
     if (
       failed.status !== "needs_human" ||
       failedExecution.status !== 1 ||
-      (await readFile(cursorConfig, "utf8")) !== "malformed"
+      failed.clients?.claude_desktop?.status !== "failed" ||
+      failed.clients?.cursor?.status !== "configured" ||
+      !failed.appliedActions.includes("configured_cursor") ||
+      (await readFile(claudeConfig, "utf8")) !== "malformed" ||
+      json(await readFile(cursorConfig, "utf8")).mcpServers?.rea?.command !==
+        cli
     )
-      throw new Error("packaged setup failure recovery did not preserve input");
-    await writeFile(cursorConfig, "{}\n");
+      throw new Error(
+        `packaged setup did not continue after an earlier client failure: ${JSON.stringify(failed)}`,
+      );
+    await writeFile(claudeConfig, "{}\n");
     const recoveredExecution = await runWithStatus(
       cli,
       ["setup", "--yes", "--json"],
