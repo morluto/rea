@@ -96,6 +96,7 @@ export const reconstructionClaimResultSchema = z.object({
     "changed",
     "truncated",
     "unknown",
+    "contradiction",
   ]),
   comparison_evidence_id: evidenceIdSchema,
   left_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),

@@ -6,12 +6,14 @@ import {
   type EvidenceFilePolicy,
 } from "../domain/evidenceBundle.js";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   EvidenceIntegrityError,
   InvestigationWorkspaceError,
   type AnalysisError,
 } from "../domain/errors.js";
 import {
+  createLegacyInvestigationRunIdentity,
   createInvestigationRunIdentity,
   createInvestigationWorkspace,
   crossVersionInvestigationInputSchema,
@@ -25,6 +27,7 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { BinarySessionPort } from "./BinarySession.js";
+import type { ProgressReporter } from "./ProgressReporter.js";
 import {
   AUTOMATIC_RUN_LIMITATION,
   createInventoryEvidencePages,
@@ -54,6 +57,8 @@ export interface CrossVersionInvestigationExecution {
   readonly inputRoots: readonly string[];
   readonly session?: BinarySessionPort;
   readonly signal?: AbortSignal;
+  readonly progress?: ProgressReporter;
+  readonly integrityContinueEnabled?: boolean;
 }
 
 /** Run or resume a deterministic cross-version artifact investigation. */
@@ -76,19 +81,36 @@ export const runCrossVersionInvestigation = async (
   if (!initial.ok) return initial;
   const preflight = validateWorkspaceRequest(initial.value, parsed.data);
   if (!preflight.ok) return preflight;
+  if (isCancelled(execution.signal))
+    return err(new AnalysisCancelledError("find_changed_behavior"));
+  await execution.progress?.report({
+    phase: "scan_versions",
+    completed: 0,
+    total: 4,
+    message: "Scanning both version inputs",
+  });
 
   const snapshots = await scanVersions(
     parsed.data,
     execution.inputRoots,
     execution.signal,
+    execution.integrityContinueEnabled,
   );
   if (!snapshots.ok) return snapshots;
+  await execution.progress?.report({
+    phase: "scan_versions",
+    completed: 1,
+    total: 4,
+    message: "Version inputs scanned",
+  });
   return continueInvestigation({
     input: parsed.data,
     initial: initial.value,
     snapshots: snapshots.value,
     policy,
     session: execution.session,
+    signal: execution.signal,
+    progress: execution.progress,
   });
 };
 
@@ -103,6 +125,8 @@ const continueInvestigation = async (context: {
   readonly snapshots: VersionSnapshots;
   readonly policy: EvidenceFilePolicy;
   readonly session: BinarySessionPort | undefined;
+  readonly signal: AbortSignal | undefined;
+  readonly progress: ProgressReporter | undefined;
 }): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {
   const left = targetFor(context.snapshots.left);
   const right = targetFor(context.snapshots.right);
@@ -110,14 +134,31 @@ const continueInvestigation = async (context: {
     left,
     right,
     options: context.input.options,
+    integrity_policy: context.input.integrity_policy,
+    integrity_continue_approved: context.input.integrity_continue_approved,
+    max_integrity_mismatches: context.input.max_integrity_mismatches,
+  });
+  const legacyIdentity = createLegacyInvestigationRunIdentity({
+    left,
+    right,
+    options: context.input.options,
   });
   const existing = context.initial?.runs.find(
-    ({ run_id: id }) => id === identity.runId,
+    (run) =>
+      run.run_id === identity.runId ||
+      (context.input.integrity_policy === "fail" &&
+        !context.input.integrity_continue_approved &&
+        context.input.max_integrity_mismatches === 10 &&
+        "legacy_request_identity" in run &&
+        run.max_integrity_mismatches === 10 &&
+        run.run_id === legacyIdentity.runId),
   );
   if (context.initial !== null && existing?.status === "complete")
     return completeOutcome(context.initial, existing, true, context.session);
   const pages = createInventoryEvidencePages(context.input, context.snapshots);
   if (!pages.ok) return pages;
+  if (isCancelled(context.signal))
+    return err(new AnalysisCancelledError("find_changed_behavior"));
   const inventoried = await ensureInventoryCheckpoint({
     input: context.input,
     current: context.initial,
@@ -127,19 +168,46 @@ const continueInvestigation = async (context: {
     policy: context.policy,
   });
   if (!inventoried.ok) return inventoried;
+  await context.progress?.report({
+    phase: "inventory_versions",
+    completed: 2,
+    total: 4,
+    message: "Both artifact inventories checkpointed",
+  });
+  if (isCancelled(context.signal))
+    return err(new AnalysisCancelledError("find_changed_behavior"));
   const compared = await ensureComparisonCheckpoint(
     context.input,
     inventoried.value,
     context.policy,
   );
   if (!compared.ok) return compared;
-  return finalizeInvestigation(
+  await context.progress?.report({
+    phase: "compare_artifacts",
+    completed: 3,
+    total: 4,
+    message: "Artifact comparison checkpointed",
+  });
+  if (isCancelled(context.signal))
+    return err(new AnalysisCancelledError("find_changed_behavior"));
+  const finalized = await finalizeInvestigation(
     context.input,
     compared.value,
     context.policy,
     context.session,
   );
+  await context.progress?.report({
+    phase: "changed_behavior",
+    completed: 4,
+    total: 4,
+    message: finalized.ok ? "Investigation completed" : "Investigation failed",
+    terminal: true,
+  });
+  return finalized;
 };
+
+const isCancelled = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;
 
 const ensureInventoryCheckpoint = async (input: {
   readonly input: CrossVersionInvestigationInput;
@@ -162,6 +230,9 @@ const ensureInventoryCheckpoint = async (input: {
     left,
     right,
     options: input.input.options,
+    integrity_policy: input.input.integrity_policy,
+    integrity_continue_approved: input.input.integrity_continue_approved,
+    max_integrity_mismatches: input.input.max_integrity_mismatches,
   });
   const run = investigationRunSchema.parse({
     schema_version: 1,
@@ -170,6 +241,9 @@ const ensureInventoryCheckpoint = async (input: {
     left,
     right,
     options: input.input.options,
+    integrity_policy: input.input.integrity_policy,
+    integrity_continue_approved: input.input.integrity_continue_approved,
+    max_integrity_mismatches: input.input.max_integrity_mismatches,
     status: "running",
     completed_stages: ["inventory_left", "inventory_right"],
     left_inventory_evidence_ids: evidenceIds(input.pages.left),

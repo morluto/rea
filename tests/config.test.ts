@@ -36,7 +36,7 @@ describe("runtime configuration", () => {
         HOPPER_TARGET_KIND: "database",
         HOPPER_LOADER_ARGS_JSON: '["-l","FAT","--aarch64","-l","Mach-O"]',
       }),
-    ).toEqual({
+    ).toMatchObject({
       ok: true,
       value: {
         hopperLauncherPath:

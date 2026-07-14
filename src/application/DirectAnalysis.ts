@@ -1,4 +1,6 @@
 import { parseConfig } from "../config.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { createServerIdentity } from "../serverIdentity.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { createBinarySession } from "./runtime.js";
@@ -9,6 +11,8 @@ import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
 import {
   EvidenceIntegrityError,
+  AnalysisProtocolError,
+  PermissionRequiredError,
   projectAnalysisError,
   type AnalysisError,
 } from "../domain/errors.js";
@@ -24,6 +28,8 @@ import {
 } from "../domain/analysisSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
+import type { PermissionAuthority } from "./PermissionAuthority.js";
 
 const WORKFLOW_PROVIDER = {
   id: "rea-workflow",
@@ -52,12 +58,16 @@ export const runDirectAnalysis = async (
   options: {
     readonly logger?: Logger;
     readonly snapshotPath?: string | undefined;
+    readonly signal?: AbortSignal;
   } = {},
 ): Promise<JsonValue> =>
-  runAnalysis(path, tool, arguments_, {
-    logger: options.logger ?? silentLogger,
-    snapshotPath: options.snapshotPath,
-  });
+  withProcessCancellation(options.signal, (signal) =>
+    runAnalysis(path, tool, arguments_, {
+      logger: options.logger ?? silentLogger,
+      snapshotPath: options.snapshotPath,
+      signal,
+    }),
+  );
 
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
@@ -65,8 +75,15 @@ export const runProviderAnalysis = async (
   tool: NativeToolName | ArtifactToolName,
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger = silentLogger,
+  signal?: AbortSignal,
 ): Promise<JsonValue> =>
-  runAnalysis(path, tool, arguments_, { logger, snapshotPath: undefined });
+  withProcessCancellation(signal, (operationSignal) =>
+    runAnalysis(path, tool, arguments_, {
+      logger,
+      snapshotPath: undefined,
+      signal: operationSignal,
+    }),
+  );
 
 /** Describe configured providers without opening a target or launching Hopper. */
 export const runSessionStatus = async (
@@ -76,10 +93,92 @@ export const runSessionStatus = async (
   if (!config.ok) return cliError(config.error);
   const session = createBinarySession(config.value, logger);
   try {
-    return session.status();
+    return {
+      ...jsonObjectSchema.parse(session.status()),
+      server_identity: createServerIdentity({
+        startedAt: new Date().toISOString(),
+      }),
+    };
   } finally {
     await session.close();
   }
+};
+
+const authorizeAnalysis = async (
+  authority: PermissionAuthority,
+  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  snapshotPath: string | undefined,
+): Promise<Result<null, AnalysisError>> => {
+  const requests = [];
+  if (snapshotPath !== undefined) {
+    requests.push(
+      {
+        capability: "snapshot_read" as const,
+        path: snapshotPath,
+        access: "write" as const,
+      },
+      {
+        capability: "snapshot_write" as const,
+        path: snapshotPath,
+        access: "write" as const,
+      },
+    );
+  }
+  if (tool === "extract_artifact" && typeof arguments_.output_root === "string")
+    requests.push({
+      capability: "artifact_extract" as const,
+      path: arguments_.output_root,
+      access: "write" as const,
+    });
+  for (const request of requests) {
+    const result = await authority.authorize(
+      {
+        capability: request.capability,
+        roots: [request.path],
+        executables: [],
+        environment_names: [],
+        network: "none",
+        mount: false,
+        operation_identity: `${tool}:${request.capability}:${request.path}`,
+      },
+      request.access,
+    );
+    if (!result.ok)
+      return err(
+        result.error instanceof PermissionRequiredError
+          ? result.error
+          : new AnalysisProtocolError(result.error.message, {
+              cause: result.error,
+            }),
+      );
+  }
+  if (
+    tool === "inventory_artifact" &&
+    arguments_.native_mount_approved === true
+  ) {
+    const result = await authority.authorize(
+      {
+        capability: "native_mount",
+        roots: [],
+        executables: [],
+        environment_names: [],
+        network: "none",
+        mount: true,
+        operation_identity: "inventory_artifact:native_mount",
+      },
+      "read",
+    );
+    if (!result.ok)
+      return err(
+        result.error instanceof PermissionRequiredError
+          ? result.error
+          : new AnalysisProtocolError(result.error.message, {
+              cause: result.error,
+            }),
+      );
+  }
+  return ok(null);
 };
 
 const runAnalysis = async (
@@ -89,11 +188,23 @@ const runAnalysis = async (
   options: {
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
+    readonly signal: AbortSignal;
   },
 ): Promise<JsonValue> => {
-  const { logger, snapshotPath } = options;
+  const { logger, signal, snapshotPath } = options;
   const config = parseConfig(process.env);
   if (!config.ok) return cliError(config.error);
+  const permissionAuthority = await loadConfiguredPermissionAuthority(
+    config.value,
+  );
+  if (!permissionAuthority.ok) return cliError(permissionAuthority.error);
+  const authorized = await authorizeAnalysis(
+    permissionAuthority.value,
+    tool,
+    arguments_,
+    snapshotPath,
+  );
+  if (!authorized.ok) return cliError(authorized.error);
   const unavailable = snapshotUnavailable(
     snapshotPath,
     config.value.hopperLoaderArgs,
@@ -114,7 +225,7 @@ const runAnalysis = async (
     const { snapshot } = prepared.value;
     const opened = await session.open(
       path,
-      snapshot === undefined ? {} : { snapshot },
+      snapshot === undefined ? { signal } : { signal, snapshot },
     );
     if (!opened.ok) return cliError(opened.error);
     let output: JsonValue;
@@ -124,7 +235,11 @@ const runAnalysis = async (
       tool === "analyze_function" ||
       tool === "trace_feature"
     ) {
-      const result = await new EnhancedTools(session).execute(tool, arguments_);
+      const result = await new EnhancedTools(session).execute(
+        tool,
+        arguments_,
+        signal,
+      );
       if (!result.ok) output = cliError(result.error);
       else {
         evidence = createEvidence(
@@ -143,7 +258,7 @@ const runAnalysis = async (
         output = evidence;
       }
     } else {
-      const result = await session.execute(tool, arguments_);
+      const result = await session.execute(tool, arguments_, { signal });
       if (!result.ok) output = cliError(result.error);
       else {
         evidence = createEvidence(
@@ -176,6 +291,21 @@ const runAnalysis = async (
     return output;
   } finally {
     await session.close();
+  }
+};
+
+const withProcessCancellation = async <Value>(
+  suppliedSignal: AbortSignal | undefined,
+  operation: (signal: AbortSignal) => Promise<Value>,
+): Promise<Value> => {
+  if (suppliedSignal !== undefined) return operation(suppliedSignal);
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort();
+  process.once("SIGINT", cancel);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    process.off("SIGINT", cancel);
   }
 };
 

@@ -25,6 +25,7 @@ import { changedBehaviorResultSchema } from "../domain/changedBehavior.js";
 import { callPathResultSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
+import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 
 const resultOf = (schema: z.ZodType) =>
   evidenceSchema
@@ -96,6 +97,69 @@ const sessionProvider = z.object({
   provider: providerIdentity,
   providers: z.array(providerIdentity),
   capabilities: z.array(providerCapability),
+  tool_availability: z.array(
+    z.object({
+      name: z.string(),
+      surface: z.string(),
+      available: z.boolean(),
+      reason: z.enum([
+        "available",
+        "target_required",
+        "provider_missing",
+        "provider_unavailable",
+        "target_unsupported",
+        "unsupported_host",
+        "policy_disabled",
+      ]),
+      remediation: z.string().nullable(),
+      annotations: z.object({
+        read_only: z.boolean(),
+        destructive: z.boolean(),
+        idempotent: z.boolean(),
+        open_world: z.boolean(),
+      }),
+    }),
+  ),
+  client_features: z.object({
+    elicitation_form: z.boolean(),
+    elicitation_url: z.boolean(),
+    roots: z.boolean(),
+    sampling: z.boolean(),
+  }),
+  server_identity: z.object({
+    package: z.object({
+      name: z.string(),
+      version: z.string(),
+      root_path: z.string(),
+      build_commit: z.string().nullable(),
+    }),
+    server: z.object({
+      name: z.string(),
+      version: z.string(),
+      started_at: z.string(),
+      command_path: z.string(),
+    }),
+    sdk: z.object({
+      server: z.string(),
+      client_test: z.string(),
+      core: z.string(),
+    }),
+    negotiated_protocol_version: z.string().nullable(),
+    client: z.object({ name: z.string(), version: z.string() }).nullable(),
+    skill: z.object({ name: z.string(), expected_version: z.string() }),
+    catalog: z.record(z.string(), z.json()),
+    protocol_features: z.object({
+      progress: z.boolean(),
+      cancellation: z.boolean(),
+      evidence_resources: z.boolean(),
+      elicitation: z.boolean(),
+    }),
+    alignment: z.object({
+      state: z.enum(["aligned", "mcp_server_restart_required", "unknown"]),
+      reasons: z.array(z.string()),
+      remediation: z.string().nullable(),
+    }),
+  }),
 });
 const nullableText = z.string().nullable();
 const addressList = z.array(z.string());
@@ -177,45 +241,6 @@ const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
       [property]: z.array(addressedEntry),
     }),
   );
-const analysisErrorProjectionSchema = z
-  .object({
-    category: z.enum([
-      "invalid_input",
-      "permission_required",
-      "unsupported_provider",
-      "integrity_mismatch",
-      "truncated",
-      "cancelled",
-      "timeout",
-      "unavailable",
-      "execution_failure",
-    ]),
-    message: z.string(),
-    details: z
-      .object({
-        logical_path: z.string(),
-        declared_sha256: z.string().nullable(),
-        calculated_sha256: z.string().nullable(),
-        unpacked: z.boolean(),
-      })
-      .strict()
-      .optional(),
-    code: z
-      .enum([
-        "private_display_unavailable",
-        "x11_authorization_failed",
-        "unsupported_hopper_build",
-        "invalid_launch_command",
-        "process_ownership_mismatch",
-        "hopper_exited_during_startup",
-        "unsupported_demo_dialog",
-        "unexpected_display_geometry",
-        "x11_input_failed",
-        "runtime_dependency_unavailable",
-      ])
-      .optional(),
-  })
-  .strict();
 const graphNode = z.discriminatedUnion("status", [
   z.object({
     address: z.string(),

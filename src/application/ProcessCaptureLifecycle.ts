@@ -389,7 +389,9 @@ export const resolveProcessResult = (
       cause: executionFailure,
     });
   if (cleanupFailure !== undefined)
-    throw new ProcessCaptureError(cleanupFailure);
+    throw new ProcessCaptureError(cleanupFailure, {
+      reason: "cleanup_incomplete",
+    });
   if (capture === undefined)
     throw new ProcessCaptureError("process capture produced no result");
   return capture;

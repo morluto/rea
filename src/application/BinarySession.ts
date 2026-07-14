@@ -46,6 +46,10 @@ import {
   unknownMutationEvidence,
 } from "./UnknownEvidence.js";
 import type { BinarySessionPort } from "./BinarySessionPort.js";
+import {
+  parseInvestigationWorkspace,
+  type InvestigationWorkspace,
+} from "../domain/investigationWorkspace.js";
 export type { BinarySessionPort } from "./BinarySessionPort.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
@@ -73,6 +77,12 @@ export class BinarySession implements BinarySessionPort {
     maxBytes: 64 * 1024 * 1024,
   });
   readonly #snapshot = new AnalysisSnapshotCache();
+  readonly #investigationWorkspaces = new Map<string, InvestigationWorkspace>();
+  readonly #runtimeAvailability = new Map<
+    string,
+    { readonly available: boolean; readonly reason: string | null }
+  >();
+  readonly #availabilityListeners = new Set<() => void>();
   readonly #snapshotsEnabled: boolean;
   #snapshotInvalidated = false;
 
@@ -119,6 +129,12 @@ export class BinarySession implements BinarySessionPort {
       }
     }
     return this.#providerIdentity;
+  }
+
+  /** Observe runtime provider-health changes that affect discovery metadata. */
+  onAvailabilityChanged(listener: () => void): () => void {
+    this.#availabilityListeners.add(listener);
+    return () => this.#availabilityListeners.delete(listener);
   }
 
   /** Add one successful public observation to the session ledger. */
@@ -188,6 +204,36 @@ export class BinarySession implements BinarySessionPort {
       );
     return this.#snapshot.import(snapshot, this.#active?.target, (bundle) =>
       this.#evidence.import(bundle),
+    );
+  }
+
+  /** Retain one validated immutable workspace revision for session resources. */
+  retainInvestigationWorkspace(
+    workspace: InvestigationWorkspace,
+  ): "added" | "duplicate" {
+    const parsed = parseInvestigationWorkspace(workspace);
+    const key = `${parsed.workspace_id}:${String(parsed.revision)}`;
+    if (this.#investigationWorkspaces.has(key)) return "duplicate";
+    this.#investigationWorkspaces.set(key, parsed);
+    return "added";
+  }
+
+  /** Read one session-retained immutable workspace revision. */
+  investigationWorkspace(
+    workspaceId: string,
+    revision: number,
+  ): InvestigationWorkspace | undefined {
+    return this.#investigationWorkspaces.get(
+      `${workspaceId}:${String(revision)}`,
+    );
+  }
+
+  /** List retained workspace revisions in canonical identity order. */
+  investigationWorkspaces(): readonly InvestigationWorkspace[] {
+    return [...this.#investigationWorkspaces.values()].sort(
+      (left, right) =>
+        left.workspace_id.localeCompare(right.workspace_id) ||
+        left.revision - right.revision,
     );
   }
 
@@ -323,6 +369,7 @@ export class BinarySession implements BinarySessionPort {
         return err(new AnalysisCancelledError("open_binary"));
       }
       this.#active = { target: parsed.value, client };
+      this.#clearRuntimeAvailability();
       this.#snapshot.select(parsed.value);
       if (options.snapshot !== undefined) {
         const imported = this.importAnalysisSnapshot(options.snapshot);
@@ -348,6 +395,7 @@ export class BinarySession implements BinarySessionPort {
       this.#evidence.clear();
       this.#snapshot.clear();
       this.#snapshotInvalidated = false;
+      this.#clearRuntimeAvailability();
       return ok(null);
     });
   }
@@ -375,6 +423,10 @@ export class BinarySession implements BinarySessionPort {
             .sort((left, right) =>
               left.operation.localeCompare(right.operation),
             )
+            .map((descriptor) => ({
+              ...descriptor,
+              ...this.#runtimeAvailability.get(descriptor.operation),
+            }))
             .map((descriptor) => ({
               operation: descriptor.operation,
               available: descriptor.available,
@@ -456,6 +508,7 @@ export class BinarySession implements BinarySessionPort {
     this.#calls.add(call);
     try {
       const result = await call;
+      this.#observeRuntimeAvailability(name, result);
       if (result.ok && cacheable)
         this.#snapshot.record(active.target, name, arguments_, result.value);
       else if (result.ok && capability?.effects.mutatesArtifact === true) {
@@ -466,6 +519,66 @@ export class BinarySession implements BinarySessionPort {
     } finally {
       this.#calls.delete(call);
     }
+  }
+
+  #observeRuntimeAvailability(
+    operation: AnalysisOperation,
+    result: Result<AnalysisExecution, AnalysisError>,
+  ): void {
+    if (result.ok) {
+      if (this.#setRuntimeAvailability(operation, true, null))
+        this.#emitAvailabilityChanged();
+      return;
+    }
+    if (result.error._tag === "AnalysisCapabilityUnavailableError") {
+      if (this.#setRuntimeAvailability(operation, false, result.error.message))
+        this.#emitAvailabilityChanged();
+      return;
+    }
+    if (
+      [
+        "ProviderAdapterError",
+        "HopperProcessError",
+        "HopperStartError",
+        "HopperRemoteError",
+      ].includes(result.error._tag)
+    ) {
+      const providerId = this.#capabilities?.get(operation)?.provider.id;
+      let changed = false;
+      for (const descriptor of this.#capabilities?.values() ?? [])
+        if (providerId !== undefined && descriptor.provider.id === providerId)
+          changed =
+            this.#setRuntimeAvailability(
+              descriptor.operation,
+              false,
+              "Provider became unavailable during this session.",
+            ) || changed;
+      if (changed) this.#emitAvailabilityChanged();
+    }
+  }
+
+  #setRuntimeAvailability(
+    operation: string,
+    available: boolean,
+    reason: string | null,
+  ): boolean {
+    const current = this.#runtimeAvailability.get(operation);
+    if (current?.available === available && current.reason === reason)
+      return false;
+    if (available && current === undefined) return false;
+    if (available) this.#runtimeAvailability.delete(operation);
+    else this.#runtimeAvailability.set(operation, { available, reason });
+    return true;
+  }
+
+  #clearRuntimeAvailability(): void {
+    if (this.#runtimeAvailability.size === 0) return;
+    this.#runtimeAvailability.clear();
+    this.#emitAvailabilityChanged();
+  }
+
+  #emitAvailabilityChanged(): void {
+    for (const listener of this.#availabilityListeners) listener();
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
