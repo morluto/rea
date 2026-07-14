@@ -34,7 +34,7 @@ const endpointTargetSchema = z.object({
 const endpointTargetsSchema = z.array(endpointTargetSchema).max(1_000);
 
 /** Validated direct CDP WebSocket bound to one discovered page target. */
-export interface CdpPageWebSocketEndpoint {
+interface CdpPageWebSocketEndpoint {
   readonly scope: "page";
   readonly targetId: string;
   readonly url: string;
