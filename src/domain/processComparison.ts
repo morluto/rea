@@ -12,6 +12,7 @@ export const comparisonStatusSchema = z.enum([
   "changed",
   "truncated",
   "unknown",
+  "contradiction",
 ]);
 type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
 

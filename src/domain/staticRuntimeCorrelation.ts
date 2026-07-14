@@ -338,7 +338,11 @@ const selectStatic = (
   return {
     status,
     conclusion_kind:
-      status === "unknown" ? "unresolved_branch" : "derived_relationship",
+      status === "contradiction"
+        ? "contradiction"
+        : status === "unknown"
+          ? "unresolved_branch"
+          : "derived_relationship",
   };
 };
 

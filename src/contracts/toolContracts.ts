@@ -389,6 +389,16 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
+/** Caller observations used to compare a live server with expected identity. */
+export const binarySessionInputSchema = z.object({
+  expected_package_version: z.string().min(1).optional(),
+  expected_catalog_digest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+  expected_server_path: z.string().min(1).optional(),
+});
+
 /** Target lifecycle tools available only on the long-lived MCP adapter. */
 export const SESSION_TOOL_CONTRACTS = [
   session(
@@ -404,7 +414,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "binary_session",
     "Report provider identity, deterministic capability descriptors, and whether a target is open; open targets include canonical path, format, and kind. Use availability, effects, limits, and limitations before selecting analysis operations.",
-    z.object({}),
+    binarySessionInputSchema,
   ),
   session(
     "export_evidence_bundle",

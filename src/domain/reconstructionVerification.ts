@@ -389,7 +389,8 @@ const classify = (
   unknowns: readonly ResidualUnknown[],
 ): ClaimResult["status"] => {
   if (limitations.length > 0) return "unknown";
-  if (["changed", "added", "removed"].includes(observed)) return "fail";
+  if (["changed", "added", "removed", "contradiction"].includes(observed))
+    return "fail";
   if (observed === "unknown" || observed === "truncated" || unknowns.length > 0)
     return "unknown";
   return "pass";

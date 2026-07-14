@@ -16,6 +16,7 @@ import type {
   UnknownStatus,
   UpdateUnknownInput,
 } from "../domain/residualUnknown.js";
+import type { InvestigationWorkspace } from "../domain/investigationWorkspace.js";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
@@ -48,6 +49,14 @@ export interface BinarySessionPort extends AnalysisOperationPort {
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
   ): Result<number, AnalysisError>;
+  retainInvestigationWorkspace(
+    workspace: InvestigationWorkspace,
+  ): "added" | "duplicate";
+  investigationWorkspace(
+    workspaceId: string,
+    revision: number,
+  ): InvestigationWorkspace | undefined;
+  investigationWorkspaces(): readonly InvestigationWorkspace[];
   recordUnknown(
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError>;
@@ -72,4 +81,5 @@ export interface BinarySessionPort extends AnalysisOperationPort {
     UnknownRegistryError
   >;
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity;
+  onAvailabilityChanged?(listener: () => void): () => void;
 }

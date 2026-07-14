@@ -23,6 +23,7 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
   type ArtifactNode,
+  type IntegrityContradiction,
 } from "../domain/artifactGraph.js";
 import {
   classifyArtifactPath,
@@ -61,6 +62,21 @@ const NATIVE_MOUNT_DISABLED: ArtifactNativeMountPolicy = {
   nativeMountEnabled: false,
 };
 
+/** Explicit caller approval bounded by operator-owned integrity policy. */
+export interface ArtifactIntegrityPolicy {
+  readonly mode: "fail" | "record-and-continue";
+  readonly approved: boolean;
+  readonly enabled: boolean;
+  readonly maxMismatches: number;
+}
+
+const STRICT_INTEGRITY_POLICY: ArtifactIntegrityPolicy = {
+  mode: "fail",
+  approved: false,
+  enabled: false,
+  maxMismatches: 1,
+};
+
 /** Immutable inventory produced by one complete artifact scan. */
 export interface ArtifactInventorySnapshot {
   readonly manifest: ArtifactInventoryResult["manifest"];
@@ -71,6 +87,7 @@ export interface ArtifactInventorySnapshot {
   readonly provenance: ReadonlyArray<
     ArtifactInventoryResult["provenance"][number]
   >;
+  readonly integrity_contradictions: readonly IntegrityContradiction[];
   readonly limitations: readonly string[];
 }
 
@@ -82,6 +99,7 @@ export const inventoryArtifact = async (
   options: {
     readonly signal?: AbortSignal;
     readonly nativeMount?: ArtifactNativeMountPolicy;
+    readonly integrity?: ArtifactIntegrityPolicy;
   } = {},
 ): Promise<ArtifactInventoryResult> => {
   const snapshot = await scanArtifactInventory(
@@ -89,6 +107,7 @@ export const inventoryArtifact = async (
     limits,
     options.signal,
     options.nativeMount ?? NATIVE_MOUNT_DISABLED,
+    options.integrity ?? STRICT_INTEGRITY_POLICY,
   );
   return paginateArtifactInventory(snapshot, page);
 };
@@ -99,10 +118,17 @@ export const scanArtifactInventory = async (
   limits: ArtifactLimits,
   signal?: AbortSignal,
   nativeMount: ArtifactNativeMountPolicy = NATIVE_MOUNT_DISABLED,
+  integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
 ): Promise<ArtifactInventorySnapshot> => {
   abortIfNeeded(signal);
   const path = await realpath(inputPath);
-  return scanCanonicalArtifactInventory(path, limits, signal, nativeMount);
+  return scanCanonicalArtifactInventory(
+    path,
+    limits,
+    signal,
+    nativeMount,
+    integrity,
+  );
 };
 
 /** Scan one already-canonical artifact path without resolving it again. */
@@ -111,7 +137,16 @@ export const scanCanonicalArtifactInventory = async (
   limits: ArtifactLimits,
   signal?: AbortSignal,
   nativeMount: ArtifactNativeMountPolicy = NATIVE_MOUNT_DISABLED,
+  integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
 ): Promise<ArtifactInventorySnapshot> => {
+  if (
+    integrity.mode === "record-and-continue" &&
+    (!integrity.approved || !integrity.enabled)
+  )
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      "Integrity continuation requires explicit approval and operator policy",
+    );
   const metadata = await lstat(path);
   const rootFormat = await classifyRoot(path, metadata.isDirectory());
   const rootDigest = metadata.isDirectory()
@@ -120,7 +155,12 @@ export const scanCanonicalArtifactInventory = async (
   const reader = await createReader(path, rootFormat, nativeMount, signal);
 
   try {
-    const { nodes, occurrences } = await scanReader(reader, limits, signal);
+    const { nodes, occurrences, pendingContradictions } = await scanReader(
+      reader,
+      limits,
+      signal,
+      integrity,
+    );
 
     materializeDirectoryNodes(occurrences, nodes);
     const rootNode = createRootNode({
@@ -137,6 +177,46 @@ export const scanCanonicalArtifactInventory = async (
       if (occurrence.parent_occurrence_id === null)
         occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
     occurrences.unshift(rootOccurrence);
+    const occurrenceById = new Map(
+      occurrences.map((occurrence) => [occurrence.occurrence_id, occurrence]),
+    );
+    const integrityContradictions = pendingContradictions.map(
+      (contradiction): IntegrityContradiction => {
+        const occurrence = occurrences.find(
+          ({ logical_path: path }) => path === contradiction.logicalPath,
+        );
+        if (occurrence === undefined)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            "Integrity contradiction lost its graph occurrence",
+          );
+        const parent =
+          occurrence.parent_occurrence_id === null
+            ? undefined
+            : occurrenceById.get(occurrence.parent_occurrence_id);
+        const parentArtifactId = parent?.artifact_id ?? rootNode.artifact_id;
+        return {
+          contradiction_id: `ic_${digestCanonical({
+            root_artifact_id: rootNode.artifact_id,
+            logical_path: contradiction.logicalPath,
+            declared_sha256: contradiction.declaredSha256,
+            observed_sha256: contradiction.observedSha256,
+          })}`,
+          occurrence_id: occurrence.occurrence_id,
+          parent_artifact_id: parentArtifactId,
+          logical_path: contradiction.logicalPath,
+          declared_sha256: contradiction.declaredSha256,
+          observed_sha256: contradiction.observedSha256,
+          entry_kind: contradiction.entryKind,
+          unpacked: contradiction.unpacked,
+          trust: "observed-untrusted",
+          provenance: "container-integrity-metadata-versus-observed-bytes",
+          limitations: [
+            "Observed bytes contradict declared integrity metadata and cannot support equivalence.",
+          ],
+        };
+      },
+    );
     const edges = createArtifactEdges(
       rootNode.artifact_id,
       occurrences,
@@ -170,6 +250,7 @@ export const scanCanonicalArtifactInventory = async (
       nodes: orderedNodes,
       occurrences: orderedOccurrences,
       edges: orderedEdges,
+      integrity_contradictions: integrityContradictions,
     });
     const manifestId = `agm_${digestCanonical({
       schema_version: 1,
@@ -193,7 +274,15 @@ export const scanCanonicalArtifactInventory = async (
       edges: orderedEdges,
       limits: toOutputLimits(limits),
       provenance: reader?.provenance() ?? [],
-      limitations: inventoryLimitations(rootFormat, reader),
+      integrity_contradictions: integrityContradictions,
+      limitations: [
+        ...inventoryLimitations(rootFormat, reader),
+        ...(integrityContradictions.length === 0
+          ? []
+          : [
+              `${String(integrityContradictions.length)} integrity contradiction(s) were recorded; mismatched content is observed-untrusted.`,
+            ]),
+      ],
     };
   } finally {
     await reader?.close();
@@ -283,18 +372,30 @@ const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>
 const emptyScan = (): {
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
-} => ({ nodes: new Map(), occurrences: [] });
+  readonly pendingContradictions: PendingIntegrityContradiction[];
+} => ({ nodes: new Map(), occurrences: [], pendingContradictions: [] });
+
+interface PendingIntegrityContradiction {
+  readonly logicalPath: string;
+  readonly declaredSha256: string;
+  readonly observedSha256: string;
+  readonly entryKind: "file" | "slice";
+  readonly unpacked: boolean;
+}
 
 const scanReader = async (
   reader: ArtifactReader | undefined,
   limits: ArtifactLimits,
   signal?: AbortSignal,
+  integrity: ArtifactIntegrityPolicy = STRICT_INTEGRITY_POLICY,
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
+  readonly pendingContradictions: PendingIntegrityContradiction[];
 }> => {
-  const { nodes, occurrences } = emptyScan();
-  if (reader === undefined) return { nodes, occurrences };
+  const { nodes, occurrences, pendingContradictions } = emptyScan();
+  if (reader === undefined)
+    return { nodes, occurrences, pendingContradictions };
   const occurrenceByPath = new Map<string, MutableOccurrence>();
   const registry = new ArtifactPathRegistry();
   let totalBytes = 0;
@@ -302,7 +403,9 @@ const scanReader = async (
     currentReader: ArtifactReader,
     entry: ArtifactEntry,
     logicalPath: string,
-  ): Promise<ArtifactNode | undefined> => {
+  ): Promise<
+    { readonly node: ArtifactNode; readonly mismatched: boolean } | undefined
+  > => {
     if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
       return undefined;
     const remainingBytes = limits.maxTotalBytes - totalBytes;
@@ -322,7 +425,9 @@ const scanReader = async (
       signal,
     );
     totalBytes += digest.bytes;
-    if (entry.declaredSha256 !== null && entry.declaredSha256 !== digest.sha256)
+    const mismatched =
+      entry.declaredSha256 !== null && entry.declaredSha256 !== digest.sha256;
+    if (mismatched && integrity.mode === "fail")
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact integrity metadata disagrees with content: ${logicalPath}`,
@@ -334,18 +439,40 @@ const scanReader = async (
           unpacked: entry.unpacked,
         },
       );
+    if (mismatched && entry.declaredSha256 !== null) {
+      if (pendingContradictions.length >= integrity.maxMismatches)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Artifact integrity mismatch limit exceeded",
+        );
+      pendingContradictions.push({
+        logicalPath,
+        declaredSha256: entry.declaredSha256,
+        observedSha256: digest.sha256,
+        entryKind: entry.kind,
+        unpacked: entry.unpacked,
+      });
+    }
     const classified =
       entry.kind === "slice"
         ? ({ kind: "universal-slice", format: "mach-o" } as const)
         : classifyArtifactContent(logicalPath, digest.prefix);
-    return createArtifactNode({
-      sha256: digest.sha256,
-      size: digest.bytes,
-      kind: classified.kind,
-      format: classified.format,
-      executable: entry.executable,
-      contentState: "embedded",
-    });
+    return {
+      node: createArtifactNode({
+        sha256: digest.sha256,
+        size: digest.bytes,
+        kind: classified.kind,
+        format: classified.format,
+        executable: entry.executable,
+        contentState: "embedded",
+        limitations: mismatched
+          ? [
+              "Observed content contradicts declared integrity metadata and is untrusted.",
+            ]
+          : [],
+      }),
+      mismatched,
+    };
   };
   const visit = async (
     currentReader: ArtifactReader,
@@ -370,20 +497,26 @@ const scanReader = async (
         logicalPath,
         parent?.occurrence_id ?? null,
       );
-      const node = await digestEntry(currentReader, entry, logicalPath);
-      if (node !== undefined) {
-        nodes.set(node.artifact_id, node);
-        occurrence.artifact_id = node.artifact_id;
-        occurrence.hash_status = "verified";
+      const digested = await digestEntry(currentReader, entry, logicalPath);
+      if (digested !== undefined) {
+        nodes.set(digested.node.artifact_id, digested.node);
+        occurrence.artifact_id = digested.node.artifact_id;
+        occurrence.hash_status = digested.mismatched
+          ? "mismatched"
+          : "verified";
+        if (digested.mismatched)
+          occurrence.limitations.push(
+            "Declared integrity metadata contradicts observed bytes.",
+          );
       }
       occurrences.push(occurrence);
       occurrenceByPath.set(logicalPath, occurrence);
-      if (expandableAsar)
+      if (expandableAsar && digested?.mismatched !== true)
         await visitNestedAsar(entry.adapterKey, logicalPath, visit);
     }
   };
   await visit(reader, "");
-  return { nodes, occurrences };
+  return { nodes, occurrences, pendingContradictions };
 };
 
 const classifyRoot = async (

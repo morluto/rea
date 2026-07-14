@@ -9,7 +9,10 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../src/application/AnalysisProvider.js";
-import { HopperStartError } from "../src/domain/errors.js";
+import {
+  HopperStartError,
+  ProviderAdapterError,
+} from "../src/domain/errors.js";
 import { err } from "../src/domain/result.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
 
@@ -176,6 +179,48 @@ describe("binary session", () => {
       value: { entries: [] },
     });
     await session.close();
+  });
+
+  it("publishes provider-health availability changes and resets on target switch", async () => {
+    const [first, second] = await targets();
+    const provider = cacheProvider([]);
+    provider.createClient = () => ({
+      execute: (operation) =>
+        Promise.resolve(
+          operation === "health"
+            ? ok(null)
+            : err(new ProviderAdapterError("fixture", operation)),
+        ),
+      close: () => Promise.resolve(),
+    });
+    const session = new BinarySession(provider);
+    let changes = 0;
+    session.onAvailabilityChanged(() => {
+      changes += 1;
+    });
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(false);
+    expect(session.status()).toMatchObject({
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({
+          operation: "address_name",
+          available: false,
+          reason: "Provider became unavailable during this session.",
+        }),
+      ]),
+    });
+    expect(changes).toBe(1);
+    expect((await session.open(second)).ok).toBe(true);
+    expect(session.status()).toMatchObject({
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({
+          operation: "address_name",
+          available: true,
+          reason: null,
+        }),
+      ]),
+    });
+    expect(changes).toBe(2);
   });
 
   it("does not replay operations with filesystem side effects", async () => {

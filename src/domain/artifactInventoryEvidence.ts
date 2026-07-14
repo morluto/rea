@@ -7,6 +7,7 @@ import {
   type ArtifactInventoryResult,
   type ArtifactNode,
   type ArtifactOccurrence,
+  type IntegrityContradiction,
 } from "./artifactGraph.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 
@@ -16,6 +17,7 @@ export interface InventorySet {
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: readonly ArtifactOccurrence[];
   readonly edges: readonly ArtifactInventoryResult["edges"]["items"][number][];
+  readonly integrityContradictions: readonly IntegrityContradiction[];
   readonly limitations: readonly string[];
   readonly complete: boolean;
 }
@@ -99,6 +101,13 @@ const assembleInventorySet = (
   for (const page of pages) {
     if (canonicalJson(page.inventory.manifest) !== manifestJson)
       throw new TypeError("Artifact inventory pages do not share one manifest");
+    if (
+      canonicalJson(page.inventory.integrity_contradictions) !==
+      canonicalJson(first.inventory.integrity_contradictions)
+    )
+      throw new TypeError(
+        "Artifact inventory pages do not share integrity contradictions",
+      );
     for (const node of page.inventory.nodes.items)
       mergeExact(nodes, node.artifact_id, node, "node");
     for (const occurrence of page.inventory.occurrences.items) {
@@ -148,6 +157,7 @@ const orderedInventory = (
     nodes,
     occurrences,
     edges,
+    integrityContradictions: first.integrity_contradictions,
     limitations: [
       ...new Set(pages.flatMap(({ inventory }) => inventory.limitations)),
     ].sort((left, right) => left.localeCompare(right)),
@@ -174,10 +184,30 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
     validateOccurrence(occurrence, inventory, nodeIds, occurrenceIds);
   for (const edge of inventory.edges)
     validateEdge(edge, nodeIds, occurrenceIds);
+  for (const contradiction of inventory.integrityContradictions) {
+    if (
+      !nodeIds.has(contradiction.parent_artifact_id) ||
+      !occurrenceIds.has(contradiction.occurrence_id)
+    )
+      throw new TypeError(
+        "Integrity contradiction references a missing graph member",
+      );
+    const expectedId = `ic_${digestCanonical({
+      root_artifact_id: inventory.manifest.root_artifact_id,
+      logical_path: contradiction.logical_path,
+      declared_sha256: contradiction.declared_sha256,
+      observed_sha256: contradiction.observed_sha256,
+    })}`;
+    if (contradiction.contradiction_id !== expectedId)
+      throw new TypeError(
+        "Integrity contradiction ID does not match its identity",
+      );
+  }
   const graphSha256 = digestCanonical({
     nodes: inventory.nodes,
     occurrences: inventory.occurrences,
     edges: inventory.edges,
+    integrity_contradictions: inventory.integrityContradictions,
   });
   if (graphSha256 !== inventory.manifest.graph_sha256)
     throw new TypeError("Artifact graph commitment does not match its members");

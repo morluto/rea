@@ -17,7 +17,10 @@ export const createBinarySession = (
 ): BinarySession => {
   return new BinarySession(
     new CompositeProvider([
-      new ArtifactProvider(config.artifactNativeMountEnabled),
+      new ArtifactProvider(
+        config.artifactNativeMountEnabled,
+        config.artifactIntegrityContinueEnabled,
+      ),
       new NativeMacOSProvider(),
       new HopperProvider(config, logger),
     ]),

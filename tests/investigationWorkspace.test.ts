@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { createPackageWithOptions } from "@electron/asar";
 
 import { runCrossVersionInvestigation } from "../src/application/CrossVersionInvestigation.js";
 import {
@@ -209,6 +210,86 @@ describe("persistent cross-version investigation workspace", () => {
         ({ evidence_id: id }) => id === firstRun.result_evidence_id,
       ),
     ).toBe(true);
+  });
+
+  it("checkpoints bounded integrity contradictions and safely reuses them", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-workspace-integrity-"));
+    const source = join(directory, "source");
+    await mkdir(source);
+    await writeFile(join(source, "addon.node"), "verified native addon\n");
+    const left = join(directory, "left.asar");
+    const right = join(directory, "right.asar");
+    await Promise.all([
+      createPackageWithOptions(source, left, { unpack: "*.node" }),
+      createPackageWithOptions(source, right, { unpack: "*.node" }),
+    ]);
+    await writeFile(join(`${right}.unpacked`, "addon.node"), "tampered\n");
+    const base = {
+      approved: true as const,
+      workspace_path: join(directory, "strict.json"),
+      workspace_name: "integrity-diff",
+      left_path: left,
+      right_path: right,
+      options: { page_size: 500, change_limit: 100 },
+    };
+    const strict = await runCrossVersionInvestigation(
+      crossVersionInvestigationInputSchema.parse(base),
+      policy(directory),
+      { inputRoots: [directory] },
+    );
+    expect(strict).toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "integrity" },
+    });
+
+    const continuedInput = crossVersionInvestigationInputSchema.parse({
+      ...base,
+      workspace_path: join(directory, "continued.json"),
+      integrity_policy: "record-and-continue",
+      integrity_continue_approved: true,
+      max_integrity_mismatches: 2,
+    });
+    const continued = await runCrossVersionInvestigation(
+      continuedInput,
+      policy(directory),
+      { inputRoots: [directory], integrityContinueEnabled: true },
+    );
+    expect(continued).toMatchObject({
+      ok: true,
+      value: { reused: false, workspace: { revision: 3 } },
+    });
+    if (!continued.ok) throw continued.error;
+    expect(
+      continued.value.workspace.bundle.records.some((record) =>
+        JSON.stringify(record.normalized_result).includes(
+          '"integrity_contradictions":[{',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      continued.value.workspace.bundle.records.find(
+        ({ operation }) => operation === "compare_artifacts",
+      )?.normalized_result,
+    ).toMatchObject({ status: "contradiction" });
+    await expect(
+      runCrossVersionInvestigation(continuedInput, policy(directory), {
+        inputRoots: [directory],
+        integrityContinueEnabled: true,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { reused: true } });
+
+    const strictAfterContinuation = crossVersionInvestigationInputSchema.parse({
+      ...base,
+      workspace_path: continuedInput.workspace_path,
+    });
+    await expect(
+      runCrossVersionInvestigation(strictAfterContinuation, policy(directory), {
+        inputRoots: [directory],
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "integrity" },
+    });
   });
 
   it("fails closed on locks, CAS conflicts, tampering, and cancellation", async () => {

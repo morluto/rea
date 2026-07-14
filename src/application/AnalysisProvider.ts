@@ -9,9 +9,11 @@ import type { Result } from "../domain/result.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { EvidenceSubjectTarget } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import type { ProgressReporter } from "./ProgressReporter.js";
 
-interface ExecutionOptions {
+export interface ExecutionOptions {
   readonly signal?: AbortSignal;
+  readonly progress?: ProgressReporter;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */

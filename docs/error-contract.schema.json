@@ -1,0 +1,831 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "invalid_request" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "unreadable_output" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "capability_unavailable" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "provider_unavailable" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "provider_timeout" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "cancelled" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "artifact_integrity_mismatch" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "logical_path": { "type": "string" },
+            "declared_sha256": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }]
+            },
+            "calculated_sha256": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }]
+            },
+            "unpacked": { "type": "boolean" }
+          },
+          "required": [
+            "logical_path",
+            "declared_sha256",
+            "calculated_sha256",
+            "unpacked"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "code",
+        "category",
+        "message",
+        "retryable",
+        "remediation",
+        "details"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "artifact_operation_failed" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "evidence_integrity_mismatch" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "truncated" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "permission_required" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "capability": { "type": "string" },
+            "requested": {
+              "type": "object",
+              "properties": {
+                "capability": { "type": "string" },
+                "roots": { "type": "array", "items": { "type": "string" } },
+                "executables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "environment_names": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "network": {
+                  "type": "string",
+                  "enum": ["none", "loopback", "external"]
+                },
+                "mount": { "type": "boolean" }
+              },
+              "required": [
+                "capability",
+                "roots",
+                "executables",
+                "environment_names",
+                "network",
+                "mount"
+              ],
+              "additionalProperties": false
+            },
+            "missing": {
+              "type": "object",
+              "properties": {
+                "roots": { "type": "array", "items": { "type": "string" } },
+                "executables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "environment_names": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "network": {
+                  "type": "string",
+                  "enum": ["none", "loopback", "external"]
+                },
+                "mount": { "type": "boolean", "const": true }
+              },
+              "additionalProperties": false
+            },
+            "ceiling": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "capability": { "type": "string" },
+                    "roots": { "type": "array", "items": { "type": "string" } },
+                    "executables": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "environment_names": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "network": {
+                      "type": "string",
+                      "enum": ["none", "loopback", "external"]
+                    },
+                    "mount": { "type": "boolean" }
+                  },
+                  "required": [
+                    "capability",
+                    "roots",
+                    "executables",
+                    "environment_names",
+                    "network",
+                    "mount"
+                  ],
+                  "additionalProperties": false
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["capability", "requested", "missing", "ceiling"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "process_capture_failed" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "cleanup_incomplete" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "revision_conflict" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "outside_approved_root" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "configuration_invalid" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "target_unavailable" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "execution_failure" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "type": "array", "items": { "$ref": "#/$defs/__schema0" } },
+        {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      ]
+    }
+  }
+}
