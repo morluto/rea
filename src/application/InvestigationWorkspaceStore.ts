@@ -11,6 +11,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
+import { isJsonWithinLimits } from "../domain/jsonLimits.js";
 import { InvestigationWorkspaceError } from "../domain/errors.js";
 import {
   parseInvestigationWorkspace,
@@ -132,7 +133,7 @@ const readWorkspaceFile = async (
       new InvestigationWorkspaceError("read", "invalid-json", { cause }),
     );
   }
-  if (!withinJsonLimits(decoded, policy))
+  if (!isJsonWithinLimits(decoded, policy))
     return err(new InvestigationWorkspaceError("read", "too-large"));
   try {
     return ok(parseInvestigationWorkspace(decoded));
@@ -239,34 +240,6 @@ const validateNextRevision = (
     next.previous_revision_digest === current.revision_digest
     ? ok(null)
     : err(new InvestigationWorkspaceError("update", "revision-conflict"));
-};
-
-const withinJsonLimits = (
-  root: unknown,
-  policy: EvidenceFilePolicy,
-): boolean => {
-  const pending: Array<{ readonly value: unknown; readonly depth: number }> = [
-    { value: root, depth: 0 },
-  ];
-  let nodes = 0;
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined) break;
-    nodes += 1;
-    if (nodes > policy.maxNodes || current.depth > policy.maxDepth)
-      return false;
-    if (
-      typeof current.value === "string" &&
-      current.value.length > policy.maxStringLength
-    )
-      return false;
-    if (typeof current.value !== "object" || current.value === null) continue;
-    for (const [key, value] of Object.entries(current.value)) {
-      if (key.length > policy.maxStringLength) return false;
-      pending.push({ value, depth: current.depth + 1 });
-    }
-  }
-  return true;
 };
 
 const isFileNotFound = (cause: unknown): boolean =>

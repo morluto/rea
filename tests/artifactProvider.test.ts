@@ -53,7 +53,7 @@ describe("artifact graph provider", () => {
       machO,
     );
     await writeFile(join(app, "Contents", "Resources", "main.js"), "main();\n");
-    await writeFile(join(app, "Contents", "Resources", "main.js.map"), "{}\n");
+    await writeFile(join(app, "Contents", "Resources", "main.js.MAP"), "{}\n");
     await symlink("/etc/passwd", join(app, "Contents", "Resources", "outside"));
     const client = new ArtifactProvider().createClient(
       target(app, "directory"),
@@ -88,7 +88,7 @@ describe("artifact graph provider", () => {
       path.endsWith("main.js"),
     );
     const sourceMap = left.occurrences.items.find(({ logical_path: path }) =>
-      path.endsWith("main.js.map"),
+      path.endsWith("main.js.MAP"),
     );
     expect(left.edges.items).toEqual(
       expect.arrayContaining([

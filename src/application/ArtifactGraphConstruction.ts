@@ -215,7 +215,7 @@ export const createArtifactEdges = (
       occurrence.artifact_id === null
     )
       continue;
-    const mappedSource = occurrence.logical_path.endsWith(".map")
+    const mappedSource = occurrence.logical_path.toLowerCase().endsWith(".map")
       ? byPath.get(occurrence.logical_path.slice(0, -".map".length))
       : undefined;
     const parentArtifactId =

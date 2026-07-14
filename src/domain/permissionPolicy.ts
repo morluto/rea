@@ -165,10 +165,7 @@ export const evaluatePermission = (
     reason:
       coveringGrant !== undefined && isExpired(coveringGrant, now)
         ? "grant_expired"
-        : candidates.length === 0 &&
-            policy.grants.some(
-              (grant) => grant.capability === normalized.capability,
-            )
+        : coveringGrant !== undefined
           ? "grant_revoked_or_consumed"
           : "grant_required",
     missing: missingFromScopes(normalized, candidates),
