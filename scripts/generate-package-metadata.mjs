@@ -2,6 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateBuildCache } from "./build-cache.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
@@ -32,4 +34,18 @@ export const PACKAGE_METADATA = {
   skillVersion: ${JSON.stringify(skillVersion)},
 } as const;
 `;
-await writeFile(join(root, "src/generatedPackageMetadata.ts"), source, "utf8");
+const outputPath = join(root, "src/generatedPackageMetadata.ts");
+let existingSource;
+try {
+  existingSource = await readFile(outputPath, "utf8");
+} catch (cause) {
+  if (
+    typeof cause !== "object" ||
+    cause === null ||
+    !("code" in cause) ||
+    cause.code !== "ENOENT"
+  )
+    throw cause;
+}
+if (existingSource !== source) await writeFile(outputPath, source, "utf8");
+await validateBuildCache(root);

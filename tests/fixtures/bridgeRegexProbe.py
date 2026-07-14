@@ -58,5 +58,11 @@ def _probe(namespace, payload):
 
 if __name__ == "__main__":
     bridge = _load_bridge(sys.argv[1])
-    request = json.loads(sys.argv[2])
-    print(json.dumps(_probe(bridge, request), sort_keys=True))
+    if len(sys.argv) >= 3:
+        print(json.dumps(_probe(bridge, json.loads(sys.argv[2])), sort_keys=True))
+    else:
+        for line in sys.stdin:
+            if not line.strip():
+                continue
+            request = json.loads(line)
+            print(json.dumps(_probe(bridge, request), sort_keys=True), flush=True)

@@ -214,12 +214,11 @@ describe("enhanced MCP tools", () => {
       ["analyze_function", { procedure: "0x1" }],
       ["trace_feature", { query: "hello", max_operations: 10 }],
     ] as const;
-    const results = [];
-    for (const [name, arguments_] of calls) {
-      results.push(
+    const results = await Promise.all(
+      calls.map(async ([name, arguments_]) =>
         jsonResult(await client.callTool({ name, arguments: arguments_ })),
-      );
-    }
+      ),
+    );
     expect(results[0]).toMatchObject({ count: 1 });
     expect(results[1]).toMatchObject({ count: 1 });
     expect(results[2]).toMatchObject({ count: 1 });

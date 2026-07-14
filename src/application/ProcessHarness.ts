@@ -25,6 +25,7 @@ import {
   type CommandShimReplay,
 } from "./CommandShimReplay.js";
 import { normalizeProcessText } from "./ProcessNormalization.js";
+import { selectCapturedProcessGroupIds } from "./ProcessOwnership.js";
 import {
   awaitTerminalExit,
   buildCaptureResult,
@@ -157,7 +158,8 @@ const cleanupFailedStartup = async (options: {
   options.terminal?.kill("SIGKILL");
   const cleanupFailure = await releaseProcessResources({
     ...options,
-    sampledProcessGroupIds: [],
+    capturedProcessGroupIds:
+      options.terminal === undefined ? [] : [options.terminal.pid],
   });
   if (cleanupFailure !== undefined)
     throw new ProcessCaptureError(cleanupFailure, {
@@ -319,9 +321,13 @@ const finishProcessRun = async (options: {
     checkpoints: options.runtime?.checkpoints,
     runId: options.runId,
     temporaryRoot: options.temporaryRoot,
-    sampledProcessGroupIds: options.samples.flatMap(({ process_group_id }) =>
-      process_group_id === null ? [] : [process_group_id],
-    ),
+    capturedProcessGroupIds:
+      options.runtime === undefined
+        ? []
+        : selectCapturedProcessGroupIds(
+            options.runtime.terminal.pid,
+            options.samples,
+          ),
   });
   let { capture, executionFailure } = options;
   if (capture !== undefined) {
@@ -365,12 +371,7 @@ const completeCapture = async (options: {
   if (reason === "cancelled") throw processCaptureCancelled();
   const settlement = await observeSettlement(
     options.runId,
-    [
-      runtime.terminal.pid,
-      ...options.samples.flatMap(({ process_group_id }) =>
-        process_group_id === null ? [] : [process_group_id],
-      ),
-    ],
+    selectCapturedProcessGroupIds(runtime.terminal.pid, options.samples),
     scenario.settle_ms,
   );
   runtime.checkpoints.trigger("settled");
