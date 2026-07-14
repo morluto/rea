@@ -66,35 +66,33 @@ describe("CLI output boundary", () => {
   it(
     "sanitizes a real missing-argument dispatcher failure",
     async () => {
-      await Promise.all([
-        expect(
-          execFileAsync(process.execPath, ["scripts/rea.mjs", "analyze"], {
-            cwd: process.cwd(),
-          }),
-        ).rejects.toMatchObject({
-          stdout:
-            'code: VALIDATION_ERROR\nmessage: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
+      await expect(
+        execFileAsync(process.execPath, ["scripts/rea.mjs", "analyze"], {
+          cwd: process.cwd(),
         }),
-        expect(
-          execFileAsync(
-            process.execPath,
-            ["scripts/rea.mjs", "--full-output", "--json", "analyze"],
-            { cwd: process.cwd() },
-          ),
-        ).rejects.toMatchObject({
-          stdout: expect.not.stringContaining("fieldErrors"),
-        }),
-        expect(
-          execFileAsync(
-            process.execPath,
-            ["scripts/rea.mjs", "--full-output", "analyze"],
-            { cwd: process.cwd() },
-          ),
-        ).rejects.toMatchObject({
-          stdout:
-            'ok: false\nerror:\n  code: VALIDATION_ERROR\n  message: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
-        }),
-      ]);
+      ).rejects.toMatchObject({
+        stdout:
+          'code: VALIDATION_ERROR\nmessage: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
+      });
+      await expect(
+        execFileAsync(
+          process.execPath,
+          ["scripts/rea.mjs", "--full-output", "--json", "analyze"],
+          { cwd: process.cwd() },
+        ),
+      ).rejects.toMatchObject({
+        stdout: expect.not.stringContaining("fieldErrors"),
+      });
+      await expect(
+        execFileAsync(
+          process.execPath,
+          ["scripts/rea.mjs", "--full-output", "analyze"],
+          { cwd: process.cwd() },
+        ),
+      ).rejects.toMatchObject({
+        stdout:
+          'ok: false\nerror:\n  code: VALIDATION_ERROR\n  message: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
+      });
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
@@ -110,24 +108,22 @@ describe("CLI output boundary", () => {
       await createPackageWithOptions(source, archive, { unpack: "*.js" });
       await writeFile(join(`${archive}.unpacked`, "main.js"), "changed();\n");
 
-      await Promise.all(
-        [["--json"], ["--full-output", "--json"]].map(async (flags) => {
-          const execution = execFileAsync(process.execPath, [
-            "scripts/rea.mjs",
-            ...flags,
-            "inventory-artifact",
-            archive,
-          ]);
-          const failure = await execution.catch((cause: unknown) => cause);
-          expect(failure).toMatchObject({ code: 1 });
-          const { stdout } = failure as { readonly stdout: string };
-          const output = JSON.stringify(JSON.parse(stdout) as unknown);
-          expect(output).toContain('"logical_path":"main.js"');
-          expect(output).toMatch(/"declared_sha256":"[a-f0-9]{64}"/u);
-          expect(output).toMatch(/"calculated_sha256":"[a-f0-9]{64}"/u);
-          expect(output).toContain('"unpacked":true');
-        }),
-      );
+      for (const flags of [["--json"], ["--full-output", "--json"]]) {
+        const execution = execFileAsync(process.execPath, [
+          "scripts/rea.mjs",
+          ...flags,
+          "inventory-artifact",
+          archive,
+        ]);
+        const failure = await execution.catch((cause: unknown) => cause);
+        expect(failure).toMatchObject({ code: 1 });
+        const { stdout } = failure as { readonly stdout: string };
+        const output = JSON.stringify(JSON.parse(stdout) as unknown);
+        expect(output).toContain('"logical_path":"main.js"');
+        expect(output).toMatch(/"declared_sha256":"[a-f0-9]{64}"/u);
+        expect(output).toMatch(/"calculated_sha256":"[a-f0-9]{64}"/u);
+        expect(output).toContain('"unpacked":true');
+      }
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
@@ -147,24 +143,18 @@ describe("CLI output boundary", () => {
         ["--token-count", "--json"],
       ];
 
-      for (let index = 0; index < variants.length; index += 2)
-        await Promise.all(
-          variants.slice(index, index + 2).map(async (flags) => {
-            await expect(
-              execFileAsync(process.execPath, [
-                "scripts/rea.mjs",
-                ...flags,
-                "investigate-versions",
-                "/tmp/left",
-                "/tmp/right",
-                "/tmp/workspace.json",
-              ]),
-            ).rejects.toMatchObject({
-              code: 1,
-              stdout: expect.any(String),
-            });
-          }),
-        );
+      for (const flags of variants) {
+        await expect(
+          execFileAsync(process.execPath, [
+            "scripts/rea.mjs",
+            ...flags,
+            "investigate-versions",
+            "/tmp/left",
+            "/tmp/right",
+            "/tmp/workspace.json",
+          ]),
+        ).rejects.toMatchObject({ code: 1, stdout: expect.any(String) });
+      }
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );

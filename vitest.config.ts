@@ -4,6 +4,12 @@ import { defineConfig } from "vitest/config";
 
 const TEST_FILES = ["tests/**/*.test.ts"];
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
+const SERIAL_INTEGRATION_TESTS = [
+  "tests/browserCli.test.ts",
+  "tests/cliOutput.test.ts",
+  PROCESS_CAPTURE_TEST,
+  "tests/runtime.test.ts",
+];
 const dualCoreProjects =
   availableParallelism() === 2
     ? {
@@ -13,13 +19,13 @@ const dualCoreProjects =
             test: {
               name: "parallel",
               include: TEST_FILES,
-              exclude: [PROCESS_CAPTURE_TEST],
+              exclude: SERIAL_INTEGRATION_TESTS,
             },
           },
           {
             test: {
-              name: "process-capture",
-              include: [PROCESS_CAPTURE_TEST],
+              name: "serial-integration",
+              include: SERIAL_INTEGRATION_TESTS,
               fileParallelism: false,
             },
           },
