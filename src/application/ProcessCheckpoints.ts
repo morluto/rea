@@ -126,7 +126,7 @@ export class ProcessCheckpoints {
       effects: classifyFilesystemEffects(previous, after.files),
       truncated: after.truncated,
     });
-    return this.#captures;
+    return structuredClone(this.#captures);
   }
 
   /** Cancel scheduled captures and await any snapshot already in progress. */

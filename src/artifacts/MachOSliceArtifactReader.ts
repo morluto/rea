@@ -94,7 +94,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   }
 
   provenance(): readonly ArtifactCommand[] {
-    return this.#command === undefined ? [] : [this.#command];
+    return this.#command === undefined ? [] : [structuredClone(this.#command)];
   }
 
   close(): Promise<void> {

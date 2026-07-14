@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NativeMacOSProvider } from "../src/native/NativeMacOSProvider.js";
 import {
   NativeCommandFailure,
+  XcrunCommandRunner,
   type NativeCommandCapture,
   type NativeCommandRunner,
 } from "../src/native/CommandRunner.js";
@@ -22,6 +23,24 @@ afterEach(async () => {
 });
 
 describe("native macOS provider", () => {
+  it("retries a failed native tool resolution and caches only success", async () => {
+    let resolutions = 0;
+    const runner = new XcrunCommandRunner((tool) => {
+      resolutions += 1;
+      return Promise.resolve(
+        resolutions === 1
+          ? err(new NativeCommandFailure(tool, "unavailable"))
+          : ok({ path: "/bin/true", sha256: "a".repeat(64) }),
+      );
+    });
+    const options = { timeoutMs: 1_000, maxOutputBytes: 1_024 };
+
+    expect((await runner.run("file", [], options)).ok).toBe(false);
+    expect((await runner.run("file", [], options)).ok).toBe(true);
+    expect((await runner.run("file", [], options)).ok).toBe(true);
+    expect(resolutions).toBe(2);
+  });
+
   it("normalizes comprehensive Mach-O inspection with exact bounded provenance", async () => {
     const runner = new FixtureRunner();
     const client = new NativeMacOSProvider(runner, "darwin").createClient(

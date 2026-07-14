@@ -150,10 +150,12 @@ const comparisonUnknownInput = (
     return undefined;
   const differingScopes = [
     ["terminal", comparison.terminal],
+    ["interaction", comparison.interaction],
     ["exit", comparison.exit],
     ["filesystem", comparison.filesystem],
     ["protocol", comparison.protocol],
     ["process", comparison.process],
+    ["shim", comparison.shim],
   ]
     .filter(([, status]) => status !== "unchanged")
     .map(([scope]) => scope)

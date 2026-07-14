@@ -290,7 +290,27 @@ describe("full MCP integration with multi-tool sequences", () => {
     const left = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
     const right = processCaptureSchema.parse({
       ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-      exit: { code: 1, signal: null, reason: "exited" },
+      interaction_events: [
+        {
+          sequence: 0,
+          scheduled_at_ms: 0,
+          dispatched_at_ms: 0,
+          type: "input",
+          data: "fixture",
+          outcome: "dispatched",
+        },
+      ],
+      shim_events: [
+        {
+          sequence: 0,
+          at_ms: 0,
+          command: "fixture",
+          route_index: null,
+          arguments: [],
+          working_directory: "/tmp",
+          outcome: "unmatched",
+        },
+      ],
     });
     const captureEvidence = (capture: typeof left) =>
       createEvidence(undefined, PROCESS_PROVIDER, {
@@ -347,6 +367,7 @@ describe("full MCP integration with multi-tool sequences", () => {
         {
           status: "contradicted",
           domain: "process-comparison",
+          question: "Process captures disagree across: interaction, shim",
           contradicting_evidence_ids: [rightEvidence.evidence_id],
         },
       ],

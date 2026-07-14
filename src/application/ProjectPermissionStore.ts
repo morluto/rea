@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  stat,
+  unlink,
+  type FileHandle,
+} from "node:fs/promises";
 import { dirname } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
@@ -49,7 +59,12 @@ export class ProjectPermissionStoreError extends Error {
   readonly _tag = "ProjectPermissionStoreError" as const;
 
   constructor(
-    readonly reason: "project_not_found" | "not_owner_only" | "invalid" | "io",
+    readonly reason:
+      | "project_not_found"
+      | "not_owner_only"
+      | "invalid"
+      | "locked"
+      | "io",
     options?: ErrorOptions,
   ) {
     super(`Project permission store failed: ${reason}`, options);
@@ -143,5 +158,114 @@ export const writeProjectPermissionStore = async (
   }
 };
 
-const isNotFound = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+/** Revoke one grant while serializing the complete read-modify-write cycle. */
+export const revokeProjectPermissionGrant = async (
+  path: string,
+  projectRoot: string,
+  grantId: string,
+): Promise<Result<boolean, ProjectPermissionStoreError>> => {
+  let lock: PermissionStoreLock | undefined;
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const acquired = await acquirePermissionStoreLock(path);
+    if (!acquired.ok) return acquired;
+    lock = acquired.value;
+    const current = await readProjectPermissionStore(path, projectRoot);
+    if (!current.ok) return current;
+    const grants = current.value?.grants ?? [];
+    const retained = grants.filter(({ grant_id }) => grant_id !== grantId);
+    if (retained.length === grants.length) return ok(false);
+    const written = await writeProjectPermissionStore(
+      path,
+      projectRoot,
+      retained,
+    );
+    return written.ok ? ok(true) : written;
+  } catch (cause: unknown) {
+    return err(new ProjectPermissionStoreError("io", { cause }));
+  } finally {
+    if (lock !== undefined) await releasePermissionStoreLock(lock);
+  }
+};
+
+interface PermissionStoreLock {
+  readonly path: string;
+  readonly handle: FileHandle;
+}
+
+const acquirePermissionStoreLock = async (
+  destination: string,
+): Promise<Result<PermissionStoreLock, ProjectPermissionStoreError>> => {
+  const path = `${destination}.lock`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      return ok(await createPermissionStoreLock(path));
+    } catch (cause: unknown) {
+      if (!isAlreadyExists(cause))
+        return err(new ProjectPermissionStoreError("io", { cause }));
+      if (await removeStalePermissionStoreLock(path)) continue;
+      if (attempt === 99)
+        return err(new ProjectPermissionStoreError("locked", { cause }));
+      await delay(10);
+    }
+  }
+  return err(new ProjectPermissionStoreError("locked"));
+};
+
+const createPermissionStoreLock = async (
+  path: string,
+): Promise<PermissionStoreLock> => {
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(`${String(process.pid)}\n`, "utf8");
+    await handle.sync();
+    return { path, handle };
+  } catch (cause: unknown) {
+    await handle.close().catch(() => undefined);
+    await unlink(path).catch(() => undefined);
+    throw cause;
+  }
+};
+
+const removeStalePermissionStoreLock = async (
+  path: string,
+): Promise<boolean> => {
+  try {
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 32)
+      return false;
+    const encoded = (await readFile(path, "utf8")).trim();
+    if (!/^[1-9][0-9]{0,9}$/u.test(encoded)) return false;
+    if (processIsAlive(Number(encoded))) return false;
+    await unlink(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause: unknown) {
+    return errorCode(cause) !== "ESRCH";
+  }
+};
+
+const releasePermissionStoreLock = async (
+  lock: PermissionStoreLock,
+): Promise<void> => {
+  await lock.handle.close().catch(() => undefined);
+  await unlink(lock.path).catch(() => undefined);
+};
+
+const isNotFound = (cause: unknown): boolean => errorCode(cause) === "ENOENT";
+
+const isAlreadyExists = (cause: unknown): boolean =>
+  errorCode(cause) === "EEXIST";
+
+const errorCode = (cause: unknown): unknown =>
+  typeof cause === "object" && cause !== null && "code" in cause
+    ? cause.code
+    : undefined;

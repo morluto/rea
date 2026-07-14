@@ -69,7 +69,7 @@ export class TerminalRenderer {
   /** Await all queued parsing and return immutable rendered observations. */
   async frames(): Promise<readonly RenderedTerminalFrame[]> {
     await this.#pending;
-    return this.#frames;
+    return structuredClone(this.#frames);
   }
 
   /** Whether a rendered observation exceeded its independent capture budget. */

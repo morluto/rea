@@ -12,7 +12,11 @@ import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { probeProcessCaptureCapability } from "../src/application/ProcessHarness.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
 import { createServer } from "../src/server/createServer.js";
-import { evidenceBundleSchema } from "../src/domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  evidenceBundleSchema,
+} from "../src/domain/evidenceBundle.js";
+import { createEvidence } from "../src/domain/evidence.js";
 import { silentLogger } from "../src/logger.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -54,6 +58,10 @@ describe("target-free MCP lifecycle", () => {
       },
     });
     const mcp = new Client({ name: "session-test", version: "1.0.0" });
+    let resourceListChanges = 0;
+    mcp.setNotificationHandler("notifications/resources/list_changed", () => {
+      resourceListChanges += 1;
+    });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -116,6 +124,31 @@ describe("target-free MCP lifecycle", () => {
         }),
       ).result,
     ).toEqual({ imported: 0, total: 1 });
+    const externalEvidencePath = join(directory, "external-evidence.json");
+    await writeFile(
+      externalEvidencePath,
+      JSON.stringify(
+        createEvidenceBundle([
+          createEvidence(
+            undefined,
+            { id: "fixture", name: "Fixture", version: "1" },
+            { operation: "external_observation", parameters: {}, result: true },
+          ),
+        ]),
+      ),
+    );
+    let changesBeforeMutation = resourceListChanges;
+    expect(
+      structured(
+        await mcp.callTool({
+          name: "import_evidence_bundle",
+          arguments: { path: externalEvidencePath },
+        }),
+      ).result,
+    ).toEqual({ imported: 1, total: 2 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resourceListChanges).toBe(changesBeforeMutation + 1);
+    changesBeforeMutation = resourceListChanges;
     const recordedUnknown = z
       .object({
         result: z.object({
@@ -142,6 +175,8 @@ describe("target-free MCP lifecycle", () => {
         ),
       ).result;
     expect(recordedUnknown.revision).toBe(1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resourceListChanges).toBe(changesBeforeMutation + 1);
     expect(
       z
         .object({ result: z.array(z.unknown()) })
@@ -174,6 +209,8 @@ describe("target-free MCP lifecycle", () => {
       },
     });
     expect(resolved.isError).not.toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(resourceListChanges).toBe(changesBeforeMutation + 2);
     expect(
       structured(
         await mcp.callTool({

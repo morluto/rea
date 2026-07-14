@@ -31,7 +31,7 @@ export const normalizeProcessText = (
       );
   }
   if (scenario.normalization.pids)
-    normalized = normalized.replaceAll(String(pid), "<pid>");
+    normalized = normalizePidTokens(normalized, [pid]);
   if (scenario.normalization.ports)
     normalized = normalized.replaceAll(/(?<=[:=])\d{2,5}\b/g, "<port>");
   for (const pattern of scenario.normalization.patterns)
@@ -57,6 +57,17 @@ export const normalizeProcessSamples = (
   for (const identifier of identifiers)
     if (identifier > 0 && !mapping.has(identifier))
       mapping.set(identifier, mapping.size + 1);
+  const normalizeCommand = (command: string): string => {
+    const normalized = normalizeProcessText(
+      command,
+      scenario,
+      "<no-temporary-root>",
+      rootPid,
+    );
+    return scenario.normalization.pids
+      ? normalizePidTokens(normalized, identifiers)
+      : normalized;
+  };
   return samples.map((sample) => ({
     at_ms:
       Math.floor(sample.at_ms / scenario.normalization.time_bucket_ms) *
@@ -69,13 +80,23 @@ export const normalizeProcessSamples = (
         : (mapping.get(sample.process_group_id) ?? 0),
     session_id:
       sample.session_id === null ? null : (mapping.get(sample.session_id) ?? 0),
-    command: normalizeProcessText(
-      sample.command,
-      scenario,
-      "<no-temporary-root>",
-      rootPid,
-    ),
+    command: normalizeCommand(sample.command),
   }));
+};
+
+const normalizePidTokens = (
+  value: string,
+  identifiers: readonly number[],
+): string => {
+  const tokens = [...new Set(identifiers)]
+    .filter((identifier) => Number.isSafeInteger(identifier) && identifier > 0)
+    .sort((left, right) => right - left)
+    .map(String);
+  if (tokens.length === 0) return value;
+  return value.replace(
+    new RegExp(`(?<!\\d)(?:${tokens.join("|")})(?!\\d)`, "gu"),
+    "<pid>",
+  );
 };
 
 export const redactProtocolEvents = (

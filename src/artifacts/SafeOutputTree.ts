@@ -107,7 +107,7 @@ export class SafeOutputTree {
   }
 
   get cleanup(): SafeOutputCleanup {
-    return this.#cleanup;
+    return structuredClone(this.#cleanup);
   }
 
   /** Stream one selected regular file with exact byte and digest verification. */
@@ -205,7 +205,7 @@ export class SafeOutputTree {
 
   /** Remove only this operation's unsealed tree and verify absence. */
   async rollback(): Promise<SafeOutputCleanup> {
-    if (this.#published) return this.#cleanup;
+    if (this.#published) return structuredClone(this.#cleanup);
     await rm(this.#stagingRoot, { recursive: true, force: true });
     const absent = await isAbsent(this.#stagingRoot);
     this.#cleanup = {
@@ -218,7 +218,7 @@ export class SafeOutputTree {
         "integrity",
         "Extraction output cleanup could not be verified",
       );
-    return this.#cleanup;
+    return structuredClone(this.#cleanup);
   }
 
   async #prepareParent(relativePath: string): Promise<string> {

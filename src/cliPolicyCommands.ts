@@ -3,7 +3,7 @@ import { Cli, z } from "incur";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import {
   readProjectPermissionStore,
-  writeProjectPermissionStore,
+  revokeProjectPermissionGrant,
 } from "./application/ProjectPermissionStore.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig, type AppConfig } from "./config.js";
@@ -68,24 +68,26 @@ export const registerPolicyCommands = (
         if (args.action === "revoke") {
           if (args.value === undefined)
             return { error: "Grant ID is required for policy revoke" };
-          const result = await readProjectGrants(config.value);
-          if (!result.ok) return result.error;
-          const retained = result.grants.filter(
-            ({ grant_id }) => grant_id !== args.value,
+          const { permissionProjectRoot, permissionProjectStore } =
+            config.value;
+          if (
+            permissionProjectRoot === undefined ||
+            permissionProjectStore === undefined
+          )
+            return { error: "Project policy is not configured" };
+          const revoked = await revokeProjectPermissionGrant(
+            permissionProjectStore,
+            permissionProjectRoot,
+            args.value,
           );
-          if (retained.length === result.grants.length)
-            return { error: "Grant was not found", grant_id: args.value };
-          const written = await writeProjectPermissionStore(
-            result.path,
-            result.root,
-            retained,
-          );
-          return written.ok
+          return revoked.ok && revoked.value
             ? {
                 revoked: args.value,
                 reload: "Send SIGHUP to the REA MCP process",
               }
-            : { error: written.error.message };
+            : revoked.ok
+              ? { error: "Grant was not found", grant_id: args.value }
+              : { error: revoked.error.message };
         }
         const capability = capabilitySchema.safeParse(args.value);
         if (!capability.success)

@@ -39,6 +39,24 @@ describe("symbol analysis", () => {
     expect(discoverObjcProtocols(names)).toMatchObject({ count: 1 });
   });
 
+  it("excludes Objective-C ivars, metaclasses, properties, and protocols from classes", () => {
+    const result = discoverObjcClasses(
+      [
+        { address: "0x1", name: "_OBJC_IVAR_$_Fixture.value" },
+        { address: "0x2", name: "_OBJC_METACLASS_$_Fixture" },
+        { address: "0x3", name: "_OBJC_PROP_$_Fixture.value" },
+        { address: "0x4", name: "_OBJC_PROTOCOL_$_FixtureProtocol" },
+        { address: "0x5", name: "_OBJC_CLASS_$_Fixture" },
+      ],
+      "",
+    );
+
+    expect(result).toMatchObject({
+      count: 1,
+      classes: [{ address: "0x5", name: "_OBJC_CLASS_$_Fixture" }],
+    });
+  });
+
   it("categorizes every Swift mangling family and deduplicates names", () => {
     const result = categorizeSwiftTypes([
       { address: "1", name: "_TtCClass" },

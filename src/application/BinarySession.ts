@@ -113,7 +113,7 @@ export class BinarySession implements BinarySessionPort {
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity {
     if (operation !== undefined) {
       const exact = this.#capabilities?.get(operation)?.provider;
-      if (exact !== undefined) return exact;
+      if (exact !== undefined) return structuredClone(exact);
       if (enhancedToolNameSchema.safeParse(operation).success) {
         const providers = new Map<string, ProviderIdentity>();
         for (const descriptor of this.#capabilities?.values() ?? [])
@@ -124,11 +124,11 @@ export class BinarySession implements BinarySessionPort {
             providers.set(descriptor.provider.id, descriptor.provider);
         if (providers.size === 1) {
           const provider = providers.values().next().value;
-          if (provider !== undefined) return provider;
+          if (provider !== undefined) return structuredClone(provider);
         }
       }
     }
-    return this.#providerIdentity;
+    return structuredClone(this.#providerIdentity);
   }
 
   /** Observe runtime provider-health changes that affect discovery metadata. */
@@ -223,18 +223,21 @@ export class BinarySession implements BinarySessionPort {
     workspaceId: string,
     revision: number,
   ): InvestigationWorkspace | undefined {
-    return this.#investigationWorkspaces.get(
+    const workspace = this.#investigationWorkspaces.get(
       `${workspaceId}:${String(revision)}`,
     );
+    return workspace === undefined ? undefined : structuredClone(workspace);
   }
 
   /** List retained workspace revisions in canonical identity order. */
   investigationWorkspaces(): readonly InvestigationWorkspace[] {
-    return [...this.#investigationWorkspaces.values()].sort(
-      (left, right) =>
-        left.workspace_id.localeCompare(right.workspace_id) ||
-        left.revision - right.revision,
-    );
+    return [...this.#investigationWorkspaces.values()]
+      .sort(
+        (left, right) =>
+          left.workspace_id.localeCompare(right.workspace_id) ||
+          left.revision - right.revision,
+      )
+      .map((workspace) => structuredClone(workspace));
   }
 
   /** Create an approved residual unknown and immutable mutation evidence. */
@@ -468,7 +471,9 @@ export class BinarySession implements BinarySessionPort {
 
   /** Return the immutable artifact identity captured before Hopper launched. */
   activeTarget(): BinaryTarget | undefined {
-    return this.#active?.target;
+    return this.#active === undefined
+      ? undefined
+      : structuredClone(this.#active.target);
   }
 
   /**

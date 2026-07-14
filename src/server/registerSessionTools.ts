@@ -303,6 +303,7 @@ const registerEvidenceTools = ({
       const loaded = await readEvidenceBundle(path, filePolicy);
       if (!loaded.ok) return toCallToolResult(loaded, importContract);
       const imported = session.importEvidenceBundle(loaded.value);
+      if (imported.ok && imported.value > 0) server.sendResourceListChanged();
       return imported.ok
         ? toCallToolResult(
             ok({
@@ -378,11 +379,13 @@ const registerUnknownTools = ({
       outputSchema: recordContract.outputSchema,
       annotations: recordContract.annotations,
     },
-    (input) =>
-      toCallToolResult(
-        session.recordUnknown(recordUnknownInputSchema.parse(input)),
-        recordContract,
-      ),
+    (input) => {
+      const recorded = session.recordUnknown(
+        recordUnknownInputSchema.parse(input),
+      );
+      if (recorded.ok) server.sendResourceListChanged();
+      return toCallToolResult(recorded, recordContract);
+    },
   );
   server.registerTool(
     updateContract.name,
@@ -392,11 +395,13 @@ const registerUnknownTools = ({
       outputSchema: updateContract.outputSchema,
       annotations: updateContract.annotations,
     },
-    (input) =>
-      toCallToolResult(
-        session.updateUnknown(updateUnknownInputSchema.parse(input)),
-        updateContract,
-      ),
+    (input) => {
+      const updated = session.updateUnknown(
+        updateUnknownInputSchema.parse(input),
+      );
+      if (updated.ok) server.sendResourceListChanged();
+      return toCallToolResult(updated, updateContract);
+    },
   );
   server.registerTool(
     verifyContract.name,

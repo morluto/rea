@@ -5,6 +5,8 @@ import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
   comparisonStatusSchema,
+  deriveProcessComparisonStatus,
+  PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processCapture.js";
 import {
@@ -205,20 +207,9 @@ const parseResult = (evidence: Evidence): void => {
     const result = processCaptureComparisonSchema.parse(
       evidence.normalized_result,
     );
-    const dimensions = [
-      result.terminal,
-      result.exit,
-      result.filesystem,
-      result.protocol,
-      result.process,
-    ];
-    const expected = dimensions.includes("truncated")
-      ? "truncated"
-      : dimensions.some(isChange)
-        ? "changed"
-        : dimensions.includes("unknown")
-          ? "unknown"
-          : "unchanged";
+    const expected = deriveProcessComparisonStatus(
+      PROCESS_COMPARISON_DIMENSIONS.map((dimension) => result[dimension]),
+    );
     if (result.status !== expected)
       throw new TypeError(
         "Process comparison status contradicts its dimensions",
@@ -273,10 +264,12 @@ const processFindings = (evidence: Evidence): Finding[] => {
   );
   const dimensions = [
     ["terminal", result.terminal, "runtime"],
+    ["interaction", result.interaction, "runtime"],
     ["exit", result.exit, "runtime"],
     ["filesystem", result.filesystem, "resource"],
     ["protocol", result.protocol, "protocol"],
     ["process", result.process, "runtime"],
+    ["shim", result.shim, "protocol"],
   ] as const;
   return dimensions.flatMap(([dimension, status, scope]) =>
     status === "unchanged"

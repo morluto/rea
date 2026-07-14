@@ -52,12 +52,22 @@ export interface NativeCommandRunner {
   ): Promise<Result<NativeCommandCapture, NativeCommandFailure>>;
 }
 
+/** Resolve one allowlisted native tool to an immutable executable identity. */
+export type NativeToolResolver = (
+  tool: string,
+) => Promise<Result<ResolvedTool, NativeCommandFailure>>;
+
 /** Run allowlisted Xcode tools directly with bounded output and no shell. */
 export class XcrunCommandRunner implements NativeCommandRunner {
   readonly #resolved = new Map<
     string,
     Promise<Result<ResolvedTool, NativeCommandFailure>>
   >();
+
+  constructor(
+    private readonly resolveTool: NativeToolResolver = (tool) =>
+      resolveXcrunTool(tool),
+  ) {}
 
   run(
     tool: string,
@@ -96,16 +106,22 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     });
   }
 
-  #resolve(tool: string): Promise<Result<ResolvedTool, NativeCommandFailure>> {
+  async #resolve(
+    tool: string,
+  ): Promise<Result<ResolvedTool, NativeCommandFailure>> {
     const existing = this.#resolved.get(tool);
     if (existing !== undefined) return existing;
-    const pending = resolveTool(tool);
+    const pending = this.resolveTool(tool);
     this.#resolved.set(tool, pending);
-    return pending;
+    const resolved = await pending;
+    if (!resolved.ok && this.#resolved.get(tool) === pending)
+      this.#resolved.delete(tool);
+    return resolved;
   }
 }
 
-interface ResolvedTool {
+/** Immutable executable identity returned by native tool discovery. */
+export interface ResolvedTool {
   readonly path: string;
   readonly sha256: string;
 }
@@ -124,7 +140,7 @@ const ALLOWED_TOOLS = new Set([
   "vtool",
 ]);
 
-const resolveTool = async (
+const resolveXcrunTool = async (
   tool: string,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {
   const found = await captureProcess(

@@ -53,17 +53,19 @@ const processResult = (
   overrides: Partial<{
     status: "unchanged" | "changed" | "unknown" | "truncated";
     terminal: "unchanged" | "changed" | "unknown" | "truncated";
+    interaction: "unchanged" | "changed" | "unknown" | "truncated";
     exit: "unchanged" | "changed" | "unknown" | "truncated";
+    shim: "unchanged" | "changed" | "unknown" | "truncated";
   }> = {},
 ): JsonValue => ({
   status: overrides.status ?? "unchanged",
   terminal: overrides.terminal ?? "unchanged",
-  interaction: "unchanged",
+  interaction: overrides.interaction ?? "unchanged",
   exit: overrides.exit ?? "unchanged",
   filesystem: "unchanged",
   protocol: "unchanged",
   process: "unchanged",
-  shim: "unchanged",
+  shim: overrides.shim ?? "unchanged",
   first_divergence:
     overrides.status === "changed"
       ? {
@@ -121,6 +123,31 @@ const artifactResult = (
 });
 
 describe("changed behavior", () => {
+  it("reports interaction and shim-only process changes", () => {
+    const evidence = comparison(
+      "compare_process_captures",
+      processResult({
+        status: "changed",
+        interaction: "changed",
+        shim: "changed",
+      }),
+    );
+
+    expect(findChangedBehavior([evidence], 0, 100)).toMatchObject({
+      behavior_status: "observed_changed",
+      summary: { observed_changes: 2 },
+      findings: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            dimension: "interaction",
+            scope: "runtime",
+          }),
+          expect.objectContaining({ dimension: "shim", scope: "protocol" }),
+        ]),
+      },
+    });
+  });
+
   it("classifies runtime changes as observed and cites both observations", () => {
     const evidence = comparison(
       "compare_process_captures",

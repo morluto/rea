@@ -40,11 +40,14 @@ export type ProcessGroupObservation =
   | { readonly state: "alive" }
   | { readonly state: "unverifiable"; readonly reason: string };
 
-const parseEnvironment = (value: string): Readonly<Record<string, string>> =>
+/** Parse the NUL-delimited Linux process environment without nameless keys. */
+export const parseProcessEnvironment = (
+  value: string,
+): Readonly<Record<string, string>> =>
   Object.fromEntries(
     value
       .split("\0")
-      .filter((entry) => entry.includes("="))
+      .filter((entry) => entry.indexOf("=") > 0)
       .map((entry) => {
         const separator = entry.indexOf("=");
         return [entry.slice(0, separator), entry.slice(separator + 1)];
@@ -72,7 +75,9 @@ const systemHost: ProcessOwnershipHost = {
   },
   async environment(pid) {
     if (process.platform === "linux") {
-      return parseEnvironment(await readFile(`/proc/${pid}/environ`, "utf8"));
+      return parseProcessEnvironment(
+        await readFile(`/proc/${pid}/environ`, "utf8"),
+      );
     }
     const { stdout } = await execFileAsync("ps", ["eww", "-p", String(pid)]);
     const environment: Record<string, string> = {};

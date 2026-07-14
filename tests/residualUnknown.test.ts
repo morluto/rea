@@ -78,6 +78,38 @@ const update = (
   });
 
 describe("residual unknown registry", () => {
+  it("returns detached unknowns and evidence bundles from every read surface", () => {
+    const store = ledger();
+    expect(store.record(evidence("detached-record")).ok).toBe(true);
+    const created = store.recordUnknown(
+      input("Does detached state remain intact?"),
+      mutation("detached-unknown"),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    Reflect.set(created.value, "status", "resolved");
+    const listed = store.listUnknowns();
+    expect(listed[0]?.status).toBe("open");
+    if (listed[0] !== undefined) Reflect.set(listed[0], "status", "resolved");
+    const verified = store.verifyUnknownResolution(created.value.unknown_id);
+    expect(verified).toMatchObject({ ok: true, value: { valid: false } });
+    if (verified.ok) Reflect.set(verified.value.unknown, "status", "resolved");
+
+    const exported = store.export();
+    const exportedRecord = exported.records.find(
+      ({ operation }) => operation === "detached-record",
+    );
+    if (exportedRecord !== undefined)
+      Reflect.set(exportedRecord, "operation", "forged");
+    expect(store.export().records.map(({ operation }) => operation)).toContain(
+      "detached-record",
+    );
+    expect(
+      store.verifyUnknownResolution(created.value.unknown_id),
+    ).toMatchObject({ ok: true, value: { valid: false } });
+  });
+
   it("requires approval, derives stable IDs, filters heads, and rejects duplicate creation", () => {
     expect(() =>
       recordUnknownInputSchema.parse({
