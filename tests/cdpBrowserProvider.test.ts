@@ -53,6 +53,159 @@ describe("CdpBrowserProvider", () => {
     expect(JSON.stringify(result.value)).not.toContain("page-secret");
   });
 
+  it("uses page-scoped discovery sockets as direct target transports", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+      additionalPageWithWebSocket: true,
+      additionalPageWithoutWebSocket: true,
+    });
+    browsers.push(browser);
+    const provider = new CdpBrowserProvider();
+    const listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        approved: true,
+      }),
+    );
+    if (!listed.ok) throw listed.error;
+    expect(
+      listed.value.targets.items.map(({ target_id }) => target_id),
+    ).toEqual(["allowed-page", "allowed-page-with-socket"]);
+    expect(listed.value.limitations).toContain(
+      "1 otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.",
+    );
+
+    const inspected = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    if (!inspected.ok) throw inspected.error;
+    expect(inspected.value.target.target_id).toBe("allowed-page");
+    expect(inspected.value.network.requests).toHaveLength(1);
+
+    const second = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page-with-socket",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    if (!second.ok) throw second.error;
+    expect(second.value.target.target_id).toBe("allowed-page-with-socket");
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(
+      browser.commands.every(({ sessionId }) => sessionId === undefined),
+    ).toBe(true);
+  });
+
+  it("projects direct-session cancellation onto the requested operation", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 1) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "observe_web_session",
+      },
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
+    expect(methods).not.toContain("Browser.close");
+  });
+
+  it("projects capture-window cancellation onto bundle analysis", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().analyzeBundle(
+      analyzeWebBundleInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        source_capture_approved: true,
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 2) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "analyze_web_bundle",
+      },
+    });
+  });
+
+  it("rejects empty browser attachment session identifiers", async () => {
+    const browser = await startFakeCdpBrowser({ invalidAttachedSession: true });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+    });
+    expect(browser.commands.map(({ method }) => method)).toEqual([
+      "Target.attachToTarget",
+    ]);
+  });
+
   it("captures bounded passive evidence without retaining sensitive values", async () => {
     const browser = await startFakeCdpBrowser({
       binaryWebSocketEvent: true,
@@ -565,6 +718,58 @@ describe("CdpBrowserProvider", () => {
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );
+  });
+
+  it("ends a browser session when its flat target session detaches", async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "target_detached",
+    });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "target_terminated",
+      detail: "target_terminated",
+    });
+  });
+
+  it("ends a direct page session when its transport disconnects", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+      closeAfterMethod: "Page.setLifecycleEventsEnabled",
+    });
+    browsers.push(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "target_terminated",
+      detail: "target_terminated",
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
   });
 
   it("discovers untrusted WebMCP declarations without registering or invoking them", async () => {
@@ -1121,7 +1326,10 @@ describe("CdpBrowserProvider", () => {
     const result = await pending;
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCancelledError" },
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      },
     });
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("Target.detachFromTarget");

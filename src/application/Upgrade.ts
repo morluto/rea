@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { gt, valid } from "semver";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -59,7 +60,7 @@ export type UpgradeResult =
       readonly status: "failed";
       readonly currentVersion: string;
       readonly latestVersion: string | null;
-      readonly reason: "unknown-install-method" | "install";
+      readonly reason: "unknown-install-method" | "version-check" | "install";
       readonly remediation: string;
     };
 
@@ -70,7 +71,20 @@ export const runUpgrade = async (
   output: UpgradeOutput = "human",
 ): Promise<UpgradeResult> => {
   const latestVersion = await host.latestVersion();
-  if (latestVersion === currentVersion)
+  const currentIsValid = valid(currentVersion) !== null;
+  const latestIsValid =
+    latestVersion !== undefined && valid(latestVersion) !== null;
+  if (!currentIsValid || !latestIsValid)
+    return {
+      status: "failed",
+      currentVersion,
+      latestVersion: latestVersion ?? null,
+      reason: "version-check",
+      remediation:
+        "REA could not verify a newer registry release. Check npm registry access and version metadata, then rerun rea upgrade.",
+    };
+
+  if (!gt(latestVersion, currentVersion))
     return {
       status: "current",
       currentVersion,
@@ -100,8 +114,8 @@ export const runUpgrade = async (
   return {
     status: "upgraded",
     previousVersion: currentVersion,
-    latestVersion: latestVersion ?? null,
-    versionCheck: latestVersion === undefined ? "unavailable" : "available",
+    latestVersion,
+    versionCheck: "available",
     installMethod: "npm",
     command: UPGRADE_COMMAND,
     clientRestartRequired: true,

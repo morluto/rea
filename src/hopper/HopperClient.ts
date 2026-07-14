@@ -72,6 +72,7 @@ export class HopperClient {
   #buffer = "";
   #closing = false;
   #launcherExitCode: number | null | undefined;
+  #startupController: AbortController | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
   #closePromise: Promise<void> | undefined;
 
@@ -86,14 +87,34 @@ export class HopperClient {
 
   /** Launch the bridge once and complete its authenticated health handshake. */
   start(signal?: AbortSignal): Promise<Result<HopperServerInfo, HopperError>> {
-    this.#startPromise ??= this.#start(signal);
-    return this.#startPromise;
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise.then(() => this.start(signal));
+    }
+    if (this.#startPromise !== undefined) return this.#startPromise;
+
+    const controller = new AbortController();
+    const startupSignal =
+      signal === undefined
+        ? controller.signal
+        : AbortSignal.any([signal, controller.signal]);
+    const started = this.#start(startupSignal);
+    this.#startupController = controller;
+    this.#startPromise = started;
+    void started.then((result) => {
+      if (!result.ok && this.#startPromise === started) {
+        this.#startPromise = undefined;
+        if (this.#startupController === controller) {
+          this.#startupController = undefined;
+        }
+      }
+    });
+    return started;
   }
 
   async #start(
     signal?: AbortSignal,
   ): Promise<Result<HopperServerInfo, HopperError>> {
-    if (signal?.aborted === true) return err(new HopperCancelledError());
+    if (isAborted(signal)) return err(new HopperCancelledError());
     if (this.#socket !== undefined || this.#directory !== undefined) {
       return err(new HopperProtocolError("Hopper client is already started"));
     }
@@ -101,6 +122,10 @@ export class HopperClient {
       this.#directory = await mkdtemp(join(SESSION_ROOT, "rea-"));
     } catch (cause: unknown) {
       return err(new HopperStartError({ cause }));
+    }
+    if (isAborted(signal)) {
+      await this.#cleanup();
+      return err(new HopperCancelledError());
     }
     const socketPath = join(this.#directory, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
@@ -116,14 +141,14 @@ export class HopperClient {
       signal === undefined ? {} : { signal },
     );
     if (!launched.ok) {
-      await this.close();
+      await this.#cleanup();
       return launched;
     }
     this.#launch = launched.value;
     this.#attachLauncher(launched.value);
     const connected = await this.#connect(socketPath, signal);
     if (!connected.ok) {
-      await this.close();
+      await this.#cleanup();
       return connected;
     }
     const health = await this.#request(
@@ -135,11 +160,11 @@ export class HopperClient {
       },
     );
     if (!health.ok) {
-      await this.close();
+      await this.#cleanup();
       return health;
     }
     const parsed = parseServerInfo(health.value, runId);
-    if (!parsed.ok) await this.close();
+    if (!parsed.ok) await this.#cleanup();
     return parsed;
   }
 
@@ -159,11 +184,32 @@ export class HopperClient {
 
   /** Stop the bridge, settle outstanding requests, and remove session artifacts. */
   close(): Promise<void> {
-    this.#closePromise ??= Promise.resolve().then(() => this.#close());
+    const starting = this.#startPromise;
+    const controller = this.#startupController;
+    controller?.abort();
+    this.#closePromise ??= Promise.resolve().then(() =>
+      this.#close(starting, controller),
+    );
     return this.#closePromise;
   }
 
-  async #close(): Promise<void> {
+  async #close(
+    starting: Promise<Result<HopperServerInfo, HopperError>> | undefined,
+    controller: AbortController | undefined,
+  ): Promise<void> {
+    try {
+      await starting?.catch(() => undefined);
+      await this.#cleanup();
+    } finally {
+      if (this.#startPromise === starting) this.#startPromise = undefined;
+      if (this.#startupController === controller) {
+        this.#startupController = undefined;
+      }
+      this.#closePromise = undefined;
+    }
+  }
+
+  async #cleanup(): Promise<void> {
     this.#closing = true;
     try {
       const socket = this.#socket;
@@ -216,10 +262,8 @@ export class HopperClient {
         this.#directory = undefined;
       }
       this.#token = undefined;
-      this.#startPromise = undefined;
     } finally {
       this.#closing = false;
-      this.#closePromise = undefined;
     }
   }
 
@@ -410,6 +454,8 @@ export class HopperClient {
     for (const id of this.#pending.keys()) this.#settle(id, err(error));
   }
 }
+
+const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const waitForDelay = (
   milliseconds: number,

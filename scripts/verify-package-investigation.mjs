@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -27,16 +27,43 @@ export async function verifyPackagedInvestigation(input) {
   ];
   const investigated = await runJson(input.cli, args, input.environment);
   const reused = await runJson(input.cli, args, input.environment);
-  const persisted = JSON.parse(await readFile(workspacePath, "utf8"));
+  let persisted = JSON.parse(await readFile(workspacePath, "utf8"));
+  const runId = investigated.normalized_result?.investigation_run?.run_id;
+  if (runId === undefined)
+    throw new Error("packaged investigation did not return a run ID");
+  await Promise.all([
+    rm(input.artifactArchive, { force: true }),
+    rm(artifactArchiveV2, { force: true }),
+  ]);
+  const replayed = await runJson(
+    input.cli,
+    [...args.slice(0, -1), "--replay-run-id", runId, "--json"],
+    input.environment,
+  );
+  persisted = JSON.parse(await readFile(workspacePath, "utf8"));
   if (
     investigated.operation !== "find_changed_behavior" ||
     investigated.normalized_result?.behavior_status !== "unknown" ||
-    investigated.normalized_result?.investigation_run?.run_id === undefined ||
+    replayed.evidence_id !== investigated.evidence_id ||
     reused.evidence_id !== investigated.evidence_id ||
     persisted.revision !== 3 ||
     persisted.runs?.[0]?.status !== "complete"
   )
     throw new Error("packaged persistent investigation CLI failed");
+  return {
+    arguments: {
+      approved: true,
+      workspace_path: workspacePath,
+      workspace_name: "package-versions",
+      expected_workspace_revision: persisted.revision,
+      replay_run_id: runId,
+      left_path: input.artifactArchive,
+      right_path: artifactArchiveV2,
+    },
+    evidenceId: investigated.evidence_id,
+    workspacePath,
+    revision: persisted.revision,
+  };
 }
 
 async function runJson(command, args, environment) {

@@ -1,4 +1,4 @@
-import { copyFile, lstat, readFile, rm } from "node:fs/promises";
+import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
@@ -7,9 +7,12 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 
 interface ManagedPathStats {
+  readonly uid?: number;
+  isFile?(): boolean;
   isSymbolicLink(): boolean;
 }
 
@@ -19,6 +22,7 @@ export interface UninstallFileSystem {
   copy(source: string, destination: string): Promise<void>;
   writeText(path: string, contents: string): Promise<void>;
   stat(path: string): Promise<ManagedPathStats>;
+  realpath?(path: string): Promise<string>;
   remove(path: string): Promise<void>;
 }
 
@@ -28,6 +32,7 @@ const systemFileSystem: UninstallFileSystem = {
   writeText: (path, contents) =>
     writeFileAtomic(path, contents, { encoding: "utf8" }),
   stat: (path) => lstat(path),
+  realpath: (path) => realpath(path),
   remove: (path) => rm(path, { recursive: true }),
 };
 
@@ -104,9 +109,12 @@ const removeClient = async (
       "skipped",
       "This client has no documented local MCP configuration boundary.",
     );
+  const resolved = await resolveUninstallConfigPath(client, fileSystem);
+  if (typeof resolved !== "string") return resolved;
+  const transactionPath = resolved;
   let original: string;
   try {
-    original = await fileSystem.readText(client.configPath);
+    original = await fileSystem.readText(transactionPath);
   } catch (cause: unknown) {
     return isMissing(cause)
       ? item(client.name, "skipped", "Configuration does not exist.")
@@ -146,7 +154,7 @@ const removeClient = async (
   document[key] = remaining;
   const backupPath = `${client.configPath}.rea.backup`;
   try {
-    await fileSystem.copy(client.configPath, backupPath);
+    await fileSystem.copy(transactionPath, backupPath);
   } catch {
     return item(
       client.name,
@@ -159,11 +167,11 @@ const removeClient = async (
       client.format === "toml"
         ? stringifyToml(document)
         : `${JSON.stringify(document, null, 2)}\n`;
-    await fileSystem.writeText(client.configPath, encoded);
+    await fileSystem.writeText(transactionPath, encoded);
     const readback = objectSchema.parse(
       client.format === "toml"
-        ? parseToml(await fileSystem.readText(client.configPath))
-        : JSON.parse(await fileSystem.readText(client.configPath)),
+        ? parseToml(await fileSystem.readText(transactionPath))
+        : JSON.parse(await fileSystem.readText(transactionPath)),
     );
     if (PRODUCT_IDENTITY.mcpServerKey in optionalObject(readback[key]))
       throw new Error("registration readback mismatch");
@@ -174,7 +182,7 @@ const removeClient = async (
     );
   } catch {
     try {
-      await fileSystem.writeText(client.configPath, original);
+      await fileSystem.writeText(transactionPath, original);
     } catch {
       return item(
         client.name,
@@ -188,6 +196,26 @@ const removeClient = async (
       "Configuration could not be updated. The original was restored and its `.rea.backup` was retained. Repair the configuration or restore the backup, then rerun uninstall.",
     );
   }
+};
+
+const resolveUninstallConfigPath = async (
+  client: SetupClient,
+  fileSystem: UninstallFileSystem,
+): Promise<string | UninstallItem> => {
+  const path = await resolveClientConfigTransactionPath(
+    client.configPath,
+    fileSystem.realpath === undefined
+      ? { lstat: fileSystem.stat }
+      : { lstat: fileSystem.stat, realpath: fileSystem.realpath },
+  );
+  return (
+    path ??
+    item(
+      client.name,
+      "failed",
+      "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
+    )
+  );
 };
 
 /** Ownership rule for persistent MCP registrations created by REA setup. */

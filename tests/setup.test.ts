@@ -23,6 +23,7 @@ class FakeSetupHost implements SetupHost {
   clientResults = new Map<string, ClientConfigurationResult>();
   hopperInstalls = 0;
   configurations = 0;
+  skillInstalls = 0;
   doctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
   unsupportedHopperVersion = false;
@@ -62,8 +63,16 @@ class FakeSetupHost implements SetupHost {
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
   };
-  installSkill = (): Promise<"installed" | "unchanged" | "failed"> =>
-    Promise.resolve(this.skill);
+  clientNeedsConfigure = (client: SetupClient): Promise<boolean> =>
+    Promise.resolve(
+      this.clientResults.get(client.name)?.status !== "unchanged",
+    );
+  skillNeedsInstall = (): Promise<boolean> =>
+    Promise.resolve(this.skill !== "unchanged");
+  installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {
+    this.skillInstalls += 1;
+    return Promise.resolve(this.skill);
+  };
   doctor = (): Promise<{
     healthy: boolean;
     hopperPath?: string;
@@ -218,6 +227,17 @@ describe("setup workflow", () => {
     expect(host.hopperInstalls).toBe(0);
   });
 
+  it("omits an aligned managed skill from an otherwise empty plan", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    const result = await runSetup(options(false), host);
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions).toEqual([]);
+    expect(result.appliedActions).toEqual([]);
+    expect(host.skillInstalls).toBe(0);
+  });
+
   it("installs missing Linux demo dependencies for existing Hopper", async () => {
     const host = new FakeSetupHost("linux");
     host.distribution = {
@@ -275,6 +295,10 @@ describe("setup workflow", () => {
 
   it.each([
     [
+      "path",
+      "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.",
+    ],
+    [
       "backup",
       "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.",
     ],
@@ -295,6 +319,31 @@ describe("setup workflow", () => {
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(message);
     expect(result.remediation).not.toContain("internal_client_key");
+  });
+
+  it("records every detected client outcome after an earlier failure", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      { name: "first", configPath: "/first.json" },
+      { name: "second", configPath: "/second.json" },
+      { name: "third", configPath: "/third.json" },
+    ];
+    host.clientResults.set("first", { status: "failed", reason: "write" });
+    host.clientResults.set("second", { status: "configured" });
+    host.clientResults.set("third", { status: "failed", reason: "readback" });
+
+    const result = await runSetup(options(true), host);
+
+    expect(host.configurations).toBe(3);
+    expect(result.clients).toEqual({
+      first: { status: "failed", reason: "write" },
+      second: { status: "configured" },
+      third: { status: "failed", reason: "readback" },
+    });
+    expect(result.appliedActions).toEqual(["configured_second"]);
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toContain("could not be updated");
   });
 
   it("explains skill installation recovery", async () => {

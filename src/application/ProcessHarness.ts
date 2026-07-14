@@ -245,12 +245,13 @@ const startCaptureRuntime = async (options: {
       renderer,
       started,
     });
-    const stopSampler = startProcessSampler(
-      terminal.pid,
+    const stopSampler = startProcessSampler({
+      rootPid: terminal.pid,
+      runId: options.runId,
       started,
-      scenario.limits.processes,
-      options.samples,
-    );
+      limit: scenario.limits.processes,
+      samples: options.samples,
+    });
     return {
       replay,
       renderer,

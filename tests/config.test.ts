@@ -232,6 +232,21 @@ describe("runtime configuration", () => {
     );
   });
 
+  it("classifies IPv6 browser origins as loopback network scope", () => {
+    const result = parseConfig({
+      REA_BROWSER_OBSERVE_ENABLED: "true",
+      REA_BROWSER_CDP_ENDPOINTS_JSON: '["http://127.0.0.1:9222"]',
+      REA_BROWSER_ALLOWED_ORIGINS_JSON: '["http://[::1]:3000"]',
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.permissionCeilings).toContainEqual(
+      expect.objectContaining({
+        capability: "browser_observe",
+        network: "loopback",
+      }),
+    );
+  });
+
   it.each([
     '["http://localhost:9222"]',
     '["http://192.168.1.5:9222"]',

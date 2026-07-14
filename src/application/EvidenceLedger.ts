@@ -62,7 +62,12 @@ export class EvidenceLedger {
         ? ok("duplicate")
         : err(new EvidenceIntegrityError("Conflicting evidence record"));
     }
-    if (this.#records.size >= this.limits.maxRecords)
+    if (
+      this.#exceedsRecordLimit(
+        this.#records.size + 1,
+        this.#unknownRevisions.size,
+      )
+    )
       return err(new EvidenceLimitError("records", this.limits.maxRecords));
     const bytes = serializedBytes(evidence);
     if (this.#bytes + bytes > this.limits.maxBytes)
@@ -344,7 +349,7 @@ export class EvidenceLedger {
     number,
     EvidenceIntegrityError | EvidenceLimitError | UnknownRegistryError
   > {
-    if (records.size + unknowns.size > this.limits.maxRecords)
+    if (this.#exceedsRecordLimit(records.size, unknowns.size))
       return err(new EvidenceLimitError("records", this.limits.maxRecords));
     const bytes =
       [...records.values()].reduce(
@@ -365,6 +370,10 @@ export class EvidenceLedger {
       return err(new UnknownRegistryError("integrity", { cause }));
     }
     return ok(bytes);
+  }
+
+  #exceedsRecordLimit(recordCount: number, unknownCount: number): boolean {
+    return recordCount + unknownCount > this.limits.maxRecords;
   }
 
   #commit(

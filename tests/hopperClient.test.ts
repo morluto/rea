@@ -59,6 +59,17 @@ class SilentLauncher implements BridgeLauncher {
   }
 }
 
+class CancelThenFixtureLauncher implements BridgeLauncher {
+  #launches = 0;
+
+  launch(session: BridgeSession) {
+    this.#launches += 1;
+    return this.#launches === 1
+      ? new SilentLauncher().launch()
+      : new FixtureLauncher().launch(session);
+  }
+}
+
 class ExitingLauncher implements BridgeLauncher {
   constructor(readonly code: number) {}
 
@@ -182,7 +193,7 @@ describe("HopperClient", () => {
 
   it("cancels bridge startup without waiting for the startup timeout", async () => {
     const client = new HopperClient({
-      launcher: new SilentLauncher(),
+      launcher: new CancelThenFixtureLauncher(),
       startupTimeoutMs: 10_000,
     });
     clients.push(client);
@@ -196,6 +207,16 @@ describe("HopperClient", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
     expect(Date.now() - startedAt).toBeLessThan(500);
+    await expect(client.start()).resolves.toEqual({
+      ok: true,
+      value: { name: "REA Hopper bridge", version: "1.0.0" },
+    });
+    await expect(
+      client.callTool("echo", { value: "retried" }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { value: "retried" },
+    });
   });
 
   it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
@@ -253,5 +274,46 @@ describe("HopperClient", () => {
     await client.close();
     expect(firstSettled).toBe(true);
     await first;
+  });
+
+  it("does not finish startup after an immediate close", async () => {
+    const client = new HopperClient({
+      launcher: new FixtureLauncher(),
+      startupTimeoutMs: 1_000,
+    });
+    clients.push(client);
+
+    const starting = client.start();
+    await client.close();
+
+    const result = await starting;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
+  });
+
+  it("starts a fresh session after close completes", async () => {
+    const client = await startClient();
+    await client.close();
+
+    await expect(client.start()).resolves.toEqual({
+      ok: true,
+      value: { name: "REA Hopper bridge", version: "1.0.0" },
+    });
+  });
+
+  it("serializes a restart requested while close is in progress", async () => {
+    const client = await startClient();
+    const closing = client.close();
+    const restarting = client.start();
+
+    await closing;
+    await expect(restarting).resolves.toEqual({
+      ok: true,
+      value: { name: "REA Hopper bridge", version: "1.0.0" },
+    });
+    await expect(client.callTool("echo", { value: "fresh" })).resolves.toEqual({
+      ok: true,
+      value: { value: "fresh" },
+    });
   });
 });

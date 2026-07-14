@@ -4,6 +4,7 @@ import type { SetupAction, SetupClient } from "./Setup.js";
 export const setupPlan = (
   platform: NodeJS.Platform,
   installHopper: boolean,
+  installSkill: boolean,
   clients: readonly SetupClient[],
 ): readonly SetupAction[] => [
   ...(installHopper
@@ -32,10 +33,14 @@ export const setupPlan = (
         external: false,
       }),
     ),
-  {
-    kind: "install_skill",
-    target: "~/.agents/skills/rea-analysis/SKILL.md",
-    detail: "Install or update the bundled REA analysis skill.",
-    external: false,
-  },
+  ...(installSkill
+    ? [
+        {
+          kind: "install_skill" as const,
+          target: "~/.agents/skills/rea-analysis/SKILL.md",
+          detail: "Install or update the bundled REA analysis skill.",
+          external: false,
+        },
+      ]
+    : []),
 ];

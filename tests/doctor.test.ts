@@ -60,6 +60,25 @@ describe("doctor", () => {
     expect(result.healthy).toBe(true);
   });
 
+  it("does not fall back when the configured Hopper launcher is invalid", async () => {
+    const configuredPath = "/invalid/custom/hopper";
+    const result = await runDoctor(
+      undefined,
+      host({ configuredHopperPath: configuredPath }),
+    );
+
+    expect(result.hopperPath).toBeUndefined();
+    expect(result.healthy).toBe(false);
+    expect(result.checks.find(({ name }) => name === "hopper")).toEqual({
+      name: "hopper",
+      ok: false,
+      classification: "config_drift",
+      detail: configuredPath,
+      remediation:
+        "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
+    });
+  });
+
   it("distinguishes stale skills, path shadowing, and unobservable live state", async () => {
     const result = await runDoctor(
       undefined,

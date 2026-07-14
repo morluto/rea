@@ -81,5 +81,5 @@ export interface BinarySessionPort extends AnalysisOperationPort {
     UnknownRegistryError
   >;
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity;
-  onAvailabilityChanged?(listener: () => void): () => void;
+  onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
 }

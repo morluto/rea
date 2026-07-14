@@ -14,6 +14,7 @@ import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_COMPARISON_EVIDENCE,
 } from "../src/contracts/investigationExamples.js";
+import { changedBehaviorResultSchema } from "../src/domain/changedBehavior.js";
 import { createEvidence, parseEvidence } from "../src/domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
@@ -208,6 +209,83 @@ describe("investigation MCP workflows", () => {
           },
         },
       });
+    } finally {
+      await close(replay.session, replay.server, replay.client);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("defers input permission for an explicit replay with deleted inputs", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-investigation-replay-"),
+    );
+    const left = join(directory, "left");
+    const right = join(directory, "right");
+    const workspace = join(directory, "workspace.json");
+    await Promise.all([mkdir(left), mkdir(right)]);
+    await Promise.all([
+      writeFile(join(left, "feature.txt"), "old\n"),
+      writeFile(join(right, "feature.txt"), "new\n"),
+    ]);
+    const filePolicy = evidencePolicy(directory);
+    const investigationRun = {
+      approved: true,
+      workspace_path: workspace,
+      workspace_name: "selected-replay",
+      left_path: left,
+      right_path: right,
+      options: { page_size: 500, change_limit: 100 },
+    };
+    const writer = await investigationAuthority(directory, true);
+    const initial = await connected(filePolicy, [directory], writer);
+    let runId: string | undefined;
+    try {
+      const created = await initial.client.callTool({
+        name: "find_changed_behavior",
+        arguments: { investigation_run: investigationRun },
+      });
+      expect(created.isError, JSON.stringify(created)).not.toBe(true);
+      const evidence = parseEvidence(
+        z.object({ result: z.unknown() }).parse(created.structuredContent)
+          .result,
+      );
+      const result = changedBehaviorResultSchema.parse(
+        evidence.normalized_result,
+      );
+      runId = result.investigation_run?.run_id;
+    } finally {
+      await close(initial.session, initial.server, initial.client);
+    }
+    if (runId === undefined) throw new Error("missing completed run ID");
+
+    await Promise.all([
+      rm(left, { recursive: true, force: true }),
+      rm(right, { recursive: true, force: true }),
+    ]);
+    const workspaceOnly = await permissionAuthorityForRoot(
+      directory,
+      [
+        "investigation_workspace_read",
+        "investigation_workspace_write",
+        "investigation_input",
+      ],
+      ["investigation_workspace_read"],
+    );
+    const replay = await connected(filePolicy, [], workspaceOnly);
+    try {
+      const cached = await replay.client.callTool({
+        name: "find_changed_behavior",
+        arguments: {
+          investigation_run: {
+            ...investigationRun,
+            replay_run_id: runId,
+          },
+        },
+      });
+      expect(cached.isError, JSON.stringify(cached)).not.toBe(true);
+      expect(
+        await readInvestigationWorkspace(workspace, filePolicy),
+      ).toMatchObject({ ok: true, value: { revision: 3 } });
     } finally {
       await close(replay.session, replay.server, replay.client);
       await rm(directory, { recursive: true, force: true });

@@ -1,6 +1,4 @@
-import { compareArtifacts } from "../domain/artifactComparison.js";
-import { findChangedBehavior } from "../domain/changedBehavior.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { type Evidence } from "../domain/evidence.js";
 import {
   createEvidenceBundle,
   type EvidenceFilePolicy,
@@ -18,18 +16,15 @@ import {
   createInvestigationWorkspace,
   crossVersionInvestigationInputSchema,
   investigationRunSchema,
-  investigationRunSummarySchema,
   reviseInvestigationWorkspace,
   type CrossVersionInvestigationInput,
   type InvestigationRun,
   type InvestigationWorkspace,
 } from "../domain/investigationWorkspace.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { BinarySessionPort } from "./BinarySession.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import {
-  AUTOMATIC_RUN_LIMITATION,
   createInventoryEvidencePages,
   runLimitations,
   scanVersions,
@@ -42,9 +37,10 @@ import {
   writeInvestigationWorkspace,
 } from "./InvestigationWorkspaceStore.js";
 import {
-  ARTIFACT_COMPARISON_PROVIDER,
-  CHANGED_BEHAVIOR_PROVIDER,
-} from "./InvestigationProviders.js";
+  createArtifactComparisonEvidence,
+  createChangedBehaviorEvidence,
+} from "./CrossVersionInvestigationEvidence.js";
+import { selectCompletedInvestigationReplay } from "./CrossVersionInvestigationReplay.js";
 
 export interface CrossVersionInvestigationOutcome {
   readonly evidence: Evidence;
@@ -59,6 +55,7 @@ export interface CrossVersionInvestigationExecution {
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   readonly integrityContinueEnabled?: boolean;
+  readonly authorizeInputRead?: () => Promise<Result<null, AnalysisError>>;
   readonly authorizeWorkspaceWrite?: () => Promise<Result<null, AnalysisError>>;
 }
 
@@ -84,6 +81,23 @@ export const runCrossVersionInvestigation = async (
   if (!preflight.ok) return preflight;
   if (isCancelled(execution.signal))
     return err(new AnalysisCancelledError("find_changed_behavior"));
+  if (parsed.data.replay_run_id !== undefined) {
+    const replay = selectCompletedInvestigationReplay(
+      initial.value,
+      parsed.data,
+    );
+    if (!replay.ok) return replay;
+    return completeOutcome(
+      replay.value.workspace,
+      replay.value.run,
+      true,
+      execution.session,
+    );
+  }
+  if (execution.authorizeInputRead !== undefined) {
+    const authorized = await execution.authorizeInputRead();
+    if (!authorized.ok) return authorized;
+  }
   await execution.progress?.report({
     phase: "scan_versions",
     completed: 0,
@@ -304,38 +318,6 @@ const ensureComparisonCheckpoint = async (
   return saved.ok ? ok({ workspace: saved.value, run }) : saved;
 };
 
-const createArtifactComparisonEvidence = (
-  inventory: {
-    readonly left: readonly Evidence[];
-    readonly right: readonly Evidence[];
-  },
-  limit: number,
-): Evidence => {
-  const comparison = compareArtifacts(
-    inventory.left,
-    inventory.right,
-    0,
-    limit,
-  );
-  const leftIds = evidenceIds(inventory.left);
-  const rightIds = evidenceIds(inventory.right);
-  return createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-    predicateType: "rea.artifact-comparison/v1",
-    operation: "compare_artifacts",
-    parameters: {
-      left_evidence_ids: leftIds,
-      right_evidence_ids: rightIds,
-      offset: 0,
-      limit,
-    },
-    result: jsonValueSchema.parse(comparison),
-    confidence: "derived",
-    authority: "analyst-inference",
-    limitations: comparison.limitations,
-    evidenceLinks: [...leftIds, ...rightIds],
-  });
-};
-
 const finalizeInvestigation = async (
   input: CrossVersionInvestigationInput,
   state: RunState,
@@ -344,7 +326,11 @@ const finalizeInvestigation = async (
 ): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {
   const comparison = comparisonEvidenceFor(state.workspace, state.run);
   if (!comparison.ok) return comparison;
-  const evidence = createChangedBehaviorEvidence(state, comparison.value);
+  const evidence = createChangedBehaviorEvidence(
+    state.workspace,
+    state.run,
+    comparison.value,
+  );
   const run = investigationRunSchema.parse({
     ...state.run,
     status: "complete",
@@ -365,45 +351,6 @@ const finalizeInvestigation = async (
     policy,
   });
   return saved.ok ? completeOutcome(saved.value, run, false, session) : saved;
-};
-
-const createChangedBehaviorEvidence = (
-  state: RunState,
-  comparison: Evidence,
-): Evidence => {
-  const limit = Math.min(state.run.options.change_limit, 100);
-  const changed = findChangedBehavior([comparison], 0, limit);
-  const summary = investigationRunSummarySchema.parse({
-    schema_version: 1,
-    workspace_id: state.workspace.workspace_id,
-    run_id: state.run.run_id,
-    left_manifest_id: state.run.left.manifest_id,
-    right_manifest_id: state.run.right.manifest_id,
-    inventory_evidence_count:
-      state.run.left_inventory_evidence_ids.length +
-      state.run.right_inventory_evidence_ids.length,
-    comparison_evidence_id: comparison.evidence_id,
-    limitations: state.run.limitations,
-  });
-  return createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
-    predicateType: "rea.changed-behavior/v1",
-    operation: "find_changed_behavior",
-    parameters: {
-      workspace_id: state.workspace.workspace_id,
-      run_id: state.run.run_id,
-      comparison_evidence_ids: [comparison.evidence_id],
-      offset: 0,
-      limit,
-    },
-    result: jsonValueSchema.parse({
-      ...changed,
-      investigation_run: summary,
-    }),
-    confidence: "derived",
-    authority: "analyst-inference",
-    limitations: [...changed.limitations, AUTOMATIC_RUN_LIMITATION],
-    evidenceLinks: changed.evidence_links,
-  });
 };
 
 const comparisonEvidenceFor = (

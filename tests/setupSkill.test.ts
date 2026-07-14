@@ -2,7 +2,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { installCanonicalSkill } from "../src/application/Setup.js";
+import {
+  canonicalSkillNeedsInstall,
+  installCanonicalSkill,
+} from "../src/application/Setup.js";
 import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 
 const roots: string[] = [];
@@ -23,6 +26,7 @@ describe("canonical skill transaction", () => {
     await writeFile(destination, "stale managed skill\n");
     await writeFile(sibling, "unrelated skill\n");
 
+    expect(await canonicalSkillNeedsInstall(home)).toBe(true);
     expect(await installCanonicalSkill(home)).toBe("installed");
     expect(await readFile(`${destination}.rea.backup`, "utf8")).toBe(
       "stale managed skill\n",
@@ -32,6 +36,7 @@ describe("canonical skill transaction", () => {
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
+    expect(await canonicalSkillNeedsInstall(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
   });
 });

@@ -5,6 +5,7 @@ import {
   createHistoricalSourceGraph,
   createHistoricalSourceManifest,
   historicalSourceGraphSchema,
+  historicalSourceParseFailureKey,
   parseHistoricalSourceGraph,
   parseHistoricalSourceManifest,
   type HistoricalSourceGraphInput,
@@ -190,6 +191,29 @@ describe("historical source graph", () => {
       expect(() =>
         createHistoricalSourceGraph({ ...graphInput(), ...change }),
       ).toThrow(/Complete inventory/u);
+  });
+
+  it("keeps distinct parse failure reasons for the same path and parser", () => {
+    const input = graphInput();
+    const malformed = {
+      path: "src/main.ts",
+      parser: "typescript",
+      reason: "Malformed input",
+    };
+    const unexpected = {
+      path: "src/main.ts",
+      parser: "typescript",
+      reason: "Unexpected token",
+    };
+    input.inventory_state = "partial";
+    input.parse_failures = [malformed, unexpected];
+
+    expect(createHistoricalSourceGraph(input).parse_failures).toEqual(
+      input.parse_failures,
+    );
+    expect(historicalSourceParseFailureKey(malformed)).not.toBe(
+      historicalSourceParseFailureKey(unexpected),
+    );
   });
 
   it("rejects strict unknown fields, invalid VCS, dangling internal edges, and false manifests", () => {

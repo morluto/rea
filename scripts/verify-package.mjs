@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -82,15 +84,23 @@ try {
     chmod(npx, 0o755),
   ]);
   const claudeDir = join(home, "Library/Application Support/Claude");
+  const codexDir = join(home, ".codex");
   const cursorDir = join(home, ".cursor");
   await Promise.all([
     mkdir(claudeDir, { recursive: true }),
+    mkdir(codexDir, { recursive: true }),
     mkdir(cursorDir, { recursive: true }),
   ]);
   const claudeConfig = join(claudeDir, "claude_desktop_config.json");
+  const codexConfig = join(codexDir, "config.toml");
+  const codexTarget = join(home, "managed-codex.toml");
   const cursorConfig = join(cursorDir, "mcp.json");
+  const cursorTarget = join(home, "managed-cursor.json");
   await writeFile(claudeConfig, '{"existing":true}\n');
-  await writeFile(cursorConfig, '{"existing":true}\n');
+  await writeFile(codexTarget, 'model = "gpt-5"\n');
+  await writeFile(cursorTarget, '{"existing":true}\n');
+  await symlink(codexTarget, codexConfig);
+  await symlink(cursorTarget, cursorConfig);
   const environment = {
     ...process.env,
     HOME: home,
@@ -169,7 +179,7 @@ try {
   )
     throw new Error("packaged artifact inventory CLI failed");
   // prettier-ignore
-  await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
+  const investigationReplay = await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
   if (process.platform === "linux") {
     const unsupportedExecution = await runWithStatus(
       cli,
@@ -364,6 +374,7 @@ try {
   const planned = json(plannedExecution.stdout);
   if (supportedSetupHost) {
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
+    const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
     const plannedSkill = await readFile(skillPath, "utf8");
     if (
@@ -373,11 +384,12 @@ try {
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
       !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
+      plannedCodexConfig !== 'model = "gpt-5"\n' ||
       plannedCursorConfig !== '{"existing":true}\n' ||
       plannedSkill !== "stale managed skill\n"
     )
       throw new Error(
-        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, cursorConfig: plannedCursorConfig, skill: plannedSkill })}`,
+        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, codexConfig: plannedCodexConfig, cursorConfig: plannedCursorConfig, skill: plannedSkill })}`,
       );
   }
   const firstExecution = await runWithStatus(
@@ -386,6 +398,12 @@ try {
     environment,
   );
   const first = json(firstExecution.stdout);
+  const alignedExecution = await runWithStatus(
+    cli,
+    ["setup", "--json"],
+    environment,
+  );
+  const aligned = json(alignedExecution.stdout);
   const secondExecution = await runWithStatus(
     cli,
     ["setup", "--yes", "--install-hopper", "--json"],
@@ -399,9 +417,15 @@ try {
       second.status !== status ||
       firstExecution.status !== (status === "ready" ? 0 : 1) ||
       secondExecution.status !== (status === "ready" ? 0 : 1) ||
+      aligned.status !== status ||
+      alignedExecution.status !== (status === "ready" ? 0 : 1) ||
+      aligned.plannedActions.length !== 0 ||
+      aligned.appliedActions.length !== 0 ||
       second.appliedActions.length !== 0
     )
-      throw new Error("packaged setup was not ready and idempotent");
+      throw new Error(
+        `packaged setup was not ready and idempotent without confirmation: ${JSON.stringify({ first, aligned, second })}`,
+      );
     for (const configPath of [claudeConfig, cursorConfig]) {
       const config = json(await readFile(configPath, "utf8"));
       if (
@@ -417,6 +441,18 @@ try {
       )
         throw new Error("packaged client backup failed");
     }
+    const codex = await readFile(codexTarget, "utf8");
+    if (
+      !(await lstat(codexConfig)).isSymbolicLink() ||
+      !(await lstat(cursorConfig)).isSymbolicLink() ||
+      !codex.includes("[mcp_servers.rea]") ||
+      !codex.includes(`command = "${cli}"`) ||
+      (await readFile(`${codexConfig}.rea.backup`, "utf8")) !==
+        'model = "gpt-5"\n' ||
+      (await readFile(`${cursorConfig}.rea.backup`, "utf8")) !==
+        '{"existing":true}\n'
+    )
+      throw new Error("packaged setup did not preserve config symlinks");
     const skill = await readFile(skillPath, "utf8");
     const canonicalSkill = await readFile(
       join(root, "skills/rea-analysis/SKILL.md"),
@@ -431,7 +467,8 @@ try {
     )
       throw new Error("packaged stale-skill upgrade was not isolated");
 
-    await writeFile(cursorConfig, "malformed");
+    await writeFile(claudeConfig, "malformed");
+    await writeFile(cursorConfig, '{"existing":true}\n');
     const failedExecution = await runWithStatus(
       cli,
       ["setup", "--yes", "--json"],
@@ -441,10 +478,17 @@ try {
     if (
       failed.status !== "needs_human" ||
       failedExecution.status !== 1 ||
-      (await readFile(cursorConfig, "utf8")) !== "malformed"
+      failed.clients?.claude_desktop?.status !== "failed" ||
+      failed.clients?.cursor?.status !== "configured" ||
+      !failed.appliedActions.includes("configured_cursor") ||
+      (await readFile(claudeConfig, "utf8")) !== "malformed" ||
+      json(await readFile(cursorConfig, "utf8")).mcpServers?.rea?.command !==
+        cli
     )
-      throw new Error("packaged setup failure recovery did not preserve input");
-    await writeFile(cursorConfig, "{}\n");
+      throw new Error(
+        `packaged setup did not continue after an earlier client failure: ${JSON.stringify(failed)}`,
+      );
+    await writeFile(claudeConfig, "{}\n");
     const recoveredExecution = await runWithStatus(
       cli,
       ["setup", "--yes", "--json"],
@@ -456,8 +500,64 @@ try {
       recoveredExecution.status !== (status === "ready" ? 0 : 1)
     )
       throw new Error("packaged setup did not recover");
+
+    const geminiDir = join(home, ".gemini");
+    const geminiConfig = join(geminiDir, "settings.json");
+    await mkdir(geminiDir, { recursive: true });
+    await symlink(join(home, "missing-gemini.json"), geminiConfig);
+    const danglingExecution = await runWithStatus(
+      cli,
+      ["setup", "--yes", "--json"],
+      environment,
+    );
+    const dangling = json(danglingExecution.stdout);
+    if (
+      dangling.status !== "needs_human" ||
+      danglingExecution.status !== 1 ||
+      dangling.clients?.gemini_cli?.status !== "failed" ||
+      dangling.clients?.gemini_cli?.reason !== "path" ||
+      !(await lstat(geminiConfig)).isSymbolicLink() ||
+      (await pathExists(`${geminiConfig}.rea.backup`))
+    )
+      throw new Error(
+        `packaged setup did not reject a dangling config symlink before mutation: ${JSON.stringify(dangling)}`,
+      );
+    await rm(geminiDir, { recursive: true });
+
+    const uninstallExecution = await runWithStatus(
+      cli,
+      ["uninstall", "--json"],
+      environment,
+    );
+    const uninstall = json(uninstallExecution.stdout);
+    const cursorAfterUninstall = json(await readFile(cursorTarget, "utf8"));
+    const codexAfterUninstall = await readFile(codexTarget, "utf8");
+    if (
+      uninstall.status !== "complete" ||
+      uninstallExecution.status !== 0 ||
+      uninstall.items?.find(({ name }) => name === "cursor")?.status !==
+        "removed" ||
+      uninstall.items?.find(({ name }) => name === "codex")?.status !==
+        "removed" ||
+      !(await lstat(cursorConfig)).isSymbolicLink() ||
+      !(await lstat(codexConfig)).isSymbolicLink() ||
+      cursorAfterUninstall.existing !== true ||
+      cursorAfterUninstall.mcpServers?.rea !== undefined ||
+      !codexAfterUninstall.includes('model = "gpt-5"') ||
+      codexAfterUninstall.includes("mcp_servers.rea") ||
+      !(await readFile(`${cursorConfig}.rea.backup`, "utf8")).includes(
+        '"rea"',
+      ) ||
+      !(await readFile(`${codexConfig}.rea.backup`, "utf8")).includes(
+        "[mcp_servers.rea]",
+      )
+    )
+      throw new Error(
+        `packaged uninstall did not preserve config symlinks: ${JSON.stringify(uninstall)}`,
+      );
   } else if (
     first.status !== "needs_human" ||
+    aligned.status !== "needs_human" ||
     second.status !== "needs_human"
   ) {
     throw new Error("packaged setup did not reject an unsupported host");
@@ -466,7 +566,10 @@ try {
   const transport = new StdioClientTransport({
     command: cli,
     args: ["mcp"],
-    env: environment,
+    env: {
+      ...environment,
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([]),
+    },
     stderr: "pipe",
   });
   let mcpStderr = "";
@@ -484,6 +587,25 @@ try {
       throw new Error("packaged MCP tool inventory diverged from contracts");
     await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
     await prompts.verifyPromptCompletion(client, mcpOptions, false);
+    const replay = await client.callTool(
+      {
+        name: "find_changed_behavior",
+        arguments: { investigation_run: investigationReplay.arguments },
+      },
+      mcpOptions,
+    );
+    const replayEvidence = json(prompts.mcpText(replay));
+    const replayWorkspace = json(
+      await readFile(investigationReplay.workspacePath, "utf8"),
+    );
+    if (
+      replay.isError === true ||
+      replayEvidence.evidence_id !== investigationReplay.evidenceId ||
+      replayWorkspace.revision !== investigationReplay.revision
+    )
+      throw new Error(
+        "packaged MCP did not replay with workspace-only authority",
+      );
     const result = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
@@ -559,7 +681,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 2 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
@@ -585,4 +707,14 @@ async function runWithStatus(command, args, env) {
 }
 function json(text) {
   return JSON.parse(text);
+}
+async function pathExists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (cause) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      return false;
+    throw cause;
+  }
 }

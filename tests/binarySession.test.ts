@@ -254,6 +254,55 @@ describe("binary session", () => {
     expect(changes).toBe(2);
   });
 
+  it("isolates availability observers from execution results and session state", async () => {
+    const [first] = await targets();
+    const provider = cacheProvider([]);
+    let providerCalls = 0;
+    provider.createClient = () => ({
+      execute: (operation) => {
+        if (operation === "health") return Promise.resolve(ok(null));
+        providerCalls += 1;
+        return Promise.resolve(
+          providerCalls === 1
+            ? err(new ProviderAdapterError("fixture", operation))
+            : ok(operation),
+        );
+      },
+      close: () => Promise.resolve(),
+    });
+    const session = new BinarySession(provider);
+    expect((await session.open(first)).ok).toBe(true);
+    const input = { address: "0x1000", document: "first" };
+    expect((await session.execute("address_name", input)).ok).toBe(false);
+
+    session.onAvailabilityChanged(() => {
+      throw new Error("external observer failed");
+    });
+    session.onAvailabilityChanged(() =>
+      Promise.reject(new Error("async external observer failed")),
+    );
+    let delivered = 0;
+    session.onAvailabilityChanged(() => {
+      delivered += 1;
+    });
+
+    await expect(session.execute("address_name", input)).resolves.toMatchObject(
+      { ok: true },
+    );
+    expect(delivered).toBe(1);
+    expect(session.status()).toMatchObject({
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({
+          operation: "address_name",
+          available: true,
+          reason: null,
+        }),
+      ]),
+    });
+    expect((await session.execute("address_name", input)).ok).toBe(true);
+    expect(providerCalls).toBe(2);
+  });
+
   it("does not replay operations with filesystem side effects", async () => {
     const [first] = await targets();
     const calls: string[] = [];
@@ -363,6 +412,64 @@ describe("binary session", () => {
     expect(session.status()).toMatchObject({ open: true });
     expect(JSON.stringify(session.status())).toContain("second.hop");
     expect(clients[0]?.closed).toBe(1);
+  });
+
+  it("replaces the active client when a canonical path changes contents", async () => {
+    directory = await mkdtemp(join(tmpdir(), "bb-session-"));
+    const path = join(directory, "mutable.hop");
+    await writeFile(path, "one");
+    const clients: Array<{
+      readonly targetSha256: string;
+      readonly calls: string[];
+      closed: number;
+    }> = [];
+    const session = new BinarySession((target) => {
+      const state = {
+        targetSha256: target.sha256,
+        calls: [] as string[],
+        closed: 0,
+      };
+      clients.push(state);
+      return {
+        execute: (operation) => {
+          state.calls.push(operation);
+          return Promise.resolve(
+            ok(operation === "health" ? null : target.sha256),
+          );
+        },
+        close: () => {
+          state.closed += 1;
+          return Promise.resolve();
+        },
+      };
+    });
+
+    const first = await session.open(path);
+    expect(first.ok).toBe(true);
+    await writeFile(path, "two");
+    const second = await session.open(path);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+
+    expect(second.value.sha256).not.toBe(first.value.sha256);
+    expect(session.activeTarget()?.sha256).toBe(second.value.sha256);
+    expect(await session.execute("binary_overview", {})).toMatchObject({
+      ok: true,
+      value: { result: second.value.sha256 },
+    });
+    expect(clients).toMatchObject([
+      {
+        targetSha256: first.value.sha256,
+        calls: ["health"],
+        closed: 1,
+      },
+      {
+        targetSha256: second.value.sha256,
+        calls: ["health", "binary_overview"],
+        closed: 0,
+      },
+    ]);
+    await session.close();
   });
 
   it("waits for an active call before closing its client during a switch", async () => {
