@@ -16,6 +16,25 @@ import {
   sessionOutputSchemas,
 } from "../src/contracts/toolOutputSchemas.js";
 
+const convertContractJsonSchema = (schema: z.ZodType) =>
+  z.toJSONSchema(schema, {
+    target: "draft-07",
+    unrepresentable: "any",
+  });
+
+const jsonSchemaCache = new WeakMap<
+  z.ZodType,
+  ReturnType<typeof convertContractJsonSchema>
+>();
+
+const contractJsonSchema = (schema: z.ZodType) => {
+  const cached = jsonSchemaCache.get(schema);
+  if (cached !== undefined) return cached;
+  const converted = convertContractJsonSchema(schema);
+  jsonSchemaCache.set(schema, converted);
+  return converted;
+};
+
 const emptySchemaPaths = (value: unknown, path = "$"): string[] => {
   if (Array.isArray(value))
     return value.flatMap((item, index) =>
@@ -41,14 +60,8 @@ describe("tool contract surface", () => {
     ];
     expect(contracts).toHaveLength(60);
     for (const contract of contracts) {
-      const inputSchema = z.toJSONSchema(contract.inputSchema, {
-        target: "draft-07",
-        unrepresentable: "any",
-      });
-      const outputSchema = z.toJSONSchema(contract.outputSchema, {
-        target: "draft-07",
-        unrepresentable: "any",
-      });
+      const inputSchema = contractJsonSchema(contract.inputSchema);
+      const outputSchema = contractJsonSchema(contract.outputSchema);
       expect(inputSchema.type).toBe("object");
       expect(outputSchema.type).toBe("object");
       expect(typeof contract.annotations.idempotentHint).toBe("boolean");
@@ -128,10 +141,7 @@ describe("tool contract surface", () => {
       ...ENHANCED_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ]) {
-      const schema = z.toJSONSchema(contract.outputSchema, {
-        target: "draft-07",
-        unrepresentable: "any",
-      });
+      const schema = contractJsonSchema(contract.outputSchema);
       expect(JSON.stringify(schema)).not.toContain('"result":{}');
       expect(contract.description.length).toBeGreaterThan(100);
       expect(contract.description).toMatch(/[.;]/u);
@@ -150,10 +160,7 @@ describe("tool contract surface", () => {
     ];
     expect(contracts).toHaveLength(78);
     for (const contract of contracts) {
-      const schema = z.toJSONSchema(contract.outputSchema, {
-        target: "draft-07",
-        unrepresentable: "any",
-      });
+      const schema = contractJsonSchema(contract.outputSchema);
       expect(emptySchemaPaths(schema), contract.name).toEqual([]);
     }
   });

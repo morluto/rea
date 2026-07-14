@@ -13,18 +13,26 @@ const sourceRoot = new URL("../src/", import.meta.url);
 describe("provider-neutral architecture", () => {
   it("keeps Hopper imports behind its adapter and composition root", async () => {
     const forbiddenRoots = ["domain", "contracts", "server", "application"];
-    const violations: string[] = [];
-    for (const root of forbiddenRoots) {
-      for (const file of await typescriptFiles(
-        fileURLToPath(new URL(`${root}/`, sourceRoot)),
-      )) {
-        if (root === "application" && file.endsWith("/runtime.ts")) continue;
-        const source = await readFile(file, "utf8");
-        if (/from\s+["'][^"']*\/hopper\//u.test(source)) {
-          violations.push(relative(fileURLToPath(sourceRoot), file));
-        }
-      }
-    }
+    const inspected = await Promise.all(
+      forbiddenRoots.map(async (root) => {
+        const files = await typescriptFiles(
+          fileURLToPath(new URL(`${root}/`, sourceRoot)),
+        );
+        return Promise.all(
+          files.map(async (file) => {
+            if (root === "application" && file.endsWith("/runtime.ts"))
+              return undefined;
+            const source = await readFile(file, "utf8");
+            return /from\s+["'][^"']*\/hopper\//u.test(source)
+              ? relative(fileURLToPath(sourceRoot), file)
+              : undefined;
+          }),
+        );
+      }),
+    );
+    const violations = inspected
+      .flat()
+      .filter((violation) => violation !== undefined);
     expect(violations).toEqual([]);
   });
 

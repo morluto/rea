@@ -314,17 +314,19 @@ describe("artifact graph provider", () => {
     const client = new ArtifactProvider().createClient(
       target(root, "directory"),
     );
-    const first = await client.execute(
-      "inventory_artifact",
-      artifactInventoryInputSchema.parse({ occurrence_limit: 500 }),
-    );
-    const secondPage = await client.execute(
-      "inventory_artifact",
-      artifactInventoryInputSchema.parse({
-        occurrence_offset: 500,
-        occurrence_limit: 500,
-      }),
-    );
+    const [first, secondPage] = await Promise.all([
+      client.execute(
+        "inventory_artifact",
+        artifactInventoryInputSchema.parse({ occurrence_limit: 500 }),
+      ),
+      client.execute(
+        "inventory_artifact",
+        artifactInventoryInputSchema.parse({
+          occurrence_offset: 500,
+          occurrence_limit: 500,
+        }),
+      ),
+    ]);
     expect(first.ok && secondPage.ok).toBe(true);
     if (!first.ok || !secondPage.ok) return;
     const left = artifactInventoryResultSchema.parse(first.value.result);
