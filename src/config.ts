@@ -14,6 +14,7 @@ import {
   browserEndpointSchema,
   browserOriginSchema,
 } from "./domain/browserObservation.js";
+import { electronFileRootsSchema } from "./domain/electronObservation.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -38,6 +39,9 @@ export interface AppConfig {
   readonly browserObservationEnabled: boolean;
   readonly browserCdpEndpoints: readonly string[];
   readonly browserAllowedOrigins: readonly string[];
+  readonly electronObservationEnabled: boolean;
+  readonly electronCdpEndpoints: readonly string[];
+  readonly electronFileRoots: readonly string[];
   readonly permissionCeilings: readonly PermissionCeiling[];
   readonly administratorPermissionGrants: readonly PermissionGrant[];
   readonly permissionProjectRoot: string | undefined;
@@ -76,6 +80,9 @@ const environmentSchema = z
     REA_BROWSER_OBSERVE_ENABLED: z.enum(["true", "false"]).default("false"),
     REA_BROWSER_CDP_ENDPOINTS_JSON: z.string().default("[]"),
     REA_BROWSER_ALLOWED_ORIGINS_JSON: z.string().default("[]"),
+    REA_ELECTRON_OBSERVE_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_ELECTRON_CDP_ENDPOINTS_JSON: z.string().default("[]"),
+    REA_ELECTRON_FILE_ROOTS_JSON: z.string().default("[]"),
     REA_PERMISSION_PROJECT_ROOT: z.string().min(1).optional(),
     REA_PERMISSION_PROJECT_STORE: z.string().min(1).optional(),
   })
@@ -130,6 +137,31 @@ const parseBrowserArray = (
         );
   } catch (cause: unknown) {
     return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
+  }
+};
+
+const parseElectronFileRoots = (
+  encoded: string,
+): Result<readonly string[], ConfigurationError> => {
+  try {
+    const decoded: unknown = JSON.parse(encoded);
+    if (Array.isArray(decoded) && decoded.length === 0) return ok([]);
+    const parsed = electronFileRootsSchema.safeParse(decoded);
+    return parsed.success
+      ? ok(parsed.data)
+      : err(
+          new ConfigurationError(
+            "REA_ELECTRON_FILE_ROOTS_JSON must encode absolute roots",
+            { cause: parsed.error },
+          ),
+        );
+  } catch (cause: unknown) {
+    return err(
+      new ConfigurationError(
+        "REA_ELECTRON_FILE_ROOTS_JSON must be valid JSON",
+        { cause },
+      ),
+    );
   }
 };
 
@@ -266,6 +298,17 @@ export const parseConfig = (
     32,
   );
   if (!browserOrigins.ok) return browserOrigins;
+  const electronEndpoints = parseBrowserArray(
+    parsedEnvironment.data.REA_ELECTRON_CDP_ENDPOINTS_JSON,
+    "REA_ELECTRON_CDP_ENDPOINTS_JSON",
+    browserEndpointSchema,
+    16,
+  );
+  if (!electronEndpoints.ok) return electronEndpoints;
+  const electronFileRoots = parseElectronFileRoots(
+    parsedEnvironment.data.REA_ELECTRON_FILE_ROOTS_JSON,
+  );
+  if (!electronFileRoots.ok) return electronFileRoots;
   const permissionCeilings = [
     ...(parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true"
       ? [
@@ -294,6 +337,14 @@ export const parseConfig = (
           permissionScope("browser_observe", [], {
             origins: [...browserEndpoints.value, ...browserOrigins.value],
             network: browserNetworkScope(browserOrigins.value),
+          }),
+        ]
+      : []),
+    ...(parsedEnvironment.data.REA_ELECTRON_OBSERVE_ENABLED === "true"
+      ? [
+          permissionScope("electron_observe", electronFileRoots.value, {
+            origins: electronEndpoints.value,
+            network: "loopback",
           }),
         ]
       : []),
@@ -336,6 +387,10 @@ export const parseConfig = (
       parsedEnvironment.data.REA_BROWSER_OBSERVE_ENABLED === "true",
     browserCdpEndpoints: browserEndpoints.value,
     browserAllowedOrigins: browserOrigins.value,
+    electronObservationEnabled:
+      parsedEnvironment.data.REA_ELECTRON_OBSERVE_ENABLED === "true",
+    electronCdpEndpoints: electronEndpoints.value,
+    electronFileRoots: electronFileRoots.value,
     permissionCeilings,
     administratorPermissionGrants: administratorGrants(permissionCeilings),
     permissionProjectRoot: parsedEnvironment.data.REA_PERMISSION_PROJECT_ROOT,

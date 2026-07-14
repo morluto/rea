@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![70 MCP tools](https://img.shields.io/badge/MCP_tools-70-5c4ee5?style=flat-square)](#70-tools-for-investigation)
+[![78 MCP tools](https://img.shields.io/badge/MCP_tools-78-5c4ee5?style=flat-square)](#78-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [70 tools](#70-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [78 tools](#78-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -30,7 +30,7 @@
 
 See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, and controlled process capture. The longer-term toolkit extends the same agent workflow to packaged apps, JavaScript bundles, websites, APIs, protocols, mobile artifacts, firmware, runtime behavior, and differences between versions.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
 
 Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
@@ -294,16 +294,17 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 70 tools for investigation
+## 78 tools for investigation
 
-| Tool family               | Count | Examples                                                                                                                           |
-| ------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                   |
-| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery            |
-| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                      |
-| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                 |
-| Browser observation       |     2 | exact-origin CDP page discovery and passive DOM, accessibility, script, resource, network, console, worker, and storage inspection |
-| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle            |
+| Tool family               | Count | Examples                                                                                                                         |
+| ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                 |
+| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery          |
+| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                    |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree               |
+| Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence |
+| Electron observation      |     2 | canonical-root-confined file-page discovery and passive DOM, resource, and optionally approved script-source inspection          |
+| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle          |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
@@ -312,7 +313,8 @@ The public interface describes what the agent is trying to learn. Providers deci
 REA is already useful for native application investigation on macOS:
 
 - Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
-- Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint, list only pages on approved exact origins, and capture bounded passive web evidence without navigation or JavaScript evaluation.
+- Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
+- Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -346,14 +348,14 @@ rea list-browser-targets http://127.0.0.1:9222 --approved --json
 rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --approved --json
 ```
 
-`list_browser_targets` and `inspect_web_page` expose the same Evidence v2 contracts over MCP. Inspection is passive: REA does not evaluate page JavaScript, navigate, click, close the page, or close the browser. It redacts query values and never retains headers, bodies, cookies, storage values, console argument values, or WebSocket payloads. Existing activity before attach is explicitly unavailable. See [Website observation with CDP](docs/browser-observation.md) for browser startup, schemas, limits, and the threat model.
+All eight browser tools expose the same Evidence v2 contracts over CLI and MCP. Inspection is passive: REA does not evaluate page JavaScript, navigate, click, close the page, or close the browser. Query values, credentials, cookies, authorization headers, storage values, and raw JSON or WebSocket values are never retained. Separately approved captures can retain bounded redacted console primitives, value-free JSON/WebSocket shapes, script sources, accessibility text, or screenshot pixels. Existing activity before attach is explicitly unavailable. See [Website observation with CDP](docs/browser-observation.md) for browser startup, schemas, limits, and the threat model.
 
 ## Roadmap
 
 REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The next capability families are:
 
 1. **Artifact decomposition** — DMG, ASAR, ZIP, packages, universal-binary slices, application resources, embedded frameworks, mobile packages, and artifact graphs.
-2. **Web and Electron investigation** — extend the shipped passive CDP observation with approved interaction, screenshots, Electron IPC, route discovery, controlled replay, and visual or structural differences.
+2. **Web and Electron investigation** — extend the shipped passive CDP, bundle, visual-diff, and file-page observation with approved interaction, controlled replay, Electron IPC observation, semantic UI differences, and deeper JavaScript reconstruction.
 3. **Deterministic behavior harnesses** — stronger process-tree ownership, protocol fixtures, network policy, filesystem tracing, signals, reconnects, and cross-version comparison.
 4. **JavaScript and source recovery** — bundle indexing, AST/module reconstruction, source-map discovery, historical-source matching, and CodeDB-backed cross-references.
 5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.

@@ -6,6 +6,7 @@ import { err, ok, type Result } from "./result.js";
 export type PermissionCapability =
   | "process_capture"
   | "browser_observe"
+  | "electron_observe"
   | "evidence_read"
   | "evidence_write"
   | "investigation_input"

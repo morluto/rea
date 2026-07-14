@@ -144,12 +144,25 @@ export class ProviderAdapterError extends AnalysisError {
   }
 }
 
+/** Public browser and Electron operations that can fail at a CDP boundary. */
+export type BrowserObservationOperation =
+  | "list_browser_targets"
+  | "inspect_web_page"
+  | "analyze_web_bundle"
+  | "observe_web_session"
+  | "discover_webmcp_tools"
+  | "compare_web_captures"
+  | "capture_web_screenshot"
+  | "compare_web_screenshots"
+  | "list_electron_targets"
+  | "inspect_electron_page";
+
 /** A bounded passive browser observation failed at its CDP boundary. */
 export class BrowserObservationError extends AnalysisError {
   readonly _tag = "BrowserObservationError";
 
   constructor(
-    readonly operation: "list_browser_targets" | "inspect_web_page",
+    readonly operation: BrowserObservationOperation,
     readonly reason:
       | "endpoint_unreachable"
       | "invalid_endpoint_response"

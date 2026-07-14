@@ -29,7 +29,35 @@ describe("runtime configuration", () => {
       expect(result.value.browserObservationEnabled).toBe(false);
       expect(result.value.browserCdpEndpoints).toEqual([]);
       expect(result.value.browserAllowedOrigins).toEqual([]);
+      expect(result.value.electronObservationEnabled).toBe(false);
+      expect(result.value.electronCdpEndpoints).toEqual([]);
+      expect(result.value.electronFileRoots).toEqual([]);
     }
+  });
+
+  it("builds a separate Electron endpoint and file-root ceiling", () => {
+    const result = parseConfig({
+      REA_ELECTRON_OBSERVE_ENABLED: "true",
+      REA_ELECTRON_CDP_ENDPOINTS_JSON: '["http://127.0.0.1:9223"]',
+      REA_ELECTRON_FILE_ROOTS_JSON: '["/tmp/electron-app"]',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.permissionCeilings).toContainEqual({
+      capability: "electron_observe",
+      roots: ["/tmp/electron-app"],
+      executables: [],
+      environment_names: [],
+      origins: ["http://127.0.0.1:9223"],
+      network: "loopback",
+      mount: false,
+    });
+  });
+
+  it("rejects relative Electron file roots", () => {
+    expect(
+      parseConfig({ REA_ELECTRON_FILE_ROOTS_JSON: '["relative/app"]' }).ok,
+    ).toBe(false);
   });
 
   it("parses database kind and loader arguments", () => {

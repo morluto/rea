@@ -16,6 +16,7 @@ import { projectAnalysisError } from "./domain/errors.js";
 import { readProjectPermissionStore } from "./application/ProjectPermissionStore.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
+import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
 
 const MCP_CONNECTION_LOST =
   "REA lost its MCP client connection. Restart REA from your MCP client.";
@@ -82,6 +83,7 @@ export const run = async (
 
   const session = createBinarySession(config.value, logger);
   const browserObservation = new CdpBrowserProvider();
+  const electronObservation = new CdpElectronProvider();
   if (config.value.hopperTargetPath !== undefined) {
     const opened = await session.open(config.value.hopperTargetPath, {
       targetKind: config.value.hopperTargetKind,
@@ -129,6 +131,7 @@ export const run = async (
           analysisSnapshotFilePolicy: runtimeSnapshotPolicy,
           permissionAuthority: permissionAuthority.value,
           browserObservation,
+          electronObservation,
           artifactIntegrityContinueEnabled: () =>
             currentConfig.artifactIntegrityContinueEnabled,
           availabilityPolicy: () => ({
@@ -138,6 +141,10 @@ export const run = async (
               currentConfig.browserObservationEnabled &&
               currentConfig.browserCdpEndpoints.length > 0 &&
               currentConfig.browserAllowedOrigins.length > 0,
+            electronObservationEnabled:
+              currentConfig.electronObservationEnabled &&
+              currentConfig.electronCdpEndpoints.length > 0 &&
+              currentConfig.electronFileRoots.length > 0,
           }),
         });
         liveServers.add(server);

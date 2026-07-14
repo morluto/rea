@@ -7,6 +7,7 @@ import {
   listBrowserTargetsInputSchema,
   sanitizeBrowserUrl,
 } from "../src/domain/browserObservation.js";
+import { captureWebScreenshotInputSchema } from "../src/domain/webScreenshot.js";
 
 describe("browser observation contracts", () => {
   it("normalizes exact HTTP origins without accepting broader URL scopes", () => {
@@ -66,12 +67,21 @@ describe("browser observation contracts", () => {
       }),
     ).toMatchObject({
       observation_ms: 500,
+      include_accessibility_text: false,
+      include_console_text: false,
+      console_text_approved: false,
+      include_json_body_shapes: false,
+      json_body_schema_approved: false,
+      include_websocket_shapes: false,
+      websocket_shape_approved: false,
       include_script_sources: false,
       include_storage_keys: false,
       limits: {
         max_frames: 200,
         max_dom_nodes: 2_000,
         max_ax_nodes: 2_000,
+        max_ax_text_field_bytes: 1_024,
+        max_total_ax_text_bytes: 65_536,
         max_scripts: 200,
         max_resources: 2_000,
         max_workers: 500,
@@ -80,9 +90,52 @@ describe("browser observation contracts", () => {
         max_total_script_source_bytes: 4_194_304,
         max_network_events: 1_000,
         max_console_events: 200,
+        max_console_text_field_bytes: 1_024,
+        max_total_console_text_bytes: 65_536,
+        max_json_body_bytes: 1_048_576,
+        max_total_json_body_bytes: 4_194_304,
+        max_json_shape_nodes: 5_000,
+        max_json_shape_depth: 20,
         max_websocket_events: 500,
+        max_websocket_shape_bytes: 65_536,
+        max_total_websocket_shape_bytes: 1_048_576,
       },
     });
+  });
+
+  it("requires independent approval for each sensitive capture surface", () => {
+    const base = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: ["https://app.example.test"],
+      target_id: "page-1",
+      approved: true,
+    };
+    for (const input of [
+      { include_console_text: true },
+      { include_json_body_shapes: true },
+      { include_websocket_shapes: true },
+    ])
+      expect(
+        inspectWebPageInputSchema.safeParse({ ...base, ...input }).success,
+      ).toBe(false);
+  });
+
+  it("requires an independent literal approval for screenshot pixels", () => {
+    const input = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: ["https://app.example.test"],
+      target_id: "page-1",
+      approved: true,
+    };
+    expect(captureWebScreenshotInputSchema.safeParse(input).success).toBe(
+      false,
+    );
+    expect(
+      captureWebScreenshotInputSchema.safeParse({
+        ...input,
+        screenshot_approved: true,
+      }).success,
+    ).toBe(true);
   });
 
   it("removes credentials, query values, and fragments from observed URLs", () => {

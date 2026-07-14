@@ -19,6 +19,10 @@ import { processCaptureSchema } from "../../src/domain/processCapture.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../src/contracts/processCaptureExample.js";
 import { jsonValueSchema } from "../../src/domain/jsonValue.js";
 import { PROCESS_PROVIDER } from "../../src/server/sessionToolPolicies.js";
+import {
+  SESSION_TOOL_CONTRACTS,
+  TOOL_CONTRACTS,
+} from "../../src/contracts/toolContracts.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -127,7 +131,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
   });
 
-  it("preserves the complete 70-tool inventory with a session", async () => {
+  it("preserves the complete 78-tool inventory with a session", async () => {
     const session = new BinarySession(
       (_path) =>
         ({
@@ -150,7 +154,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(70);
+    expect(listed.tools).toHaveLength(78);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("open_binary");
     expect(names).toContain("close_binary");
@@ -374,12 +378,14 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
   });
 
-  it("preserves the 52-tool inventory without a session", async () => {
+  it("preserves the target-open tool inventory without a session", async () => {
     const client = await connect({
       execute: () => Promise.resolve(ok(null)),
     });
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(52);
+    expect(listed.tools).toHaveLength(
+      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+    );
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("binary_overview");
     expect(names).toContain("batch_decompile");

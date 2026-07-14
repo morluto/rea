@@ -10,7 +10,7 @@ import {
 
 const execute = promisify(execFile);
 const browsers: FakeCdpBrowser[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
+const INTEGRATION_TEST_TIMEOUT_MS = 40_000;
 
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
@@ -20,7 +20,11 @@ describe("browser CLI parity", () => {
   it(
     "returns the same Evidence v2 discovery and inspection contracts",
     async () => {
-      const browser = await startFakeCdpBrowser();
+      const browser = await startFakeCdpBrowser({
+        sessionTimeline: "same_origin",
+        webMcpTools: true,
+        sensitiveShapes: true,
+      });
       browsers.push(browser);
       const environment = {
         ...process.env,
@@ -49,6 +53,12 @@ describe("browser CLI parity", () => {
           "--approved",
           "--observation-ms",
           "0",
+          "--include-console-text",
+          "--console-text-approved",
+          "--include-json-body-shapes",
+          "--json-body-schema-approved",
+          "--include-websocket-shapes",
+          "--websocket-shape-approved",
           "--json",
         ],
         environment,
@@ -58,8 +68,121 @@ describe("browser CLI parity", () => {
         provider: { id: "rea-cdp-browser" },
         normalized_result: {
           target: { target_id: "allowed-page" },
-          network: { prior_activity_available: false },
+          network: {
+            prior_activity_available: false,
+            requests: [
+              expect.objectContaining({
+                body_shapes: expect.objectContaining({ status: "included" }),
+              }),
+            ],
+          },
         },
+      });
+      const inspection = normalizedResult(inspected);
+      const compared = await runCli(
+        [
+          "compare-web-captures",
+          JSON.stringify({ inspection }),
+          JSON.stringify({ inspection }),
+          "--json",
+        ],
+        environment,
+      );
+      expect(compared).toMatchObject({
+        operation: "compare_web_captures",
+        normalized_result: {
+          overall_status: "unknown",
+          dimensions: {
+            network: { status: "unknown", total_changes: 0 },
+          },
+        },
+      });
+      const analyzed = await runCli(
+        [
+          "analyze-web-bundle",
+          browser.endpoint,
+          "allowed-page",
+          "--approved",
+          "--source-capture-approved",
+          "--observation-ms",
+          "0",
+          "--json",
+        ],
+        environment,
+      );
+      expect(analyzed).toMatchObject({
+        operation: "analyze_web_bundle",
+        normalized_result: {
+          capture: { scripts_analyzed: 1 },
+          observations: { source_maps: { status: "not_requested" } },
+        },
+      });
+      const observedSession = await runCli(
+        [
+          "observe-web-session",
+          browser.endpoint,
+          "allowed-page",
+          "--approved",
+          "--observation-ms",
+          "5",
+          "--json",
+        ],
+        environment,
+      );
+      expect(observedSession).toMatchObject({
+        operation: "observe_web_session",
+        normalized_result: {
+          window: { end_reason: "window_elapsed" },
+          timeline: expect.arrayContaining([
+            expect.objectContaining({ type: "same_origin_reload" }),
+          ]),
+        },
+      });
+      const webMcp = await runCli(
+        [
+          "discover-webmcp-tools",
+          browser.endpoint,
+          "allowed-page",
+          "--approved",
+          "--observation-ms",
+          "0",
+          "--json",
+        ],
+        environment,
+      );
+      expect(webMcp).toMatchObject({
+        operation: "discover_webmcp_tools",
+        normalized_result: {
+          tools: {
+            items: [expect.objectContaining({ name: "search_orders" })],
+          },
+        },
+      });
+      const screenshot = await runCli(
+        [
+          "capture-web-screenshot",
+          browser.endpoint,
+          "allowed-page",
+          "--approved",
+          "--screenshot-approved",
+          "--json",
+        ],
+        environment,
+      );
+      const artifact = screenshotArtifact(screenshot);
+      expect(artifact).toMatchObject({ media_type: "image/png", bytes: 70 });
+      const visual = await runCli(
+        [
+          "compare-web-screenshots",
+          JSON.stringify(artifact),
+          JSON.stringify(artifact),
+          "--json",
+        ],
+        environment,
+      );
+      expect(visual).toMatchObject({
+        operation: "compare_web_screenshots",
+        normalized_result: { status: "identical", changed_pixels: 0 },
       });
       const policy = await runCli(
         [
@@ -137,3 +260,22 @@ const runCli = async (
     throw cause;
   }
 };
+
+const screenshotArtifact = (value: unknown): Record<string, unknown> => {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.normalized_result) ||
+    !isRecord(value.normalized_result.artifact)
+  )
+    throw new TypeError("Missing CLI screenshot artifact");
+  return value.normalized_result.artifact;
+};
+
+const normalizedResult = (value: unknown): Record<string, unknown> => {
+  if (!isRecord(value) || !isRecord(value.normalized_result))
+    throw new TypeError("Missing CLI normalized result");
+  return value.normalized_result;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);

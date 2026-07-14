@@ -27,14 +27,29 @@ describe("browser MCP tools", () => {
   it(
     "exposes CLI-equivalent Evidence v2 and session resources",
     async () => {
-      const browser = await startFakeCdpBrowser();
+      const browser = await startFakeCdpBrowser({
+        sessionTimeline: "same_origin",
+        webMcpTools: true,
+        sensitiveShapes: true,
+      });
       browsers.push(browser);
       const connected = await connectBrowser(browser);
 
       const tools = await connected.client.listTools();
-      expect(tools.tools).toHaveLength(70);
+      expect(tools.tools).toHaveLength(78);
       expect(tools.tools.map(({ name }) => name)).toEqual(
-        expect.arrayContaining(["list_browser_targets", "inspect_web_page"]),
+        expect.arrayContaining([
+          "list_browser_targets",
+          "inspect_web_page",
+          "analyze_web_bundle",
+          "observe_web_session",
+          "discover_webmcp_tools",
+          "compare_web_captures",
+          "capture_web_screenshot",
+          "compare_web_screenshots",
+          "list_electron_targets",
+          "inspect_electron_page",
+        ]),
       );
       const status = await connected.client.callTool({
         name: "binary_session",
@@ -65,7 +80,7 @@ describe("browser MCP tools", () => {
         authority: "external-service",
         confidence: "observed",
         subject: null,
-        provider: { id: "rea-cdp-browser", version: "1" },
+        provider: { id: "rea-cdp-browser", version: "2" },
         normalized_result: {
           targets: { items: [{ target_id: "allowed-page" }] },
         },
@@ -78,6 +93,12 @@ describe("browser MCP tools", () => {
           target_id: "allowed-page",
           approved: true,
           observation_ms: 0,
+          include_console_text: true,
+          console_text_approved: true,
+          include_json_body_shapes: true,
+          json_body_schema_approved: true,
+          include_websocket_shapes: true,
+          websocket_shape_approved: true,
         },
       });
       expect(inspected.isError).not.toBe(true);
@@ -85,9 +106,111 @@ describe("browser MCP tools", () => {
         operation: "inspect_web_page",
         normalized_result: {
           target: { target_id: "allowed-page" },
-          network: { prior_activity_available: false },
           console: { prior_activity_available: false },
+          network: {
+            prior_activity_available: false,
+            requests: [
+              expect.objectContaining({
+                body_shapes: expect.objectContaining({ status: "included" }),
+              }),
+            ],
+          },
         },
+      });
+      const analyzed = await connected.client.callTool({
+        name: "analyze_web_bundle",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          approved: true,
+          source_capture_approved: true,
+          observation_ms: 0,
+        },
+      });
+      expect(analyzed.isError).not.toBe(true);
+      expect(analyzed.structuredContent).toMatchObject({
+        operation: "analyze_web_bundle",
+        normalized_result: {
+          capture: { scripts_analyzed: 1 },
+          observations: { source_maps: { status: "not_requested" } },
+        },
+      });
+      const observedSession = await connected.client.callTool({
+        name: "observe_web_session",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          approved: true,
+          observation_ms: 5,
+        },
+      });
+      expect(observedSession.isError).not.toBe(true);
+      expect(observedSession.structuredContent).toMatchObject({
+        operation: "observe_web_session",
+        normalized_result: {
+          window: { end_reason: "window_elapsed" },
+          timeline: expect.arrayContaining([
+            expect.objectContaining({ type: "same_origin_reload" }),
+          ]),
+        },
+      });
+      const webMcp = await connected.client.callTool({
+        name: "discover_webmcp_tools",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          approved: true,
+          observation_ms: 0,
+        },
+      });
+      expect(webMcp.isError).not.toBe(true);
+      expect(webMcp.structuredContent).toMatchObject({
+        operation: "discover_webmcp_tools",
+        normalized_result: {
+          tools: {
+            items: [expect.objectContaining({ name: "search_orders" })],
+          },
+        },
+      });
+      const capture = normalizedResultOf(inspected.structuredContent);
+      const compared = await connected.client.callTool({
+        name: "compare_web_captures",
+        arguments: {
+          before: { inspection: capture },
+          after: { inspection: capture },
+        },
+      });
+      expect(compared.isError).not.toBe(true);
+      expect(compared.structuredContent).toMatchObject({
+        operation: "compare_web_captures",
+        normalized_result: { overall_status: "unknown" },
+      });
+      const screenshot = await connected.client.callTool({
+        name: "capture_web_screenshot",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          approved: true,
+          screenshot_approved: true,
+        },
+      });
+      expect(screenshot.isError).not.toBe(true);
+      const screenshotArtifact = artifactOf(screenshot.structuredContent);
+      const visual = await connected.client.callTool({
+        name: "compare_web_screenshots",
+        arguments: {
+          before: screenshotArtifact,
+          after: screenshotArtifact,
+        },
+      });
+      expect(visual.isError).not.toBe(true);
+      expect(visual.structuredContent).toMatchObject({
+        operation: "compare_web_screenshots",
+        normalized_result: { status: "identical", changed_pixels: 0 },
       });
       const evidenceId = evidenceIdOf(inspected.structuredContent);
       const evidence = await connected.client.readResource({
@@ -167,4 +290,25 @@ const evidenceIdOf = (value: unknown): string => {
   )
     throw new TypeError("Missing browser evidence ID");
   return value.evidence_id;
+};
+
+const normalizedResultOf = (value: unknown): unknown => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("normalized_result" in value)
+  )
+    throw new TypeError("Missing normalized browser result");
+  return value.normalized_result;
+};
+
+const artifactOf = (value: unknown): unknown => {
+  const normalized = normalizedResultOf(value);
+  if (
+    typeof normalized !== "object" ||
+    normalized === null ||
+    !("artifact" in normalized)
+  )
+    throw new TypeError("Missing screenshot artifact");
+  return normalized.artifact;
 };

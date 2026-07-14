@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import { browserCompletenessSchema } from "./browserCompleteness.js";
+import { webTextArtifactSchema } from "./webContentArtifact.js";
+import { jsonShapeSchema } from "./jsonShape.js";
+
 const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
   try {
@@ -78,7 +82,7 @@ export const browserEndpointSchema = z
     return url.origin;
   });
 
-const allowedOriginsSchema = z
+export const browserAllowedOriginsSchema = z
   .array(browserOriginSchema)
   .min(1)
   .max(32)
@@ -86,7 +90,7 @@ const allowedOriginsSchema = z
 
 const approvedBrowserInput = {
   cdp_endpoint: browserEndpointSchema,
-  allowed_origins: allowedOriginsSchema,
+  allowed_origins: browserAllowedOriginsSchema,
   approved: z
     .literal(true)
     .describe("Explicit approval for browser observation"),
@@ -103,6 +107,18 @@ const browserInspectionLimitsSchema = z.object({
   max_frames: z.number().int().min(1).max(1_000).default(200),
   max_dom_nodes: z.number().int().min(1).max(10_000).default(2_000),
   max_ax_nodes: z.number().int().min(1).max(10_000).default(2_000),
+  max_ax_text_field_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16 * 1_024)
+    .default(1_024),
+  max_total_ax_text_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_024 * 1_024)
+    .default(64 * 1_024),
   max_scripts: z.number().int().min(1).max(1_000).default(200),
   max_resources: z.number().int().min(1).max(10_000).default(2_000),
   max_workers: z.number().int().min(1).max(5_000).default(500),
@@ -121,13 +137,53 @@ const browserInspectionLimitsSchema = z.object({
     .default(4 * 1_024 * 1_024),
   max_network_events: z.number().int().min(1).max(10_000).default(1_000),
   max_console_events: z.number().int().min(1).max(2_000).default(200),
+  max_console_text_field_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16 * 1_024)
+    .default(1_024),
+  max_total_console_text_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_024 * 1_024)
+    .default(64 * 1_024),
+  max_json_body_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(4 * 1_024 * 1_024)
+    .default(1_024 * 1_024),
+  max_total_json_body_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16 * 1_024 * 1_024)
+    .default(4 * 1_024 * 1_024),
+  max_json_shape_nodes: z.number().int().min(1).max(100_000).default(5_000),
+  max_json_shape_depth: z.number().int().min(1).max(100).default(20),
   max_websocket_events: z.number().int().min(1).max(5_000).default(500),
+  max_websocket_shape_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_024 * 1_024)
+    .default(64 * 1_024),
+  max_total_websocket_shape_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16 * 1_024 * 1_024)
+    .default(1_024 * 1_024),
 });
 
 const DEFAULT_BROWSER_INSPECTION_LIMITS = {
   max_frames: 200,
   max_dom_nodes: 2_000,
   max_ax_nodes: 2_000,
+  max_ax_text_field_bytes: 1_024,
+  max_total_ax_text_bytes: 64 * 1_024,
   max_scripts: 200,
   max_resources: 2_000,
   max_workers: 500,
@@ -136,7 +192,15 @@ const DEFAULT_BROWSER_INSPECTION_LIMITS = {
   max_total_script_source_bytes: 4 * 1_024 * 1_024,
   max_network_events: 1_000,
   max_console_events: 200,
+  max_console_text_field_bytes: 1_024,
+  max_total_console_text_bytes: 64 * 1_024,
+  max_json_body_bytes: 1_024 * 1_024,
+  max_total_json_body_bytes: 4 * 1_024 * 1_024,
+  max_json_shape_nodes: 5_000,
+  max_json_shape_depth: 20,
   max_websocket_events: 500,
+  max_websocket_shape_bytes: 64 * 1_024,
+  max_total_websocket_shape_bytes: 1_024 * 1_024,
 } as const;
 
 /** Public input for one passive, bounded inspection of an existing page. */
@@ -145,6 +209,13 @@ export const inspectWebPageInputSchema = z
     ...approvedBrowserInput,
     target_id: z.string().trim().min(1).max(256),
     observation_ms: z.number().int().min(0).max(10_000).default(500),
+    include_accessibility_text: z.boolean().default(false),
+    include_console_text: z.boolean().default(false),
+    console_text_approved: z.boolean().default(false),
+    include_json_body_shapes: z.boolean().default(false),
+    json_body_schema_approved: z.boolean().default(false),
+    include_websocket_shapes: z.boolean().default(false),
+    websocket_shape_approved: z.boolean().default(false),
     include_script_sources: z.boolean().default(false),
     include_storage_keys: z.boolean().default(false),
     limits: browserInspectionLimitsSchema.default(
@@ -160,6 +231,66 @@ export const inspectWebPageInputSchema = z
         code: "custom",
         path: ["limits", "max_script_source_bytes"],
         message: "Per-script source limit cannot exceed the total source limit",
+      });
+    for (const [include, approved, path, message] of [
+      [
+        input.include_console_text,
+        input.console_text_approved,
+        "console_text_approved",
+        "Console text capture requires separate approval",
+      ],
+      [
+        input.include_json_body_shapes,
+        input.json_body_schema_approved,
+        "json_body_schema_approved",
+        "JSON body schema capture requires separate approval",
+      ],
+      [
+        input.include_websocket_shapes,
+        input.websocket_shape_approved,
+        "websocket_shape_approved",
+        "WebSocket shape capture requires separate approval",
+      ],
+    ] as const)
+      if (include && !approved)
+        context.addIssue({ code: "custom", path: [path], message });
+    if (
+      input.limits.max_console_text_field_bytes >
+      input.limits.max_total_console_text_bytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["limits", "max_console_text_field_bytes"],
+        message:
+          "Per-field console text limit cannot exceed the total text limit",
+      });
+    if (
+      input.limits.max_json_body_bytes > input.limits.max_total_json_body_bytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["limits", "max_json_body_bytes"],
+        message: "Per-body JSON limit cannot exceed the total body limit",
+      });
+    if (
+      input.limits.max_websocket_shape_bytes >
+      input.limits.max_total_websocket_shape_bytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["limits", "max_websocket_shape_bytes"],
+        message:
+          "Per-frame WebSocket limit cannot exceed the total frame limit",
+      });
+    if (
+      input.limits.max_ax_text_field_bytes >
+      input.limits.max_total_ax_text_bytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["limits", "max_ax_text_field_bytes"],
+        message:
+          "Per-field accessibility text limit cannot exceed the total text limit",
       });
   });
 
@@ -280,13 +411,22 @@ const browserScriptSourceSchema = z.discriminatedUnion("included", [
   z.object({ included: z.literal(false), reason: z.string() }),
   z.object({
     included: z.literal(true),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    bytes: z.number().int().min(0),
-    content: z.string(),
+    artifact: webTextArtifactSchema,
+  }),
+]);
+const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("exact"), resource_key: z.string() }),
+  z.object({
+    status: z.literal("ambiguous"),
+    candidate_resource_keys: z.array(z.string()),
+  }),
+  z.object({
+    status: z.literal("unmatched"),
+    reason: z.literal("no_exact_sanitized_url"),
   }),
 ]);
 const browserScriptSchema = z.object({
-  script_id: z.string(),
+  script_key: z.string().regex(/^scr_[a-f0-9]{64}(?:_[0-9]+)?$/u),
   url: z.string(),
   origin: z.string().nullable(),
   cdp_hash: z.string(),
@@ -294,9 +434,11 @@ const browserScriptSchema = z.object({
   is_module: z.boolean(),
   language: z.string().nullable(),
   source_map_url: z.string().nullable(),
+  resource_reconciliation: browserResourceReconciliationSchema,
   source: browserScriptSourceSchema,
 });
 const browserResourceSchema = z.object({
+  resource_key: z.string().regex(/^res_[a-f0-9]{64}$/u),
   url: z.string(),
   origin: z.string().nullable(),
   type: z.string(),
@@ -318,6 +460,17 @@ const browserNetworkRequestSchema = z.object({
     line: z.number().int().min(0).nullable(),
     column: z.number().int().min(0).nullable(),
   }),
+  body_shapes: z.object({
+    status: z.enum([
+      "not_approved",
+      "included",
+      "partial",
+      "unavailable",
+      "truncated",
+    ]),
+    request: jsonShapeSchema.nullable(),
+    response: jsonShapeSchema.nullable(),
+  }),
 });
 const browserConsoleEventSchema = z.object({
   type: z.string(),
@@ -326,12 +479,31 @@ const browserConsoleEventSchema = z.object({
   url: z.string().nullable(),
   line: z.number().int().min(0).nullable(),
   column: z.number().int().min(0).nullable(),
+  text_capture: z.object({
+    status: z.enum(["not_approved", "included", "truncated"]),
+    values: z.array(
+      z.object({
+        argument_index: z.number().int().min(0),
+        type: z.string(),
+        text: z.string(),
+      }),
+    ),
+    retained_bytes: z.number().int().min(0),
+    truncated_values: z.number().int().min(0),
+  }),
 });
 const browserWebSocketEventSchema = z.object({
   request_id: z.string(),
   direction: z.enum(["sent", "received"]),
   opcode: z.number().int().min(0),
   payload_bytes: z.number().int().min(0),
+  payload_shape: z
+    .object({
+      format: z.enum(["json", "text", "binary"]),
+      json_shape: jsonShapeSchema.nullable(),
+      truncated: z.boolean(),
+    })
+    .nullable(),
 });
 const browserWorkerSchema = z.object({
   target_id: z.string(),
@@ -340,10 +512,80 @@ const browserWorkerSchema = z.object({
   origin: z.string().nullable(),
   attached: z.boolean(),
 });
+const browserCspSourceSchema = z.object({
+  kind: z.enum([
+    "keyword",
+    "scheme",
+    "approved_origin",
+    "external_origin",
+    "other",
+  ]),
+  value: z.string().nullable(),
+});
+const browserLinkMetadataSchema = z.object({
+  href: z.string().nullable(),
+  destination_scope: z.enum(["approved", "outside_policy", "unsupported"]),
+  rel: z.array(z.string()),
+  as: z.string().nullable(),
+  type: z.string().nullable(),
+  crossorigin: z.string().nullable(),
+});
+const browserAgentHintSchema = z.object({
+  mechanism: z.enum([
+    "link_rel",
+    "dom_link_rel",
+    "well_known_resource",
+    "response_header",
+  ]),
+  declaration: z.string(),
+  url: z.string().nullable(),
+  trust: z.literal("page-declared-untrusted"),
+});
+const browserSafeMetadataSchema = z.object({
+  responses: z.array(
+    z.object({
+      request_id: z.string(),
+      url: z.string(),
+      mime_type: z.string().nullable(),
+      content_length: z.number().int().min(0).nullable(),
+      content_encoding: z.string().nullable(),
+      csp: z.object({
+        directives: z.array(
+          z.object({
+            name: z.string(),
+            sources: z.array(browserCspSourceSchema),
+          }),
+        ),
+        nonce_count: z.number().int().min(0),
+        hash_count: z.number().int().min(0),
+      }),
+      links: z.array(browserLinkMetadataSchema),
+      policies: z.object({
+        coop: z.string().nullable(),
+        coep: z.string().nullable(),
+        corp: z.string().nullable(),
+        referrer_policy: z.string().nullable(),
+        x_content_type_options: z.string().nullable(),
+        permissions_policy_features: z.array(z.string()),
+      }),
+    }),
+  ),
+  dom_urls: z.array(
+    z.object({
+      node_index: z.number().int().min(0),
+      attribute: z.enum(["href", "src", "action", "formaction", "poster"]),
+      url: z.string().nullable(),
+      destination_scope: z.enum(["approved", "outside_policy", "unsupported"]),
+    }),
+  ),
+  agent_hints: z.array(browserAgentHintSchema),
+  excluded_dom_urls: z.number().int().min(0),
+  headers_allowlisted: z.literal(true),
+});
 
 /** Provider-neutral normalized result for one passive web-page observation. */
 export const webPageInspectionSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.literal(2),
   browser: browserVersionSchema,
   target: browserTargetSchema,
   capture_window: z.object({
@@ -351,11 +593,7 @@ export const webPageInspectionSchema = z.object({
     ended_at: z.iso.datetime(),
     observation_ms: z.number().int().min(0),
   }),
-  completeness: z.object({
-    status: z.enum(["complete", "truncated"]),
-    truncated_sections: z.array(z.string()),
-    dropped_events: z.number().int().min(0),
-  }),
+  completeness: browserCompletenessSchema,
   frames: z.array(browserFrameSchema),
   dom: z.object({
     total_nodes: z.number().int().min(0),
@@ -363,6 +601,12 @@ export const webPageInspectionSchema = z.object({
   }),
   accessibility: z.object({
     total_nodes: z.number().int().min(0),
+    text_capture: z.object({
+      status: z.enum(["not_approved", "included", "truncated", "unavailable"]),
+      retained_bytes: z.number().int().min(0),
+      excluded_fields: z.number().int().min(0),
+      truncated_fields: z.number().int().min(0),
+    }),
     nodes: z.array(browserAxNodeSchema),
   }),
   scripts: z.object({
@@ -382,6 +626,7 @@ export const webPageInspectionSchema = z.object({
     prior_activity_available: z.literal(false),
   }),
   workers: z.array(browserWorkerSchema),
+  metadata: browserSafeMetadataSchema,
   storage: z.object({
     origin: z.string(),
     usage_bytes: z.number().min(0).nullable(),

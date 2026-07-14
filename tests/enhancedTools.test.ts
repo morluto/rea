@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../src/application/EnhancedTools.js";
-import { ENHANCED_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
+import {
+  ENHANCED_TOOL_CONTRACTS,
+  SESSION_TOOL_CONTRACTS,
+  TOOL_CONTRACTS,
+} from "../src/contracts/toolContracts.js";
 import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { err } from "../src/domain/result.js";
@@ -180,10 +184,12 @@ const jsonResult = (result: CallToolResult): JsonValue => {
 };
 
 describe("enhanced MCP tools", () => {
-  it("lists the complete 33 plus 10 surface", async () => {
+  it("lists the complete target-open analysis surface", async () => {
     const client = await connect();
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(52);
+    expect(listed.tools).toHaveLength(
+      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+    );
     expect(
       listed.tools
         .map(({ name }) => name)

@@ -17,6 +17,7 @@ import type { Logger } from "./logger.js";
 const capabilitySchema = z.enum([
   "process_capture",
   "browser_observe",
+  "electron_observe",
   "evidence_read",
   "evidence_write",
   "investigation_input",

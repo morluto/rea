@@ -38,6 +38,14 @@ export const CLI_COMMAND_NAMES = [
   "policy",
   "list-browser-targets",
   "inspect-web-page",
+  "analyze-web-bundle",
+  "observe-web-session",
+  "discover-webmcp-tools",
+  "compare-web-captures",
+  "capture-web-screenshot",
+  "compare-web-screenshots",
+  "list-electron-targets",
+  "inspect-electron-page",
 ] as const;
 
 const toolCatalog = TOOL_CONTRACTS.map((contract) => ({

@@ -4,6 +4,11 @@ import type {
 } from "../domain/browserObservation.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/errors.js";
+import {
+  reconcileCapturedWebScript,
+  stableWebResources,
+  stableWebScriptKey,
+} from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
@@ -14,6 +19,7 @@ import {
   captureDom,
   captureFrames,
   captureResources,
+  type CapturedResource,
   mainFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import {
@@ -27,6 +33,7 @@ import {
   sourceResult,
   stringValue,
 } from "./CdpCaptureValues.js";
+import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 interface CaptureContext {
   readonly connection: CdpConnection;
@@ -43,7 +50,6 @@ interface CaptureState {
   readonly events: CdpCaptureEvents;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly limitations: string[];
-  readonly truncatedSections: Set<string>;
   readonly startedAt: string;
 }
 
@@ -58,10 +64,20 @@ interface CapturedSections {
   readonly storage: WebPageInspection["storage"];
 }
 
+export interface CapturedPage {
+  readonly inspection: WebPageInspection;
+  readonly sourceMapRequests: readonly WebSourceMapRequest[];
+}
+
+interface CapturedScripts {
+  readonly inventory: WebPageInspection["scripts"];
+  readonly sourceMapRequests: readonly WebSourceMapRequest[];
+}
+
 /** Capture and normalize one attached page without evaluating page JavaScript. */
 export const capturePage = async (
   context: CaptureContext,
-): Promise<WebPageInspection> => {
+): Promise<CapturedPage> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
   const removeListener = context.connection.onEvent((event) => {
@@ -74,11 +90,10 @@ export const capturePage = async (
     allowedOrigins,
     limitations: [
       "Observation starts when REA attaches; prior network and console activity is unavailable.",
-      "Network headers, request bodies, response bodies, cookies, storage values, console values, and WebSocket payloads are not retained.",
+      "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; separately approved captures retain only bounded redacted text or value-free shapes.",
       "Source maps are reported only as declarative URLs and are not fetched.",
       "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
     ],
-    truncatedSections: new Set<string>(),
     startedAt: new Date().toISOString(),
   };
   try {
@@ -90,19 +105,22 @@ export const capturePage = async (
 
 const captureAuthorizedPage = async (
   state: CaptureState,
-): Promise<WebPageInspection> => {
-  const { context, allowedOrigins, limitations, truncatedSections } = state;
+): Promise<CapturedPage> => {
+  const { context, allowedOrigins, limitations } = state;
   const { connection, sessionId, input, signal } = context;
   await authorizeObservationWindow(state);
+  await captureJsonResponseBodies(state);
   const frameResult = await authorizedFrameTree(context, allowedOrigins);
   const attachedUrl = mainFrameUrl(frameResult) ?? "";
   const frameCapture = captureFrames(
     frameResult,
     allowedOrigins,
     input.limits.max_frames,
+    state.events.completeness,
   );
   const frames = frameCapture.items;
-  if (frameCapture.total > frames.length) truncatedSections.add("frames");
+  if (frameCapture.total > frames.length)
+    state.events.completeness.truncate("frames");
   const captureFrame = frames[0];
   if (captureFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
@@ -111,38 +129,39 @@ const captureAuthorizedPage = async (
     await connection.send("Page.getResourceTree", {}, sessionId, signal),
     allowedOrigins,
     input.limits.max_resources,
+    state.events.completeness,
   );
   if (resourceCapture.total > resourceCapture.items.length)
-    truncatedSections.add("resources");
-  const dom = await capturePageDom(state);
-  if (dom.total > dom.nodes.length) truncatedSections.add("dom");
-  const accessibility = await accessibilityForFrames(
-    context,
-    frames,
-    limitations,
+    state.events.completeness.truncate("resources");
+  const resources = stableWebResources(
+    resourceCapture.items.map(publicResource),
   );
+  const dom = await capturePageDom(state);
+  if (dom.total > dom.nodes.length) state.events.completeness.truncate("dom");
+  const accessibility = await accessibilityForFrames(state, frames);
   if (accessibility.total > accessibility.nodes.length)
-    truncatedSections.add("accessibility");
+    state.events.completeness.truncate("accessibility");
   const scripts = await captureScripts(
     context,
     state.events,
-    truncatedSections,
+    resourceCapture.items,
+    resources,
   );
   const workerCapture = await captureWorkers(
-    context,
-    allowedOrigins,
+    state,
     new Set(frames.map((frame) => frame.frame_id)),
-    limitations,
   );
   if (workerCapture.total > workerCapture.items.length)
-    truncatedSections.add("workers");
+    state.events.completeness.truncate("workers");
   const storageCapture = await captureStorage(
     context,
     frames[0]?.origin ?? new URL(attachedUrl).origin,
     limitations,
   );
-  if (storageCapture.truncated) truncatedSections.add("storage_keys");
-  if (state.events.dropped > 0) truncatedSections.add("events");
+  if (storageCapture.truncated)
+    state.events.completeness.truncate("storage_keys");
+  if (!input.include_storage_keys)
+    state.events.completeness.exclude("storage_keys", "not_approved", null);
   const completedFrameResult = await authorizedFrameTree(
     context,
     allowedOrigins,
@@ -153,16 +172,42 @@ const captureAuthorizedPage = async (
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   await report(context.progress, 3, "Normalizing browser evidence");
-  return normalizedInspection(state, {
-    attachedUrl,
-    frames,
-    dom,
-    accessibility,
-    scripts,
-    resources: resourceCapture.items,
-    workers: workerCapture.items,
-    storage: storageCapture.value,
-  });
+  return {
+    inspection: normalizedInspection(state, {
+      attachedUrl,
+      frames,
+      dom,
+      accessibility,
+      scripts: scripts.inventory,
+      resources,
+      workers: workerCapture.items,
+      storage: storageCapture.value,
+    }),
+    sourceMapRequests: scripts.sourceMapRequests,
+  };
+};
+
+const captureJsonResponseBodies = async (
+  state: CaptureState,
+): Promise<void> => {
+  const requestIds = state.events.responseBodyRequestIds();
+  for (let index = 0; index < requestIds.length; index += 1) {
+    const requestId = requestIds[index];
+    if (requestId === undefined) continue;
+    const result = await optionalCdpCommand(
+      state.context,
+      "Network.getResponseBody",
+      { requestId },
+      state.limitations,
+    );
+    if (result !== undefined) {
+      state.events.ingestResponseBody(requestId, result);
+      continue;
+    }
+    for (const remaining of requestIds.slice(index))
+      state.events.responseBodyUnavailable(remaining);
+    return;
+  }
 };
 
 const authorizeObservationWindow = async (
@@ -199,14 +244,19 @@ const capturePageDom = async (
     context.sessionId,
     context.signal,
   );
-  return captureDom(result, allowedOrigins, context.input);
+  return captureDom(
+    result,
+    allowedOrigins,
+    context.input,
+    state.events.completeness,
+  );
 };
 
 const normalizedInspection = (
   state: CaptureState,
   captured: CapturedSections,
 ): WebPageInspection => ({
-  schema_version: 1,
+  schema_version: 2,
   browser: state.context.discovery.version,
   target: normalizedTarget(
     state.context.target,
@@ -218,15 +268,12 @@ const normalizedInspection = (
     ended_at: new Date().toISOString(),
     observation_ms: state.context.input.observation_ms,
   },
-  completeness: {
-    status: state.truncatedSections.size === 0 ? "complete" : "truncated",
-    truncated_sections: [...state.truncatedSections].sort(),
-    dropped_events: state.events.dropped,
-  },
+  completeness: state.events.completeness.snapshot(),
   frames: [...captured.frames],
   dom: { total_nodes: captured.dom.total, nodes: [...captured.dom.nodes] },
   accessibility: {
     total_nodes: captured.accessibility.total,
+    text_capture: captured.accessibility.textCapture,
     nodes: [...captured.accessibility.nodes],
   },
   scripts: captured.scripts,
@@ -243,6 +290,16 @@ const normalizedInspection = (
     prior_activity_available: false,
   },
   workers: [...captured.workers],
+  metadata: {
+    responses: [...state.events.responseMetadata],
+    dom_urls: [...captured.dom.urls],
+    agent_hints: deduplicatedAgentHints([
+      ...state.events.agentHints,
+      ...captured.dom.agentHints,
+    ]),
+    excluded_dom_urls: captured.dom.excludedUrls,
+    headers_allowlisted: true,
+  },
   storage: captured.storage,
   limitations: state.limitations,
 });
@@ -295,12 +352,12 @@ const enableObservationDomains = async (
 };
 
 const accessibilityForFrames = async (
-  context: CaptureContext,
+  state: CaptureState,
   frames: readonly { readonly frame_id: string }[],
-  limitations: string[],
 ): Promise<ReturnType<typeof captureAccessibility>> => {
-  const nodes: WebPageInspection["accessibility"]["nodes"] = [];
-  let total = 0;
+  const { context, limitations, events } = state;
+  const results: unknown[] = [];
+  let unavailable = false;
   for (const frame of frames) {
     const result = await optionalCdpCommand(
       context,
@@ -308,24 +365,45 @@ const accessibilityForFrames = async (
       { depth: 32, frameId: frame.frame_id },
       limitations,
     );
-    if (result === undefined) continue;
-    const capture = captureAccessibility(
-      [result],
-      Math.max(0, context.input.limits.max_ax_nodes - nodes.length),
-    );
-    total += capture.total;
-    nodes.push(...capture.nodes);
+    if (result === undefined) unavailable = true;
+    else results.push(result);
   }
-  return { total, nodes };
+  if (unavailable) events.completeness.unavailable("accessibility");
+  const capture = captureAccessibility(
+    results,
+    context.input.limits.max_ax_nodes,
+    {
+      includeText: context.input.include_accessibility_text,
+      maximumFieldBytes: context.input.limits.max_ax_text_field_bytes,
+      maximumTotalBytes: context.input.limits.max_total_ax_text_bytes,
+      ...(results.length === 0 && unavailable ? { unavailable: true } : {}),
+    },
+  );
+  if (!context.input.include_accessibility_text)
+    events.completeness.exclude(
+      "accessibility",
+      "not_approved",
+      capture.textCapture.excluded_fields,
+    );
+  if (capture.textCapture.status === "truncated")
+    events.completeness.truncate("accessibility");
+  return capture;
 };
 
 const captureScripts = async (
   context: CaptureContext,
   events: CdpCaptureEvents,
-  truncatedSections: Set<string>,
-): Promise<WebPageInspection["scripts"]> => {
+  rawResources: readonly CapturedResource[],
+  resources: WebPageInspection["resources"],
+): Promise<CapturedScripts> => {
   let totalSourceBytes = 0;
-  const items: WebPageInspection["scripts"]["items"] = [];
+  const drafts: {
+    readonly item: Omit<
+      WebPageInspection["scripts"]["items"][number],
+      "script_key"
+    >;
+    readonly sourceMapRawUrl: string | null;
+  }[] = [];
   for (const script of events.scripts.values()) {
     let source: WebPageInspection["scripts"]["items"][number]["source"] =
       sourceExcluded("source capture was not approved");
@@ -334,13 +412,13 @@ const captureScripts = async (
         source = sourceExcluded(
           "declared script length exceeds per-script limit",
         );
-        truncatedSections.add("script_sources");
+        events.completeness.truncate("script_sources");
       } else if (
         totalSourceBytes + script.length >
         context.input.limits.max_total_script_source_bytes
       ) {
         source = sourceExcluded("total script source limit reached");
-        truncatedSections.add("script_sources");
+        events.completeness.truncate("script_sources");
       } else {
         const result = requiredRecord(
           await context.connection.send(
@@ -360,37 +438,103 @@ const captureScripts = async (
           source = sourceExcluded(
             "actual source exceeds configured byte limits",
           );
-          truncatedSections.add("script_sources");
+          events.completeness.truncate("script_sources");
         } else {
           source = sourceResult(content);
           totalSourceBytes += bytes;
         }
       }
     }
-    items.push({
-      script_id: script.scriptId,
+    const inventoryScript = {
       url: script.url,
-      origin: script.origin,
       cdp_hash: script.hash,
       length: script.length,
       is_module: script.isModule,
       language: script.language,
       source_map_url: script.sourceMapUrl,
-      source,
+    };
+    drafts.push({
+      item: {
+        ...inventoryScript,
+        origin: script.origin,
+        resource_reconciliation: reconcileCapturedWebScript(
+          { ...inventoryScript, rawUrl: script.rawUrl },
+          rawResources,
+          resources,
+        ),
+        source,
+      },
+      sourceMapRawUrl: script.sourceMapRawUrl,
     });
   }
-  return { total: events.scripts.size, items };
+  if (!context.input.include_script_sources)
+    events.completeness.exclude(
+      "script_sources",
+      "not_approved",
+      events.scripts.size,
+    );
+  const keyed = drafts.map((draft) => ({
+    ...draft,
+    base: stableWebScriptKey(draft.item),
+  }));
+  keyed.sort(
+    (left, right) =>
+      left.base.localeCompare(right.base) ||
+      sourceDigest(left.item.source).localeCompare(
+        sourceDigest(right.item.source),
+      ),
+  );
+  const totals = new Map<string, number>();
+  for (const { base } of keyed) totals.set(base, (totals.get(base) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  const sourceMapRequests: WebSourceMapRequest[] = [];
+  const items = keyed.map(({ base, item, sourceMapRawUrl }) => {
+    const occurrence = (seen.get(base) ?? 0) + 1;
+    seen.set(base, occurrence);
+    const scriptKey =
+      totals.get(base) === 1 ? base : `${base}_${String(occurrence)}`;
+    if (item.source_map_url !== null && sourceMapRawUrl !== null)
+      sourceMapRequests.push({
+        scriptKey,
+        declaredUrl: item.source_map_url,
+        fetchUrl: sourceMapRawUrl,
+      });
+    return { script_key: scriptKey, ...item };
+  });
+  return {
+    inventory: { total: events.scripts.size, items },
+    sourceMapRequests,
+  };
+};
+
+const sourceDigest = (
+  source: WebPageInspection["scripts"]["items"][number]["source"],
+): string => (source.included ? source.artifact.sha256 : source.reason);
+
+const publicResource = ({ rawUrl: _rawUrl, ...resource }: CapturedResource) =>
+  resource;
+
+const deduplicatedAgentHints = (
+  hints: WebPageInspection["metadata"]["agent_hints"],
+): WebPageInspection["metadata"]["agent_hints"] => {
+  const seen = new Set<string>();
+  return hints.filter((hint) => {
+    const key = `${hint.mechanism}\0${hint.declaration}\0${hint.url ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 const captureWorkers = async (
-  context: CaptureContext,
-  allowedOrigins: ReadonlySet<string>,
+  state: CaptureState,
   frameIds: ReadonlySet<string>,
-  limitations: string[],
 ): Promise<{
   readonly total: number;
   readonly items: WebPageInspection["workers"];
 }> => {
+  const { context, allowedOrigins, limitations, events } = state;
+  const completeness = events.completeness;
   const result = await optionalCdpCommand(
     { ...context, sessionId: undefined },
     "Target.getTargets",
@@ -399,6 +543,7 @@ const captureWorkers = async (
   );
   const items: WebPageInspection["workers"] = [];
   let total = 0;
+  if (result === undefined) completeness.unavailable("workers");
   for (const target of recordsValue(recordValue(result)?.targetInfos)) {
     const type = stringValue(target.type) ?? "";
     const url = allowedSanitizedUrl(target.url, allowedOrigins);
@@ -406,8 +551,23 @@ const captureWorkers = async (
       stringValue(target.openerId) === context.target.id ||
       (stringValue(target.parentFrameId) !== undefined &&
         frameIds.has(stringValue(target.parentFrameId) ?? ""));
-    if (!type.includes("worker") || url === undefined || !relatedToPage)
+    if (!type.includes("worker")) continue;
+    if (!relatedToPage) {
+      completeness.exclude("workers", "out_of_target_scope");
       continue;
+    }
+    if (url === undefined) {
+      const rawUrl = stringValue(target.url);
+      completeness.exclude(
+        "workers",
+        rawUrl === undefined || rawUrl === ""
+          ? "unattributed_origin"
+          : isHttpUrl(rawUrl)
+            ? "disallowed_origin"
+            : "unsupported_url",
+      );
+      continue;
+    }
     total += 1;
     if (items.length >= context.input.limits.max_workers) continue;
     items.push({

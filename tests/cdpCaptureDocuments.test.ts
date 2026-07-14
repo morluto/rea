@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  captureAccessibility,
   captureDom,
   captureFrames,
   captureResources,
@@ -70,5 +71,66 @@ describe("CDP document capture", () => {
     expect(capture.nodes.map((node) => node.parent_index)).toEqual([
       -1, 0, -1, 2,
     ]);
+  });
+
+  it("bounds approved accessibility text by UTF-8 bytes without splitting characters", () => {
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            {
+              nodeId: "node-1",
+              role: { value: "button" },
+              name: { value: "😀a" },
+              description: { value: "éé" },
+            },
+          ],
+        },
+      ],
+      10,
+      {
+        includeText: true,
+        maximumFieldBytes: 4,
+        maximumTotalBytes: 7,
+      },
+    );
+
+    expect(capture.nodes[0]).toMatchObject({ name: "😀", description: "é" });
+    expect(capture.textCapture).toEqual({
+      status: "truncated",
+      retained_bytes: 6,
+      excluded_fields: 0,
+      truncated_fields: 2,
+    });
+  });
+
+  it("counts accessibility fields omitted without text approval", () => {
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            {
+              nodeId: "node-1",
+              name: { value: "private name" },
+              description: { value: "private description" },
+            },
+          ],
+        },
+      ],
+      10,
+      {
+        includeText: false,
+        maximumFieldBytes: 1_024,
+        maximumTotalBytes: 64 * 1_024,
+      },
+    );
+
+    expect(capture.nodes[0]).toMatchObject({ name: null, description: null });
+    expect(capture.textCapture).toEqual({
+      status: "not_approved",
+      retained_bytes: 0,
+      excluded_fields: 2,
+      truncated_fields: 0,
+    });
   });
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Route production MCP before importing Incur. Incur owns registration helpers
-// such as `mcp add`, while only dist/main.js may serve the 70-tool stdio server.
+// such as `mcp add`, while only dist/main.js may serve the 78-tool stdio server.
 const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },

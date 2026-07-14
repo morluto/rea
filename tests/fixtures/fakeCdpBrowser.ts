@@ -14,6 +14,12 @@ export interface FakeCdpBrowser {
   readonly browserWebSocketUrl: string;
   readonly allowedOrigin: string;
   readonly commands: readonly FakeCdpCommand[];
+  readonly httpRequests: readonly {
+    readonly url: string;
+    readonly authorization: string | undefined;
+    readonly cookie: string | undefined;
+    readonly referer: string | undefined;
+  }[];
   close(): Promise<void>;
 }
 
@@ -29,13 +35,24 @@ interface FakeOptions {
   readonly unsupportedMethods?: readonly string[];
   readonly transitionalFrameReads?: number;
   readonly attachedFrameUrl?: string;
+  readonly frameUrlAfterFirstRead?: string;
   readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
+  readonly navigateDuringScreenshotUrl?: string;
   readonly extraCollections?: boolean;
   readonly foreignSessionEvents?: boolean;
   readonly redirectToDisallowedOrigin?: boolean;
   readonly unrelatedWorker?: boolean;
   readonly binaryWebSocketEvent?: boolean;
+  readonly invalidBinaryWebSocketEvent?: boolean;
+  readonly sourceMapBody?: string;
+  readonly sessionTimeline?: "same_origin" | "outside_policy";
+  readonly sensitiveShapes?: boolean;
+  readonly invalidResponseBodyBase64?: boolean;
+  readonly webMcpTools?: boolean;
+  readonly webMcpChildLeavesScope?: boolean;
+  readonly electronFileUrl?: string;
+  readonly duplicateElectronInventory?: boolean;
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -43,11 +60,30 @@ export const startFakeCdpBrowser = async (
   options: FakeOptions = {},
 ): Promise<FakeCdpBrowser> => {
   const commands: FakeCdpCommand[] = [];
+  const httpRequests: {
+    url: string;
+    authorization: string | undefined;
+    cookie: string | undefined;
+    referer: string | undefined;
+  }[] = [];
   const sockets = new Set<WebSocket>();
   let frameTreeReads = 0;
   let port = 0;
   const http = createServer((request, response) => {
+    httpRequests.push({
+      url: request.url ?? "",
+      authorization: request.headers.authorization,
+      cookie: request.headers.cookie,
+      referer: request.headers.referer,
+    });
     response.setHeader("content-type", "application/json");
+    if (
+      request.url?.startsWith("/app.js.map") === true &&
+      options.sourceMapBody !== undefined
+    ) {
+      response.end(options.sourceMapBody);
+      return;
+    }
     if (request.url === "/json/version") {
       response.end(
         options.oversizedDiscovery === true
@@ -138,6 +174,7 @@ export const startFakeCdpBrowser = async (
     browserWebSocketUrl: `ws://127.0.0.1:${String(port)}/devtools/browser/fake`,
     allowedOrigin: endpoint,
     commands,
+    httpRequests,
     async close() {
       for (const socket of sockets) socket.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
@@ -208,6 +245,17 @@ const targets = (
         },
       ]
     : []),
+  ...(options.electronFileUrl === undefined
+    ? []
+    : [
+        {
+          id: "electron-page",
+          type: "page",
+          title: "Electron application",
+          url: options.electronFileUrl,
+          attached: false,
+        },
+      ]),
 ];
 
 const parseCommand = (text: string): FakeCdpCommand => {
@@ -245,19 +293,44 @@ const resultFor = (
     case "Page.getFrameTree":
       return frameTree(
         port,
-        frameTreeReads <= (options.transitionalFrameReads ?? 0)
-          ? ":"
-          : options.attachedFrameUrl,
+        frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
+          ? options.frameUrlAfterFirstRead
+          : frameTreeReads <= (options.transitionalFrameReads ?? 0)
+            ? ":"
+            : (options.electronFileUrl ?? options.attachedFrameUrl),
         options.extraCollections === true,
       );
     case "Page.getResourceTree":
-      return resourceTree(port, options.extraCollections === true);
+      return resourceTree(
+        port,
+        options.extraCollections === true,
+        options.electronFileUrl,
+        options.duplicateElectronInventory === true,
+      );
     case "DOMSnapshot.captureSnapshot":
-      return domSnapshot(port);
+      return domSnapshot(
+        port,
+        options.electronFileUrl,
+        options.extraCollections === true,
+      );
     case "Accessibility.getFullAXTree":
       return accessibilityTree(options.extraCollections === true);
     case "Debugger.getScriptSource":
       return { scriptSource: "export const observed = 'source-secret';" };
+    case "Network.getResponseBody":
+      return options.invalidResponseBodyBase64 === true
+        ? { body: "%%%not-base64%%%", base64Encoded: true }
+        : {
+            body: JSON.stringify({
+              result: { ok: true, token: "response-body-secret" },
+              items: [{ id: 1 }, { id: 2 }],
+            }),
+            base64Encoded: false,
+          };
+    case "Page.captureScreenshot":
+      return {
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==",
+      };
     case "Target.getTargets":
       return { targetInfos: targets(port, options).map(endpointTargetToInfo) };
     case "Storage.getUsageAndQuota":
@@ -348,20 +421,38 @@ const frameTree = (
 const resourceTree = (
   port: number,
   extraCollections = false,
+  electronFileUrl?: string,
+  duplicateElectronInventory = false,
 ): Readonly<Record<string, unknown>> => ({
   frameTree: {
     frame: {
       id: "frame-main",
       loaderId: "loader-main",
-      url: `http://127.0.0.1:${String(port)}/app`,
+      url: electronFileUrl ?? `http://127.0.0.1:${String(port)}/app`,
     },
     resources: [
       {
-        url: `http://127.0.0.1:${String(port)}/app.js?api_key=resource-secret`,
+        url:
+          electronFileUrl === undefined
+            ? `http://127.0.0.1:${String(port)}/app.js?token=script-secret`
+            : new URL("app.js", electronFileUrl).href,
         type: "Script",
         mimeType: "text/javascript",
         contentSize: 128,
       },
+      ...(duplicateElectronInventory
+        ? [
+            {
+              url:
+                electronFileUrl === undefined
+                  ? `http://127.0.0.1:${String(port)}/app.js?token=script-secret`
+                  : new URL("app.js", electronFileUrl).href,
+              type: "Script",
+              mimeType: "text/javascript",
+              contentSize: 128,
+            },
+          ]
+        : []),
       ...(extraCollections
         ? [
             {
@@ -381,16 +472,30 @@ const resourceTree = (
   },
 });
 
-const domSnapshot = (port: number): Readonly<Record<string, unknown>> => {
+const domSnapshot = (
+  port: number,
+  electronFileUrl?: string,
+  extraCollections = false,
+): Readonly<Record<string, unknown>> => {
+  const secondDocumentUrl =
+    electronFileUrl !== undefined && extraCollections
+      ? new URL("child.html", electronFileUrl).href
+      : "https://private.example.test/frame";
   const strings = [
-    `http://127.0.0.1:${String(port)}/app`,
+    electronFileUrl ?? `http://127.0.0.1:${String(port)}/app`,
     "#document",
     "",
-    "HTML",
+    "LINK",
     "token",
     "dom-secret",
-    "https://private.example.test/frame",
+    secondDocumentUrl,
     "PRIVATE-TEXT",
+    "href",
+    "/agent?token=dom-url-secret",
+    "rel",
+    "mcp",
+    "DIV",
+    "child text",
   ];
   return {
     strings,
@@ -402,18 +507,27 @@ const domSnapshot = (port: number): Readonly<Record<string, unknown>> => {
           nodeName: [1, 3],
           nodeValue: [2, 2],
           parentIndex: [-1, 0],
-          attributes: [[], [4, 5]],
+          attributes: [[], [4, 5, 8, 9, 10, 11]],
         },
       },
       {
         documentURL: 6,
-        nodes: {
-          nodeType: [3],
-          nodeName: [1],
-          nodeValue: [7],
-          parentIndex: [-1],
-          attributes: [[]],
-        },
+        nodes:
+          electronFileUrl !== undefined && extraCollections
+            ? {
+                nodeType: [9, 1],
+                nodeName: [1, 12],
+                nodeValue: [2, 13],
+                parentIndex: [-1, 0],
+                attributes: [[], []],
+              }
+            : {
+                nodeType: [3],
+                nodeName: [1],
+                nodeValue: [7],
+                parentIndex: [-1],
+                attributes: [[]],
+              },
       },
     ],
   };
@@ -461,13 +575,28 @@ const emitEvents = (
       });
     event(socket, "Debugger.scriptParsed", command.sessionId, {
       scriptId: "script-allowed",
-      url: `http://127.0.0.1:${String(port)}/app.js?token=script-secret`,
+      url:
+        options.electronFileUrl === undefined
+          ? `http://127.0.0.1:${String(port)}/app.js?token=script-secret`
+          : new URL("app.js", options.electronFileUrl).href,
       hash: "cdp-hash",
       length: 40,
       isModule: true,
       scriptLanguage: "JavaScript",
       sourceMapURL: `http://127.0.0.1:${String(port)}/app.js.map?token=map-secret`,
     });
+    if (
+      options.electronFileUrl !== undefined &&
+      options.duplicateElectronInventory === true
+    )
+      event(socket, "Debugger.scriptParsed", command.sessionId, {
+        scriptId: "script-allowed-duplicate",
+        url: new URL("app.js", options.electronFileUrl).href,
+        hash: "cdp-hash",
+        length: 40,
+        isModule: true,
+        scriptLanguage: "JavaScript",
+      });
     event(socket, "Debugger.scriptParsed", command.sessionId, {
       scriptId: "script-private",
       url: "https://private.example.test/private.js?secret=forbidden",
@@ -498,14 +627,27 @@ const emitEvents = (
       request: {
         url,
         method: "POST",
-        headers: { Authorization: "Bearer request-secret" },
-        postData: "request-body-secret",
+        headers: {
+          Authorization: "Bearer request-secret",
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        postData: JSON.stringify({
+          operation: "lookup",
+          token: "request-body-secret",
+          filters: { active: true },
+        }),
       },
       initiator: {
         type: "script",
-        callFrames: [
-          { url: `${url}#caller-secret`, lineNumber: 3, columnNumber: 5 },
-        ],
+        stack: {
+          callFrames: [
+            {
+              url: `http://127.0.0.1:${String(port)}/app.js?caller=caller-secret`,
+              lineNumber: 3,
+              columnNumber: 5,
+            },
+          ],
+        },
       },
     });
     if (options.redirectToDisallowedOrigin === true)
@@ -526,7 +668,18 @@ const emitEvents = (
             : url,
         status: 200,
         mimeType: "application/json",
-        headers: { "Set-Cookie": "response-secret" },
+        headers: {
+          "Set-Cookie": "response-secret",
+          "Content-Length": "321",
+          "Content-Encoding": "br",
+          "Content-Security-Policy":
+            "default-src 'self' https:; script-src 'nonce-csp-secret' 'sha256-hash-secret' https://private.example.test https://127.0.0.1",
+          Link: `</agent?token=link-secret>; rel="mcp service-desc"; type="application/json", <https://private.example.test/agent>; rel="mcp"`,
+          "Cross-Origin-Opener-Policy": "same-origin",
+          "Cross-Origin-Embedder-Policy": "require-corp",
+          "Permissions-Policy": "camera=(), geolocation=(self)",
+          "X-Model-Context": "header-secret",
+        },
       },
     });
     event(socket, "Network.loadingFinished", command.sessionId, {
@@ -539,19 +692,51 @@ const emitEvents = (
     });
     event(socket, "Network.webSocketFrameSent", command.sessionId, {
       requestId: "websocket-1",
-      response: { opcode: 1, payloadData: "websocket-secret" },
+      response: {
+        opcode: 1,
+        payloadData:
+          options.sensitiveShapes === true
+            ? JSON.stringify({
+                event: "updated",
+                token: "websocket-secret",
+                payload: { count: 2 },
+              })
+            : "websocket-secret",
+      },
     });
     if (options.binaryWebSocketEvent === true)
       event(socket, "Network.webSocketFrameReceived", command.sessionId, {
         requestId: "websocket-1",
-        response: { opcode: 2, payloadData: "AQID" },
+        response: {
+          opcode: 2,
+          payloadData:
+            options.invalidBinaryWebSocketEvent === true ? "%%%" : "AQID",
+        },
       });
   }
   if (command.method === "Runtime.enable") {
     event(socket, "Runtime.consoleAPICalled", command.sessionId, {
       type: "log",
       timestamp: 123,
-      args: [{ type: "string", value: "console-secret" }],
+      args: [
+        {
+          type: "string",
+          value:
+            options.sensitiveShapes === true
+              ? "authorization=Bearer console-secret"
+              : "console-secret",
+        },
+        ...(options.sensitiveShapes === true
+          ? [
+              { type: "number", value: 42 },
+              {
+                type: "object",
+                objectId: "must-not-be-expanded",
+                description: "object-secret",
+              },
+            ]
+          : []),
+      ],
       stackTrace: {
         callFrames: [
           {
@@ -568,6 +753,85 @@ const emitEvents = (
       args: [{ type: "string", value: "unknown-console-value-secret" }],
     });
   }
+  if (command.method === "WebMCP.enable" && options.webMcpTools === true) {
+    event(socket, "WebMCP.toolsAdded", command.sessionId, {
+      tools: [
+        {
+          name: "search_orders",
+          description: "Search orders; authorization=Bearer tool-secret",
+          frameId: "frame-main",
+          backendNodeId: 42,
+          inputSchema: {
+            type: "object",
+            properties: {
+              orderId: { type: "string", example: "schema-secret" },
+              includeItems: { type: "boolean", default: true },
+            },
+            required: ["orderId"],
+          },
+          annotations: {
+            readOnly: true,
+            untrustedContent: true,
+            autosubmit: false,
+          },
+          stackTrace: {
+            callFrames: [
+              {
+                url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
+                lineNumber: 12,
+                columnNumber: 4,
+              },
+            ],
+          },
+        },
+        {
+          name: "private_tool",
+          description: "private-tool-secret",
+          frameId: "frame-private",
+        },
+        ...(options.extraCollections === true
+          ? [
+              {
+                name: "update_order",
+                description: "Update an order",
+                frameId: "frame-main",
+                inputSchema: {
+                  type: "object",
+                  properties: { orderId: { type: "string" } },
+                },
+              },
+            ]
+          : []),
+        ...(options.webMcpChildLeavesScope === true
+          ? [
+              {
+                name: "child_tool",
+                description: "Must be removed after child navigation",
+                frameId: "frame-child",
+              },
+            ]
+          : []),
+      ],
+    });
+    if (options.webMcpChildLeavesScope === true) {
+      event(socket, "Page.frameNavigated", command.sessionId, {
+        frame: {
+          id: "frame-child",
+          parentId: "frame-main",
+          url: "https://private.example.test/escaped",
+        },
+      });
+      event(socket, "WebMCP.toolsAdded", command.sessionId, {
+        tools: [
+          {
+            name: "escaped_child_tool",
+            description: "cross-origin-child-secret",
+            frameId: "frame-child",
+          },
+        ],
+      });
+    }
+  }
   if (
     command.method === "DOMSnapshot.captureSnapshot" &&
     options.navigateDuringCaptureUrl !== undefined
@@ -578,6 +842,68 @@ const emitEvents = (
         url: options.navigateDuringCaptureUrl,
       },
     });
+  if (
+    command.method === "Page.captureScreenshot" &&
+    options.navigateDuringScreenshotUrl !== undefined
+  )
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-main",
+        url: options.navigateDuringScreenshotUrl,
+      },
+    });
+  if (
+    command.method === "Page.setLifecycleEventsEnabled" &&
+    options.sessionTimeline !== undefined
+  ) {
+    const allowed = `http://127.0.0.1:${String(port)}/reloaded?token=session-secret`;
+    event(socket, "Page.frameRequestedNavigation", command.sessionId, {
+      frameId: "frame-main",
+      url: allowed,
+      reason: "reload",
+      timestamp: 10,
+    });
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-main",
+        loaderId: "loader-reload",
+        url: allowed,
+        transitionType: "reload",
+      },
+      timestamp: 11,
+    });
+    event(socket, "Page.navigatedWithinDocument", command.sessionId, {
+      frameId: "frame-main",
+      url: `${allowed}#spa-secret`,
+      navigationType: "historyApi",
+      timestamp: 12,
+    });
+    const redirectUrl =
+      options.sessionTimeline === "outside_policy"
+        ? "https://private.example.test/outside?token=redirect-secret"
+        : `http://127.0.0.1:${String(port)}/redirected?token=redirect-secret`;
+    event(socket, "Network.requestWillBeSent", command.sessionId, {
+      requestId: "document-request",
+      frameId: "frame-main",
+      loaderId: "loader-redirect",
+      request: { url: redirectUrl, method: "GET" },
+      redirectResponse: { status: 302 },
+      timestamp: 13,
+    });
+    event(socket, "Network.loadingFailed", command.sessionId, {
+      requestId: "failed-request",
+      frameId: "frame-main",
+      loaderId: "loader-reload",
+      errorText: "net::ERR_CONNECTION_REFUSED",
+      timestamp: 14,
+    });
+    event(socket, "Page.lifecycleEvent", command.sessionId, {
+      frameId: "frame-main",
+      loaderId: "loader-reload",
+      name: "networkIdle",
+      timestamp: 15,
+    });
+  }
 };
 
 const event = (
