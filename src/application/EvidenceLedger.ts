@@ -122,9 +122,11 @@ export class EvidenceLedger {
 
   /** Export records in deterministic, semantically irrelevant ID order. */
   export(): EvidenceBundle {
-    return createEvidenceBundle(
-      [...this.#records.values()],
-      [...this.#unknownRevisions.values()],
+    return structuredClone(
+      createEvidenceBundle(
+        [...this.#records.values()],
+        [...this.#unknownRevisions.values()],
+      ),
     );
   }
 
@@ -232,7 +234,7 @@ export class EvidenceLedger {
     const checked = this.#validateCandidate(pendingRecords, pendingUnknowns);
     if (!checked.ok) return checked;
     this.#commit(pendingRecords, pendingUnknowns, checked.value);
-    return ok(unknown);
+    return ok(structuredClone(unknown));
   }
 
   /** Apply one approved full-state update using optimistic revision matching. */
@@ -277,7 +279,8 @@ export class EvidenceLedger {
             unknown.severity === filters.severity) &&
           (filters.domain === undefined || unknown.domain === filters.domain),
       )
-      .sort((left, right) => left.unknown_id.localeCompare(right.unknown_id));
+      .sort((left, right) => left.unknown_id.localeCompare(right.unknown_id))
+      .map((unknown) => structuredClone(unknown));
   }
 
   /** Return current resolution validity; imported invalid states are rejected. */
@@ -295,7 +298,7 @@ export class EvidenceLedger {
     return ok({
       valid: unknown.status === "resolved",
       truthVerified: unknown.resolution?.disposition === "verified",
-      unknown,
+      unknown: structuredClone(unknown),
     });
   }
 
@@ -331,7 +334,7 @@ export class EvidenceLedger {
     const checked = this.#validateCandidate(pendingRecords, pendingUnknowns);
     if (!checked.ok) return checked;
     this.#commit(pendingRecords, pendingUnknowns, checked.value);
-    return ok(unknown);
+    return ok(structuredClone(unknown));
   }
 
   #validateCandidate(

@@ -112,7 +112,12 @@ export const compareProcessEvidenceFiles = async (
 };
 
 const parseCaptureEvidence = (input: unknown) => {
-  const evidence = parseEvidence(input);
+  let evidence;
+  try {
+    evidence = parseEvidence(input);
+  } catch {
+    throw invalidCaptureEvidence();
+  }
   if (
     evidence.operation !== "capture_process_scenario" ||
     evidence.predicate_type !== "rea.process-capture/v4" ||
@@ -129,11 +134,21 @@ const parseCaptureEvidence = (input: unknown) => {
       "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
     );
   }
-  return {
-    id: evidence.evidence_id,
-    capture: parseProcessCapture(evidence.normalized_result),
-  };
+  try {
+    return {
+      id: evidence.evidence_id,
+      capture: parseProcessCapture(evidence.normalized_result),
+    };
+  } catch {
+    throw invalidCaptureEvidence();
+  }
 };
+
+const invalidCaptureEvidence = (): ProcessCliFailure =>
+  new ProcessCliFailure(
+    "invalid_input",
+    "Capture evidence is malformed. Create new capture evidence, then try again.",
+  );
 
 const readJson = async (path: string): Promise<unknown> => {
   let bytes;

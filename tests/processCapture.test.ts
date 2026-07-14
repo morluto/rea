@@ -14,6 +14,14 @@ import {
 } from "../src/application/ProcessHarness.js";
 import { snapshotRoots } from "../src/application/FilesystemSnapshot.js";
 import {
+  prepareProcessCapture,
+  type ProcessPreparationHost,
+} from "../src/application/ProcessCaptureLifecycle.js";
+import { ProcessCheckpoints } from "../src/application/ProcessCheckpoints.js";
+import { normalizeProcessSamples } from "../src/application/ProcessNormalization.js";
+import { readLinuxChildren } from "../src/application/ProcessSampling.js";
+import { TerminalRenderer } from "../src/application/TerminalRenderer.js";
+import {
   authorizeProcessScenario,
   compareProcessCaptures,
   digestProcessCommitment,
@@ -105,6 +113,132 @@ describe("process capture domain", () => {
     executable: "/bin/sh",
     working_directory: "/tmp",
   };
+
+  it("returns detached terminal and filesystem checkpoint observations", async () => {
+    const renderer = new TerminalRenderer({
+      columns: 40,
+      rows: 12,
+      scrollback: 100,
+      maxFrames: 10,
+      maxBytes: 10_000,
+      normalize: (value) => value,
+    });
+    renderer.write("A", 0);
+    const frames = await renderer.frames();
+    if (frames[0] !== undefined) Reflect.set(frames[0], "cursor_x", 999);
+    expect((await renderer.frames())[0]?.cursor_x).not.toBe(999);
+    await renderer.dispose();
+
+    const scenario = parseProcessScenario(base);
+    const checkpoints = new ProcessCheckpoints(
+      scenario,
+      Date.now(),
+      { files: [], truncated: false },
+      undefined,
+    );
+    const first = await checkpoints.finish({ files: [], truncated: false });
+    if (first[0] !== undefined) Reflect.set(first[0], "name", "tampered");
+    const second = await checkpoints.finish({ files: [], truncated: false });
+    expect(second[0]?.name).toBe("before");
+    await checkpoints.dispose();
+  });
+
+  it("cleans the temporary root when capture home creation fails", async () => {
+    const cleaned: string[] = [];
+    const host: ProcessPreparationHost = {
+      createTemporaryRoot: () => Promise.resolve("/tmp/rea-process-fixture"),
+      createHome: () => Promise.reject(new Error("mkdir failed")),
+      cleanup: (path) => {
+        cleaned.push(path);
+        return Promise.resolve();
+      },
+    };
+
+    await expect(
+      prepareProcessCapture(
+        parseProcessScenario(base),
+        {
+          enabled: true,
+          executableRoots: ["/bin"],
+          workingRoots: ["/tmp"],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+        undefined,
+        host,
+      ),
+    ).rejects.toThrow("mkdir failed");
+    expect(cleaned).toEqual(["/tmp/rea-process-fixture"]);
+  });
+
+  it("normalizes every sampled process identifier in command text", () => {
+    const samples = normalizeProcessSamples(
+      [
+        {
+          at_ms: 0,
+          pid: 101,
+          parent_pid: 0,
+          process_group_id: 101,
+          session_id: 101,
+          command: "root 101",
+        },
+        {
+          at_ms: 10,
+          pid: 202,
+          parent_pid: 101,
+          process_group_id: 101,
+          session_id: 101,
+          command: "child 202 peer=101 unrelated 1202",
+        },
+      ],
+      parseProcessScenario(base),
+      101,
+    );
+
+    expect(samples[1]?.command).toBe("child <pid> peer=<pid> unrelated 1202");
+  });
+
+  it("collects and deduplicates children from every Linux thread", async () => {
+    const signal = new AbortController().signal;
+    expect(
+      await readLinuxChildren(100, signal, {
+        taskIds: () => Promise.resolve([100, 101, 102]),
+        children: (_pid, taskId) =>
+          Promise.resolve(
+            taskId === 100 ? "201 202" : taskId === 101 ? "202 203" : "",
+          ),
+      }),
+    ).toEqual([201, 202, 203]);
+  });
+
+  it("keeps interaction and shim residual uncertainty in separate scopes", () => {
+    const baseCapture = emptyCapture();
+    const interaction = parseProcessCapture({
+      ...baseCapture,
+      residual_unknowns: [
+        { scope: "interaction", reason: "Interaction capture was partial." },
+      ],
+    });
+    const shim = parseProcessCapture({
+      ...baseCapture,
+      residual_unknowns: [
+        { scope: "shim", reason: "Shim capture was partial." },
+      ],
+    });
+
+    expect(compareProcessCaptures(interaction, baseCapture)).toMatchObject({
+      status: "unknown",
+      terminal: "unchanged",
+      interaction: "unknown",
+      shim: "unchanged",
+    });
+    expect(compareProcessCaptures(shim, baseCapture)).toMatchObject({
+      status: "unknown",
+      terminal: "unchanged",
+      interaction: "unchanged",
+      shim: "unknown",
+    });
+  });
 
   it("cancels filesystem snapshots before traversing declared roots", async () => {
     const controller = new AbortController();

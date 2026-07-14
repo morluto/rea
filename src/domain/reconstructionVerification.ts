@@ -10,6 +10,8 @@ import { parseEvidenceBundle } from "./evidenceBundle.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import {
+  deriveProcessComparisonStatus,
+  PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
   processCaptureSchema,
 } from "./processCapture.js";
@@ -319,22 +321,9 @@ const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
 const validateProcessStatus = (
   result: z.infer<typeof processCaptureComparisonSchema>,
 ): void => {
-  const dimensions = [
-    result.terminal,
-    result.exit,
-    result.filesystem,
-    result.protocol,
-    result.process,
-  ];
-  const expected = dimensions.includes("truncated")
-    ? "truncated"
-    : dimensions.some((status) =>
-          ["added", "removed", "changed"].includes(status),
-        )
-      ? "changed"
-      : dimensions.includes("unknown")
-        ? "unknown"
-        : "unchanged";
+  const expected = deriveProcessComparisonStatus(
+    PROCESS_COMPARISON_DIMENSIONS.map((dimension) => result[dimension]),
+  );
   if (result.status !== expected)
     throw new TypeError("Process comparison status contradicts its dimensions");
 };

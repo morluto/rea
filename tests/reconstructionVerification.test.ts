@@ -161,6 +161,62 @@ const artifactComparison = (
   );
 
 describe("reconstruction verification", () => {
+  it("accepts interaction and shim behavioral claim dimensions", () => {
+    const left = source("1", "controlled-replay");
+    const right = source("2", "controlled-replay");
+    const result = {
+      status: "changed",
+      terminal: "unchanged",
+      interaction: "changed",
+      exit: "unchanged",
+      filesystem: "unchanged",
+      protocol: "unchanged",
+      process: "unchanged",
+      shim: "unchanged",
+      first_divergence: {
+        status: "found",
+        dimension: "interaction",
+        index: 0,
+        left_at_ms: 0,
+        right_at_ms: 0,
+        left: "left",
+        right: "right",
+      },
+      limitations: [],
+    } satisfies JsonValue;
+    const comparison = processComparison(left, right, result);
+
+    expect(
+      verifyReconstruction(
+        {
+          schema_version: 1,
+          name: "Interaction reconstruction",
+          claims: [
+            {
+              kind: "behavioral",
+              claim_id: "interaction",
+              title: "Interaction remains equivalent",
+              comparison_evidence_id: comparison.evidence_id,
+              dimension: "interaction",
+            },
+            {
+              kind: "behavioral",
+              claim_id: "shim",
+              title: "Shim remains equivalent",
+              comparison_evidence_id: comparison.evidence_id,
+              dimension: "shim",
+            },
+          ],
+        },
+        createEvidenceBundle([comparison, right, left]),
+        0,
+        100,
+      ),
+    ).toMatchObject({
+      summary: { total: 2, passed: 1, failed: 1, unknown: 0 },
+    });
+  });
+
   it("passes a complete authoritative claim with two-sided citations", () => {
     const left = source("1", "controlled-replay");
     const right = source("2", "controlled-replay");

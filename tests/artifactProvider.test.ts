@@ -382,6 +382,10 @@ describe("artifact graph provider", () => {
     expect(reader.provenance()).toEqual([
       expect.objectContaining({ tool: "lipo", effects: ["read"] }),
     ]);
+    const provenance = reader.provenance();
+    if (provenance[0] !== undefined)
+      Reflect.set(provenance[0], "tool", "forged");
+    expect(reader.provenance()[0]?.tool).toBe("lipo");
   });
 });
 

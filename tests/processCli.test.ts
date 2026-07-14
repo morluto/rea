@@ -175,4 +175,17 @@ describe("process CLI errors", () => {
         "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
     });
   });
+
+  it("classifies malformed capture evidence as invalid input", async () => {
+    const root = await fixture();
+    const malformed = join(root, "malformed-evidence.json");
+    await writeFile(malformed, "{}");
+
+    expect(await compareProcessEvidenceFiles(malformed, malformed)).toEqual({
+      error: "Process command failed",
+      category: "invalid_input",
+      message:
+        "Capture evidence is malformed. Create new capture evidence, then try again.",
+    });
+  });
 });

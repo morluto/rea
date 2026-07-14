@@ -103,7 +103,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   }
 
   provenance(): readonly ArtifactCommand[] {
-    return this.#provenance;
+    return structuredClone(this.#provenance);
   }
 
   async close(): Promise<void> {

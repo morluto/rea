@@ -69,4 +69,22 @@ describe("derived MCP operation boundary", () => {
     expect(notifications.map(({ params }) => params?.progress)).toEqual([0, 2]);
     expect(notifications.every(({ params }) => params?.total === 2)).toBe(true);
   });
+
+  it("projects synchronous computation failures into a typed result", async () => {
+    const result = await runDerivedOperation(
+      context(new AbortController()),
+      "compare_artifacts",
+      () => {
+        throw new TypeError("malformed comparison evidence");
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "compare_artifacts",
+      },
+    });
+  });
 });

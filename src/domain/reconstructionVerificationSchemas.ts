@@ -20,10 +20,12 @@ const behavioralClaimSchema = z.object({
   dimension: z.enum([
     "overall",
     "terminal",
+    "interaction",
     "exit",
     "filesystem",
     "protocol",
     "process",
+    "shim",
   ]),
 });
 const functionClaimSchema = z.object({

@@ -1,6 +1,9 @@
 import { setImmediate } from "node:timers/promises";
 
-import { AnalysisCancelledError } from "../domain/errors.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
@@ -25,7 +28,7 @@ export const runDerivedOperation = async <Value>(
   context: DerivedOperationContext,
   operation: string,
   compute: () => Value,
-): Promise<Result<Value, AnalysisCancelledError>> => {
+): Promise<Result<Value, AnalysisCancelledError | AnalysisInputError>> => {
   const progress = mcpProgressReporter(context);
   await progress.report({
     phase: "prepare",
@@ -36,7 +39,16 @@ export const runDerivedOperation = async <Value>(
   await setImmediate();
   if (context.mcpReq.signal.aborted)
     return err(new AnalysisCancelledError(operation));
-  const value = compute();
+  let value: Value;
+  try {
+    value = compute();
+  } catch (cause: unknown) {
+    return err(
+      cause instanceof AnalysisCancelledError
+        ? cause
+        : new AnalysisInputError(operation, { cause }),
+    );
+  }
   await progress.report({
     phase: "compute",
     completed: 1,

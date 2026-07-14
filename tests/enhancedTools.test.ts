@@ -215,8 +215,7 @@ describe("enhanced MCP tools", () => {
       );
     }
     expect(results[0]).toMatchObject({ count: 1 });
-    // Legacy behavior treats any `_OBJC_` label, including protocol labels, as a class.
-    expect(results[1]).toMatchObject({ count: 2 });
+    expect(results[1]).toMatchObject({ count: 1 });
     expect(results[2]).toMatchObject({ count: 1 });
     expect(results[3]).toEqual({
       items: [

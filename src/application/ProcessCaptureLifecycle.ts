@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty } from "node-pty";
@@ -401,6 +401,7 @@ export const prepareProcessCapture = async (
   scenario: ProcessScenario,
   policy: ProcessExecutionPolicy,
   signal: AbortSignal | undefined,
+  host: ProcessPreparationHost = systemProcessPreparationHost,
 ): Promise<{
   readonly temporaryRoot: string;
   readonly runId: string;
@@ -416,11 +417,29 @@ export const prepareProcessCapture = async (
   await assertRealPathAuthority(scenario, policy);
   assertNotCancelled(signal);
   const before = await snapshotRoots(scenario, signal);
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-process-"));
-  const runId = randomUUID();
-  const home = join(temporaryRoot, "home");
-  await import("node:fs/promises").then(({ mkdir }) => mkdir(home));
-  return { temporaryRoot, runId, home, before };
+  const temporaryRoot = await host.createTemporaryRoot();
+  try {
+    const runId = randomUUID();
+    const home = join(temporaryRoot, "home");
+    await host.createHome(home);
+    return { temporaryRoot, runId, home, before };
+  } catch (cause: unknown) {
+    await host.cleanup(temporaryRoot);
+    throw cause;
+  }
+};
+
+/** Filesystem seam for allocating and cleaning a capture's private home. */
+export interface ProcessPreparationHost {
+  createTemporaryRoot(): Promise<string>;
+  createHome(path: string): Promise<void>;
+  cleanup(path: string): Promise<void>;
+}
+
+const systemProcessPreparationHost: ProcessPreparationHost = {
+  createTemporaryRoot: () => mkdtemp(join(tmpdir(), "rea-process-")),
+  createHome: (path) => mkdir(path),
+  cleanup: (path) => rm(path, { recursive: true, force: true }),
 };
 
 const processPolicyMessage = (

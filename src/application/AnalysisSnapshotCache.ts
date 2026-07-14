@@ -95,11 +95,11 @@ export class AnalysisSnapshotCache {
         this.#target.architecture !== snapshot.target.architecture)
     )
       this.#entries.clear();
-    this.#target = snapshot.target;
+    this.#target = structuredClone(snapshot.target);
     let imported = 0;
     for (const entry of snapshot.entries) {
       if (!this.#entries.has(entry.query_id)) imported += 1;
-      this.#entries.set(entry.query_id, entry);
+      this.#entries.set(entry.query_id, structuredClone(entry));
     }
     return imported;
   }
@@ -114,7 +114,7 @@ export class AnalysisSnapshotCache {
       snapshot_version: 1,
       target: snapshotTarget(target),
       entries: this.entries(),
-      evidence_bundle: evidenceBundle,
+      evidence_bundle: structuredClone(evidenceBundle),
     });
   }
 
@@ -138,9 +138,9 @@ export class AnalysisSnapshotCache {
 
   /** Return canonical entries for persistence. */
   entries(): AnalysisSnapshotEntry[] {
-    return [...this.#entries.values()].sort((left, right) =>
-      left.query_id.localeCompare(right.query_id),
-    );
+    return [...this.#entries.values()]
+      .sort((left, right) => left.query_id.localeCompare(right.query_id))
+      .map((entry) => structuredClone(entry));
   }
 
   /** Replay an exact provider-specific query, marking its cached provenance. */
@@ -159,7 +159,7 @@ export class AnalysisSnapshotCache {
     const cached = this.#entries.get(queryId);
     if (cached === undefined) return undefined;
     const subject = cached.execution.subject;
-    return {
+    return structuredClone({
       result: cached.execution.result,
       rawResult: cached.execution.raw_result,
       provider: cached.execution.provider,
@@ -183,7 +183,7 @@ export class AnalysisSnapshotCache {
                 format: subject.format,
                 architecture: subject.architecture,
               },
-    };
+    });
   }
 
   /** Record one successful immutable call unless the cache is full. */

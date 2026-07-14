@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   readProjectPermissionStore,
+  revokeProjectPermissionGrant,
   writeProjectPermissionStore,
 } from "../src/application/ProjectPermissionStore.js";
 
@@ -58,6 +59,45 @@ describe("project permission store", () => {
     expect(await readProjectPermissionStore(path, second)).toMatchObject({
       ok: false,
       error: { reason: "invalid" },
+    });
+  });
+
+  it("serializes concurrent grant revocations without losing an update", async () => {
+    const project = await mkdtemp(join(tmpdir(), "rea-policy-revoke-"));
+    const path = join(project, ".rea", "permissions.json");
+    const grant = (grantId: string) => ({
+      grant_id: grantId,
+      capability: "evidence_read" as const,
+      roots: [project],
+      executables: [],
+      environment_names: [],
+      network: "none" as const,
+      mount: false,
+      lifetime: "project" as const,
+      operation_identity: null,
+      expires_at: null,
+    });
+    expect(
+      (
+        await writeProjectPermissionStore(path, project, [
+          grant("grant-one"),
+          grant("grant-two"),
+        ])
+      ).ok,
+    ).toBe(true);
+
+    const revoked = await Promise.all([
+      revokeProjectPermissionGrant(path, project, "grant-one"),
+      revokeProjectPermissionGrant(path, project, "grant-two"),
+    ]);
+
+    expect(revoked).toEqual([
+      { ok: true, value: true },
+      { ok: true, value: true },
+    ]);
+    expect(await readProjectPermissionStore(path, project)).toMatchObject({
+      ok: true,
+      value: { grants: [] },
     });
   });
 });

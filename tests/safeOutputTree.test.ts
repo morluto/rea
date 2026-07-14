@@ -56,4 +56,14 @@ describe("safe artifact output tree", () => {
       "visible before seal",
     );
   });
+
+  it("returns detached cleanup reports", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "rea-safe-output-"));
+    const tree = await SafeOutputTree.create(join(parent, "published"), LIMITS);
+    const cleanup = await tree.rollback();
+    (cleanup.residualPaths as string[]).push("/forged/path");
+
+    expect(tree.cleanup.residualPaths).toEqual([]);
+    expect((await tree.rollback()).residualPaths).toEqual([]);
+  });
 });

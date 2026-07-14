@@ -41,6 +41,10 @@ describe("native DMG artifact reader", () => {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry.path);
     expect(entries).toContain("image.dmg/Fixture/hello.txt");
+    const provenance = reader.provenance();
+    if (provenance[0] !== undefined)
+      Reflect.set(provenance[0], "tool", "forged");
+    expect(reader.provenance()[0]?.tool).toBe("hdiutil");
     await reader.close();
     expect(calls).toContainEqual(["verify", "/tmp/image.dmg"]);
     expect(calls).toContainEqual(["detach", "/dev/disk-fixture"]);

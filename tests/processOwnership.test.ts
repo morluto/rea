@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
+  parseProcessEnvironment,
   type ProcessOwnershipHost,
 } from "../src/application/ProcessOwnership.js";
 
@@ -36,6 +37,12 @@ const host = (
 };
 
 describe("owned process-group cleanup", () => {
+  it("drops nameless Linux environment entries", () => {
+    expect(
+      parseProcessEnvironment("=ignored\0REA_PROCESS_RUN_ID=owned\0EMPTY=\0"),
+    ).toEqual({ REA_PROCESS_RUN_ID: "owned", EMPTY: "" });
+  });
+
   it("signals only a group whose every member carries the run token", async () => {
     const { adapter, signalGroup } = host({
       100: { REA_PROCESS_RUN_ID: "run-token" },

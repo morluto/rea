@@ -26,11 +26,8 @@ export const discoverObjcClasses = (
 ): JsonValue => {
   const classes = uniqueByName(
     names
-      .filter(
-        ({ name }) =>
-          ["OBJC_CLASS", "OBJC_$_CLASS"].some((marker) =>
-            name.includes(marker),
-          ) || name.startsWith("_OBJC_"),
+      .filter(({ name }) =>
+        ["OBJC_CLASS", "OBJC_$_CLASS"].some((marker) => name.includes(marker)),
       )
       .filter(({ name }) => pattern.length === 0 || name.includes(pattern)),
   );

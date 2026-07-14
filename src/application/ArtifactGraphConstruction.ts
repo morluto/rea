@@ -30,6 +30,17 @@ export interface MutableOccurrence {
   limitations: string[];
 }
 
+/** Index the first occurrence for each canonical logical path. */
+export const indexOccurrencesByPath = (
+  occurrences: readonly MutableOccurrence[],
+): ReadonlyMap<string, MutableOccurrence> => {
+  const byPath = new Map<string, MutableOccurrence>();
+  for (const occurrence of occurrences)
+    if (!byPath.has(occurrence.logical_path))
+      byPath.set(occurrence.logical_path, occurrence);
+  return byPath;
+};
+
 export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
@@ -196,6 +207,7 @@ export const createArtifactEdges = (
   producer?: ArtifactCommand,
 ): ArtifactEdge[] => {
   const byId = new Map(occurrences.map((item) => [item.occurrence_id, item]));
+  const byPath = indexOccurrencesByPath(occurrences);
   const edges: ArtifactEdge[] = [];
   for (const occurrence of occurrences) {
     if (
@@ -204,10 +216,7 @@ export const createArtifactEdges = (
     )
       continue;
     const mappedSource = occurrence.logical_path.endsWith(".map")
-      ? occurrences.find(
-          ({ logical_path: path }) =>
-            path === occurrence.logical_path.slice(0, -".map".length),
-        )
+      ? byPath.get(occurrence.logical_path.slice(0, -".map".length))
       : undefined;
     const parentArtifactId =
       mappedSource?.artifact_id ??

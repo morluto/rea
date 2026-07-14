@@ -16,6 +16,31 @@ export const comparisonStatusSchema = z.enum([
 ]);
 type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
 
+/** Canonical ordered dimensions that contribute to an overall process status. */
+export const PROCESS_COMPARISON_DIMENSIONS = [
+  "terminal",
+  "interaction",
+  "exit",
+  "filesystem",
+  "protocol",
+  "process",
+  "shim",
+] as const;
+
+/** Derive the overall comparison status from every process dimension. */
+export const deriveProcessComparisonStatus = (
+  dimensions: readonly ComparisonStatus[],
+): ComparisonStatus => {
+  if (dimensions.includes("truncated")) return "truncated";
+  if (
+    dimensions.some((status) =>
+      ["changed", "added", "removed"].includes(status),
+    )
+  )
+    return "changed";
+  return dimensions.includes("unknown") ? "unknown" : "unchanged";
+};
+
 /** Pure normalized comparison between two captures. */
 export const processCaptureComparisonSchema = z
   .object({
@@ -51,24 +76,9 @@ export const processCaptureComparisonSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((comparison, context) => {
-    const dimensions = [
-      comparison.terminal,
-      comparison.interaction,
-      comparison.exit,
-      comparison.filesystem,
-      comparison.protocol,
-      comparison.process,
-      comparison.shim,
-    ];
-    const expected = dimensions.includes("truncated")
-      ? "truncated"
-      : dimensions.some((status) =>
-            ["added", "removed", "changed"].includes(status),
-          )
-        ? "changed"
-        : dimensions.includes("unknown")
-          ? "unknown"
-          : "unchanged";
+    const expected = deriveProcessComparisonStatus(
+      PROCESS_COMPARISON_DIMENSIONS.map((dimension) => comparison[dimension]),
+    );
     if (comparison.status !== expected)
       context.addIssue({
         code: "custom",
@@ -117,18 +127,6 @@ const hasUnknown = (
   capture: ProcessCapture,
   scope: ProcessCapture["residual_unknowns"][number]["scope"],
 ): boolean => capture.residual_unknowns.some((item) => item.scope === scope);
-
-const comparisonStatus = (
-  dimensions: readonly ComparisonStatus[],
-): ComparisonStatus => {
-  if (
-    dimensions.some((status) =>
-      ["changed", "added", "removed"].includes(status),
-    )
-  )
-    return "changed";
-  return dimensions.includes("unknown") ? "unknown" : "unchanged";
-};
 
 type DivergenceDimension = Exclude<
   ProcessCaptureComparison["first_divergence"],
@@ -277,7 +275,7 @@ const compareDimensions = (
       terminalObservations(right),
     ),
     interaction: classify(
-      "terminal",
+      "interaction",
       left.interaction_events,
       right.interaction_events,
     ),
@@ -295,9 +293,7 @@ const compareDimensions = (
     ),
     protocol: classify("protocol", left.protocol_events, right.protocol_events),
     process: classify("process", left.process_samples, right.process_samples),
-    shim: sameNormalization
-      ? classifyCollection(left.shim_events, right.shim_events)
-      : "unknown",
+    shim: classify("shim", left.shim_events, right.shim_events),
   };
 };
 
@@ -367,15 +363,9 @@ export const compareProcessCaptures = (
           } as const)
         : observedFirstDivergence;
   return {
-    status: comparisonStatus([
-      dimensions.terminal,
-      dimensions.interaction,
-      dimensions.exit,
-      dimensions.filesystem,
-      dimensions.protocol,
-      dimensions.process,
-      dimensions.shim,
-    ]),
+    status: deriveProcessComparisonStatus(
+      PROCESS_COMPARISON_DIMENSIONS.map((dimension) => dimensions[dimension]),
+    ),
     ...dimensions,
     first_divergence: firstDivergence,
     limitations: [

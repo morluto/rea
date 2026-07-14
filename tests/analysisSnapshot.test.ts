@@ -8,6 +8,7 @@ import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
 } from "../src/application/AnalysisSnapshotFiles.js";
+import { AnalysisSnapshotCache } from "../src/application/AnalysisSnapshotCache.js";
 import {
   createAnalysisSnapshotEntry,
   parseAnalysisSnapshot,
@@ -27,6 +28,49 @@ afterEach(async () => {
 });
 
 describe("analysis snapshots", () => {
+  it("returns detached cache entries and evidence bundles", () => {
+    const cache = new AnalysisSnapshotCache();
+    const target = {
+      path: "/tmp/app",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      loaderArgs: [],
+    } as const;
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    cache.record(
+      target,
+      "address_name",
+      { address: "0x1000", document: "fixture" },
+      createAnalysisExecution("main", provider),
+    );
+    const exported = cache.export(target, createEvidenceBundle([]));
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) return;
+    const entry = exported.value.entries[0];
+    if (entry !== undefined) {
+      Reflect.set(entry.execution, "provider", {
+        id: "forged",
+        name: "Forged",
+        version: "9",
+      });
+      (entry.execution.limitations as string[]).push("forged");
+    }
+
+    expect(
+      cache.lookup(
+        target,
+        "address_name",
+        { address: "0x1000", document: "fixture" },
+        provider,
+      ),
+    ).toMatchObject({
+      provider,
+      limitations: [expect.stringContaining("local REA analysis snapshot")],
+    });
+  });
+
   it("finds exact CLI evidence for provider-free replay", () => {
     const target = {
       path: "/tmp/app",

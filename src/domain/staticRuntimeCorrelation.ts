@@ -25,10 +25,12 @@ const functionDimensionSchema = z.enum([
 ]);
 const runtimeDimensionSchema = z.enum([
   "terminal",
+  "interaction",
   "exit",
   "filesystem",
   "protocol",
   "process",
+  "shim",
 ]);
 const expectedPatternSchema = z.enum([
   "cochanged",

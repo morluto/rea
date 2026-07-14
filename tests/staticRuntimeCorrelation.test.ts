@@ -88,7 +88,7 @@ const processComparison = (
 const mapping = (
   runtime: Evidence,
   expected: "cochanged" | "static_only" | "runtime_only" | "both_unchanged",
-  dimension: "terminal" | "exit" = "terminal",
+  dimension: "terminal" | "interaction" | "exit" | "shim" = "terminal",
 ) => ({
   static_comparisons: [staticComparison],
   runtime_comparisons: [runtime],
@@ -115,6 +115,16 @@ const mapping = (
 });
 
 describe("static/runtime correlation", () => {
+  it("accepts interaction and shim runtime dimensions", () => {
+    const runtime = processComparison("unchanged");
+    expect(
+      correlateStaticAndRuntime(mapping(runtime, "static_only", "interaction")),
+    ).toMatchObject({ status: "correlated" });
+    expect(
+      correlateStaticAndRuntime(mapping(runtime, "static_only", "shim")),
+    ).toMatchObject({ status: "correlated" });
+  });
+
   it("keeps consistent cochange as a hypothesis with complete citations", () => {
     const runtime = processComparison("changed");
     const result = correlateStaticAndRuntime(mapping(runtime, "cochanged"));

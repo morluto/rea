@@ -33,6 +33,7 @@ import {
   createOccurrence,
   createRootNode,
   digestCanonical,
+  indexOccurrencesByPath,
   materializeDirectoryNodes,
   nearestParent,
   pageOf,
@@ -180,11 +181,10 @@ export const scanCanonicalArtifactInventory = async (
     const occurrenceById = new Map(
       occurrences.map((occurrence) => [occurrence.occurrence_id, occurrence]),
     );
+    const occurrenceByPath = indexOccurrencesByPath(occurrences);
     const integrityContradictions = pendingContradictions.map(
       (contradiction): IntegrityContradiction => {
-        const occurrence = occurrences.find(
-          ({ logical_path: path }) => path === contradiction.logicalPath,
-        );
+        const occurrence = occurrenceByPath.get(contradiction.logicalPath);
         if (occurrence === undefined)
           throw new ArtifactReaderFailure(
             "integrity",

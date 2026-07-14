@@ -156,10 +156,12 @@ export interface ProcessCapture {
   readonly residual_unknowns: readonly {
     readonly scope:
       | "terminal"
+      | "interaction"
       | "exit"
       | "process"
       | "filesystem"
       | "protocol"
+      | "shim"
       | "cleanup"
       | "network";
     readonly reason: string;
@@ -309,10 +311,12 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
     z.object({
       scope: z.enum([
         "terminal",
+        "interaction",
         "exit",
         "process",
         "filesystem",
         "protocol",
+        "shim",
         "cleanup",
         "network",
       ]),
@@ -349,5 +353,7 @@ export const parseProcessCapture = (input: unknown): ProcessCapture => {
 export {
   compareProcessCaptures,
   comparisonStatusSchema,
+  deriveProcessComparisonStatus,
+  PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
