@@ -14,6 +14,7 @@ import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { resolveSessionEvidence } from "./sessionEvidence.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
@@ -24,7 +25,7 @@ export const registerFunctionComparisonTool = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    (input) => {
+    async (input, context) => {
       const parsed = functionComparisonInputSchema.parse(input);
       const left = resolveSessionEvidence(session, parsed.left);
       if (!left.ok) return toCallToolResult(left, contract);
@@ -32,12 +33,11 @@ export const registerFunctionComparisonTool = (
       if (!right.ok) return toCallToolResult(right, contract);
       const leftIds = evidenceIds(left.value);
       const rightIds = evidenceIds(right.value);
-      const comparison = compareFunctions(
-        left.value,
-        right.value,
-        parsed.offset,
-        parsed.limit,
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        compareFunctions(left.value, right.value, parsed.offset, parsed.limit),
       );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const comparison = computed.value;
       const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
         predicateType: "rea.function-comparison/v1",
         operation: contract.name,
