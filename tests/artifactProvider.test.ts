@@ -124,6 +124,17 @@ describe("artifact graph provider", () => {
       provider: { id: "rea-artifact-graph" },
       subject: { format: "apk" },
     });
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(
+      runProviderAnalysis(
+        zipPath,
+        "inventory_artifact",
+        {},
+        undefined,
+        cancellation.signal,
+      ),
+    ).resolves.toMatchObject({ code: "cancelled" });
 
     const source = join(root, "asar-source");
     await mkdir(source);

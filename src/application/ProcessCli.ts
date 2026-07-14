@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 
 import { parseConfig } from "../config.js";
-import { AnalysisError, projectAnalysisError } from "../domain/errors.js";
+import {
+  AnalysisError,
+  AnalysisProtocolError,
+  PermissionRequiredError,
+  projectAnalysisError,
+} from "../domain/errors.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
@@ -15,6 +20,7 @@ import {
   PROCESS_PROVIDER,
   createProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
+import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
 
 const MAX_INPUT_BYTES = 64 * 1024 * 1024;
 
@@ -40,6 +46,31 @@ export const captureProcessScenarioFile = async (path: string) => {
     }
     const config = parseConfig(process.env);
     if (!config.ok) return cliAnalysisError(config.error);
+    const authority = await loadConfiguredPermissionAuthority(config.value);
+    if (!authority.ok) return cliAnalysisError(authority.error);
+    const authorized = await authority.value.authorize(
+      {
+        capability: "process_capture",
+        roots: [scenario.working_directory, ...scenario.filesystem_roots],
+        executables: [scenario.executable],
+        environment_names: [
+          ...Object.keys(scenario.environment),
+          ...scenario.inherit_environment,
+        ],
+        network: scenario.network_access === "host" ? "external" : "none",
+        mount: false,
+        operation_identity: `capture_process_scenario:${scenario.executable}`,
+      },
+      "read",
+    );
+    if (!authorized.ok)
+      return cliAnalysisError(
+        authorized.error instanceof PermissionRequiredError
+          ? authorized.error
+          : new AnalysisProtocolError(authorized.error.message, {
+              cause: authorized.error,
+            }),
+      );
     const captured = await captureProcessScenario(
       scenario,
       config.value.processExecutionPolicy,

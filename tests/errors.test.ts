@@ -23,12 +23,17 @@ import {
   NoBinaryOpenError,
   ProviderAdapterError,
   ProviderSelectionError,
+  PermissionRequiredError,
   UnknownRegistryError,
   projectAnalysisError,
   type AnalysisError,
   type AnalysisErrorTag,
 } from "../src/domain/errors.js";
 import { ProcessCaptureError } from "../src/application/ProcessHarness.js";
+import {
+  analysisErrorJsonSchema,
+  analysisErrorProjectionSchema,
+} from "../src/contracts/errorSchemas.js";
 
 describe("analysis error projection", () => {
   it("uses the correct provider-neutral protocol tag", () => {
@@ -52,7 +57,10 @@ describe("analysis error projection", () => {
     ] as const;
     for (const [exitCode, code] of expected) {
       const projected = projectAnalysisError(new HopperProcessError(exitCode));
-      expect(projected.code).toBe(code);
+      expect(projected).toMatchObject({
+        code: "provider_unavailable",
+        details: { failure_code: code, exit_code: exitCode },
+      });
       expect(projected.message.length).toBeGreaterThan(20);
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
@@ -121,20 +129,34 @@ describe("analysis error projection", () => {
           cause: secretCause,
         },
       ),
+      PermissionRequiredError: new PermissionRequiredError(
+        {
+          capability: "evidence_read",
+          roots: ["/workspace/evidence.json"],
+          executables: [],
+          environment_names: ["TOKEN_NAME"],
+          network: "none",
+          mount: false,
+          operation_identity: "read:evidence",
+        },
+        { environment_names: ["TOKEN_NAME"] },
+        null,
+        false,
+        true,
+      ),
     } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
-    expect(projected).toHaveLength(24);
+    expect(projected).toHaveLength(25);
     const serialized = JSON.stringify(projected);
     for (const hidden of [
       "secret-token",
-      "/secret/local/path",
-      "fixture",
-      "overview",
       "AnalysisCapabilityUnavailableError",
       "declaredSha256",
     ])
       expect(serialized).not.toContain(hidden);
+    expect(serialized).toContain("/secret/local/path");
+    expect(serialized).toContain('"environment_names":["TOKEN_NAME"]');
     expect(
       projectAnalysisError(byTag.AnalysisCapabilityUnavailableError),
     ).toMatchObject({
@@ -160,11 +182,114 @@ describe("analysis error projection", () => {
     });
     expect(projected.every(({ message }) => message.length > 0)).toBe(true);
     expect(
-      projected.every(({ message }) =>
-        /try again|run `rea doctor`|current target|when ready|smaller request|smaller artifact|fresh copy|re-import|reduce|inline evidence|configured evidence directory|evidence file|allow overwrite|refresh the current state|reported setting|call open_binary|supported file|review capture policy/u.test(
-          message,
-        ),
+      projected.every(
+        (value) => analysisErrorProjectionSchema.safeParse(value).success,
       ),
     ).toBe(true);
+    expect(analysisErrorJsonSchema).toMatchObject({ oneOf: expect.any(Array) });
+    expect(
+      projectAnalysisError(
+        new ProcessCaptureError("terminal cleanup failed", {
+          reason: "cleanup_incomplete",
+          cleanupResources: ["process_group"],
+        }),
+      ),
+    ).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { cleanup: "incomplete", resources: ["process_group"] },
+    });
+    expect(
+      projected
+        .map(({ message }) => message)
+        .filter(
+          (message) =>
+            !/try again|run `rea doctor`|current target|when ready|smaller request|smaller artifact|fresh copy|re-import|reduce|inline evidence|configured evidence directory|evidence file|allow overwrite|refresh the current state|reported setting|call open_binary|supported file|review capture policy|review the requested scope/iu.test(
+              message,
+            ),
+        ),
+    ).toEqual([]);
+  });
+
+  it("validates every closed error-reason variant against the generated contract", () => {
+    const variants: AnalysisError[] = [
+      ...(
+        [
+          "cancelled",
+          "format",
+          "integrity",
+          "limit",
+          "path",
+          "unavailable",
+          "io",
+        ] as const
+      ).map(
+        (reason) => new ArtifactOperationError("inventory_artifact", reason),
+      ),
+      ...(
+        [
+          "disabled",
+          "outside-root",
+          "not-file",
+          "too-large",
+          "exists",
+          "invalid-json",
+          "io",
+        ] as const
+      ).map((reason) => new EvidenceFileError("read", reason)),
+      ...(
+        [
+          "disabled",
+          "outside-root",
+          "not-file",
+          "too-large",
+          "invalid-json",
+          "integrity",
+          "locked",
+          "revision-conflict",
+          "name-conflict",
+          "io",
+        ] as const
+      ).map((reason) => new InvestigationWorkspaceError("update", reason)),
+      ...(
+        [
+          "not-found",
+          "already-exists",
+          "revision-conflict",
+          "invalid-transition",
+          "integrity",
+          "limit",
+        ] as const
+      ).map((reason) => new UnknownRegistryError(reason)),
+      ...(
+        [
+          "capture_failed",
+          "cleanup_incomplete",
+          "permission_required",
+          "cancelled",
+        ] as const
+      ).map(
+        (reason) =>
+          new ProcessCaptureError("SECRET capture diagnostic", { reason }),
+      ),
+      ...(
+        [
+          "remote",
+          "authorization",
+          "invalid_request",
+          "bridge_exception",
+        ] as const
+      ).map((diagnostic) => new HopperRemoteError(9, "safe", diagnostic)),
+    ];
+
+    expect(variants).toHaveLength(38);
+    for (const variant of variants) {
+      const projected = projectAnalysisError(variant);
+      const parsed = analysisErrorProjectionSchema.safeParse(projected);
+      expect(parsed, JSON.stringify({ variant, projected })).toMatchObject({
+        success: true,
+      });
+      expect(projected.code).toMatch(/^[a-z][a-z0-9_]*$/u);
+      expect(JSON.stringify(projected)).not.toContain("SECRET");
+    }
   });
 });

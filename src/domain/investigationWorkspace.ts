@@ -53,17 +53,32 @@ export type InvestigationRunOptions = z.infer<
 >;
 
 /** Explicit write approval and two local versions for an automatic run. */
-export const crossVersionInvestigationInputSchema = z.object({
-  approved: z.literal(true),
-  workspace_path: z.string().min(1).max(4_096),
-  workspace_name: z.string().trim().min(1).max(200).default("default"),
-  expected_workspace_revision: z.number().int().min(1).optional(),
-  left_path: z.string().min(1).max(4_096),
-  right_path: z.string().min(1).max(4_096),
-  options: investigationRunOptionsSchema.default(
-    DEFAULT_INVESTIGATION_RUN_OPTIONS,
-  ),
-});
+export const crossVersionInvestigationInputSchema = z
+  .object({
+    approved: z.literal(true),
+    workspace_path: z.string().min(1).max(4_096),
+    workspace_name: z.string().trim().min(1).max(200).default("default"),
+    expected_workspace_revision: z.number().int().min(1).optional(),
+    left_path: z.string().min(1).max(4_096),
+    right_path: z.string().min(1).max(4_096),
+    integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
+    integrity_continue_approved: z.boolean().default(false),
+    max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
+    options: investigationRunOptionsSchema.default(
+      DEFAULT_INVESTIGATION_RUN_OPTIONS,
+    ),
+  })
+  .superRefine((input, context) => {
+    if (
+      input.integrity_policy === "record-and-continue" &&
+      input.integrity_continue_approved !== true
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["integrity_continue_approved"],
+        message: "record-and-continue requires explicit approval",
+      });
+  });
 
 export type CrossVersionInvestigationInput = z.infer<
   typeof crossVersionInvestigationInputSchema
@@ -92,6 +107,9 @@ export const investigationRunSchema = z.object({
   left: targetSchema,
   right: targetSchema,
   options: investigationRunOptionsSchema,
+  integrity_policy: z.enum(["fail", "record-and-continue"]),
+  integrity_continue_approved: z.boolean(),
+  max_integrity_mismatches: z.number().int().min(1).max(100),
   status: z.enum(["running", "complete"]),
   completed_stages: z.array(stageSchema).max(4),
   left_inventory_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
@@ -137,12 +155,20 @@ export const createInvestigationRunIdentity = (input: {
   readonly left: InvestigationRunTarget;
   readonly right: InvestigationRunTarget;
   readonly options: InvestigationRunOptions;
+  readonly integrity_policy: CrossVersionInvestigationInput["integrity_policy"];
+  readonly integrity_continue_approved: boolean;
+  readonly max_integrity_mismatches: number;
 }): { readonly runId: string; readonly requestSha256: string } => {
   const requestSha256 = digestCanonical({
     schema: "rea.cross-version-investigation-request/v1",
     left: input.left,
     right: input.right,
     options: input.options,
+    integrity: {
+      policy: input.integrity_policy,
+      approved: input.integrity_continue_approved,
+      max_mismatches: input.max_integrity_mismatches,
+    },
   });
   return { runId: `run_${requestSha256}`, requestSha256 };
 };

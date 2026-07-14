@@ -134,6 +134,7 @@ export const createArtifactNode = (input: {
   readonly format: ArtifactNode["format"];
   readonly executable: boolean;
   readonly contentState: ArtifactNode["content_state"];
+  readonly limitations?: readonly string[];
 }): ArtifactNode => ({
   artifact_id: `art_${digestCanonical({ schema_version: 1, sha256: input.sha256 })}`,
   kind: input.kind,
@@ -144,7 +145,7 @@ export const createArtifactNode = (input: {
   architecture: null,
   executable: input.executable,
   content_state: input.contentState,
-  limitations: [],
+  limitations: [...(input.limitations ?? [])],
 });
 
 export const rootOccurrenceFor = (

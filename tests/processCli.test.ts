@@ -97,11 +97,20 @@ describe("process CLI errors", () => {
         working_directory: "/tmp",
       }),
     );
-    expect(await captureProcessScenarioFile(scenario)).toEqual({
+    expect(await captureProcessScenarioFile(scenario)).toMatchObject({
       error: "Process command failed",
+      code: "permission_required",
       category: "permission_required",
       message:
-        "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.",
+        "This operation needs additional local permission. Review the requested scope and remediation.",
+      details: {
+        capability: "process_capture",
+        ceiling: null,
+      },
+      remediation: {
+        restart_required: false,
+        elicitation_supported: false,
+      },
     });
   });
 

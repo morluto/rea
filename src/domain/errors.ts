@@ -1,4 +1,9 @@
 import type { JsonValue } from "./jsonValue.js";
+import type {
+  MissingPermissionScope,
+  PermissionRequest,
+  PermissionScope,
+} from "./permissionPolicy.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureCode,
@@ -31,6 +36,7 @@ const ANALYSIS_ERROR_TAGS = [
   "ConfigurationError",
   "NoBinaryOpenError",
   "BinaryTargetError",
+  "PermissionRequiredError",
 ] as const;
 
 /** Stable tag for an expected analysis failure. */
@@ -42,6 +48,8 @@ export abstract class AnalysisError extends Error {
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "permission_required" | "cancelled" | undefined =
     undefined;
+  readonly cleanupIncomplete: boolean = false;
+  readonly cleanupResources: readonly string[] = [];
 }
 
 /** Base class for failures produced specifically by the Hopper provider. */
@@ -336,6 +344,25 @@ export class BinaryTargetError extends AnalysisError {
 
 export interface AnalysisErrorProjection
   extends Readonly<Record<string, JsonValue>> {
+  readonly code:
+    | "invalid_request"
+    | "unreadable_output"
+    | "capability_unavailable"
+    | "provider_unavailable"
+    | "provider_timeout"
+    | "cancelled"
+    | "artifact_integrity_mismatch"
+    | "artifact_operation_failed"
+    | "evidence_integrity_mismatch"
+    | "truncated"
+    | "permission_required"
+    | "process_capture_failed"
+    | "cleanup_incomplete"
+    | "revision_conflict"
+    | "outside_approved_root"
+    | "configuration_invalid"
+    | "target_unavailable"
+    | "execution_failure";
   readonly category:
     | "invalid_input"
     | "permission_required"
@@ -347,8 +374,28 @@ export interface AnalysisErrorProjection
     | "unavailable"
     | "execution_failure";
   readonly message: string;
-  readonly code?: HopperStartupFailureCode;
+  readonly retryable: boolean;
+  readonly remediation: Readonly<{
+    action: string;
+    restart_required: boolean;
+    elicitation_supported?: boolean;
+  }>;
   readonly details?: Readonly<Record<string, JsonValue>>;
+}
+
+/** Exact denied authority used by both CLI and MCP remediation. */
+export class PermissionRequiredError extends AnalysisError {
+  readonly _tag = "PermissionRequiredError" as const;
+
+  constructor(
+    readonly requested: PermissionRequest,
+    readonly missing: MissingPermissionScope,
+    readonly ceiling: PermissionScope | null,
+    readonly elicitationSupported: boolean,
+    readonly restartRequired: boolean,
+  ) {
+    super(`Permission required for ${requested.capability}`);
+  }
 }
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
@@ -356,29 +403,217 @@ export const projectAnalysisError = (
   error: AnalysisError,
 ): AnalysisErrorProjection => {
   assertKnownTag(error._tag);
-  const code =
-    error instanceof HopperProcessError ? error.failureCode : undefined;
-  const artifact =
-    error instanceof ArtifactOperationError && error.artifactDetails;
-  const details = artifact
-    ? {
-        logical_path: artifact.logicalPath,
-        declared_sha256: artifact.declaredSha256,
-        calculated_sha256: artifact.calculatedSha256,
-        unpacked: artifact.unpacked,
-      }
-    : undefined;
+  const code = errorCode(error);
+  const details = errorDetails(error);
   return {
+    code,
     category: errorCategory(error),
     message: userMessage(error),
-    ...(code === undefined ? {} : { code }),
+    retryable: RETRYABLE_CODES.has(code),
+    remediation: {
+      action: remediationAction(error),
+      restart_required:
+        error instanceof PermissionRequiredError && error.restartRequired,
+      ...(error instanceof PermissionRequiredError
+        ? { elicitation_supported: error.elicitationSupported }
+        : {}),
+    },
     ...(details === undefined ? {} : { details }),
   };
+};
+
+const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
+  if (error instanceof PermissionRequiredError) return "permission_required";
+  if (error instanceof ArtifactOperationError)
+    return error.reason === "integrity" && error.artifactDetails !== undefined
+      ? "artifact_integrity_mismatch"
+      : error.reason === "limit"
+        ? "truncated"
+        : error.reason === "cancelled"
+          ? "cancelled"
+          : "artifact_operation_failed";
+  if (error instanceof EvidenceFileError)
+    return error.reason === "outside-root"
+      ? "outside_approved_root"
+      : error.reason === "too-large"
+        ? "truncated"
+        : error.reason === "disabled"
+          ? "capability_unavailable"
+          : "execution_failure";
+  if (error instanceof InvestigationWorkspaceError) {
+    if (
+      error.reason === "revision-conflict" ||
+      error.reason === "name-conflict"
+    )
+      return "revision_conflict";
+    if (error.reason === "too-large") return "truncated";
+    if (error.reason === "disabled") return "capability_unavailable";
+    if (error.reason === "outside-root") return "outside_approved_root";
+    if (error.reason === "integrity" || error.reason === "invalid-json")
+      return "evidence_integrity_mismatch";
+    return "execution_failure";
+  }
+  if (error instanceof UnknownRegistryError)
+    return error.reason === "revision-conflict" ||
+      error.reason === "already-exists"
+      ? "revision_conflict"
+      : error.reason === "limit"
+        ? "truncated"
+        : error.reason === "integrity"
+          ? "evidence_integrity_mismatch"
+          : "execution_failure";
+  if (error._tag === "ProcessCaptureError")
+    return error.cleanupIncomplete
+      ? "cleanup_incomplete"
+      : error.userCategory === "cancelled"
+        ? "cancelled"
+        : error.userCategory === "permission_required"
+          ? "permission_required"
+          : "process_capture_failed";
+  switch (error._tag) {
+    case "AnalysisProtocolError":
+    case "AnalysisOutputError":
+    case "HopperProtocolError":
+      return "unreadable_output";
+    case "AnalysisInputError":
+      return "invalid_request";
+    case "AnalysisCapabilityUnavailableError":
+    case "ProviderSelectionError":
+      return "capability_unavailable";
+    case "AnalysisCancelledError":
+    case "HopperCancelledError":
+      return "cancelled";
+    case "AnalysisTimeoutError":
+    case "HopperTimeoutError":
+      return "provider_timeout";
+    case "HopperProcessError":
+    case "HopperStartError":
+      return "provider_unavailable";
+    case "ConfigurationError":
+      return "configuration_invalid";
+    case "NoBinaryOpenError":
+    case "BinaryTargetError":
+      return "target_unavailable";
+    case "EvidenceIntegrityError":
+      return "evidence_integrity_mismatch";
+    case "EvidenceLimitError":
+      return "truncated";
+    case "ProviderAdapterError":
+    case "HopperRemoteError":
+      return "execution_failure";
+    case "ArtifactOperationError":
+    case "EvidenceFileError":
+    case "InvestigationWorkspaceError":
+    case "UnknownRegistryError":
+    case "PermissionRequiredError":
+      throw new TypeError("Unhandled specialized analysis error");
+  }
+};
+
+const errorDetails = (
+  error: AnalysisError,
+): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof PermissionRequiredError)
+    return {
+      capability: error.requested.capability,
+      requested: scopeDetails(error.requested),
+      missing: missingScopeDetails(error.missing),
+      ceiling: error.ceiling === null ? null : scopeDetails(error.ceiling),
+    };
+  if (error instanceof ArtifactOperationError && error.artifactDetails)
+    return {
+      logical_path: error.artifactDetails.logicalPath,
+      declared_sha256: error.artifactDetails.declaredSha256,
+      calculated_sha256: error.artifactDetails.calculatedSha256,
+      unpacked: error.artifactDetails.unpacked,
+    };
+  if (error instanceof ArtifactOperationError)
+    return {
+      operation: error.operation,
+      reason: error.reason,
+      ...(error.reason === "limit" ? { truncated: true } : {}),
+    };
+  if (error instanceof AnalysisCancelledError)
+    return { operation: error.operation, cleanup: "complete" };
+  if (error instanceof HopperCancelledError)
+    return { operation: "hopper", cleanup: "complete" };
+  if (error instanceof AnalysisTimeoutError)
+    return { operation: error.operation, timeout_ms: error.timeoutMs };
+  if (error instanceof HopperTimeoutError)
+    return { operation: "hopper", timeout_ms: error.timeoutMs };
+  if (error instanceof EvidenceLimitError)
+    return { limit: error.limit, maximum: error.maximum, truncated: true };
+  if (error instanceof InvestigationWorkspaceError)
+    return { operation: error.operation, reason: error.reason };
+  if (error instanceof UnknownRegistryError) return { reason: error.reason };
+  if (error instanceof EvidenceFileError)
+    return { operation: error.operation, reason: error.reason };
+  if (error instanceof AnalysisCapabilityUnavailableError)
+    return { provider_id: error.providerId, operation: error.operation };
+  if (error instanceof ProviderAdapterError)
+    return { provider_id: error.providerId, operation: error.operation };
+  if (error instanceof HopperRemoteError)
+    return { provider_code: error.code, diagnostic_type: error.diagnosticType };
+  if (error instanceof HopperProcessError && error.failureCode !== undefined)
+    return { failure_code: error.failureCode, exit_code: error.exitCode };
+  if (error._tag === "ProcessCaptureError" && error.cleanupIncomplete)
+    return {
+      cleanup: "incomplete",
+      resources: [...error.cleanupResources],
+    };
+  if (
+    error._tag === "ProcessCaptureError" &&
+    error.userCategory === "cancelled"
+  )
+    return { operation: "process_capture", cleanup: "complete" };
+  if (error instanceof BinaryTargetError) return { path: error.path };
+  return undefined;
+};
+
+const scopeDetails = (
+  scope: PermissionScope,
+): Readonly<Record<string, JsonValue>> => ({
+  capability: scope.capability,
+  roots: [...scope.roots],
+  executables: [...scope.executables],
+  environment_names: [...scope.environment_names],
+  network: scope.network,
+  mount: scope.mount,
+});
+
+const missingScopeDetails = (
+  scope: MissingPermissionScope,
+): Readonly<Record<string, JsonValue>> => ({
+  ...(scope.roots === undefined ? {} : { roots: [...scope.roots] }),
+  ...(scope.executables === undefined
+    ? {}
+    : { executables: [...scope.executables] }),
+  ...(scope.environment_names === undefined
+    ? {}
+    : { environment_names: [...scope.environment_names] }),
+  ...(scope.network === undefined ? {} : { network: scope.network }),
+  ...(scope.mount === undefined ? {} : { mount: scope.mount }),
+});
+
+const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
+  "provider_timeout",
+  "cancelled",
+  "revision_conflict",
+  "provider_unavailable",
+]);
+
+const remediationAction = (error: AnalysisError): string => {
+  if (error instanceof PermissionRequiredError)
+    return error.elicitationSupported
+      ? "Approve the exact missing scope, then retry the operation."
+      : "Add the exact missing scope beneath the administrator ceiling, then retry.";
+  return userMessage(error);
 };
 
 const errorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
+  if (error instanceof PermissionRequiredError) return "permission_required";
   if (error._tag === "ProcessCaptureError")
     return error.userCategory ?? "execution_failure";
   if (
@@ -437,6 +672,8 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 const userMessage = (error: AnalysisError): string => {
+  if (error instanceof PermissionRequiredError)
+    return "This operation needs additional local permission. Review the requested scope and remediation.";
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
   if (error.userMessage !== undefined) return error.userMessage;
@@ -578,6 +815,7 @@ const KNOWN_ERROR_TAGS = {
   ConfigurationError: true,
   NoBinaryOpenError: true,
   BinaryTargetError: true,
+  PermissionRequiredError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 
 const assertKnownTag = (tag: AnalysisErrorTag): void => {

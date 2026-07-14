@@ -3,8 +3,14 @@ import { Cli, z } from "incur";
 import { runCrossVersionInvestigation } from "./application/CrossVersionInvestigation.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
-import { projectAnalysisError, type AnalysisError } from "./domain/errors.js";
+import {
+  AnalysisProtocolError,
+  PermissionRequiredError,
+  projectAnalysisError,
+  type AnalysisError,
+} from "./domain/errors.js";
 import type { Logger } from "./logger.js";
+import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 
 const investigationOptionsSchema = z.object({
   yes: z
@@ -28,6 +34,9 @@ const investigationOptionsSchema = z.object({
     .default(268_435_456),
   pageSize: z.number().int().min(1).max(500).default(500),
   changeLimit: z.number().int().min(1).max(500).default(500),
+  integrityPolicy: z.enum(["fail", "record-and-continue"]).default("fail"),
+  integrityContinueApproved: z.boolean().default(false),
+  maxIntegrityMismatches: z.number().int().min(1).max(100).default(10),
 });
 
 /** Register the persistent cross-version CLI workflow. */
@@ -52,6 +61,9 @@ export const registerInvestigationCommands = (
       maxEntryBytes: "max-entry-bytes",
       pageSize: "page-size",
       changeLimit: "change-limit",
+      integrityPolicy: "integrity-policy",
+      integrityContinueApproved: "integrity-continue-approved",
+      maxIntegrityMismatches: "max-integrity-mismatches",
       yes: "y",
     },
     run: ({ args, options }) =>
@@ -76,6 +88,46 @@ const runInvestigation = async (
     };
   const config = parseConfig(process.env);
   if (!config.ok) return cliError(config.error);
+  const authority = await loadConfiguredPermissionAuthority(config.value);
+  if (!authority.ok) return cliError(authority.error);
+  for (const scope of [
+    {
+      capability: "investigation_workspace_read" as const,
+      roots: [args.workspacePath],
+      access: "write" as const,
+    },
+    {
+      capability: "investigation_workspace_write" as const,
+      roots: [args.workspacePath],
+      access: "write" as const,
+    },
+    {
+      capability: "investigation_input" as const,
+      roots: [args.leftPath, args.rightPath],
+      access: "read" as const,
+    },
+  ]) {
+    const authorized = await authority.value.authorize(
+      {
+        capability: scope.capability,
+        roots: scope.roots,
+        executables: [],
+        environment_names: [],
+        network: "none",
+        mount: false,
+        operation_identity: `investigate_versions:${scope.capability}:${scope.roots.join(":")}`,
+      },
+      scope.access,
+    );
+    if (!authorized.ok)
+      return cliError(
+        authorized.error instanceof PermissionRequiredError
+          ? authorized.error
+          : new AnalysisProtocolError(authorized.error.message, {
+              cause: authorized.error,
+            }),
+      );
+  }
   const investigated = await runCrossVersionInvestigation(
     {
       approved: true,
@@ -86,6 +138,9 @@ const runInvestigation = async (
         : { expected_workspace_revision: options.expectedRevision }),
       left_path: args.leftPath,
       right_path: args.rightPath,
+      integrity_policy: options.integrityPolicy,
+      integrity_continue_approved: options.integrityContinueApproved,
+      max_integrity_mismatches: options.maxIntegrityMismatches,
       options: {
         max_entries: options.maxEntries,
         max_total_bytes: options.maxTotalBytes,
@@ -98,7 +153,10 @@ const runInvestigation = async (
       },
     },
     config.value.evidenceFilePolicy,
-    { inputRoots: config.value.investigationInputRoots },
+    {
+      inputRoots: config.value.investigationInputRoots,
+      integrityContinueEnabled: config.value.artifactIntegrityContinueEnabled,
+    },
   );
   return investigated.ok
     ? investigated.value.evidence
