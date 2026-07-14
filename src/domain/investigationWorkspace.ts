@@ -59,6 +59,10 @@ export const crossVersionInvestigationInputSchema = z
     workspace_path: z.string().min(1).max(4_096),
     workspace_name: z.string().trim().min(1).max(200).default("default"),
     expected_workspace_revision: z.number().int().min(1).optional(),
+    replay_run_id: z
+      .string()
+      .regex(/^run_[a-f0-9]{64}$/u)
+      .optional(),
     left_path: z.string().min(1).max(4_096),
     right_path: z.string().min(1).max(4_096),
     integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),

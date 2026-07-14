@@ -31,6 +31,11 @@ Use `--expected-revision N` when an external coordinator needs an explicit
 compare-and-swap guard. Traversal, byte, page, and comparison limits are also
 available as CLI options.
 
+After a completed run returns its stable run ID, `--replay-run-id RUN_ID`
+selects that exact result without reading or rescanning either version input.
+The workspace still requires read authority. REA rejects a selector that is
+missing, incomplete, or inconsistent with the requested paths and controls.
+
 ## MCP
 
 `find_changed_behavior` retains its existing aggregation mode. Its additive
@@ -74,6 +79,12 @@ The inventory checkpoint is written first, followed by the comparison and final
 report checkpoints. A process interrupted after a checkpoint can resume from
 the last complete stage. A completed run is reused when both graph commitments
 and every bounded option are identical.
+
+By default, REA rescans the version inputs so changed content creates a new
+run. For an explicit cache-only replay, add the returned `run_id` as
+`investigation_run.replay_run_id`. REA validates the workspace revision and
+name, the complete run, its exact paths and controls, and every linked Evidence
+record before it skips input-read authorization.
 
 The run ID is a SHA-256 commitment to both root and graph digests plus the
 normalized options. Local paths and timestamps do not affect that identity.
