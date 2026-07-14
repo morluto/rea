@@ -1,0 +1,33 @@
+name: Process cleanup stress
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/process-cleanup-stress.yml"
+      - "scripts/verify-process-cleanup-stress.mjs"
+      - "src/application/ProcessCaptureLifecycle.ts"
+      - "src/application/ProcessHarness.ts"
+      - "src/application/ProcessOwnership.ts"
+      - "tests/fixtures/processFidelity.mjs"
+      - "package.json"
+      - "package-lock.json"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-forkpty-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:process:stress

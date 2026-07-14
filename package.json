@@ -71,6 +71,7 @@
     "typecheck": "tsc --noEmit",
     "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs",
     "verify:browser": "npm run build && node scripts/verify-real-browser.mjs",
+    "verify:process:stress": "npm run build && node scripts/verify-process-cleanup-stress.mjs",
     "verify:hopper:linux": "npm run build && node scripts/verify-real-hopper-linux.mjs",
     "verify:setup:linux": "npm run build && node scripts/verify-linux-setup-e2e.mjs",
     "build:fixtures": "node scripts/build-conformance-fixtures.mjs",
