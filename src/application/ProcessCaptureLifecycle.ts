@@ -285,7 +285,7 @@ export const releaseProcessResources = async (options: {
   readonly checkpoints: ProcessCheckpoints | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
-  readonly sampledProcessGroupIds: readonly number[];
+  readonly capturedProcessGroupIds: readonly number[];
 }): Promise<string | undefined> => {
   for (const timer of options.timers) clearTimeout(timer);
   let failure: string | undefined;
@@ -310,11 +310,7 @@ export const releaseProcessResources = async (options: {
     failure ??= "filesystem checkpoint cleanup failed";
   }
   if (options.terminal !== undefined && process.platform !== "win32") {
-    const processGroupIds = new Set([
-      options.terminal.pid,
-      ...options.sampledProcessGroupIds,
-    ]);
-    for (const processGroupId of processGroupIds) {
+    for (const processGroupId of new Set(options.capturedProcessGroupIds)) {
       const cleaned = await cleanupOwnedProcessGroup({
         runId: options.runId,
         leaderPid: processGroupId,
