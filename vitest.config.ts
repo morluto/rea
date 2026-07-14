@@ -1,3 +1,6 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -8,6 +11,10 @@ export default defineConfig({
     coverage: {
       enabled: true,
       provider: "v8",
+      reportsDirectory: join(
+        tmpdir(),
+        `rea-vitest-coverage-${String(process.pid)}`,
+      ),
       include: ["src/**"],
       thresholds: {
         statements: 65,
