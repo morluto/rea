@@ -8,7 +8,7 @@ const { default: packageJson } = await import("../package.json", {
 });
 process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpMode =
-  args[0] === "--mcp" || (args.length === 1 && args[0] === "mcp");
+  args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp");
 
 if (isMcpMode) {
   const { runEntrypoint } = await import("../dist/main.js");
