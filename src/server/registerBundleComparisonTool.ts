@@ -14,6 +14,7 @@ import { BUNDLE_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { isSessionEvidence } from "./sessionEvidence.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Register canonical Evidence bundle comparison. */
 export const registerBundleComparisonTool = (
@@ -24,7 +25,7 @@ export const registerBundleComparisonTool = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    (input) => {
+    async (input, context) => {
       const parsed = bundleComparisonInputSchema.parse(input);
       const sourceIds = [
         ...new Set([
@@ -63,13 +64,17 @@ export const registerBundleComparisonTool = (
           ),
           contract,
         );
-      const comparison = compareBundles(
-        parsed.left,
-        parsed.right,
-        parsed.record_pairs,
-        parsed.offset,
-        parsed.limit,
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        compareBundles(
+          parsed.left,
+          parsed.right,
+          parsed.record_pairs,
+          parsed.offset,
+          parsed.limit,
+        ),
       );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const comparison = computed.value;
       const evidence = createEvidence(undefined, BUNDLE_COMPARISON_PROVIDER, {
         predicateType: "rea.bundle-comparison/v1",
         operation: contract.name,

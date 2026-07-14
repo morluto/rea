@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
 
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
+import { BinarySession } from "../src/application/BinarySession.js";
 import { CATALOG_IDENTITY, CLI_COMMAND_NAMES } from "../src/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../src/identity.js";
+import { createServer } from "../src/server/createServer.js";
 import { createServerIdentity } from "../src/serverIdentity.js";
+import { observed } from "./fixtures/analysisExecution.js";
 import { buildCapabilityInventory } from "../src/application/CapabilityInventory.js";
 
 describe("server and catalog identity", () => {
@@ -118,5 +122,76 @@ describe("server and catalog identity", () => {
         reason: "unsupported_host",
       }),
     );
+  });
+  it("exposes live identity, labeled inventories, availability, and list changes", async () => {
+    const session = new BinarySession(() => ({
+      health: () => Promise.resolve(),
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const server = createServer(session, session);
+    const client = new Client({ name: "identity-test", version: "9" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    let toolListChanges = 0;
+    client.setNotificationHandler("notifications/tools/list_changed", () => {
+      toolListChanges += 1;
+    });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const resource = await client.readResource({
+        uri: "rea://server/identity",
+      });
+      const content = resource.contents[0];
+      expect(content).toBeDefined();
+      if (content === undefined || !("text" in content)) return;
+      const live = JSON.parse(content.text);
+      expect(live).toMatchObject({
+        package: { version: PRODUCT_IDENTITY.packageVersion },
+        server: { version: PRODUCT_IDENTITY.packageVersion },
+        sdk: { server: "2.0.0-beta.4", client_test: "2.0.0-beta.4" },
+        client: { name: "identity-test", version: "9" },
+        alignment: { state: "unknown" },
+      });
+      const status = await client.callTool({
+        name: "binary_session",
+        arguments: { expected_package_version: "1.2.0" },
+      });
+      expect(status.structuredContent).toMatchObject({
+        result: {
+          server_identity: {
+            catalog: { counts: { mcp_tools: 68, cli_commands: 28 } },
+            alignment: { state: "mcp_server_restart_required" },
+          },
+          tool_availability: expect.arrayContaining([
+            expect.objectContaining({
+              name: "current_address",
+              available: false,
+              reason: "target_required",
+            }),
+            expect.objectContaining({
+              name: "capture_process_scenario",
+              available: false,
+              reason: "policy_disabled",
+            }),
+          ]),
+          client_features: {
+            elicitation_form: false,
+            elicitation_url: false,
+            roots: false,
+            sampling: false,
+          },
+        },
+      });
+      await client.callTool({ name: "close_binary", arguments: {} });
+      await expect.poll(() => toolListChanges).toBeGreaterThan(0);
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
   });
 });

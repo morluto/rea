@@ -66,6 +66,7 @@ describe("artifact graph MCP integration", () => {
         expect(result.isError).toBe(true);
         expect(result.structuredContent).toEqual({
           error: {
+            code: "artifact_integrity_mismatch",
             category: "integrity_mismatch",
             message:
               "Artifact is invalid or has changed. Get a fresh copy and try again.",
@@ -74,6 +75,12 @@ describe("artifact graph MCP integration", () => {
               declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
               calculated_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
               unpacked,
+            },
+            retryable: false,
+            remediation: {
+              action:
+                "Artifact is invalid or has changed. Get a fresh copy and try again.",
+              restart_required: false,
             },
           },
         });
@@ -86,6 +93,144 @@ describe("artifact graph MCP integration", () => {
       }
     },
   );
+
+  it("records an approved mismatch, preserves verified siblings, and never reports equivalence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-asar-continue-mcp-"));
+    const source = join(root, "source");
+    await mkdir(source);
+    const original = "console.log('ok');\n";
+    const changed = "console.log('no');\n";
+    const secondOriginal = "console.log('up');\n";
+    const secondChanged = "console.log('dn');\n";
+    await writeFile(join(source, "main.js"), original);
+    await writeFile(join(source, "second.js"), secondOriginal);
+    await writeFile(join(source, "sibling.js"), "console.log('sibling');\n");
+    const archive = join(root, "fixture.asar");
+    await createPackageWithOptions(source, archive, {});
+    const bytes = await readFile(archive);
+    const contentOffset = bytes.indexOf(original);
+    const secondOffset = bytes.indexOf(secondOriginal);
+    expect(contentOffset).toBeGreaterThanOrEqual(0);
+    expect(secondOffset).toBeGreaterThanOrEqual(0);
+    bytes.write(changed, contentOffset, "utf8");
+    bytes.write(secondChanged, secondOffset, "utf8");
+    await writeFile(archive, bytes);
+
+    const session = new BinarySession(new ArtifactProvider(false, true));
+    const server = createServer(session, session);
+    const client = new Client({ name: "asar-continue-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.callTool({
+        name: "open_binary",
+        arguments: { path: archive },
+      });
+      const limited = await client.callTool({
+        name: "inventory_artifact",
+        arguments: {
+          integrity_policy: "record-and-continue",
+          integrity_continue_approved: true,
+          max_integrity_mismatches: 1,
+        },
+      });
+      expect(limited).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: "truncated" } },
+      });
+      const result = await client.callTool({
+        name: "inventory_artifact",
+        arguments: {
+          integrity_policy: "record-and-continue",
+          integrity_continue_approved: true,
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      const evidence = parseEvidence(result.structuredContent);
+      const inventory = z
+        .object({
+          occurrences: z.object({
+            items: z.array(
+              z.object({ logical_path: z.string(), hash_status: z.string() }),
+            ),
+          }),
+          integrity_contradictions: z.array(
+            z.object({
+              logical_path: z.string(),
+              declared_sha256: z.string(),
+              observed_sha256: z.string(),
+              trust: z.literal("observed-untrusted"),
+            }),
+          ),
+        })
+        .parse(evidence.normalized_result);
+      expect(inventory.integrity_contradictions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            logical_path: "main.js",
+            trust: "observed-untrusted",
+            declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            observed_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          }),
+          expect.objectContaining({ logical_path: "second.js" }),
+        ]),
+      );
+      expect(inventory.integrity_contradictions).toHaveLength(2);
+      expect(inventory.occurrences.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            logical_path: "main.js",
+            hash_status: "mismatched",
+          }),
+          expect.objectContaining({
+            logical_path: "sibling.js",
+            hash_status: "verified",
+          }),
+          expect.objectContaining({
+            logical_path: "second.js",
+            hash_status: "mismatched",
+          }),
+        ]),
+      );
+      const compared = await client.callTool({
+        name: "compare_artifacts",
+        arguments: {
+          left: evidence,
+          right: evidence,
+        },
+      });
+      expect(compared.isError).not.toBe(true);
+      const comparison = parseEvidence(
+        z.object({ result: z.unknown() }).parse(compared.structuredContent)
+          .result,
+      );
+      expect(comparison.normalized_result).toMatchObject({
+        status: "contradiction",
+        summary: { contradiction: 2 },
+        changes: {
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              logical_path: "main.js",
+              classification: "contradiction",
+              dimensions: ["integrity"],
+            }),
+            expect.objectContaining({
+              logical_path: "second.js",
+              classification: "contradiction",
+            }),
+          ]),
+        },
+      });
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
 
   it("rejects altered payloads that reuse session Evidence IDs", async () => {
     const session = new BinarySession(() => ({

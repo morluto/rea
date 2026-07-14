@@ -22,6 +22,49 @@ import { readInvestigationWorkspace } from "../src/application/InvestigationWork
 import type { EvidenceFilePolicy } from "../src/domain/evidenceBundle.js";
 
 describe("investigation MCP workflows", () => {
+  it("never retains derived evidence after request cancellation", async () => {
+    const { session, server, client } = await connected();
+    const inputs = [
+      {
+        name: "find_changed_behavior",
+        arguments: INVESTIGATION_EXAMPLES.find_changed_behavior,
+      },
+      {
+        name: "build_call_path",
+        arguments: INVESTIGATION_EXAMPLES.build_call_path,
+      },
+      {
+        name: "correlate_static_and_runtime",
+        arguments: INVESTIGATION_EXAMPLES.correlate_static_and_runtime,
+      },
+    ] as const;
+    for (const evidence of [
+      FUNCTION_COMPARISON_EXAMPLE.left,
+      FUNCTION_COMPARISON_EXAMPLE.right,
+      FUNCTION_COMPARISON_EVIDENCE,
+      PROCESS_CAPTURE_REFERENCE,
+      PROCESS_CAPTURE_RECONSTRUCTION,
+      PROCESS_COMPARISON_EVIDENCE,
+    ])
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+    const initialCount = session.exportEvidenceBundle().records.length;
+    try {
+      for (const input of inputs) {
+        const controller = new AbortController();
+        const request = client.callTool(input, {
+          signal: controller.signal,
+          onprogress: () => controller.abort(),
+        });
+        await expect(request).rejects.toThrow(/abort/iu);
+      }
+      await expect
+        .poll(() => session.exportEvidenceBundle().records.length)
+        .toBe(initialCount);
+    } finally {
+      await close(session, server, client);
+    }
+  });
+
   it("runs and reuses a persistent cross-version workspace", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-investigation-mcp-"));
     const left = join(directory, "left");
@@ -64,6 +107,26 @@ describe("investigation MCP workflows", () => {
         ok: true,
         value: { revision: 3, runs: [{ status: "complete" }] },
       });
+      expect(first.content).toContainEqual(
+        expect.objectContaining({
+          type: "resource_link",
+          uri: expect.stringMatching(
+            /^rea:\/\/workspace\/ws_[a-f0-9]{64}\/revision\/3$/u,
+          ),
+        }),
+      );
+      const retainedWorkspace = session.investigationWorkspaces()[0];
+      expect(retainedWorkspace).toBeDefined();
+      if (retainedWorkspace !== undefined) {
+        const resource = await client.readResource({
+          uri: `rea://workspace/${retainedWorkspace.workspace_id}/revision/${String(retainedWorkspace.revision)}`,
+        });
+        expect(resource.contents[0]).toEqual(
+          expect.objectContaining({
+            text: expect.stringContaining(retainedWorkspace.revision_digest),
+          }),
+        );
+      }
 
       const second = await client.callTool({
         name: "find_changed_behavior",
