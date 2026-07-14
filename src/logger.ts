@@ -12,7 +12,7 @@ const logLevelSchema = z
 export const parseLogLevel = (value: unknown): LogLevel =>
   logLevelSchema.parse(value);
 
-/** Create a JSON logger on stderr so protocol and CLI result stdout stay valid. */
+/** Create a JSON logger whose stderr destination cannot corrupt structured output. */
 export const createLogger = (mode: "mcp" | "cli", level: LogLevel): Logger =>
   pino(
     {

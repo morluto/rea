@@ -19,6 +19,8 @@ import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
 import { registerInvestigationCommands } from "./cliInvestigationCommands.js";
+import { registerUnknownCommands } from "./cliUnknownCommands.js";
+import { registerBrowserCommands } from "./cliBrowserCommands.js";
 import {
   AnalysisProtocolError,
   PermissionRequiredError,
@@ -27,7 +29,8 @@ import {
 import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { registerPolicyCommands } from "./cliPolicyCommands.js";
-import { registerBrowserCommands } from "./cliBrowserCommands.js";
+import { UnknownRegistry } from "./application/UnknownRegistry.js";
+import { UnknownRegistry } from "./application/UnknownRegistry.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -71,6 +74,11 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerArtifactCommands(cli, logger);
   registerInvestigationCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
+  registerUnknownCommands(
+    cli,
+    logger,
+    new UnknownRegistry({ maxRecords: 1_000, maxRelationships: 100 }),
+  );
   registerReferenceSourceCommand(cli, logger);
   registerProcessCommands(cli, logger);
   registerPolicyCommands(cli, logger);

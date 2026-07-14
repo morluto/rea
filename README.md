@@ -431,6 +431,19 @@ Run `npx -y rea-agents --help` for direct decompilation, bounded search and
 other options. `analyze` and `inspect` share the same overview workflow;
 `function`, `xrefs`, and `trace` return the same Evidence v2 envelopes as MCP.
 
+CLI exit status is independent of output format, full output, filtering, and
+token limits:
+
+| Status | Meaning                                                                                                                                                                                                                      |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`    | The requested operation completed truthfully. Explicit unknown, bounded, or truncated evidence remains successful when the operation completed under its declared contract.                                                  |
+| `1`    | Argument validation, approval or policy, provider or analysis, integrity, cancellation or timeout, serialization, or output failed. Structured output retains the typed category and safe diagnostic details when available. |
+
+Machine-readable failures remain on stdout in the requested format; incidental
+diagnostics and progress use stderr. Signal termination retains the conventional
+status supplied by the shell and runtime. Shell pipelines should enable
+`pipefail` when the REA status must propagate through later commands.
+
 Or install the `rea` command globally:
 
 ```bash

@@ -31,8 +31,8 @@ lint:dead` rejects unused files, exports, and dependencies.
 Set `REA_LOG_LEVEL` to `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
 `silent` to control structured JSON diagnostics. MCP mode defaults to `info` and
 always writes logs to stderr so the stdio protocol remains intact. One-shot CLI
-logging is opt-in and writes to stdout when a level is configured, preserving
-machine-readable command output by default. Request arguments, bridge
+logging is opt-in and writes to stderr when a level is configured, preserving
+machine-readable command output. Request arguments, bridge
 authentication tokens, and environment data are redacted.
 
 Changes that claim real Hopper behavior must also be tested against two distinct binaries:
