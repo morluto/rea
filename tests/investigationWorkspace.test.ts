@@ -8,11 +8,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
+import canonicalize from "canonicalize";
 
 import { runCrossVersionInvestigation } from "../src/application/CrossVersionInvestigation.js";
 import {
@@ -26,8 +28,15 @@ import {
   createInvestigationWorkspace,
   crossVersionInvestigationInputSchema,
   investigationRunSchema,
+  parseInvestigationWorkspace,
   serializeInvestigationWorkspace,
 } from "../src/domain/investigationWorkspace.js";
+
+const digestCanonical = (value: unknown): string => {
+  const encoded = canonicalize(value);
+  if (encoded === undefined) throw new TypeError("fixture is not canonical");
+  return createHash("sha256").update(encoded).digest("hex");
+};
 
 let directory: string | undefined;
 
@@ -68,6 +77,116 @@ const fixture = async () => {
 };
 
 describe("persistent cross-version investigation workspace", () => {
+  it("migrates legacy v1 runs without losing their revision chain", async () => {
+    const { input } = await fixture();
+    if (directory === undefined) throw new Error("missing fixture root");
+    const completed = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
+    if (!completed.ok) throw completed.error;
+    const current = completed.value.workspace;
+    const currentRun = current.runs[0];
+    if (currentRun === undefined) throw new Error("missing completed run");
+    expect(() =>
+      investigationRunSchema.parse({
+        ...currentRun,
+        legacy_request_identity: true,
+      }),
+    ).toThrow(/migrated strict runs/iu);
+    const legacyIdentity = digestCanonical({
+      schema: "rea.cross-version-investigation-request/v1",
+      left: currentRun.left,
+      right: currentRun.right,
+      options: currentRun.options,
+    });
+    expect(() =>
+      investigationRunSchema.parse({
+        ...currentRun,
+        legacy_request_identity: true,
+        run_id: `run_${legacyIdentity}`,
+        request_sha256: legacyIdentity,
+        max_integrity_mismatches: 100,
+      }),
+    ).toThrow(/migrated strict runs/iu);
+    const legacyRuns = current.runs.map((run) => {
+      const requestSha256 = digestCanonical({
+        schema: "rea.cross-version-investigation-request/v1",
+        left: run.left,
+        right: run.right,
+        options: run.options,
+      });
+      const {
+        integrity_policy: _integrityPolicy,
+        integrity_continue_approved: _integrityApproved,
+        max_integrity_mismatches: _integrityLimit,
+        ...legacy
+      } = run;
+      return {
+        ...legacy,
+        run_id: `run_${requestSha256}`,
+        request_sha256: requestSha256,
+      };
+    });
+    const legacySemantic = {
+      workspace_version: 1 as const,
+      workspace_id: current.workspace_id,
+      name: current.name,
+      revision: current.revision,
+      previous_revision_digest: current.previous_revision_digest,
+      bundle: current.bundle,
+      runs: legacyRuns,
+    };
+    const legacyDigest = `wrev_${digestCanonical(legacySemantic)}`;
+    expect(() =>
+      parseInvestigationWorkspace({
+        ...legacySemantic,
+        runs: legacyRuns.map((run) => ({
+          ...run,
+          max_integrity_mismatches: 100,
+        })),
+        revision_digest: legacyDigest,
+      }),
+    ).toThrow(/unrecognized key/iu);
+    const migrated = parseInvestigationWorkspace({
+      ...legacySemantic,
+      revision_digest: legacyDigest,
+    });
+
+    expect(migrated).toMatchObject({
+      revision: current.revision + 1,
+      previous_revision_digest: legacyDigest,
+      runs: [
+        {
+          legacy_request_identity: true,
+          integrity_policy: "fail",
+          integrity_continue_approved: false,
+          max_integrity_mismatches: 10,
+        },
+      ],
+    });
+    const encodedLegacy = canonicalize({
+      ...legacySemantic,
+      revision_digest: legacyDigest,
+    });
+    if (encodedLegacy === undefined)
+      throw new TypeError("legacy fixture is not canonical");
+    await writeFile(input.workspace_path, encodedLegacy, { mode: 0o600 });
+    await expect(
+      runCrossVersionInvestigation(input, policy(directory), {
+        inputRoots: [directory],
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { reused: true } });
+    await expect(
+      runCrossVersionInvestigation(
+        { ...input, integrity_continue_approved: true },
+        policy(directory),
+        { inputRoots: [directory] },
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { reused: false } });
+  });
+
   it("checkpoints, validates, and reuses a completed deterministic run", async () => {
     const { path, input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");

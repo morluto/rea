@@ -13,6 +13,7 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import {
+  createLegacyInvestigationRunIdentity,
   createInvestigationRunIdentity,
   createInvestigationWorkspace,
   crossVersionInvestigationInputSchema,
@@ -137,8 +138,20 @@ const continueInvestigation = async (context: {
     integrity_continue_approved: context.input.integrity_continue_approved,
     max_integrity_mismatches: context.input.max_integrity_mismatches,
   });
+  const legacyIdentity = createLegacyInvestigationRunIdentity({
+    left,
+    right,
+    options: context.input.options,
+  });
   const existing = context.initial?.runs.find(
-    ({ run_id: id }) => id === identity.runId,
+    (run) =>
+      run.run_id === identity.runId ||
+      (context.input.integrity_policy === "fail" &&
+        !context.input.integrity_continue_approved &&
+        context.input.max_integrity_mismatches === 10 &&
+        "legacy_request_identity" in run &&
+        run.max_integrity_mismatches === 10 &&
+        run.run_id === legacyIdentity.runId),
   );
   if (context.initial !== null && existing?.status === "complete")
     return completeOutcome(context.initial, existing, true, context.session);
