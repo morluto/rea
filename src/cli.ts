@@ -30,7 +30,6 @@ import { projectReferenceSourceImportError } from "./application/ReferenceSource
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { registerPolicyCommands } from "./cliPolicyCommands.js";
 import { UnknownRegistry } from "./application/UnknownRegistry.js";
-import { UnknownRegistry } from "./application/UnknownRegistry.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
