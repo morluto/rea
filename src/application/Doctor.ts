@@ -121,14 +121,16 @@ export const runDoctor = async (
       },
     ),
   );
-  const candidates = [
-    host.configuredHopperPath,
-    DEFAULT_HOPPER,
-    SYSTEM_LINUX_HOPPER,
-    linuxHopperLauncherPath(homedir()),
-    ...(await host.manualHopperPaths()),
-    await host.brewHopperPath(),
-  ].filter((value): value is string => value !== undefined);
+  const candidates =
+    host.configuredHopperPath === undefined
+      ? [
+          DEFAULT_HOPPER,
+          SYSTEM_LINUX_HOPPER,
+          linuxHopperLauncherPath(homedir()),
+          ...(await host.manualHopperPaths()),
+          await host.brewHopperPath(),
+        ].filter((value): value is string => value !== undefined)
+      : [host.configuredHopperPath];
   let hopperPath: string | undefined;
   for (const candidate of new Set(candidates))
     if (await host.executable(candidate)) {
@@ -136,11 +138,21 @@ export const runDoctor = async (
       break;
     }
   checks.push(
-    check("hopper", hopperPath !== undefined, hopperPath, {
-      remediation:
-        "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
-      classification: "missing_analysis_engine",
-    }),
+    check(
+      "hopper",
+      hopperPath !== undefined,
+      hopperPath ?? host.configuredHopperPath,
+      {
+        remediation:
+          host.configuredHopperPath === undefined
+            ? "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH."
+            : "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
+        classification:
+          host.configuredHopperPath === undefined
+            ? "missing_analysis_engine"
+            : "config_drift",
+      },
+    ),
   );
   if (host.platform === "linux" && hopperPath !== undefined)
     checks.push(
