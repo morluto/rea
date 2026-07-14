@@ -119,5 +119,4 @@ describe("server and catalog identity", () => {
       }),
     );
   });
-
 });
