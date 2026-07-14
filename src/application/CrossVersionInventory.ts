@@ -34,6 +34,43 @@ export interface InventoryEvidencePages {
   readonly right: readonly Evidence[];
 }
 
+/** Injectable artifact scan boundary used by paired version inventory. */
+export type VersionInventoryScanner = typeof scanAuthorizedArtifactInventory;
+
+/** Inputs shared by the two scans in one version comparison. */
+export interface VersionInventoryScanOptions {
+  readonly leftPath: string;
+  readonly rightPath: string;
+  readonly inputRoots: readonly string[];
+  readonly limits: ArtifactLimits;
+  readonly signal?: AbortSignal;
+  readonly integrity: ArtifactIntegrityPolicy;
+}
+
+/** Start both independent version scans while preserving left/right identity. */
+export const scanVersionInventories = async (
+  options: VersionInventoryScanOptions,
+  scanner: VersionInventoryScanner = scanAuthorizedArtifactInventory,
+): Promise<VersionSnapshots> => {
+  const [left, right] = await Promise.all([
+    scanner(
+      options.leftPath,
+      options.inputRoots,
+      options.limits,
+      options.signal,
+      options.integrity,
+    ),
+    scanner(
+      options.rightPath,
+      options.inputRoots,
+      options.limits,
+      options.signal,
+      options.integrity,
+    ),
+  ]);
+  return { left, right };
+};
+
 /** Authorize and scan both inputs once under the same bounded traversal policy. */
 export const scanVersions = async (
   input: CrossVersionInvestigationInput,
@@ -51,21 +88,16 @@ export const scanVersions = async (
       enabled: integrityContinueEnabled,
       maxMismatches: input.max_integrity_mismatches,
     };
-    const left = await scanAuthorizedArtifactInventory(
-      input.left_path,
-      inputRoots,
-      limits,
-      signal,
-      integrity,
+    return ok(
+      await scanVersionInventories({
+        leftPath: input.left_path,
+        rightPath: input.right_path,
+        inputRoots,
+        limits,
+        ...(signal === undefined ? {} : { signal }),
+        integrity,
+      }),
     );
-    const right = await scanAuthorizedArtifactInventory(
-      input.right_path,
-      inputRoots,
-      limits,
-      signal,
-      integrity,
-    );
-    return ok({ left, right });
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure)
       return err(
