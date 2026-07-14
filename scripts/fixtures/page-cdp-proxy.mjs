@@ -18,10 +18,11 @@ export async function startPageCdpProxy(upstreamEndpoint) {
         return;
       }
       const value = await upstreamJson(upstreamEndpoint, request.url);
-      const rewritten =
+      const pageScoped =
         request.url === "/json/version"
           ? await pageScopedVersion(upstreamEndpoint, value)
           : value;
+      const rewritten = rewriteWebSocketEndpoints(pageScoped, server);
       const body = JSON.stringify(rewritten);
       response.writeHead(200, {
         "Content-Type": "application/json",
@@ -101,6 +102,20 @@ async function pageScopedVersion(upstreamEndpoint, version) {
   );
   if (page === undefined) throw new Error("Chrome exposed no page CDP socket");
   return { ...version, webSocketDebuggerUrl: page.webSocketDebuggerUrl };
+}
+
+function rewriteWebSocketEndpoints(value, server) {
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Page CDP proxy has no TCP address");
+  const rewrite = (entry) => {
+    if (typeof entry.webSocketDebuggerUrl !== "string") return entry;
+    const url = new URL(entry.webSocketDebuggerUrl);
+    url.hostname = "127.0.0.1";
+    url.port = String(address.port);
+    return { ...entry, webSocketDebuggerUrl: url.href };
+  };
+  return Array.isArray(value) ? value.map(rewrite) : rewrite(value);
 }
 
 async function upstreamJson(endpoint, path) {
