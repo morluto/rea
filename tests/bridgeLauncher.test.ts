@@ -1,57 +1,85 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { HopperApplicationLauncher } from "../src/hopper/BridgeLauncher.js";
+import {
+  type HopperApplicationLauncherOptions,
+  usesLinuxDemo,
+} from "../src/hopper/BridgeLauncher.js";
 
-const directories: string[] = [];
+const execFileAsync = promisify(execFile);
+const demoHelperPath = fileURLToPath(
+  new URL("../scripts/hopper-demo-x11.py", import.meta.url),
+);
 
-afterEach(async () => {
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
+const options = (launcherPath: string): HopperApplicationLauncherOptions => ({
+  launcherPath,
+  targetPath: "/target",
+  targetKind: "executable",
+  loaderArgs: [],
+  bridgeScriptPath: "/rea/hopper_bridge.py",
+  launchMode: "verified_linux_demo",
+  demoHelperPath: "/rea/hopper-demo-x11.py",
 });
 
-describe("Hopper application launcher", () => {
-  it.skipIf(process.platform !== "linux")(
-    "uses the Linux demo helper for a non-canonical launcher path",
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "rea-launcher-test-"));
-      directories.push(directory);
-      const helper = join(directory, "demo-helper.py");
-      await writeFile(helper, "import sys\nsys.exit(0)\n");
-      const launcher = new HopperApplicationLauncher({
-        launcherPath: "/usr/bin/true",
-        targetPath: "/tmp/fixture",
-        targetKind: "executable",
-        loaderArgs: [],
-        bridgeScriptPath: "/tmp/hopper_bridge.py",
-        demoHelperPath: helper,
-      });
-
-      const launched = await launcher.launch({
-        directory,
-        socketPath: join(directory, "bridge.sock"),
-        token: "token",
-        runId: "run-wrapper",
-      });
-
-      expect(launched.ok).toBe(true);
-      if (!launched.ok) return;
-      expect(launched.value.process.spawnfile).toBe("/usr/bin/python3");
-      expect(launched.value.process.spawnargs).toContain(helper);
-      expect(launched.value.shutdownByCleanup).toBe(true);
-      expect(await readFile(join(directory, "bootstrap.py"), "utf8")).toContain(
-        "REA_OWNS_PROCESS_LIFETIME = True",
-      );
-      if (launched.value.process.exitCode === null)
-        await new Promise<void>((resolve) => {
-          launched.value.process.once("exit", () => resolve());
-        });
+describe("Hopper bridge launcher selection", () => {
+  it.each([
+    "/opt/hopper/bin/Hopper",
+    "/usr/local/bin/hopper",
+    "/workspace/bin/hopper-wrapper",
+  ])(
+    "routes launcher spelling %s through the explicitly selected pinned adapter",
+    (path) => {
+      expect(usesLinuxDemo(options(path))).toBe(true);
     },
   );
+
+  it("does not infer demo behavior from a native launcher's basename", () => {
+    expect(
+      usesLinuxDemo({
+        launcherPath: "/opt/hopper/bin/Hopper",
+        targetPath: "/target",
+        targetKind: "executable",
+        loaderArgs: [],
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "native",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects an unpinned wrapper before executing it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-hopper-wrapper-"));
+    const wrapper = join(directory, "hopper-wrapper");
+    const marker = join(directory, "executed");
+    try {
+      await writeFile(wrapper, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
+      await chmod(wrapper, 0o700);
+      await expect(
+        execFileAsync(
+          "python3",
+          [
+            demoHelperPath,
+            "--hopper",
+            wrapper,
+            "--socket",
+            join(directory, "bridge.sock"),
+            "--",
+            wrapper,
+          ],
+          { timeout: 3_000 },
+        ),
+      ).rejects.toMatchObject({
+        code: 72,
+        stderr: expect.stringContaining("unsupported Hopper binary"),
+      });
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

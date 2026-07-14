@@ -40,14 +40,24 @@ export interface BridgeLauncher {
   ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>>;
 }
 
-export interface HopperApplicationLauncherOptions {
+interface SharedHopperApplicationLauncherOptions {
   readonly launcherPath: string;
   readonly targetPath: string;
   readonly targetKind: "executable" | "database";
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
-  readonly demoHelperPath?: string;
 }
+
+/** Explicit launcher contract; the Linux adapter verifies its pinned Hopper build before execution. */
+export type HopperApplicationLauncherOptions =
+  | (SharedHopperApplicationLauncherOptions & {
+      readonly launchMode: "native";
+      readonly demoHelperPath?: never;
+    })
+  | (SharedHopperApplicationLauncherOptions & {
+      readonly launchMode: "verified_linux_demo";
+      readonly demoHelperPath: string;
+    });
 
 /**
  * Launches Hopper through its documented CLI and injects only REA's owned bridge.
@@ -186,8 +196,13 @@ const linuxDemoLaunch = (
   };
 };
 
-const usesLinuxDemo = (options: HopperApplicationLauncherOptions): boolean =>
-  process.platform === "linux" && options.demoHelperPath !== undefined;
+/** Select the version-pinned adapter from the caller's explicit launch mode. */
+export const usesLinuxDemo = (
+  options: HopperApplicationLauncherOptions,
+): options is HopperApplicationLauncherOptions & {
+  readonly launchMode: "verified_linux_demo";
+  readonly demoHelperPath: string;
+} => options.launchMode === "verified_linux_demo";
 
 const spawnLauncher = async (
   command: string,
