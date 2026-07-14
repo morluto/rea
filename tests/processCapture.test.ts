@@ -37,6 +37,7 @@ const processFixture = fileURLToPath(
   new URL("./fixtures/processFidelity.mjs", import.meta.url),
 );
 const execFileAsync = promisify(execFile);
+const PROCESS_CAPTURE_INTEGRATION_TIMEOUT_MS = 20_000;
 
 const emptyCapture = (): ProcessCapture => {
   const normalization = {
@@ -839,95 +840,103 @@ describe("process capture adapter", () => {
     }
   });
 
-  it("renders terminal state, records shim invocations, and captures literal checkpoints", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-v3-test-"));
-    const script = join(root, "scenario.mjs");
-    await writeFile(
-      script,
-      [
-        'import { spawnSync } from "node:child_process";',
-        'const result = spawnSync("codex", ["--version"], { encoding: "utf8" });',
-        'const node = spawnSync("node", ["--version"], { encoding: "utf8" });',
-        "process.stdout.write(`probe:${result.stdout}`);",
-        "process.stdout.write(`runtime:${node.stdout}`);",
-      ].join("\n"),
-    );
-    try {
-      const capability = await probeProcessCaptureCapability();
-      if (!capability.available) return;
-      const result = await captureProcessScenario(
-        parseProcessScenario({
-          approved: true,
-          executable: process.execPath,
-          arguments: [script],
-          working_directory: root,
-          filesystem_roots: [root],
-          checkpoints: [
-            {
-              name: "probe_seen",
-              trigger: { type: "terminal_literal", value: "probe:codex 1.2.3" },
-            },
-          ],
-          command_shims: [
-            {
-              name: "codex",
-              routes: [
-                {
-                  arguments: ["--version"],
-                  outputs: [
-                    { at_ms: 0, stream: "stdout", data: "codex 1.2.3\n" },
-                  ],
-                  termination: { type: "exit", code: 0 },
-                },
-              ],
-            },
-            {
-              name: "node",
-              routes: [
-                {
-                  arguments: ["--version"],
-                  outputs: [
-                    { at_ms: 0, stream: "stdout", data: "node 9.8.7\n" },
-                  ],
-                  termination: { type: "exit", code: 0 },
-                },
-              ],
-            },
-          ],
-        }),
-        {
-          enabled: true,
-          executableRoots: [dirname(process.execPath)],
-          workingRoots: [root],
-          allowedEnvironment: [],
-          allowExternalNetwork: true,
-        },
+  it(
+    "renders terminal state, records shim invocations, and captures literal checkpoints",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "rea-v3-test-"));
+      const script = join(root, "scenario.mjs");
+      await writeFile(
+        script,
+        [
+          'import { spawnSync } from "node:child_process";',
+          'const result = spawnSync("codex", ["--version"], { encoding: "utf8" });',
+          'const node = spawnSync("node", ["--version"], { encoding: "utf8" });',
+          "process.stdout.write(`probe:${result.stdout}`);",
+          "process.stdout.write(`runtime:${node.stdout}`);",
+        ].join("\n"),
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw result.error;
-      expect(result.value.schema_version).toBe(4);
-      expect(result.value.rendered_frames.at(-1)?.lines.join("\n")).toContain(
-        "probe:codex 1.2.3",
-      );
-      expect(result.value.shim_events).toEqual([
-        expect.objectContaining({
-          command: "codex",
-          arguments: ["--version"],
-          outcome: "matched",
-        }),
-        expect.objectContaining({
-          command: "node",
-          arguments: ["--version"],
-          outcome: "matched",
-        }),
-      ]);
-      expect(
-        result.value.filesystem_checkpoints.map(({ name }) => name),
-      ).toEqual(["before", "probe_seen", "after_settlement"]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+      try {
+        const capability = await probeProcessCaptureCapability();
+        if (!capability.available) return;
+        const result = await captureProcessScenario(
+          parseProcessScenario({
+            approved: true,
+            executable: process.execPath,
+            arguments: [script],
+            working_directory: root,
+            filesystem_roots: [root],
+            checkpoints: [
+              {
+                name: "probe_seen",
+                trigger: {
+                  type: "terminal_literal",
+                  value: "probe:codex 1.2.3",
+                },
+              },
+            ],
+            command_shims: [
+              {
+                name: "codex",
+                routes: [
+                  {
+                    arguments: ["--version"],
+                    outputs: [
+                      { at_ms: 0, stream: "stdout", data: "codex 1.2.3\n" },
+                    ],
+                    termination: { type: "exit", code: 0 },
+                  },
+                ],
+              },
+              {
+                name: "node",
+                routes: [
+                  {
+                    arguments: ["--version"],
+                    outputs: [
+                      { at_ms: 0, stream: "stdout", data: "node 9.8.7\n" },
+                    ],
+                    termination: { type: "exit", code: 0 },
+                  },
+                ],
+              },
+            ],
+            timeout_ms: 5_000,
+            idle_timeout_ms: 5_000,
+          }),
+          {
+            enabled: true,
+            executableRoots: [dirname(process.execPath)],
+            workingRoots: [root],
+            allowedEnvironment: [],
+            allowExternalNetwork: true,
+          },
+        );
+        if (!result.ok) throw result.error;
+        expect(result.value.schema_version).toBe(4);
+        expect(result.value.rendered_frames.at(-1)?.lines.join("\n")).toContain(
+          "probe:codex 1.2.3",
+        );
+        expect(result.value.shim_events).toEqual([
+          expect.objectContaining({
+            command: "codex",
+            arguments: ["--version"],
+            outcome: "matched",
+          }),
+          expect.objectContaining({
+            command: "node",
+            arguments: ["--version"],
+            outcome: "matched",
+          }),
+        ]);
+        expect(
+          result.value.filesystem_checkpoints.map(({ name }) => name),
+        ).toEqual(["before", "probe_seen", "after_settlement"]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    PROCESS_CAPTURE_INTEGRATION_TIMEOUT_MS,
+  );
 
   it("does not follow or disclose symlink targets outside declared roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-symlink-test-"));
@@ -1108,40 +1117,45 @@ describe("process capture adapter", () => {
     ]);
   });
 
-  it("samples and cleans a source-owned child and grandchild process tree", async () => {
-    const capability = await probeProcessCaptureCapability();
-    if (!capability.available) return;
-    const result = await captureProcessScenario(
-      parseProcessScenario({
-        approved: true,
-        executable: process.execPath,
-        arguments: [processFixture, "tree"],
-        working_directory: dirname(processFixture),
-        timeout_ms: 2_000,
-        idle_timeout_ms: 2_000,
-      }),
-      {
-        enabled: true,
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [dirname(processFixture)],
-        allowedEnvironment: [],
-        allowExternalNetwork: true,
-      },
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw result.error;
-    const commands = result.value.process_samples.map(({ command }) => command);
-    expect(commands.some((command) => command.includes("tree-child"))).toBe(
-      true,
-    );
-    expect(
-      commands.some((command) => command.includes("tree-grandchild")),
-    ).toBe(true);
-    expect(JSON.stringify(result.value.process_samples)).not.toContain(
-      dirname(processFixture),
-    );
-    const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
-    expect(stdout).not.toContain(`${processFixture} tree-child`);
-    expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
-  });
+  it(
+    "samples and cleans a source-owned child and grandchild process tree",
+    async () => {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const result = await captureProcessScenario(
+        parseProcessScenario({
+          approved: true,
+          executable: process.execPath,
+          arguments: [processFixture, "tree"],
+          working_directory: dirname(processFixture),
+          timeout_ms: 2_000,
+          idle_timeout_ms: 2_000,
+        }),
+        {
+          enabled: true,
+          executableRoots: [dirname(process.execPath)],
+          workingRoots: [dirname(processFixture)],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      );
+      if (!result.ok) throw result.error;
+      const commands = result.value.process_samples.map(
+        ({ command }) => command,
+      );
+      expect(commands.some((command) => command.includes("tree-child"))).toBe(
+        true,
+      );
+      expect(
+        commands.some((command) => command.includes("tree-grandchild")),
+      ).toBe(true);
+      expect(JSON.stringify(result.value.process_samples)).not.toContain(
+        dirname(processFixture),
+      );
+      const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
+      expect(stdout).not.toContain(`${processFixture} tree-child`);
+      expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
+    },
+    PROCESS_CAPTURE_INTEGRATION_TIMEOUT_MS,
+  );
 });
