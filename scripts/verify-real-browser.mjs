@@ -18,6 +18,7 @@ import {
   compareWebScreenshotsInputSchema,
 } from "../dist/domain/webScreenshot.js";
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
+import { startPageCdpProxy } from "./fixtures/page-cdp-proxy.mjs";
 
 const SECRET_VALUES = [
   "network-secret-value",
@@ -31,11 +32,15 @@ const executable = await browserExecutable();
 const profile = await mkdtemp(join(tmpdir(), "rea-real-browser-"));
 const site = await startBrowserVerifierSite();
 let browser;
+let pageProxy;
 try {
   browser = spawn(
     executable,
     [
       "--headless=new",
+      ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
+        ? ["--no-sandbox"]
+        : []),
       "--remote-debugging-address=127.0.0.1",
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
@@ -43,6 +48,7 @@ try {
       "--no-default-browser-check",
       "--disable-background-networking",
       "--disable-component-update",
+      "--disable-dev-shm-usage",
       "--disable-sync",
       "--metrics-recording-only",
       `${site.origin}/app?startup=browser-secret-value`,
@@ -191,6 +197,9 @@ try {
   )
     throw new Error("Real Chrome same-origin SPA timeline was missing");
 
+  pageProxy = await startPageCdpProxy(endpoint);
+  await verifyPageScopedTransport(provider, pageProxy, site.origin);
+
   process.stdout.write(
     `${JSON.stringify({
       browser: observed.value.browser.product,
@@ -205,11 +214,13 @@ try {
       bundleScripts: bundle.value.capture.scripts_analyzed,
       sourceMaps: bundle.value.observations.source_maps.processed,
       sessionEvents: session.value.timeline.length,
+      pageScopedTransport: true,
       screenshotBytes: screenshot.value.artifact.bytes,
       verified: true,
     })}\n`,
   );
 } finally {
+  if (pageProxy !== undefined) await pageProxy.close();
   if (browser !== undefined) await stopProcess(browser);
   await site.close();
   await rm(profile, {
@@ -218,6 +229,61 @@ try {
     maxRetries: 10,
     retryDelay: 100,
   });
+}
+
+async function verifyPageScopedTransport(provider, proxy, origin) {
+  const target = await pageTarget(provider, proxy.endpoint, origin);
+  const input = inspectWebPageInputSchema.parse({
+    cdp_endpoint: proxy.endpoint,
+    allowed_origins: [origin],
+    approved: true,
+    target_id: target,
+    observation_ms: 100,
+  });
+  const observed = await provider.inspectPage(input);
+  if (!observed.ok) throw observed.error;
+  if (observed.value.dom.nodes.length < 1)
+    throw new Error("Page-scoped CDP transport returned no DOM nodes");
+
+  const controller = new AbortController();
+  const cancelledPromise = provider.inspectPage(
+    { ...input, observation_ms: 5_000 },
+    { signal: controller.signal },
+  );
+  await delay(100);
+  controller.abort();
+  const cancelled = await cancelledPromise;
+  if (
+    cancelled.ok ||
+    cancelled.error._tag !== "AnalysisCancelledError" ||
+    cancelled.error.operation !== "inspect_web_page"
+  )
+    throw new Error(
+      "Page-scoped CDP cancellation lost its operation semantics",
+    );
+
+  const disconnectedPromise = provider.observeSession(
+    observeWebSessionInputSchema.parse({
+      cdp_endpoint: proxy.endpoint,
+      allowed_origins: [origin],
+      approved: true,
+      target_id: target,
+      observation_ms: 5_000,
+    }),
+  );
+  await delay(100);
+  proxy.disconnectClients();
+  const disconnected = await disconnectedPromise;
+  if (
+    !disconnected.ok ||
+    disconnected.value.window.end_reason !== "target_terminated" ||
+    !disconnected.value.timeline.some(
+      ({ type }) => type === "target_terminated",
+    )
+  )
+    throw new Error(
+      "Page-scoped CDP disconnect was not reported as target_terminated",
+    );
 }
 
 async function browserExecutable() {
@@ -247,7 +313,7 @@ async function browserExecutable() {
 
 async function devtoolsPort(profile, child, stderr) {
   const activePort = join(profile, "DevToolsActivePort");
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     if (child.exitCode !== null)
       throw new Error(`Chrome exited before CDP startup: ${stderr()}`);
     try {

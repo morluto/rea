@@ -1,0 +1,33 @@
+name: Real browser verification
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/real-browser.yml"
+      - "scripts/verify-real-browser.mjs"
+      - "scripts/fixtures/browser-verifier-site.mjs"
+      - "scripts/fixtures/page-cdp-proxy.mjs"
+      - "src/browser/**"
+      - "src/domain/browser*.ts"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:browser
+        env:
+          REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+          REA_BROWSER_NO_SANDBOX: "true"

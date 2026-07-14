@@ -25,7 +25,7 @@ import { boundedSensitiveText } from "./SensitiveTextCapture.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: DiscoverWebMcpToolsInput;
@@ -96,6 +96,7 @@ export const discoverWebMcp = async (
       // CDP sends the enable response before the required toolsAdded replay.
       await delayWithCancellation(
         Math.max(context.input.observation_ms, 25),
+        "discover_webmcp_tools",
         context.signal,
       );
     await assertStableAuthorizedFrame(context, initialUrl, origins);

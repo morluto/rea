@@ -3,7 +3,10 @@ import type {
   WebPageInspection,
 } from "../domain/browserObservation.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import {
+  BrowserObservationError,
+  type BrowserObservationOperation,
+} from "../domain/errors.js";
 import {
   reconcileCapturedWebScript,
   stableWebResources,
@@ -37,7 +40,11 @@ import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 interface CaptureContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
+  readonly operation: Extract<
+    BrowserObservationOperation,
+    "inspect_web_page" | "analyze_web_bundle"
+  >;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: InspectWebPageInput;
@@ -225,7 +232,11 @@ const authorizeObservationWindow = async (
   events.beginAuthorizedFrame(mainFrame.frame_id);
   await enableObservationDomains(connection, sessionId, signal);
   await report(context.progress, 2, "Observing page events");
-  await delayWithCancellation(context.input.observation_ms, signal);
+  await delayWithCancellation(
+    context.input.observation_ms,
+    context.operation,
+    signal,
+  );
   if (events.originViolation)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
 };
@@ -323,14 +334,14 @@ const authorizedFrameTree = async (
         "inspect_web_page",
         "target_not_allowed",
       );
-    await delayWithCancellation(25, context.signal);
+    await delayWithCancellation(25, context.operation, context.signal);
   }
   throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
 };
 
 const enableObservationDomains = async (
   connection: CdpConnection,
-  sessionId: string,
+  sessionId: string | undefined,
   signal?: AbortSignal,
 ): Promise<void> => {
   await connection.send("Runtime.enable", {}, sessionId, signal);

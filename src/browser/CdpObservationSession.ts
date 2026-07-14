@@ -3,7 +3,10 @@ import type {
   ObserveWebSessionInput,
   WebObservationSession,
 } from "../domain/browserSession.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import {
+  AnalysisCancelledError,
+  BrowserObservationError,
+} from "../domain/errors.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -20,7 +23,7 @@ import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 
 interface ObservationContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: ObserveWebSessionInput;
@@ -48,8 +51,12 @@ export const observeCdpSession = async (
     initialUrl,
   );
   const removeListener = context.connection.onEvent((event) => {
-    if (event.sessionId === context.sessionId) capture.ingest(event);
+    if (observationEventMatches(event, context.sessionId))
+      capture.ingest(event);
   });
+  const removeDisconnectListener = context.connection.onDisconnect(() =>
+    capture.targetTerminated(),
+  );
   try {
     await context.connection.send(
       "Page.enable",
@@ -115,6 +122,7 @@ export const observeCdpSession = async (
     };
   } finally {
     removeListener();
+    removeDisconnectListener();
   }
 };
 
@@ -162,8 +170,7 @@ class TimelineCapture {
         break;
       case "Inspector.targetCrashed":
       case "Target.detachedFromTarget":
-        this.#add("target_terminated", params, null, null, "target_terminated");
-        this.end("target_terminated");
+        this.targetTerminated();
         break;
     }
   }
@@ -179,6 +186,12 @@ class TimelineCapture {
     this.#endReason = reason;
     for (const listener of this.#listeners) listener(reason);
     this.#listeners.clear();
+  }
+
+  targetTerminated(): void {
+    if (this.#endReason !== undefined) return;
+    this.#add("target_terminated", {}, null, null, "target_terminated");
+    this.end("target_terminated");
   }
 
   setFinalUrl(rawUrl: string): void {
@@ -300,6 +313,18 @@ class TimelineCapture {
   }
 }
 
+const observationEventMatches = (
+  event: CdpEvent,
+  sessionId: string | undefined,
+): boolean => {
+  if (event.method !== "Target.detachedFromTarget")
+    return event.sessionId === sessionId;
+  return (
+    sessionId !== undefined &&
+    stringValue(recordValue(event.params)?.sessionId) === sessionId
+  );
+};
+
 const waitForWindow = async (
   durationMs: number,
   capture: TimelineCapture,
@@ -321,7 +346,7 @@ const waitForWindow = async (
       settled = true;
       clearTimeout(timer);
       removeEnd();
-      reject(signal?.reason ?? new Error("browser observation cancelled"));
+      reject(new AnalysisCancelledError("observe_web_session"));
     };
     const timer = setTimeout(() => finish("window_elapsed"), durationMs);
     removeEnd = capture.onEnd(finish);
@@ -347,7 +372,7 @@ const authorizedFrame = async (
         "inspect_web_page",
         "target_not_allowed",
       );
-    await delayWithCancellation(25, context.signal);
+    await delayWithCancellation(25, "observe_web_session", context.signal);
   }
   throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
 };

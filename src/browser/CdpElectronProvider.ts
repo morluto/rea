@@ -18,8 +18,16 @@ import {
   type BrowserObservationOperation,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { CdpConnection } from "./CdpConnection.js";
-import { discoverCdpEndpoint, type CdpEndpointTarget } from "./CdpEndpoint.js";
+import {
+  discoverCdpEndpoint,
+  hasCdpTargetWebSocket,
+  type CdpEndpointTarget,
+} from "./CdpEndpoint.js";
+import {
+  closeCdpTargetSession,
+  openCdpTargetSession,
+  type CdpTargetSession,
+} from "./CdpTargetSession.js";
 import { inspectCdpElectronPage } from "./CdpElectronInspection.js";
 import {
   authorizedElectronFile,
@@ -46,13 +54,14 @@ export class CdpElectronProvider implements ElectronObservationPort {
       const roots = await canonicalElectronRoots(input.allowed_file_roots);
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "list_browser_targets",
+        "list_electron_targets",
         options.signal,
       );
       const allowed = [];
       let outsideRoot = 0;
       let unsupportedUrl = 0;
       let nonPage = 0;
+      let unconnectable = 0;
       for (const target of discovery.targets) {
         if (target.type !== "page") {
           nonPage += 1;
@@ -62,6 +71,10 @@ export class CdpElectronProvider implements ElectronObservationPort {
         if (path === undefined) {
           if (isFileUrl(target.url)) outsideRoot += 1;
           else unsupportedUrl += 1;
+          continue;
+        }
+        if (!hasCdpTargetWebSocket(discovery, target)) {
+          unconnectable += 1;
           continue;
         }
         allowed.push({
@@ -96,6 +109,11 @@ export class CdpElectronProvider implements ElectronObservationPort {
           },
           limitations: [
             "Only page targets whose canonical file path is contained by an approved root are listed.",
+            ...(unconnectable === 0
+              ? []
+              : [
+                  `${String(unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
+                ]),
           ],
         }),
       );
@@ -108,13 +126,12 @@ export class CdpElectronProvider implements ElectronObservationPort {
     input: InspectElectronPageInput,
     options: ExecutionOptions = {},
   ): Promise<Result<ElectronPageInspection, AnalysisError>> {
-    let connection: CdpConnection | undefined;
-    let sessionId: string | undefined;
+    let targetSession: CdpTargetSession | undefined;
     try {
       const roots = await canonicalElectronRoots(input.allowed_file_roots);
       const discovery = await discoverCdpEndpoint(
         input.cdp_endpoint,
-        "inspect_web_page",
+        "inspect_electron_page",
         options.signal,
       );
       const target = await authorizeTarget(
@@ -122,22 +139,17 @@ export class CdpElectronProvider implements ElectronObservationPort {
         input.target_id,
         roots,
       );
-      connection = await CdpConnection.connect(
-        discovery.browserWebSocketUrl,
+      targetSession = await openCdpTargetSession(
+        discovery,
+        target,
+        "inspect_electron_page",
         options.signal,
       );
-      const attached = await connection.send(
-        "Target.attachToTarget",
-        { targetId: target.id, flatten: true },
-        undefined,
-        options.signal,
-      );
-      sessionId = attachedSessionId(attached);
       return ok(
         electronPageInspectionSchema.parse(
           await inspectCdpElectronPage({
-            connection,
-            sessionId,
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
             discovery,
             target,
             input,
@@ -151,10 +163,8 @@ export class CdpElectronProvider implements ElectronObservationPort {
     } catch (cause: unknown) {
       return err(providerError(cause, "inspect_electron_page"));
     } finally {
-      if (connection !== undefined) {
-        if (sessionId !== undefined) await cleanup(connection, sessionId);
-        await connection.close();
-      }
+      if (targetSession !== undefined)
+        await closeCdpTargetSession(targetSession, ["Debugger", "Page"]);
     }
   }
 }
@@ -173,35 +183,6 @@ const authorizeTarget = async (
   )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return target;
-};
-
-const attachedSessionId = (value: unknown): string => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("sessionId" in value) ||
-    typeof value.sessionId !== "string" ||
-    value.sessionId.length > 256
-  )
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return value.sessionId;
-};
-
-const cleanup = async (
-  connection: CdpConnection,
-  sessionId: string,
-): Promise<void> => {
-  for (const method of ["Debugger.disable", "Page.disable"])
-    try {
-      await connection.send(method, {}, sessionId);
-    } catch {
-      // Detach remains the final non-destructive cleanup boundary.
-    }
-  try {
-    await connection.send("Target.detachFromTarget", { sessionId });
-  } catch {
-    // Closing REA's socket never closes the Electron target.
-  }
 };
 
 const isFileUrl = (value: string): boolean => {

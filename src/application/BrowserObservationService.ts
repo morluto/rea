@@ -1,7 +1,8 @@
 import type { Evidence } from "../domain/evidence.js";
-import type {
-  InspectWebPageInput,
-  ListBrowserTargetsInput,
+import {
+  isLiteralLoopbackHostname,
+  type InspectWebPageInput,
+  type ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import type { AnalyzeWebBundleInput } from "../domain/webBundleAnalysis.js";
 import type { ObserveWebSessionInput } from "../domain/browserSession.js";
@@ -285,7 +286,7 @@ const browserNetworkScope = (
 ): "loopback" | "external" =>
   allowedOrigins.every((origin) => {
     const hostname = new URL(origin).hostname;
-    return hostname === "127.0.0.1" || hostname === "[::1]";
+    return isLiteralLoopbackHostname(hostname);
   })
     ? "loopback"
     : "external";

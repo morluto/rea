@@ -5,6 +5,7 @@ import {
   AnalysisError,
   AnalysisTimeoutError,
   BrowserObservationError,
+  type BrowserObservationOperation,
 } from "../domain/errors.js";
 
 export interface CdpEvent {
@@ -25,40 +26,54 @@ const COMMAND_TIMEOUT_MS = 5_000;
 const MAX_PAYLOAD_BYTES = 16 * 1_024 * 1_024;
 const MAX_PENDING_COMMANDS = 128;
 
-/** Correlated, bounded JSON-RPC transport for a browser-level CDP socket. */
+/** Correlated, bounded JSON-RPC transport for one CDP target operation. */
 export class CdpConnection {
   readonly #pending = new Map<number, PendingCommand>();
   readonly #listeners = new Set<(event: CdpEvent) => void>();
+  readonly #disconnectListeners = new Set<() => void>();
   #nextId = 1;
   #closed = false;
   #protocolFailed = false;
 
-  private constructor(private readonly socket: WebSocket) {
+  private constructor(
+    private readonly socket: WebSocket,
+    private readonly operation: BrowserObservationOperation,
+  ) {
     socket.on("message", (data) => this.#receive(data));
-    socket.on("close", () => this.#failPending("disconnected"));
-    socket.on("error", () => this.#failPending("disconnected"));
+    socket.on("close", () => this.#disconnect());
+    socket.on("error", () => this.#disconnect());
   }
 
-  /** Connect to one already-validated loopback browser WebSocket. */
+  /** Connect to one already-validated loopback CDP WebSocket. */
   static async connect(
     url: string,
+    operation: BrowserObservationOperation,
     signal?: AbortSignal,
   ): Promise<CdpConnection> {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError("inspect_web_page");
+    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
     const socket = new WebSocket(url, {
       handshakeTimeout: CONNECT_TIMEOUT_MS,
       maxPayload: MAX_PAYLOAD_BYTES,
       perMessageDeflate: false,
     });
-    await waitForOpen(socket, signal);
-    return new CdpConnection(socket);
+    await waitForOpen(socket, operation, signal);
+    return new CdpConnection(socket, operation);
   }
 
   /** Subscribe to validated CDP event envelopes. */
   onEvent(listener: (event: CdpEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  /** Subscribe to an unexpected transport loss while an operation is active. */
+  onDisconnect(listener: () => void): () => void {
+    if (this.#closed) {
+      listener();
+      return () => undefined;
+    }
+    this.#disconnectListeners.add(listener);
+    return () => this.#disconnectListeners.delete(listener);
   }
 
   /** Execute one bounded command, optionally within a flat target session. */
@@ -69,13 +84,13 @@ export class CdpConnection {
     signal?: AbortSignal,
   ): Promise<unknown> {
     if (this.#protocolFailed)
-      throw new BrowserObservationError("inspect_web_page", "protocol_error");
+      throw new BrowserObservationError(this.operation, "protocol_error");
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
-      throw new BrowserObservationError("inspect_web_page", "disconnected");
+      throw new BrowserObservationError(this.operation, "disconnected");
     if (this.#pending.size >= MAX_PENDING_COMMANDS)
-      throw new BrowserObservationError("inspect_web_page", "payload_limit");
+      throw new BrowserObservationError(this.operation, "payload_limit");
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError("inspect_web_page");
+      throw new AnalysisCancelledError(this.operation);
     const id = this.#nextId;
     this.#nextId += 1;
     return await new Promise((resolve, reject) => {
@@ -85,15 +100,13 @@ export class CdpConnection {
         clearTimeout(pending.timer);
         pending.removeAbort();
         this.#pending.delete(id);
-        reject(new AnalysisCancelledError("inspect_web_page"));
+        reject(new AnalysisCancelledError(this.operation));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);
         this.#pending.delete(id);
-        reject(
-          new AnalysisTimeoutError("inspect_web_page", COMMAND_TIMEOUT_MS),
-        );
+        reject(new AnalysisTimeoutError(this.operation, COMMAND_TIMEOUT_MS));
       }, COMMAND_TIMEOUT_MS);
       this.#pending.set(id, {
         resolve,
@@ -106,7 +119,7 @@ export class CdpConnection {
           id,
           method,
           params,
-          ...(sessionId ? { sessionId } : {}),
+          ...(sessionId === undefined ? {} : { sessionId }),
         }),
         (error) => {
           if (error === undefined || error === null) return;
@@ -114,7 +127,7 @@ export class CdpConnection {
           if (pending === undefined) return;
           this.#complete(id, pending);
           reject(
-            new BrowserObservationError("inspect_web_page", "disconnected", {
+            new BrowserObservationError(this.operation, "disconnected", {
               cause: error,
             }),
           );
@@ -191,7 +204,7 @@ export class CdpConnection {
     this.#complete(id, pending);
     if ("error" in message) {
       pending.reject(
-        new BrowserObservationError("inspect_web_page", "protocol_error"),
+        new BrowserObservationError(this.operation, "protocol_error"),
       );
       return;
     }
@@ -209,8 +222,16 @@ export class CdpConnection {
     else this.#protocolFailed = true;
     for (const [id, pending] of this.#pending) {
       this.#complete(id, pending);
-      pending.reject(new BrowserObservationError("inspect_web_page", reason));
+      pending.reject(new BrowserObservationError(this.operation, reason));
     }
+  }
+
+  #disconnect(): void {
+    const wasClosed = this.#closed;
+    this.#failPending("disconnected");
+    if (wasClosed) return;
+    for (const listener of this.#disconnectListeners) listener();
+    this.#disconnectListeners.clear();
   }
 }
 
@@ -226,13 +247,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const waitForOpen = async (
   socket: WebSocket,
+  operation: BrowserObservationOperation,
   signal?: AbortSignal,
 ): Promise<void> =>
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       terminateSocket(socket);
-      reject(new AnalysisTimeoutError("inspect_web_page", CONNECT_TIMEOUT_MS));
+      reject(new AnalysisTimeoutError(operation, CONNECT_TIMEOUT_MS));
     }, CONNECT_TIMEOUT_MS);
     const onOpen = (): void => {
       cleanup();
@@ -242,17 +264,15 @@ const waitForOpen = async (
       cleanup();
       reject(
         signal?.aborted === true
-          ? new AnalysisCancelledError("inspect_web_page")
-          : new BrowserObservationError(
-              "inspect_web_page",
-              "endpoint_unreachable",
-              { cause },
-            ),
+          ? new AnalysisCancelledError(operation)
+          : new BrowserObservationError(operation, "endpoint_unreachable", {
+              cause,
+            }),
       );
     };
     const onAbort = (): void => {
       terminateSocket(socket);
-      onFailure(new AnalysisCancelledError("inspect_web_page"));
+      onFailure(new AnalysisCancelledError(operation));
     };
     const cleanup = (): void => {
       clearTimeout(timer);

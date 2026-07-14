@@ -29,7 +29,7 @@ import {
 
 interface ElectronContext {
   readonly connection: CdpConnection;
-  readonly sessionId: string;
+  readonly sessionId: string | undefined;
   readonly discovery: CdpEndpointDiscovery;
   readonly target: CdpEndpointTarget;
   readonly input: InspectElectronPageInput;
@@ -95,7 +95,11 @@ export const inspectCdpElectronPage = async (
       context.sessionId,
       context.signal,
     );
-    await delayWithCancellation(context.input.observation_ms, context.signal);
+    await delayWithCancellation(
+      context.input.observation_ms,
+      "inspect_electron_page",
+      context.signal,
+    );
     await report(context.progress, 2, "Capturing Electron structure");
     const resources = await captureResources(context, roots, completeness);
     const dom = await captureDom(context, roots, completeness);

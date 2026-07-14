@@ -114,6 +114,56 @@ describe("CdpElectronProvider", () => {
     });
   });
 
+  it("inspects a page-scoped Electron endpoint without browser attachment", async () => {
+    const root = await electronFixture();
+    const index = join(root, "index.html");
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(index).href,
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_file_roots: [root],
+        target_id: "electron-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.target.file_path).toBe(index);
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Target.attachToTarget",
+    );
+    expect(
+      browser.commands.every(({ sessionId }) => sessionId === undefined),
+    ).toBe(true);
+  });
+
+  it("maps cancelled Electron discovery to the Electron operation", async () => {
+    const root = await electronFixture();
+    const controller = new AbortController();
+    controller.abort();
+    const result = await new CdpElectronProvider().listTargets(
+      listElectronTargetsInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        allowed_file_roots: [root],
+        approved: true,
+      }),
+      { signal: controller.signal },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "list_electron_targets",
+      },
+    });
+  });
+
   it("captures Electron script source only after separate approval", async () => {
     const root = await electronFixture();
     const browser = await startFakeCdpBrowser({
