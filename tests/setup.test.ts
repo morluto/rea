@@ -297,6 +297,31 @@ describe("setup workflow", () => {
     expect(result.remediation).not.toContain("internal_client_key");
   });
 
+  it("records every detected client outcome after an earlier failure", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      { name: "first", configPath: "/first.json" },
+      { name: "second", configPath: "/second.json" },
+      { name: "third", configPath: "/third.json" },
+    ];
+    host.clientResults.set("first", { status: "failed", reason: "write" });
+    host.clientResults.set("second", { status: "configured" });
+    host.clientResults.set("third", { status: "failed", reason: "readback" });
+
+    const result = await runSetup(options(true), host);
+
+    expect(host.configurations).toBe(3);
+    expect(result.clients).toEqual({
+      first: { status: "failed", reason: "write" },
+      second: { status: "configured" },
+      third: { status: "failed", reason: "readback" },
+    });
+    expect(result.appliedActions).toEqual(["configured_second"]);
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toContain("could not be updated");
+  });
+
   it("explains skill installation recovery", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
