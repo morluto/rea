@@ -92,6 +92,9 @@ describe("CdpBrowserProvider", () => {
     expect(result.value.scripts.items[0]?.script_key).toMatch(
       /^scr_[a-f0-9]{64}$/u,
     );
+    expect(result.value.scripts.items[0]?.source_map_url).toBe(
+      `${browser.allowedOrigin}/app.js.map?token=%5BREDACTED%5D`,
+    );
     expect(result.value.scripts.items[0]?.resource_reconciliation).toEqual({
       status: "exact",
       resource_key: result.value.resources[0]?.resource_key,
