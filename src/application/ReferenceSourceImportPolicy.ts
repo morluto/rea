@@ -12,6 +12,7 @@ import {
   type ReferenceSourceImportError,
   type ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
+import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
 /** Validated, authorized inputs ready for filesystem traversal. */
 export interface PreparedReferenceSourceImport {
@@ -66,8 +67,10 @@ const authorizeRoot = async (
         failure("invalid-root", "Reference source root is not a directory"),
       );
     const canonicalRoot = await realpath(resolve(requestedRoot));
-    for (const approvedRoot of approvedRoots) {
-      const canonicalApproved = await realpath(resolve(approvedRoot));
+    const canonicalApprovedRoots = await canonicalizeConfiguredRoots(
+      approvedRoots.map((approvedRoot) => resolve(approvedRoot)),
+    );
+    for (const canonicalApproved of canonicalApprovedRoots) {
       if (withinRoot(canonicalApproved, canonicalRoot))
         return ok(canonicalRoot);
     }

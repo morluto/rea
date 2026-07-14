@@ -6,6 +6,7 @@ import writeFileAtomic from "write-file-atomic";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import { EvidenceFileError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
 /** Read bounded JSON data from a regular file beneath an approved root. */
 export const readBoundedJson = async (
@@ -82,8 +83,9 @@ const isApproved = async (
   candidate: string,
   roots: readonly string[],
 ): Promise<boolean> => {
-  for (const configuredRoot of roots) {
-    const root = await realpath(resolve(configuredRoot));
+  for (const root of await canonicalizeConfiguredRoots(
+    roots.map((configuredRoot) => resolve(configuredRoot)),
+  )) {
     const relation = relative(root, candidate);
     if (
       relation === "" ||

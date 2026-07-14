@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, stat } from "node:fs/promises";
+import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,6 +57,17 @@ describe("project permission store", () => {
     expect((await writeProjectPermissionStore(path, first, [])).ok).toBe(true);
 
     expect(await readProjectPermissionStore(path, second)).toMatchObject({
+      ok: false,
+      error: { reason: "invalid" },
+    });
+  });
+
+  it("classifies malformed JSON as an invalid store", async () => {
+    const project = await mkdtemp(join(tmpdir(), "rea-policy-invalid-"));
+    const path = join(project, "permissions.json");
+    await writeFile(path, "{", { mode: 0o600 });
+
+    expect(await readProjectPermissionStore(path, project)).toMatchObject({
       ok: false,
       error: { reason: "invalid" },
     });

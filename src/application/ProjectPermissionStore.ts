@@ -104,9 +104,14 @@ export const readProjectPermissionStore = async (
     const metadata = await stat(path);
     if ((metadata.mode & 0o077) !== 0)
       return err(new ProjectPermissionStoreError("not_owner_only"));
-    const parsed = storeSchema.safeParse(
-      JSON.parse(await readFile(path, "utf8")),
-    );
+    const encoded = await readFile(path, "utf8");
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(encoded);
+    } catch (cause: unknown) {
+      return err(new ProjectPermissionStoreError("invalid", { cause }));
+    }
+    const parsed = storeSchema.safeParse(decoded);
     if (
       !parsed.success ||
       parsed.data.project_id !== project.value.id ||

@@ -8,6 +8,7 @@ import {
   type ArtifactIntegrityPolicy,
   type ArtifactInventorySnapshot,
 } from "./ArtifactInventory.js";
+import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
 /** Resolve, authorize, and scan one artifact without a second path resolution. */
 export const scanAuthorizedArtifactInventory = async (
@@ -24,7 +25,7 @@ export const scanAuthorizedArtifactInventory = async (
     );
   const [path, approved] = await Promise.all([
     realpath(inputPath),
-    Promise.all(roots.map(async (root) => realpath(root))),
+    canonicalizeConfiguredRoots(roots),
   ]);
   if (!approved.some((root) => withinRoot(root, path)))
     throw new ArtifactReaderFailure(

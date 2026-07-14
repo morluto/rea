@@ -18,6 +18,13 @@ if (mode === "interactive") {
   process.stdin.on("data", (value) => {
     process.stdout.write(`input:${value.toString()} unicode:雪\n`);
   });
+} else if (mode === "silent-interactive") {
+  process.stdin.setRawMode?.(true);
+  process.stdin.resume();
+  process.stdin.on("data", (value) => {
+    process.stdout.write(`input:${value.toString()}\n`);
+    process.exit(0);
+  });
 } else if (mode === "partial") {
   process.stdout.write("partial-");
   setTimeout(() => {

@@ -130,20 +130,6 @@ const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
   }
 };
 
-const startScenarioEvents = (options: ScenarioEventOptions): (() => void) => {
-  let eventsStarted = false;
-  return () => {
-    if (eventsStarted) return;
-    eventsStarted = true;
-    scheduleScenarioEvents(options);
-  };
-};
-
-const eventsRequireReadiness = (scenario: ProcessScenario): boolean =>
-  scenario.events.some(
-    (event) => event.type === "input" || event.type === "resize",
-  );
-
 interface StartedCaptureRuntime {
   readonly replay: LoopbackReplay;
   readonly renderer: TerminalRenderer;
@@ -243,21 +229,19 @@ const startCaptureRuntime = async (options: {
       rows: scenario.terminal.rows,
       name: "xterm-256color",
     });
-    const startEvents = startScenarioEvents({
-      ...options,
-      getTerminal: () => terminal,
-      renderer,
-      started,
-    });
-    if (!eventsRequireReadiness(scenario)) startEvents();
     const framesTruncated = captureTerminalFrames({
       ...options,
       terminal,
       started,
       onOutput: () => (lastOutput = Date.now()),
-      onFirstOutput: startEvents,
       renderer,
       checkpoints,
+    });
+    scheduleScenarioEvents({
+      ...options,
+      getTerminal: () => terminal,
+      renderer,
+      started,
     });
     const stopSampler = startProcessSampler(
       terminal.pid,
