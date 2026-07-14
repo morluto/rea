@@ -32,6 +32,54 @@ afterEach(async () => {
 });
 
 describe("target-free MCP lifecycle", () => {
+  it("reopens replaced content at one canonical path through MCP", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-mcp-replaced-target-"));
+    const targetPath = join(directory, "mutable.hop");
+    await writeFile(targetPath, "first");
+    const closed: string[] = [];
+    const session = new BinarySession((target) => client(target.path, closed));
+    const server = createServer(session, session, { logger: silentLogger });
+    const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server);
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+
+    const first = structured(
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: targetPath },
+      }),
+    ).result;
+    await writeFile(targetPath, "second");
+    const second = structured(
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: targetPath },
+      }),
+    ).result;
+
+    expect(first).toMatchObject({ path: targetPath });
+    expect(second).toMatchObject({ path: targetPath });
+    expect(z.object({ sha256: z.string() }).parse(second).sha256).not.toBe(
+      z.object({ sha256: z.string() }).parse(first).sha256,
+    );
+    expect(closed).toEqual([targetPath]);
+    expect(
+      z
+        .object({ result: z.object({ path: z.string(), sha256: z.string() }) })
+        .parse(
+          structured(
+            await mcp.callTool({ name: "binary_session", arguments: {} }),
+          ),
+        ).result,
+    ).toEqual({
+      path: targetPath,
+      sha256: z.object({ sha256: z.string() }).parse(second).sha256,
+    });
+  });
+
   it("reports no-target, opens, analyzes, switches, reports status, and closes", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-mcp-session-"));
     const first = join(directory, "first.hop");
