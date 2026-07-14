@@ -77,7 +77,8 @@
     "verify:package": "npm run build && node scripts/verify-package.mjs",
     "verify:published": "node scripts/verify-published-package.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
-    "docs:generate": "typedoc",
+    "docs:generate": "npm run build && typedoc && node scripts/generate-error-schema.mjs",
+    "docs:error-schema": "npm run build && node scripts/generate-error-schema.mjs",
     "prepack": "npm run build",
     "prepare": "husky",
     "rebuild:native": "node scripts/rebuild-native.mjs"
