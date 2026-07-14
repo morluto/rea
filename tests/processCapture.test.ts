@@ -19,7 +19,10 @@ import {
 } from "../src/application/ProcessCaptureLifecycle.js";
 import { ProcessCheckpoints } from "../src/application/ProcessCheckpoints.js";
 import { normalizeProcessSamples } from "../src/application/ProcessNormalization.js";
-import { readLinuxChildren } from "../src/application/ProcessSampling.js";
+import {
+  isInitializedPtyRoot,
+  readLinuxChildren,
+} from "../src/application/ProcessSampling.js";
 import { TerminalRenderer } from "../src/application/TerminalRenderer.js";
 import {
   authorizeProcessScenario,
@@ -209,6 +212,43 @@ describe("process capture domain", () => {
           ),
       }),
     ).toEqual([201, 202, 203]);
+  });
+
+  it("admits PTY samples only after stable session and token setup", () => {
+    const initialized = {
+      pid: 100,
+      parent_pid: 10,
+      process_group_id: 100,
+      session_id: 100,
+      startTime: "200",
+    };
+    expect(
+      isInitializedPtyRoot({
+        rootPid: 100,
+        expectedRunId: "run-token",
+        before: { ...initialized, process_group_id: 10, session_id: 10 },
+        observedRunId: undefined,
+        after: initialized,
+      }),
+    ).toBe(false);
+    expect(
+      isInitializedPtyRoot({
+        rootPid: 100,
+        expectedRunId: "run-token",
+        before: initialized,
+        observedRunId: "run-token",
+        after: { ...initialized, startTime: "201" },
+      }),
+    ).toBe(false);
+    expect(
+      isInitializedPtyRoot({
+        rootPid: 100,
+        expectedRunId: "run-token",
+        before: initialized,
+        observedRunId: "run-token",
+        after: initialized,
+      }),
+    ).toBe(true);
   });
 
   it("keeps interaction and shim residual uncertainty in separate scopes", () => {
@@ -1133,6 +1173,9 @@ describe("process capture adapter", () => {
     const commands = result.value.process_samples.map(({ command }) => command);
     expect(commands.some((command) => command.includes("tree-child"))).toBe(
       true,
+    );
+    expect(commands.some((command) => command.includes("forks.js"))).toBe(
+      false,
     );
     expect(
       commands.some((command) => command.includes("tree-grandchild")),

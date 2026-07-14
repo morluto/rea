@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProcessSample } from "../domain/processCapture.js";
+import { readProcessRunId } from "./ProcessOwnership.js";
 
 const execFileAsync = promisify(execFile);
 const PROC_READ_CONCURRENCY = 64;
@@ -26,6 +27,29 @@ interface SampleProcessContext {
   readonly identities: Map<number, string>;
   readonly signal: AbortSignal;
 }
+
+type ProcessIdentitySnapshot = Pick<
+  ProcessRow,
+  "pid" | "parent_pid" | "process_group_id" | "session_id" | "startTime"
+>;
+
+/** Prove that forkpty completed session setup and installed the run token. */
+export const isInitializedPtyRoot = (options: {
+  readonly rootPid: number;
+  readonly expectedRunId: string;
+  readonly before: ProcessIdentitySnapshot;
+  readonly observedRunId: string | undefined;
+  readonly after: ProcessIdentitySnapshot;
+}): boolean =>
+  options.before.pid === options.rootPid &&
+  options.before.process_group_id === options.rootPid &&
+  options.before.session_id === options.rootPid &&
+  options.after.pid === options.rootPid &&
+  options.after.parent_pid === options.before.parent_pid &&
+  options.after.process_group_id === options.rootPid &&
+  options.after.session_id === options.rootPid &&
+  options.after.startTime === options.before.startTime &&
+  options.observedRunId === options.expectedRunId;
 
 const isExpectedProcReadFailure = (cause: unknown): boolean =>
   cause instanceof Error &&
@@ -305,6 +329,47 @@ const readPsRows = async (
     .sort((left, right) => left.pid - right.pid);
 };
 
+const readRootIdentity = async (
+  rootPid: number,
+  signal: AbortSignal,
+): Promise<ProcessRow | undefined> =>
+  process.platform === "linux"
+    ? readProcessStat(rootPid, signal)
+    : (await readPsRows(signal)).find(({ pid }) => pid === rootPid);
+
+const inspectInitializedPtyRoot = async (
+  rootPid: number,
+  runId: string,
+  signal: AbortSignal,
+): Promise<{ readonly startTime: string | undefined } | undefined> => {
+  const before = await readRootIdentity(rootPid, signal);
+  if (
+    before === undefined ||
+    before.process_group_id !== rootPid ||
+    before.session_id !== rootPid
+  )
+    return undefined;
+  let observedRunId: string | undefined;
+  try {
+    observedRunId = await readProcessRunId(rootPid);
+  } catch {
+    return undefined;
+  }
+  const after = await readRootIdentity(rootPid, signal);
+  if (
+    after === undefined ||
+    !isInitializedPtyRoot({
+      rootPid,
+      expectedRunId: runId,
+      before,
+      observedRunId,
+      after,
+    })
+  )
+    return undefined;
+  return { startTime: after.startTime };
+};
+
 const samplePs = async (
   context: SampleProcessContext,
 ): Promise<readonly ProcessRow[]> => {
@@ -375,31 +440,47 @@ const sampleProcesses = async (
 };
 
 /** Start bounded process-tree sampling and expose an awaited stop. */
-export const startProcessSampler = (
-  rootPid: number,
-  started: number,
-  limit: number,
-  samples: ProcessSample[],
-): (() => Promise<{ readonly partial: boolean }>) => {
+export const startProcessSampler = (options: {
+  readonly rootPid: number;
+  readonly runId: string;
+  readonly started: number;
+  readonly limit: number;
+  readonly samples: ProcessSample[];
+}): (() => Promise<{ readonly partial: boolean }>) => {
+  const { rootPid, runId, started, limit, samples } = options;
   const identities = new Map<number, string>();
   const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
   let stopped = false;
   let abortCurrent: (() => void) | undefined;
   let partial = false;
+  let rootInitialized = false;
 
   const sample = (): void => {
     if (stopped || pending !== undefined) return;
 
     const controller = new AbortController();
     abortCurrent = () => controller.abort();
-    pending = sampleProcesses({
-      rootPid,
-      elapsedMs: Date.now() - started,
-      limit: limit + 1,
-      identities,
-      signal: controller.signal,
-    })
+    pending = (async () => {
+      if (!rootInitialized) {
+        const identity = await inspectInitializedPtyRoot(
+          rootPid,
+          runId,
+          controller.signal,
+        );
+        if (identity === undefined) return [];
+        if (identity.startTime !== undefined)
+          identities.set(rootPid, identity.startTime);
+        rootInitialized = true;
+      }
+      return sampleProcesses({
+        rootPid,
+        elapsedMs: Date.now() - started,
+        limit: limit + 1,
+        identities,
+        signal: controller.signal,
+      });
+    })()
       .then((values) => {
         for (const value of values) {
           const observation = JSON.stringify({
