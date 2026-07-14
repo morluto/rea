@@ -4,26 +4,53 @@ import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 
+const canonicalSkillFiles = async (
+  home: string,
+): Promise<{ readonly content: string; readonly destination: string }> => ({
+  destination: join(
+    home,
+    ".agents/skills",
+    PRODUCT_IDENTITY.skillName,
+    "SKILL.md",
+  ),
+  content: await readFile(
+    new URL(
+      `../../skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+});
+
+/** Report whether setup would change the managed REA skill. */
+export const canonicalSkillNeedsInstall = async (
+  home: string,
+): Promise<boolean> => {
+  try {
+    const { content, destination } = await canonicalSkillFiles(home);
+    return (await readFile(destination, "utf8")) !== content;
+  } catch {
+    return true;
+  }
+};
+
 /** Transactionally install or upgrade the versioned canonical REA skill. */
 export const installCanonicalSkill = async (
   home: string,
 ): Promise<"installed" | "unchanged" | "failed"> => {
-  const destination = join(
+  let destination = join(
     home,
     ".agents/skills",
     PRODUCT_IDENTITY.skillName,
     "SKILL.md",
   );
-  const backup = `${destination}.rea.backup`;
+  let backup = `${destination}.rea.backup`;
   let original: string | undefined;
   try {
-    const content = await readFile(
-      new URL(
-        `../../skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
-        import.meta.url,
-      ),
-      "utf8",
-    );
+    const canonical = await canonicalSkillFiles(home);
+    destination = canonical.destination;
+    backup = `${destination}.rea.backup`;
+    const { content } = canonical;
     original = await readFile(destination, "utf8").catch(() => undefined);
     if (original === content) return "unchanged";
     await mkdir(dirname(destination), { recursive: true });

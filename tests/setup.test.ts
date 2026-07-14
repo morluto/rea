@@ -23,6 +23,7 @@ class FakeSetupHost implements SetupHost {
   clientResults = new Map<string, ClientConfigurationResult>();
   hopperInstalls = 0;
   configurations = 0;
+  skillInstalls = 0;
   doctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
   unsupportedHopperVersion = false;
@@ -62,8 +63,12 @@ class FakeSetupHost implements SetupHost {
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
   };
-  installSkill = (): Promise<"installed" | "unchanged" | "failed"> =>
-    Promise.resolve(this.skill);
+  skillNeedsInstall = (): Promise<boolean> =>
+    Promise.resolve(this.skill !== "unchanged");
+  installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {
+    this.skillInstalls += 1;
+    return Promise.resolve(this.skill);
+  };
   doctor = (): Promise<{
     healthy: boolean;
     hopperPath?: string;
@@ -216,6 +221,17 @@ describe("setup workflow", () => {
       "installed_skill",
     ]);
     expect(host.hopperInstalls).toBe(0);
+  });
+
+  it("omits an aligned managed skill from an otherwise empty plan", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    const result = await runSetup(options(false), host);
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions).toEqual([]);
+    expect(result.appliedActions).toEqual([]);
+    expect(host.skillInstalls).toBe(0);
   });
 
   it("installs missing Linux demo dependencies for existing Hopper", async () => {

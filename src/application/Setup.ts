@@ -25,7 +25,10 @@ import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 export type { SetupClient } from "./SupportedClients.js";
-import { installCanonicalSkill } from "./SetupSkill.js";
+import {
+  canonicalSkillNeedsInstall,
+  installCanonicalSkill,
+} from "./SetupSkill.js";
 import { setupPlan } from "./SetupPlan.js";
 import {
   setupInstallFailure,
@@ -34,7 +37,10 @@ import {
 } from "./SetupInstallFailure.js";
 export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 
-export { installCanonicalSkill } from "./SetupSkill.js";
+export {
+  canonicalSkillNeedsInstall,
+  installCanonicalSkill,
+} from "./SetupSkill.js";
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
@@ -69,6 +75,7 @@ export interface SetupHost {
     hopperPath: string | undefined,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
+  skillNeedsInstall(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
@@ -131,17 +138,10 @@ export const runSetup = async (
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
-  const initialDoctor = await host.doctor();
-  const linuxHopperRepairNeeded = initialDoctor.checks.some(
-    ({ name, ok, detail }) =>
-      !ok &&
-      (name === "hopper-demo-runtime" ||
-        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
-  );
-  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
-  const detectedClients = await host.detectedClients();
-  plannedActions = setupPlan(host.platform, installHopper, detectedClients);
-  let approved = options.approved;
+  const discovery = await discoverSetupActions(host, hopperPath);
+  const { detectedClients, installHopper, installSkill } = discovery;
+  plannedActions = discovery.plannedActions;
+  let approved = options.approved || plannedActions.length === 0;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
     interactiveApproval = await confirm(plannedActions);
@@ -182,12 +182,14 @@ export const runSetup = async (
     appliedActions,
   });
   if (clientFailure !== undefined) return fail(clientFailure);
-  const skill = await host.installSkill();
-  if (skill === "failed")
-    return fail(
-      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
-    );
-  if (skill === "installed") appliedActions.push("installed_skill");
+  if (installSkill) {
+    const skill = await host.installSkill();
+    if (skill === "failed")
+      return fail(
+        "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+      );
+    if (skill === "installed") appliedActions.push("installed_skill");
+  }
   const doctor = await host.doctor();
   const remediation = finalSetupRemediation(
     host.platform,
@@ -202,6 +204,36 @@ export const runSetup = async (
     clients,
     doctor,
     ...(remediation === undefined ? {} : { remediation }),
+  };
+};
+
+const discoverSetupActions = async (
+  host: SetupHost,
+  hopperPath: string | undefined,
+) => {
+  const initialDoctor = await host.doctor();
+  const linuxHopperRepairNeeded = initialDoctor.checks.some(
+    ({ name, ok, detail }) =>
+      !ok &&
+      (name === "hopper-demo-runtime" ||
+        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
+  );
+  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
+  const [detectedClients, installSkill] = await Promise.all([
+    host.detectedClients(),
+    host.skillNeedsInstall(),
+  ]);
+  const plannedActions = setupPlan(
+    host.platform,
+    installHopper,
+    installSkill,
+    detectedClients,
+  );
+  return {
+    installHopper,
+    installSkill,
+    detectedClients,
+    plannedActions,
   };
 };
 
@@ -261,6 +293,7 @@ const systemSetupHost = (): SetupHost => {
         : client.format === "toml"
           ? configureTomlClient(client, hopperPath, command)
           : configureJsonClient(client, hopperPath, command),
+    skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
   };
