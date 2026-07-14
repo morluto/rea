@@ -3,7 +3,6 @@ import {
   copyFile,
   mkdir,
   readFile,
-  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -15,6 +14,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { supportsNodeVersion } from "../domain/runtimeVersion.js";
+import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { runDoctor, systemDoctorHost } from "./Doctor.js";
 import {
   installLinuxHopper,
@@ -49,7 +49,7 @@ export type ClientConfigurationResult =
     }
   | {
       readonly status: "failed";
-      readonly reason: "backup" | "write" | "readback";
+      readonly reason: "path" | "backup" | "write" | "readback";
     };
 /**
  * Effects required by the idempotent setup workflow.
@@ -288,10 +288,15 @@ export const configureJsonClient = async (
     "mcp",
   ],
 ): Promise<ClientConfigurationResult> => {
+  const transactionPath = await resolveClientConfigTransactionPath(
+    client.configPath,
+  );
+  if (transactionPath === undefined)
+    return { status: "failed", reason: "path" };
   let document: Record<string, unknown> = {};
   let original: string | undefined;
   try {
-    original = await readFile(client.configPath, "utf8");
+    original = await readFile(transactionPath, "utf8");
     document = parseObject(original);
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
@@ -318,7 +323,7 @@ export const configureJsonClient = async (
   if (original !== undefined) {
     backupPath = `${client.configPath}.rea.backup`;
     try {
-      await copyFile(client.configPath, backupPath);
+      await copyFile(transactionPath, backupPath);
     } catch {
       return { status: "failed", reason: "backup" };
     }
@@ -328,26 +333,26 @@ export const configureJsonClient = async (
     [PRODUCT_IDENTITY.mcpServerKey]: desired,
   };
   const encoded = `${JSON.stringify(document, null, 2)}\n`;
-  const temporary = `${client.configPath}.rea.tmp`;
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
-    await writeFile(temporary, encoded, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, client.configPath);
+    await writeFileAtomic(transactionPath, encoded, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
   } catch {
-    await rm(temporary, { force: true }).catch(() => undefined);
     return { status: "failed", reason: "write" };
   }
   try {
-    const readback = parseObject(await readFile(client.configPath, "utf8"));
+    const readback = parseObject(await readFile(transactionPath, "utf8"));
     const value = parseOptionalObject(readback.mcpServers)[
       PRODUCT_IDENTITY.mcpServerKey
     ];
     if (JSON.stringify(value) !== JSON.stringify(desired)) {
-      await restoreConfig(client.configPath, original);
+      await restoreConfig(transactionPath, original);
       return { status: "failed", reason: "readback" };
     }
   } catch {
-    await restoreConfig(client.configPath, original);
+    await restoreConfig(transactionPath, original);
     return { status: "failed", reason: "readback" };
   }
   return {
@@ -367,10 +372,15 @@ export const configureTomlClient = async (
     "mcp",
   ],
 ): Promise<ClientConfigurationResult> => {
+  const transactionPath = await resolveClientConfigTransactionPath(
+    client.configPath,
+  );
+  if (transactionPath === undefined)
+    return { status: "failed", reason: "path" };
   let document: Record<string, unknown> = {};
   let original: string | undefined;
   try {
-    original = await readFile(client.configPath, "utf8");
+    original = await readFile(transactionPath, "utf8");
     document = objectSchema.parse(parseToml(original));
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
@@ -396,7 +406,7 @@ export const configureTomlClient = async (
   const backupPath =
     original === undefined ? undefined : `${client.configPath}.rea.backup`;
   try {
-    if (backupPath !== undefined) await copyFile(client.configPath, backupPath);
+    if (backupPath !== undefined) await copyFile(transactionPath, backupPath);
   } catch {
     return { status: "failed", reason: "backup" };
   }
@@ -406,12 +416,12 @@ export const configureTomlClient = async (
   };
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
-    await writeFileAtomic(client.configPath, stringifyToml(document), {
+    await writeFileAtomic(transactionPath, stringifyToml(document), {
       encoding: "utf8",
       mode: 0o600,
     });
     const readback = objectSchema.parse(
-      parseToml(await readFile(client.configPath, "utf8")),
+      parseToml(await readFile(transactionPath, "utf8")),
     );
     if (
       JSON.stringify(
@@ -422,7 +432,7 @@ export const configureTomlClient = async (
     )
       throw new Error("TOML readback mismatch");
   } catch {
-    await restoreConfig(client.configPath, original);
+    await restoreConfig(transactionPath, original);
     return { status: "failed", reason: "readback" };
   }
   return {

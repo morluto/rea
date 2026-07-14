@@ -5,8 +5,10 @@ import type {
 } from "./Setup.js";
 
 const failedConfigurationMessage = (
-  reason: "backup" | "write" | "readback",
+  reason: "path" | "backup" | "write" | "readback",
 ): string => {
+  if (reason === "path")
+    return "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.";
   if (reason === "backup")
     return "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
   if (reason === "write")

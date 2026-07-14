@@ -275,6 +275,10 @@ describe("setup workflow", () => {
 
   it.each([
     [
+      "path",
+      "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.",
+    ],
+    [
       "backup",
       "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.",
     ],

@@ -1,8 +1,16 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { resolveClientConfigTransactionPath } from "../src/application/ClientConfigPath.js";
 import { configureJsonClient } from "../src/application/Setup.js";
 
 let directory: string | undefined;
@@ -13,6 +21,25 @@ afterEach(async () => {
 });
 
 describe("JSON client configuration transaction", () => {
+  it("rejects a symlink target not owned by the current user", async () => {
+    if (typeof process.getuid !== "function") return;
+    const currentUid = process.getuid();
+    let statCalls = 0;
+    expect(
+      await resolveClientConfigTransactionPath("/config", {
+        lstat: () => {
+          statCalls += 1;
+          return Promise.resolve({
+            uid: statCalls === 1 ? currentUid : currentUid + 1,
+            isFile: () => statCalls > 1,
+            isSymbolicLink: () => statCalls === 1,
+          });
+        },
+        realpath: () => Promise.resolve("/target"),
+      }),
+    ).toBeUndefined();
+  });
+
   it("preserves existing keys, creates a backup, and reads back the MCP entry", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");
@@ -32,6 +59,48 @@ describe("JSON client configuration transaction", () => {
         },
       },
     });
+  });
+
+  it("updates a symlink target without replacing the JSON config symlink", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const targetPath = join(directory, "managed.json");
+    const configPath = join(directory, "mcp.json");
+    const original = '{"theme":"dark"}\n';
+    await writeFile(targetPath, original);
+    await symlink(targetPath, configPath);
+
+    expect(
+      await configureJsonClient({ name: "cursor", configPath }),
+    ).toMatchObject({ status: "configured" });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+    expect(JSON.parse(await readFile(targetPath, "utf8"))).toMatchObject({
+      theme: "dark",
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", "rea-agents", "mcp"],
+        },
+      },
+    });
+    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+      status: "unchanged",
+    });
+  });
+
+  it("fails before mutation when a JSON config symlink is dangling", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const configPath = join(directory, "mcp.json");
+    await symlink(join(directory, "missing.json"), configPath);
+
+    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+      status: "failed",
+      reason: "path",
+    });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
   });
 
   it("performs no write or second backup when configuration already matches", async () => {
