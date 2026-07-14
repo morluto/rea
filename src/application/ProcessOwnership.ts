@@ -31,7 +31,7 @@ export interface ProcessOwnershipHost {
 }
 
 /** Cleanup succeeds only when the group is absent or every member is owned. */
-export interface ProcessOwnershipValidationFailure {
+interface ProcessOwnershipValidationFailure {
   readonly pid: number;
   readonly reason: "environment-unreadable" | "run-token-mismatch";
 }
