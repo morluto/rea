@@ -18,6 +18,7 @@ import { err } from "../domain/result.js";
 import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Register deterministic process-capture comparison and contradiction tracking. */
 export const registerProcessComparisonTool = (
@@ -29,7 +30,7 @@ export const registerProcessComparisonTool = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    (input) => {
+    async (input, context) => {
       const parsed = z
         .object({
           left_evidence_id: z.string(),
@@ -44,12 +45,16 @@ export const registerProcessComparisonTool = (
       if (!validated.ok) return toCallToolResult(validated, contract);
       let comparison: ReturnType<typeof compareProcessCaptures>;
       try {
-        comparison = compareProcessCaptures(parsed.left, parsed.right, {
-          ...(parsed.max_capture_age_ms === undefined
-            ? {}
-            : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
-          now,
-        });
+        const computed = await runDerivedOperation(context, contract.name, () =>
+          compareProcessCaptures(parsed.left, parsed.right, {
+            ...(parsed.max_capture_age_ms === undefined
+              ? {}
+              : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
+            now,
+          }),
+        );
+        if (!computed.ok) return toCallToolResult(computed, contract);
+        comparison = computed.value;
       } catch (cause: unknown) {
         return toCallToolResult(
           err(

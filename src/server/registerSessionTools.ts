@@ -6,7 +6,7 @@ import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
-import { ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type {
   ProcessCapture,
   ProcessExecutionPolicy,
@@ -29,7 +29,12 @@ import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
 } from "../application/AnalysisSnapshotFiles.js";
-import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
+import {
+  AnalysisProtocolError,
+  PermissionRequiredError,
+  UnknownRegistryError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import {
   DENY_EVIDENCE_FILE_POLICY,
   DENY_PROCESS_POLICY,
@@ -45,6 +50,22 @@ import {
   openBinaryInputSchema,
 } from "../contracts/sessionLifecycleInputs.js";
 import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+
+const permissionFailure = (
+  failure: Awaited<ReturnType<PermissionAuthority["authorize"]>>,
+): Result<never, AnalysisError> => {
+  if (failure.ok)
+    return err(new AnalysisProtocolError("Expected a denied permission"));
+  return err(
+    failure.error instanceof PermissionRequiredError
+      ? failure.error
+      : new AnalysisProtocolError(failure.error.message, {
+          cause: failure.error,
+        }),
+  );
+};
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -91,6 +112,11 @@ interface ProcessToolRegistration {
   readonly logger: Logger;
   readonly processPolicy: ProcessExecutionPolicy;
   readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly availabilityPolicy?: () => {
+    readonly processCaptureEnabled: boolean;
+    readonly evidenceFileRoots: number;
+  };
 }
 
 const registerProcessTools = ({
@@ -99,6 +125,7 @@ const registerProcessTools = ({
   logger,
   processPolicy,
   captureContract,
+  permissionAuthority,
 }: ProcessToolRegistration): void => {
   server.registerTool(
     captureContract.name,
@@ -110,6 +137,35 @@ const registerProcessTools = ({
     },
     async (input, context) => {
       const scenario = processScenarioSchema.parse(input);
+      if (permissionAuthority !== undefined) {
+        const authorized = await permissionAuthority.authorize(
+          {
+            capability: "process_capture",
+            roots: [scenario.working_directory, ...scenario.filesystem_roots],
+            executables: [scenario.executable],
+            environment_names: [
+              ...Object.keys(scenario.environment),
+              ...scenario.inherit_environment,
+            ],
+            network: scenario.network_access === "host" ? "external" : "none",
+            mount: false,
+            operation_identity: `capture_process_scenario:${scenario.executable}`,
+          },
+          "read",
+        );
+        if (!authorized.ok)
+          return toCallToolResult(
+            permissionFailure(authorized),
+            captureContract,
+          );
+      }
+      const progress = mcpProgressReporter(context);
+      await progress.report({
+        phase: captureContract.name,
+        completed: 0,
+        total: 1,
+        message: "started",
+      });
       const captured = await logToolExecution(
         logger,
         captureContract.name,
@@ -120,6 +176,13 @@ const registerProcessTools = ({
             context.mcpReq.signal,
           ),
       );
+      await progress.report({
+        phase: captureContract.name,
+        completed: 1,
+        total: 1,
+        message: captured.ok ? "completed" : "failed",
+        terminal: true,
+      });
       if (!captured.ok) return toCallToolResult(captured, captureContract);
       const evidence = createProcessCaptureEvidence(scenario, captured.value);
       const recorded = session.recordEvidence(evidence);
@@ -142,6 +205,7 @@ interface EvidenceToolRegistration {
   readonly exportContract: (typeof SESSION_TOOL_CONTRACTS)[3];
   readonly importContract: (typeof SESSION_TOOL_CONTRACTS)[4];
   readonly filePolicy: EvidenceFilePolicy;
+  readonly permissionAuthority?: PermissionAuthority;
 }
 
 const registerEvidenceTools = ({
@@ -150,6 +214,7 @@ const registerEvidenceTools = ({
   exportContract,
   importContract,
   filePolicy,
+  permissionAuthority,
 }: EvidenceToolRegistration): void => {
   server.registerTool(
     exportContract.name,
@@ -169,6 +234,25 @@ const registerEvidenceTools = ({
       const bundle = session.exportEvidenceBundle();
       if (parsed.path === undefined)
         return toCallToolResult(ok(bundle), exportContract);
+      if (permissionAuthority !== undefined) {
+        const authorized = await permissionAuthority.authorize(
+          {
+            capability: "evidence_write",
+            roots: [parsed.path],
+            executables: [],
+            environment_names: [],
+            network: "none",
+            mount: false,
+            operation_identity: `export_evidence:${parsed.path}`,
+          },
+          "write",
+        );
+        if (!authorized.ok)
+          return toCallToolResult(
+            permissionFailure(authorized),
+            exportContract,
+          );
+      }
       const written = await writeEvidenceBundle(
         bundle,
         parsed.path,
@@ -197,6 +281,25 @@ const registerEvidenceTools = ({
     },
     async (input) => {
       const path = z.object({ path: z.string().min(1) }).parse(input).path;
+      if (permissionAuthority !== undefined) {
+        const authorized = await permissionAuthority.authorize(
+          {
+            capability: "evidence_read",
+            roots: [path],
+            executables: [],
+            environment_names: [],
+            network: "none",
+            mount: false,
+            operation_identity: `import_evidence:${path}`,
+          },
+          "read",
+        );
+        if (!authorized.ok)
+          return toCallToolResult(
+            permissionFailure(authorized),
+            importContract,
+          );
+      }
       const loaded = await readEvidenceBundle(path, filePolicy);
       if (!loaded.ok) return toCallToolResult(loaded, importContract);
       const imported = session.importEvidenceBundle(loaded.value);
@@ -325,6 +428,12 @@ interface LifecycleToolRegistration {
     (typeof SESSION_TOOL_CONTRACTS)[2],
   ];
   readonly snapshotFilePolicy: EvidenceFilePolicy;
+  readonly startedAt: string;
+  readonly availabilityPolicy: () => {
+    readonly processCaptureEnabled: boolean;
+    readonly evidenceFileRoots: number;
+  };
+  readonly permissionAuthority?: PermissionAuthority;
 }
 
 const registerLifecycleTools = ({
@@ -333,6 +442,9 @@ const registerLifecycleTools = ({
   logger,
   contracts,
   snapshotFilePolicy,
+  startedAt,
+  availabilityPolicy,
+  permissionAuthority,
 }: LifecycleToolRegistration): void => {
   const [openContract, closeContract, statusContract] = contracts;
   server.registerTool(
@@ -347,6 +459,25 @@ const registerLifecycleTools = ({
       const parsed = openBinaryInputSchema.parse(input);
       let snapshot: AnalysisSnapshot | undefined;
       if (parsed.snapshot_path !== undefined) {
+        if (permissionAuthority !== undefined) {
+          const authorized = await permissionAuthority.authorize(
+            {
+              capability: "snapshot_read",
+              roots: [parsed.snapshot_path],
+              executables: [],
+              environment_names: [],
+              network: "none",
+              mount: false,
+              operation_identity: `open_binary:snapshot:${parsed.snapshot_path}`,
+            },
+            "read",
+          );
+          if (!authorized.ok)
+            return toCallToolResult(
+              permissionFailure(authorized),
+              openContract,
+            );
+        }
         const loaded = await readAnalysisSnapshot(
           parsed.snapshot_path,
           snapshotFilePolicy,
@@ -360,6 +491,7 @@ const registerLifecycleTools = ({
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );
+      if (opened.ok) server.sendToolListChanged();
       return opened.ok
         ? toCallToolResult(
             {
@@ -389,6 +521,25 @@ const registerLifecycleTools = ({
     async (input) => {
       const parsed = closeBinaryInputSchema.parse(input);
       if (parsed.snapshot_path !== undefined) {
+        if (permissionAuthority !== undefined) {
+          const authorized = await permissionAuthority.authorize(
+            {
+              capability: "snapshot_write",
+              roots: [parsed.snapshot_path],
+              executables: [],
+              environment_names: [],
+              network: "none",
+              mount: false,
+              operation_identity: `close_binary:snapshot:${parsed.snapshot_path}`,
+            },
+            "write",
+          );
+          if (!authorized.ok)
+            return toCallToolResult(
+              permissionFailure(authorized),
+              closeContract,
+            );
+        }
         const snapshot = session.exportAnalysisSnapshot();
         if (!snapshot.ok) return toCallToolResult(snapshot, closeContract);
         const written = await writeAnalysisSnapshot(
@@ -401,6 +552,7 @@ const registerLifecycleTools = ({
         const closed = await logToolExecution(logger, closeContract.name, () =>
           session.close(),
         );
+        if (closed.ok) server.sendToolListChanged();
         return closed.ok
           ? toCallToolResult(
               ok({
@@ -412,15 +564,20 @@ const registerLifecycleTools = ({
             )
           : toCallToolResult(closed, closeContract);
       }
-      return toCallToolResult(
-        await logToolExecution(logger, closeContract.name, () =>
-          session.close(),
-        ),
-        closeContract,
+      const closed = await logToolExecution(logger, closeContract.name, () =>
+        session.close(),
       );
+      if (closed.ok) server.sendToolListChanged();
+      return toCallToolResult(closed, closeContract);
     },
   );
-  registerSessionStatusTool(server, session, statusContract);
+  registerSessionStatusTool(
+    server,
+    session,
+    statusContract,
+    startedAt,
+    availabilityPolicy,
+  );
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
@@ -429,6 +586,13 @@ export interface SessionToolOptions {
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
   readonly investigationInputRoots?: readonly string[];
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
+  readonly startedAt?: string;
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly artifactIntegrityContinueEnabled?: () => boolean;
+  readonly availabilityPolicy?: () => {
+    readonly processCaptureEnabled: boolean;
+    readonly evidenceFileRoots: number;
+  };
 }
 
 export const registerSessionTools = (
@@ -468,6 +632,16 @@ export const registerSessionTools = (
     logger,
     contracts: [openContract, closeContract, statusContract],
     snapshotFilePolicy: analysisSnapshotFilePolicy,
+    startedAt: options.startedAt ?? new Date().toISOString(),
+    availabilityPolicy:
+      options.availabilityPolicy ??
+      (() => ({
+        processCaptureEnabled: processPolicy.enabled,
+        evidenceFileRoots: evidenceFilePolicy.roots.length,
+      })),
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
   });
   registerEvidenceTools({
     server,
@@ -475,6 +649,9 @@ export const registerSessionTools = (
     exportContract,
     importContract,
     filePolicy: evidenceFilePolicy,
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
   });
   registerProcessTools({
     server,
@@ -482,6 +659,9 @@ export const registerSessionTools = (
     logger,
     processPolicy,
     captureContract,
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
   });
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
@@ -496,6 +676,14 @@ export const registerSessionTools = (
   registerInvestigationTools(server, session, investigationContracts, {
     evidenceFiles: evidenceFilePolicy,
     inputRoots: options.investigationInputRoots ?? [],
+    ...(options.artifactIntegrityContinueEnabled === undefined
+      ? {}
+      : {
+          integrityContinueEnabled: options.artifactIntegrityContinueEnabled,
+        }),
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
   });
   registerUnknownTools({
     server,

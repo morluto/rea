@@ -16,6 +16,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { UnknownRegistryError } from "../domain/errors.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -69,6 +70,13 @@ const registerEnhancedTool = (
       annotations: contract.annotations,
     },
     async (input, context) => {
+      const progress = mcpProgressReporter(context);
+      await progress.report({
+        phase: name,
+        completed: 0,
+        total: 1,
+        message: "started",
+      });
       const parsedInput = jsonObjectSchema.parse(
         enhancedInputSchemas[name].parse(input),
       );
@@ -76,6 +84,13 @@ const registerEnhancedTool = (
       const result = await logToolExecution(registration.logger, name, () =>
         services.execute(name, input, context.mcpReq.signal),
       );
+      await progress.report({
+        phase: name,
+        completed: 1,
+        total: 1,
+        message: result.ok ? "completed" : "failed",
+        terminal: true,
+      });
       if (result.ok) {
         const evidence = createEvidence(
           registration.activeTarget?.(),

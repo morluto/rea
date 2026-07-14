@@ -6,6 +6,7 @@ import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 
 /** Register deterministic artifact inventory and safe extraction operations. */
 export const registerArtifactTools = (
@@ -15,6 +16,7 @@ export const registerArtifactTools = (
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
     readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+    readonly permissionAuthority?: PermissionAuthority;
   },
 ): void => {
   registerEvidenceTools(server, analysis, ARTIFACT_TOOL_CONTRACTS, options);

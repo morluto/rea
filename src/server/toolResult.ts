@@ -60,9 +60,32 @@ const successResult = (
     };
   }
   return {
-    content: [{ type: "text", text: formatValue(value) }],
+    content: [
+      { type: "text", text: formatValue(value) },
+      ...evidenceResourceLinks(value),
+    ],
     structuredContent: candidate,
   };
+};
+
+const evidenceResourceLinks = (value: JsonValue): CallToolResult["content"] => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof value.evidence_id !== "string" ||
+    !/^ev_[a-f0-9]{64}$/u.test(value.evidence_id)
+  )
+    return [];
+  return [
+    {
+      type: "resource_link",
+      uri: `rea://evidence/${value.evidence_id}`,
+      name: value.evidence_id,
+      description: "Session-owned Evidence v2 record",
+      mimeType: "application/json",
+    },
+  ];
 };
 
 const formatValue = (value: JsonValue): string => {

@@ -13,6 +13,8 @@ import { createBinarySession } from "./application/runtime.js";
 import { createServer } from "./server/createServer.js";
 import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/errors.js";
+import { readProjectPermissionStore } from "./application/ProjectPermissionStore.js";
+import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 
 const MCP_CONNECTION_LOST =
   "REA lost its MCP client connection. Restart REA from your MCP client.";
@@ -30,6 +32,7 @@ interface RuntimeDependencies {
   readonly writeStderr: (text: string) => void;
   readonly setExitCode: (code: number) => void;
   readonly registerShutdown: (handler: () => void) => void;
+  readonly registerReload?: (handler: () => void) => () => void;
 }
 
 const runtimeDependencies = (): RuntimeDependencies => ({
@@ -44,6 +47,10 @@ const runtimeDependencies = (): RuntimeDependencies => ({
     process.once("SIGTERM", handler);
     process.stdin.once("end", handler);
     process.stdin.once("close", handler);
+  },
+  registerReload: (handler) => {
+    process.on("SIGHUP", handler);
+    return () => process.off("SIGHUP", handler);
   },
 });
 
@@ -62,6 +69,15 @@ export const run = async (
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
+  const permissionAuthority = await loadConfiguredPermissionAuthority(
+    config.value,
+  );
+  if (!permissionAuthority.ok) {
+    dependencies.writeStderr(
+      `${projectAnalysisError(permissionAuthority.error).message}\n`,
+    );
+    return 1;
+  }
 
   const session = createBinarySession(config.value, logger);
   if (config.value.hopperTargetPath !== undefined) {
@@ -80,17 +96,46 @@ export const run = async (
       return 1;
     }
   }
+  let currentConfig = config.value;
+  const runtimeProcessPolicy = {
+    ...config.value.processExecutionPolicy,
+    executableRoots: [...config.value.processExecutionPolicy.executableRoots],
+    workingRoots: [...config.value.processExecutionPolicy.workingRoots],
+    allowedEnvironment: [
+      ...config.value.processExecutionPolicy.allowedEnvironment,
+    ],
+  };
+  const runtimeEvidencePolicy = {
+    ...config.value.evidenceFilePolicy,
+    roots: [...config.value.evidenceFilePolicy.roots],
+  };
+  const runtimeSnapshotPolicy = {
+    ...config.value.analysisSnapshotFilePolicy,
+    roots: [...config.value.analysisSnapshotFilePolicy.roots],
+  };
+  const runtimeInvestigationRoots = [...config.value.investigationInputRoots];
+  const liveServers = new Set<ReturnType<typeof createServer>>();
   let handle: StdioServerHandle;
   try {
     handle = dependencies.serve(
-      () =>
-        createServer(session, session, {
+      () => {
+        const server = createServer(session, session, {
           logger,
-          processPolicy: config.value.processExecutionPolicy,
-          evidenceFilePolicy: config.value.evidenceFilePolicy,
-          investigationInputRoots: config.value.investigationInputRoots,
-          analysisSnapshotFilePolicy: config.value.analysisSnapshotFilePolicy,
-        }),
+          processPolicy: runtimeProcessPolicy,
+          evidenceFilePolicy: runtimeEvidencePolicy,
+          investigationInputRoots: runtimeInvestigationRoots,
+          analysisSnapshotFilePolicy: runtimeSnapshotPolicy,
+          permissionAuthority: permissionAuthority.value,
+          artifactIntegrityContinueEnabled: () =>
+            currentConfig.artifactIntegrityContinueEnabled,
+          availabilityPolicy: () => ({
+            processCaptureEnabled: currentConfig.processExecutionPolicy.enabled,
+            evidenceFileRoots: currentConfig.evidenceFilePolicy.roots.length,
+          }),
+        });
+        liveServers.add(server);
+        return server;
+      },
       {
         onerror: () => {
           serverLogger.error(MCP_CONNECTION_LOST);
@@ -105,11 +150,90 @@ export const run = async (
     return 1;
   }
 
+  const unregisterReload =
+    dependencies.registerReload?.(() => {
+      void (async () => {
+        const refreshed = parseConfig(dependencies.env);
+        if (!refreshed.ok) {
+          serverLogger.error("Reloaded permission policy is invalid");
+          return;
+        }
+        const reloaded = await permissionAuthority.value.reload(
+          refreshed.value.permissionCeilings,
+        );
+        if (!reloaded.ok) {
+          serverLogger.error(
+            "Reloaded permission ceiling could not be applied",
+          );
+          return;
+        }
+        const administrators =
+          await permissionAuthority.value.replaceAdministratorGrants(
+            refreshed.value.administratorPermissionGrants,
+          );
+        if (!administrators.ok) {
+          serverLogger.error(
+            "Reloaded administrator grants could not be applied",
+          );
+          return;
+        }
+        if (
+          refreshed.value.permissionProjectRoot !== undefined &&
+          refreshed.value.permissionProjectStore !== undefined
+        ) {
+          const project = await readProjectPermissionStore(
+            refreshed.value.permissionProjectStore,
+            refreshed.value.permissionProjectRoot,
+          );
+          if (!project.ok) {
+            serverLogger.error("Reloaded project grants could not be read");
+            return;
+          }
+          const projects = await permissionAuthority.value.replaceProjectGrants(
+            project.value?.grants ?? [],
+          );
+          if (!projects.ok) {
+            serverLogger.error("Reloaded project grants could not be applied");
+            return;
+          }
+        } else {
+          const projects = await permissionAuthority.value.replaceProjectGrants(
+            [],
+          );
+          if (!projects.ok) {
+            serverLogger.error("Reloaded project grants could not be cleared");
+            return;
+          }
+        }
+        currentConfig = refreshed.value;
+        Object.assign(
+          runtimeProcessPolicy,
+          refreshed.value.processExecutionPolicy,
+        );
+        Object.assign(
+          runtimeEvidencePolicy,
+          refreshed.value.evidenceFilePolicy,
+        );
+        Object.assign(
+          runtimeSnapshotPolicy,
+          refreshed.value.analysisSnapshotFilePolicy,
+        );
+        runtimeInvestigationRoots.splice(
+          0,
+          runtimeInvestigationRoots.length,
+          ...refreshed.value.investigationInputRoots,
+        );
+        for (const server of liveServers) server.sendToolListChanged();
+      })();
+    }) ?? (() => undefined);
+
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {
     shutdownPromise ??= (async () => {
+      unregisterReload();
       await handle.close();
       await session.close();
+      permissionAuthority.value.clearSessionGrants();
     })();
     return shutdownPromise;
   };
