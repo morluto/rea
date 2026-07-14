@@ -109,6 +109,82 @@ describe("CdpBrowserProvider", () => {
     ).toBe(true);
   });
 
+  it("projects direct-session cancellation onto the requested operation", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 1) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "observe_web_session",
+      },
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
+    expect(methods).not.toContain("Browser.close");
+  });
+
+  it("projects capture-window cancellation onto bundle analysis", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    browsers.push(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().analyzeBundle(
+      analyzeWebBundleInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        source_capture_approved: true,
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 2) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "analyze_web_bundle",
+      },
+    });
+  });
+
   it("rejects empty browser attachment session identifiers", async () => {
     const browser = await startFakeCdpBrowser({ invalidAttachedSession: true });
     browsers.push(browser);
@@ -1198,7 +1274,10 @@ describe("CdpBrowserProvider", () => {
     const result = await pending;
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCancelledError" },
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      },
     });
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("Target.detachFromTarget");

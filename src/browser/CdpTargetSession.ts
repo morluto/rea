@@ -23,7 +23,11 @@ export const openCdpTargetSession = async (
   signal?: AbortSignal,
 ): Promise<CdpTargetSession> => {
   const webSocket = cdpTargetWebSocket(discovery, target, operation);
-  const connection = await CdpConnection.connect(webSocket.url, signal);
+  const connection = await CdpConnection.connect(
+    webSocket.url,
+    operation,
+    signal,
+  );
   if (webSocket.scope === "page") return { connection, sessionId: undefined };
   try {
     const attached = await connection.send(

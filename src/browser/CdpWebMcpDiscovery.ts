@@ -96,6 +96,7 @@ export const discoverWebMcp = async (
       // CDP sends the enable response before the required toolsAdded replay.
       await delayWithCancellation(
         Math.max(context.input.observation_ms, 25),
+        "discover_webmcp_tools",
         context.signal,
       );
     await assertStableAuthorizedFrame(context, initialUrl, origins);

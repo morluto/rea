@@ -19,7 +19,10 @@ describe("CDP connection", () => {
   it("correlates concurrent command responses over a real WebSocket", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);
-    const connection = await CdpConnection.connect(browser.browserWebSocketUrl);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "inspect_web_page",
+    );
     try {
       const [attached, frames] = await Promise.all([
         connection.send("Target.attachToTarget"),
@@ -37,13 +40,16 @@ describe("CDP connection", () => {
   it("returns a typed timeout for an unresponsive CDP command", async () => {
     const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
     browsers.push(browser);
-    const connection = await CdpConnection.connect(browser.browserWebSocketUrl);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "observe_web_session",
+    );
     vi.useFakeTimers();
     try {
       const pending = connection.send("Page.enable");
       const assertion = expect(pending).rejects.toMatchObject({
         _tag: "AnalysisTimeoutError",
-        operation: "inspect_web_page",
+        operation: "observe_web_session",
         timeoutMs: 5_000,
       });
       await vi.advanceTimersByTimeAsync(5_000);

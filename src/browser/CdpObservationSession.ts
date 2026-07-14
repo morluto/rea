@@ -3,7 +3,10 @@ import type {
   ObserveWebSessionInput,
   WebObservationSession,
 } from "../domain/browserSession.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import {
+  AnalysisCancelledError,
+  BrowserObservationError,
+} from "../domain/errors.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -321,7 +324,7 @@ const waitForWindow = async (
       settled = true;
       clearTimeout(timer);
       removeEnd();
-      reject(signal?.reason ?? new Error("browser observation cancelled"));
+      reject(new AnalysisCancelledError("observe_web_session"));
     };
     const timer = setTimeout(() => finish("window_elapsed"), durationMs);
     removeEnd = capture.onEnd(finish);
@@ -347,7 +350,7 @@ const authorizedFrame = async (
         "inspect_web_page",
         "target_not_allowed",
       );
-    await delayWithCancellation(25, context.signal);
+    await delayWithCancellation(25, "observe_web_session", context.signal);
   }
   throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
 };

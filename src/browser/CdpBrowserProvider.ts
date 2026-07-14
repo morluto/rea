@@ -328,6 +328,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       return await capturePage({
         connection: targetSession.connection,
         sessionId: targetSession.sessionId,
+        operation,
         discovery,
         target,
         input,
