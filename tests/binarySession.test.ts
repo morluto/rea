@@ -414,6 +414,64 @@ describe("binary session", () => {
     expect(clients[0]?.closed).toBe(1);
   });
 
+  it("replaces the active client when a canonical path changes contents", async () => {
+    directory = await mkdtemp(join(tmpdir(), "bb-session-"));
+    const path = join(directory, "mutable.hop");
+    await writeFile(path, "one");
+    const clients: Array<{
+      readonly targetSha256: string;
+      readonly calls: string[];
+      closed: number;
+    }> = [];
+    const session = new BinarySession((target) => {
+      const state = {
+        targetSha256: target.sha256,
+        calls: [] as string[],
+        closed: 0,
+      };
+      clients.push(state);
+      return {
+        execute: (operation) => {
+          state.calls.push(operation);
+          return Promise.resolve(
+            ok(operation === "health" ? null : target.sha256),
+          );
+        },
+        close: () => {
+          state.closed += 1;
+          return Promise.resolve();
+        },
+      };
+    });
+
+    const first = await session.open(path);
+    expect(first.ok).toBe(true);
+    await writeFile(path, "two");
+    const second = await session.open(path);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+
+    expect(second.value.sha256).not.toBe(first.value.sha256);
+    expect(session.activeTarget()?.sha256).toBe(second.value.sha256);
+    expect(await session.execute("binary_overview", {})).toMatchObject({
+      ok: true,
+      value: { result: second.value.sha256 },
+    });
+    expect(clients).toMatchObject([
+      {
+        targetSha256: first.value.sha256,
+        calls: ["health"],
+        closed: 1,
+      },
+      {
+        targetSha256: second.value.sha256,
+        calls: ["health", "binary_overview"],
+        closed: 0,
+      },
+    ]);
+    await session.close();
+  });
+
   it("waits for an active call before closing its client during a switch", async () => {
     const [first, second] = await targets();
     const active = deferred<ReturnType<typeof ok>>();

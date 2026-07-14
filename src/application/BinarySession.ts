@@ -35,7 +35,10 @@ import type { AnalysisOperation } from "./AnalysisProvider.js";
 import { enhancedToolNameSchema } from "../contracts/enhancedInputs.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import { snapshotMatchesTarget } from "../domain/analysisSnapshot.js";
+import {
+  snapshotMatchesTarget,
+  snapshotTarget,
+} from "../domain/analysisSnapshot.js";
 import {
   AnalysisSnapshotCache,
   isSnapshotCacheable,
@@ -348,7 +351,10 @@ export class BinarySession implements BinarySessionPort {
         );
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
-      if (this.#active?.target.path === parsed.value.path) {
+      if (
+        this.#active?.target.path === parsed.value.path &&
+        snapshotMatchesTarget(snapshotTarget(this.#active.target), parsed.value)
+      ) {
         if (options.snapshot !== undefined) {
           const imported = this.importAnalysisSnapshot(options.snapshot);
           if (!imported.ok) return imported;
