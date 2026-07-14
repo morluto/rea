@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
   parseProcessEnvironment,
+  selectCapturedProcessGroupIds,
   type ProcessOwnershipHost,
 } from "../src/application/ProcessOwnership.js";
 
@@ -37,6 +38,18 @@ const host = (
 };
 
 describe("owned process-group cleanup", () => {
+  it("excludes sampled groups whose leader was outside the captured tree", () => {
+    expect(
+      selectCapturedProcessGroupIds(100, [
+        { pid: 100, process_group_id: 42 },
+        { pid: 100, process_group_id: 100 },
+        { pid: 101, process_group_id: 42 },
+        { pid: 102, process_group_id: 102 },
+        { pid: 103, process_group_id: 102 },
+      ]),
+    ).toEqual([100, 102]);
+  });
+
   it("drops nameless Linux environment entries", () => {
     expect(
       parseProcessEnvironment("=ignored\0REA_PROCESS_RUN_ID=owned\0EMPTY=\0"),

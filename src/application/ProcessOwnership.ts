@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import type { ProcessSample } from "../domain/processCapture.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +40,22 @@ export type ProcessGroupObservation =
   | { readonly state: "empty" }
   | { readonly state: "alive" }
   | { readonly state: "unverifiable"; readonly reason: string };
+
+/** Select the PTY root group and groups led by an observed captured process. */
+export const selectCapturedProcessGroupIds = (
+  rootPid: number,
+  samples: readonly Pick<ProcessSample, "pid" | "process_group_id">[],
+): readonly number[] => {
+  const processGroupIds = new Set<number>([rootPid]);
+  for (const sample of samples) {
+    // A sampled member may transiently inherit an unrelated group. POSIX group
+    // leaders have pid === pgid, so only that observation establishes that the
+    // group leader itself belonged to the captured tree. Token checks below
+    // remain the final authority immediately before observation or signaling.
+    if (sample.pid === sample.process_group_id) processGroupIds.add(sample.pid);
+  }
+  return [...processGroupIds];
+};
 
 /** Parse the NUL-delimited Linux process environment without nameless keys. */
 export const parseProcessEnvironment = (
