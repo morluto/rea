@@ -4,7 +4,9 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,6 +94,44 @@ describe("agent lifecycle", () => {
     ).toEqual({ status: "unchanged" });
   });
 
+  it("updates a symlink target without replacing the TOML config symlink", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-toml-symlink-"));
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    const targetPath = join(home, "managed-config.toml");
+    const original = 'model = "gpt-5"\n';
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(targetPath, original);
+    await symlink(targetPath, configPath);
+
+    expect(
+      await configureTomlClient(
+        { name: "codex", configPath, format: "toml" },
+        undefined,
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(targetPath, "utf8")).toContain("[mcp_servers.rea]");
+  });
+
+  it("fails before mutation when a TOML config symlink is dangling", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-toml-symlink-"));
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await symlink(join(home, "missing-config.toml"), configPath);
+
+    expect(
+      await configureTomlClient({ name: "codex", configPath, format: "toml" }),
+    ).toEqual({ status: "failed", reason: "path" });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
+
   it("uninstalls only owned entries and refuses purge symlinks", async () => {
     const home = await mkdtemp(join(tmpdir(), "rea-uninstall-"));
     roots.push(home);
@@ -129,6 +169,52 @@ describe("agent lifecycle", () => {
     expect((await runUninstall(true, systemUninstallHost(home))).status).toBe(
       "complete",
     );
+  });
+
+  it("removes an owned entry through a symlink without replacing it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-symlink-"));
+    roots.push(home);
+    const configPath = join(home, ".cursor/mcp.json");
+    const targetPath = join(home, "managed-mcp.json");
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: { command: "rea", args: ["mcp"] },
+        other: { command: "other" },
+      },
+    });
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(targetPath, original);
+    await symlink(targetPath, configPath);
+
+    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
+      "complete",
+    );
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+    expect(JSON.parse(await readFile(targetPath, "utf8"))).toEqual({
+      mcpServers: { other: { command: "other" } },
+    });
+  });
+
+  it("fails before mutation when an uninstall config symlink is dangling", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-symlink-"));
+    roots.push(home);
+    const configPath = join(home, ".cursor/mcp.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    await symlink(join(home, "missing-mcp.json"), configPath);
+
+    const result = await runUninstall(false, systemUninstallHost(home));
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual({
+      name: "cursor",
+      status: "failed",
+      detail:
+        "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
+    });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
   });
 
   it("fails closed on malformed client configuration", async () => {
@@ -228,6 +314,7 @@ const testFileSystem: UninstallFileSystem = {
   copy: (source, destination) => copyFile(source, destination),
   writeText: (path, contents) => writeFile(path, contents),
   stat: (path) => lstat(path),
+  realpath: (path) => realpath(path),
   remove: (path) => rm(path, { recursive: true }),
 };
 
