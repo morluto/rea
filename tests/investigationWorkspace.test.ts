@@ -21,16 +21,23 @@ import {
   readInvestigationWorkspace,
   writeInvestigationWorkspace,
 } from "../src/application/InvestigationWorkspaceStore.js";
-import { changedBehaviorResultSchema } from "../src/domain/changedBehavior.js";
+import { compareArtifacts } from "../src/domain/artifactComparison.js";
+import {
+  changedBehaviorResultSchema,
+  findChangedBehavior,
+} from "../src/domain/changedBehavior.js";
+import { createEvidence, type Evidence } from "../src/domain/evidence.js";
 import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
 import type { EvidenceFilePolicy } from "../src/domain/evidenceBundle.js";
 import {
   createInvestigationWorkspace,
   crossVersionInvestigationInputSchema,
   investigationRunSchema,
+  investigationRunSummarySchema,
   parseInvestigationWorkspace,
   serializeInvestigationWorkspace,
 } from "../src/domain/investigationWorkspace.js";
+import type { JsonValue } from "../src/domain/jsonValue.js";
 import { ok } from "../src/domain/result.js";
 
 const digestCanonical = (value: unknown): string => {
@@ -54,6 +61,41 @@ const policy = (root: string): EvidenceFilePolicy => ({
   maxStringLength: 1024 * 1024,
   maxNodes: 1_000_000,
 });
+
+const recreateEvidence = (
+  evidence: Evidence,
+  overrides: {
+    readonly parameters?: Readonly<Record<string, JsonValue>>;
+    readonly result?: JsonValue;
+    readonly evidenceLinks?: readonly string[];
+  },
+): Evidence =>
+  createEvidence(
+    evidence.subject === null
+      ? undefined
+      : {
+          path: evidence.subject.local_path,
+          sha256: evidence.subject.digest.sha256,
+          format: evidence.subject.format,
+          ...(evidence.subject.architecture === null
+            ? {}
+            : { architecture: evidence.subject.architecture }),
+        },
+    evidence.provider,
+    {
+      predicateType: evidence.predicate_type,
+      operation: evidence.operation,
+      parameters: overrides.parameters ?? evidence.parameters,
+      result: overrides.result ?? evidence.normalized_result,
+      rawResult: evidence.raw_result,
+      confidence: evidence.confidence,
+      authority: evidence.authority,
+      environment: evidence.environment,
+      limitations: evidence.limitations,
+      locations: evidence.locations,
+      evidenceLinks: overrides.evidenceLinks ?? evidence.evidence_links,
+    },
+  );
 
 const fixture = async () => {
   directory = await mkdtemp(join(tmpdir(), "rea-workspace-"));
@@ -288,6 +330,120 @@ describe("persistent cross-version investigation workspace", () => {
           reason: "revision-conflict",
         },
       });
+    expect(authorizeInputRead).not.toHaveBeenCalled();
+
+    const byId = new Map(
+      completed.value.workspace.bundle.records.map((record) => [
+        record.evidence_id,
+        record,
+      ]),
+    );
+    const leftPages = run.left_inventory_evidence_ids.map((id) => byId.get(id));
+    const rightPages = run.right_inventory_evidence_ids.map((id) =>
+      byId.get(id),
+    );
+    if (
+      leftPages.some((record) => record === undefined) ||
+      rightPages.some((record) => record === undefined)
+    )
+      throw new Error("missing inventory fixture Evidence");
+    const forgedFirstPage = recreateEvidence(leftPages[0]!, {
+      parameters: {
+        ...leftPages[0]!.parameters,
+        max_entries: input.options.max_entries - 1,
+      },
+    });
+    const forgedLeftPages = [forgedFirstPage, ...leftPages.slice(1)];
+    const comparison = byId.get(run.comparison_evidence_id ?? "");
+    const result = byId.get(run.result_evidence_id ?? "");
+    if (comparison === undefined || result === undefined)
+      throw new Error("missing completed fixture Evidence");
+    const comparisonResult = compareArtifacts(
+      forgedLeftPages,
+      rightPages,
+      0,
+      run.options.change_limit,
+    );
+    const forgedComparison = recreateEvidence(comparison, {
+      parameters: {
+        left_evidence_ids: forgedLeftPages.map(({ evidence_id: id }) => id),
+        right_evidence_ids: rightPages.map(({ evidence_id: id }) => id),
+        offset: 0,
+        limit: run.options.change_limit,
+      },
+      result: comparisonResult,
+      evidenceLinks: [
+        ...forgedLeftPages.map(({ evidence_id: id }) => id),
+        ...rightPages.map(({ evidence_id: id }) => id),
+      ],
+    });
+    const resultLimit = Math.min(run.options.change_limit, 100);
+    const changed = findChangedBehavior([forgedComparison], 0, resultLimit);
+    const summary = investigationRunSummarySchema.parse({
+      schema_version: 1,
+      workspace_id: completed.value.workspace.workspace_id,
+      run_id: run.run_id,
+      left_manifest_id: run.left.manifest_id,
+      right_manifest_id: run.right.manifest_id,
+      inventory_evidence_count: forgedLeftPages.length + rightPages.length,
+      comparison_evidence_id: forgedComparison.evidence_id,
+      limitations: run.limitations,
+    });
+    const forgedResult = recreateEvidence(result, {
+      parameters: {
+        workspace_id: completed.value.workspace.workspace_id,
+        run_id: run.run_id,
+        comparison_evidence_ids: [forgedComparison.evidence_id],
+        offset: 0,
+        limit: resultLimit,
+      },
+      result: { ...changed, investigation_run: summary },
+      evidenceLinks: changed.evidence_links,
+    });
+    const forgedRun = investigationRunSchema.parse({
+      ...run,
+      left_inventory_evidence_ids: forgedLeftPages.map(
+        ({ evidence_id: id }) => id,
+      ),
+      comparison_evidence_id: forgedComparison.evidence_id,
+      result_evidence_id: forgedResult.evidence_id,
+    });
+    const forgedWorkspace = createInvestigationWorkspace(
+      input.workspace_name,
+      createEvidenceBundle([
+        ...completed.value.workspace.bundle.records,
+        forgedFirstPage,
+        forgedComparison,
+        forgedResult,
+      ]),
+      [forgedRun],
+    );
+    const forgedPath = join(directory, "forged-controls.json");
+    expect(
+      await writeInvestigationWorkspace(
+        forgedWorkspace,
+        forgedPath,
+        null,
+        policy(directory),
+      ),
+    ).toMatchObject({ ok: true });
+    await expect(
+      runCrossVersionInvestigation(
+        {
+          ...input,
+          workspace_path: forgedPath,
+          replay_run_id: run.run_id,
+        },
+        policy(directory),
+        { inputRoots: [], authorizeInputRead },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "InvestigationWorkspaceError",
+        reason: "revision-conflict",
+      },
+    });
     expect(authorizeInputRead).not.toHaveBeenCalled();
   });
 

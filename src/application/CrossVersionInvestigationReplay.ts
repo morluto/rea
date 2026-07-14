@@ -2,6 +2,8 @@ import {
   changedBehaviorResultSchema,
   type ChangedBehaviorResult,
 } from "../domain/changedBehavior.js";
+import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
+import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   EvidenceIntegrityError,
@@ -53,39 +55,133 @@ const replayRequestMatches = (
   run.integrity_policy === input.integrity_policy &&
   run.integrity_continue_approved === input.integrity_continue_approved &&
   run.max_integrity_mismatches === input.max_integrity_mismatches &&
-  inventoryEvidenceMatches(
-    workspace,
-    run.left_inventory_evidence_ids,
-    input.left_path,
-    run.left,
-  ) &&
-  inventoryEvidenceMatches(
-    workspace,
-    run.right_inventory_evidence_ids,
-    input.right_path,
-    run.right,
-  );
+  inventoryEvidenceMatches(workspace, run.left_inventory_evidence_ids, {
+    path: input.left_path,
+    target: run.left,
+    input,
+  }) &&
+  inventoryEvidenceMatches(workspace, run.right_inventory_evidence_ids, {
+    path: input.right_path,
+    target: run.right,
+    input,
+  });
+
+interface InventoryReplayExpectation {
+  readonly path: string;
+  readonly target: InvestigationRun["left"];
+  readonly input: CrossVersionInvestigationInput;
+}
 
 const inventoryEvidenceMatches = (
   workspace: InvestigationWorkspace,
   evidenceIds: readonly string[],
-  path: string,
-  target: InvestigationRun["left"],
+  expectation: InventoryReplayExpectation,
 ): boolean => {
   const byId = new Map(
     workspace.bundle.records.map((record) => [record.evidence_id, record]),
   );
-  return evidenceIds.every((evidenceId) => {
-    const evidence = byId.get(evidenceId);
-    return (
-      evidence?.operation === "inventory_artifact" &&
-      providerMatches(evidence.provider, ARTIFACT_GRAPH_PROVIDER) &&
-      evidence.subject?.local_path === path &&
-      evidence.subject.digest.sha256 === target.root_sha256 &&
-      evidence.subject.format === target.format
-    );
+  const evidence = evidenceIds.flatMap((evidenceId) => {
+    const record = byId.get(evidenceId);
+    return record === undefined ? [] : [record];
   });
+  if (
+    evidence.length !== evidenceIds.length ||
+    !evidence.every((record, index) =>
+      inventoryPageMatches(record, index, expectation),
+    )
+  )
+    return false;
+  try {
+    const inventory = parseArtifactInventoryEvidence(evidence).inventory;
+    return (
+      inventory.complete &&
+      inventory.manifest.root_sha256 === expectation.target.root_sha256 &&
+      inventory.manifest.graph_sha256 === expectation.target.graph_sha256 &&
+      inventory.manifest.manifest_id === expectation.target.manifest_id &&
+      inventory.manifest.root_format === expectation.target.format
+    );
+  } catch {
+    return false;
+  }
 };
+
+const inventoryPageMatches = (
+  evidence: Evidence,
+  index: number,
+  expectation: InventoryReplayExpectation,
+): boolean => {
+  const page = artifactInventoryResultSchema.safeParse(
+    evidence.normalized_result,
+  );
+  if (!page.success) return false;
+  const offset = index * expectation.input.options.page_size;
+  return (
+    inventoryEvidenceMetadataMatches(evidence, expectation) &&
+    inventoryParametersMatch(evidence.parameters, offset, expectation.input) &&
+    inventoryResultPageMatches(page.data, offset, expectation.input)
+  );
+};
+
+const inventoryEvidenceMetadataMatches = (
+  evidence: Evidence,
+  expectation: InventoryReplayExpectation,
+): boolean =>
+  evidence.operation === "inventory_artifact" &&
+  evidence.predicate_type === "rea.analysis/v2" &&
+  providerMatches(evidence.provider, ARTIFACT_GRAPH_PROVIDER) &&
+  evidence.subject?.local_path === expectation.path &&
+  evidence.subject.digest.sha256 === expectation.target.root_sha256 &&
+  evidence.subject.format === expectation.target.format &&
+  evidence.confidence === "observed" &&
+  evidence.authority === "shipped-artifact" &&
+  evidence.raw_result === null &&
+  evidence.environment === null &&
+  evidence.evidence_links.length === 0;
+
+const inventoryResultPageMatches = (
+  page: ReturnType<typeof artifactInventoryResultSchema.parse>,
+  offset: number,
+  input: CrossVersionInvestigationInput,
+): boolean =>
+  page.nodes.offset === offset &&
+  page.nodes.limit === input.options.page_size &&
+  page.occurrences.offset === offset &&
+  page.occurrences.limit === input.options.page_size &&
+  page.edges.offset === offset &&
+  page.edges.limit === input.options.page_size &&
+  valuesMatch(page.limits, traversalLimits(input));
+
+const inventoryParametersMatch = (
+  parameters: Readonly<Record<string, unknown>>,
+  offset: number,
+  input: CrossVersionInvestigationInput,
+): boolean =>
+  Object.keys(parameters).length === 15 &&
+  parameters.node_offset === offset &&
+  parameters.node_limit === input.options.page_size &&
+  parameters.occurrence_offset === offset &&
+  parameters.occurrence_limit === input.options.page_size &&
+  parameters.edge_offset === offset &&
+  parameters.edge_limit === input.options.page_size &&
+  parameters.max_entries === input.options.max_entries &&
+  parameters.max_total_bytes === input.options.max_total_bytes &&
+  parameters.max_entry_bytes === input.options.max_entry_bytes &&
+  parameters.max_compression_ratio === input.options.max_compression_ratio &&
+  parameters.max_depth === input.options.max_depth &&
+  parameters.max_path_bytes === input.options.max_path_bytes &&
+  parameters.integrity_policy === input.integrity_policy &&
+  parameters.integrity_continue_approved ===
+    input.integrity_continue_approved &&
+  parameters.max_integrity_mismatches === input.max_integrity_mismatches;
+
+const traversalLimits = (input: CrossVersionInvestigationInput) => ({
+  max_entries: input.options.max_entries,
+  max_total_bytes: input.options.max_total_bytes,
+  max_entry_bytes: input.options.max_entry_bytes,
+  max_compression_ratio: input.options.max_compression_ratio,
+  max_depth: input.options.max_depth,
+  max_path_bytes: input.options.max_path_bytes,
+});
 
 const validateCompletedReplayEvidence = (
   workspace: InvestigationWorkspace,
