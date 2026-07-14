@@ -61,16 +61,60 @@ describe("CLI upgrade", () => {
     expect(host.installs).toBe(1);
   });
 
-  it("continues with npm latest when the registry check is unavailable", async () => {
+  it("does not mutate when the registry check is unavailable", async () => {
     const host = new FakeUpgradeHost();
     host.latest = undefined;
 
     expect(await runUpgrade("0.5.0", host)).toMatchObject({
-      status: "upgraded",
+      status: "failed",
       latestVersion: null,
-      versionCheck: "unavailable",
+      reason: "version-check",
+    });
+    expect(host.installs).toBe(0);
+  });
+
+  it.each([
+    ["1.10.0", "1.9.0"],
+    ["1.0.0", "1.0.0-rc.1"],
+  ])(
+    "does not downgrade installed version %s to registry version %s",
+    async (currentVersion, latestVersion) => {
+      const host = new FakeUpgradeHost();
+      host.latest = latestVersion;
+
+      expect(await runUpgrade(currentVersion, host)).toEqual({
+        status: "current",
+        currentVersion,
+        latestVersion,
+        installMethod: "npm",
+      });
+      expect(host.installs).toBe(0);
+    },
+  );
+
+  it("upgrades a prerelease when the final release is available", async () => {
+    const host = new FakeUpgradeHost();
+    host.latest = "1.0.0";
+
+    expect(await runUpgrade("1.0.0-rc.1", host)).toMatchObject({
+      status: "upgraded",
+      previousVersion: "1.0.0-rc.1",
+      latestVersion: "1.0.0",
     });
     expect(host.installs).toBe(1);
+  });
+
+  it("rejects invalid registry version metadata without mutation", async () => {
+    const host = new FakeUpgradeHost();
+    host.latest = "latest";
+
+    expect(await runUpgrade("1.0.0", host)).toMatchObject({
+      status: "failed",
+      currentVersion: "1.0.0",
+      latestVersion: "latest",
+      reason: "version-check",
+    });
+    expect(host.installs).toBe(0);
   });
 
   it("preserves stdout for an explicitly structured CLI response", async () => {
