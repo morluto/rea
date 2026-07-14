@@ -239,6 +239,27 @@ describe("persistent cross-version investigation workspace", () => {
     });
   });
 
+  it("enforces shared JSON depth limits while reading workspaces", async () => {
+    const { path, input } = await fixture();
+    if (directory === undefined) throw new Error("missing fixture root");
+    const completed = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
+    if (!completed.ok) throw completed.error;
+
+    await expect(
+      readInvestigationWorkspace(path, {
+        ...policy(directory),
+        maxDepth: 1,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "InvestigationWorkspaceError", reason: "too-large" },
+    });
+  });
+
   it("resumes from a comparison checkpoint without recomputing its identity", async () => {
     const { input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");

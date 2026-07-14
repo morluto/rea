@@ -5,6 +5,7 @@ import writeFileAtomic from "write-file-atomic";
 
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import { EvidenceFileError } from "../domain/errors.js";
+import { isJsonWithinLimits } from "../domain/jsonLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
@@ -32,8 +33,9 @@ export const readBoundedJson = async (
     } catch (cause: unknown) {
       return err(new EvidenceFileError("read", "invalid-json", { cause }));
     }
-    const limits = validateJsonLimits(decoded, policy);
-    return limits.ok ? ok(decoded) : limits;
+    return isJsonWithinLimits(decoded, policy)
+      ? ok(decoded)
+      : err(new EvidenceFileError("read", "too-large"));
   } catch (cause: unknown) {
     return err(new EvidenceFileError("read", "io", { cause }));
   }
@@ -94,35 +96,6 @@ const isApproved = async (
       return true;
   }
   return false;
-};
-
-const validateJsonLimits = (
-  root: unknown,
-  policy: EvidenceFilePolicy,
-): Result<null, EvidenceFileError> => {
-  const pending: Array<{ readonly value: unknown; readonly depth: number }> = [
-    { value: root, depth: 0 },
-  ];
-  let nodes = 0;
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined) break;
-    nodes += 1;
-    if (nodes > policy.maxNodes || current.depth > policy.maxDepth)
-      return err(new EvidenceFileError("read", "too-large"));
-    if (
-      typeof current.value === "string" &&
-      current.value.length > policy.maxStringLength
-    )
-      return err(new EvidenceFileError("read", "too-large"));
-    if (typeof current.value !== "object" || current.value === null) continue;
-    for (const [key, value] of Object.entries(current.value)) {
-      if (key.length > policy.maxStringLength)
-        return err(new EvidenceFileError("read", "too-large"));
-      pending.push({ value, depth: current.depth + 1 });
-    }
-  }
-  return ok(null);
 };
 
 const isFileNotFound = (cause: unknown): boolean =>

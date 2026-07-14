@@ -176,6 +176,42 @@ describe("permission policy", () => {
     });
   });
 
+  it("reports a missing scope when revoked grants cover a different root", () => {
+    const ceiling = {
+      capability: "evidence_write" as const,
+      roots: ["/workspace"],
+      executables: [],
+      environment_names: [],
+      network: "none" as const,
+      mount: false,
+    };
+    const granted = grantPermission(createPermissionPolicy([ceiling]), {
+      ...ceiling,
+      roots: ["/workspace/first"],
+      grant_id: "revoked-other-root",
+      lifetime: "project",
+      operation_identity: null,
+      expires_at: null,
+    });
+    expect(granted.ok).toBe(true);
+    if (!granted.ok) return;
+
+    expect(
+      evaluatePermission(
+        revokePermission(granted.value, "revoked-other-root"),
+        {
+          ...ceiling,
+          roots: ["/workspace/second"],
+          operation_identity: "write:report.json",
+        },
+      ),
+    ).toMatchObject({
+      allowed: false,
+      reason: "grant_required",
+      missing: { roots: ["/workspace/second"] },
+    });
+  });
+
   it("expires grants, removes session authority on disconnect, and never combines partial grants", () => {
     const ceiling = {
       capability: "process_capture" as const,
