@@ -1,5 +1,99 @@
 # Changelog
 
+## [1.6.0](https://github.com/morluto/rea/compare/rea-agents-1.5.0...rea-agents-1.6.0) (2026-07-14)
+
+
+### Features
+
+* add web and Electron reverse-engineering workflows ([be76f80](https://github.com/morluto/rea/commit/be76f8090b5195680cdf73a8c21f65e6516efc92))
+
+
+### Bug Fixes
+
+* **application:** add explicit investigation replay ([7112e1e](https://github.com/morluto/rea/commit/7112e1e6bf33bccd605bf3ee5541b83a522831e5))
+* **application:** add explicit investigation replay ([a6b5ca4](https://github.com/morluto/rea/commit/a6b5ca4135ac2cf168470b47e97a05d8b67f3147))
+* **browser:** keep page endpoint type internal ([3743962](https://github.com/morluto/rea/commit/37439620710d4c47bf48f1df0b099eab0c115446))
+* **browser:** observe direct target disconnects ([9be24f8](https://github.com/morluto/rea/commit/9be24f8de14edc04cdd3649e0ea66d53edb72328))
+* **browser:** preserve operation-aware cancellation errors ([0aac8aa](https://github.com/morluto/rea/commit/0aac8aaba5a5097d99277d7501dae6fdd017f2d0))
+* **browser:** support page-scoped CDP transports ([c4930f4](https://github.com/morluto/rea/commit/c4930f4820dbf114da6fa850500f1415d0d6b7a9))
+* **browser:** support page-scoped CDP transports ([bf96192](https://github.com/morluto/rea/commit/bf9619267b45f2383ebdd648dea05a7d2e3945a6))
+* **browser:** support relative source map URLs ([5231e95](https://github.com/morluto/rea/commit/5231e95c19d309113a4335fe44a5793e3924219a))
+* **cli:** confirm project grant revocation ([6397e54](https://github.com/morluto/rea/commit/6397e54169a55b4fcab7ad92f42bbd8f8c616810))
+* **cli:** confirm project grant revocation ([7a4cfb4](https://github.com/morluto/rea/commit/7a4cfb4fbd96df34f5502adbf70f5bfb12bbc56c))
+* **cli:** restrict production MCP dispatch ([8bd0e5f](https://github.com/morluto/rea/commit/8bd0e5f1ea7f36b23f83113ef285c31a36ff315c))
+* **cli:** restrict production MCP dispatch ([190e5d3](https://github.com/morluto/rea/commit/190e5d3282f0f1bc980ad488a7774a500ae3e87d))
+* **doctor:** honor explicit Hopper launcher ([c69fe2c](https://github.com/morluto/rea/commit/c69fe2c897b8f567e1607424690e9d59aaefadf1))
+* **doctor:** honor explicit Hopper launcher ([9208592](https://github.com/morluto/rea/commit/9208592f41ed920c32206c78fcf43c8d7db77f22))
+* **evidence:** enforce the combined record limit ([c791802](https://github.com/morluto/rea/commit/c7918024bc89995f4054bd499fef88a34a3e24d7))
+* **evidence:** enforce the combined record limit ([834c70c](https://github.com/morluto/rea/commit/834c70cf4b9c8dca000c7a20491215d1acc0db89))
+* **hopper:** cancel startup before closing ([f471a63](https://github.com/morluto/rea/commit/f471a63c87679eff9564553741d9967724c57f0a))
+* **hopper:** cancel startup before closing ([6cc2fdf](https://github.com/morluto/rea/commit/6cc2fdf80ce2d0220fe996ddbed2f0378f5397cd))
+* **hopper:** select verified Linux demo mode explicitly ([46e4052](https://github.com/morluto/rea/commit/46e40520285c2338bd1ffedd16599977c333befb))
+* **hopper:** select verified Linux demo mode explicitly ([04c5fd6](https://github.com/morluto/rea/commit/04c5fd63b72e6e497363ecbde5e24088eef639cd))
+* **native:** harden command capture edge cases ([c2e64a4](https://github.com/morluto/rea/commit/c2e64a42c84bd245f3df4eb8b61039c8594704f8))
+* **native:** harden command capture edge cases ([d39f98d](https://github.com/morluto/rea/commit/d39f98d06dd53cdfd427e75e2f45f2c8b8792f50))
+* preserve setup diagnostics and clean Knip config ([2d1e021](https://github.com/morluto/rea/commit/2d1e021782dc903faaa401207dad47278bfb57b2))
+* preserve setup diagnostics and clean Knip config ([5a7ccef](https://github.com/morluto/rea/commit/5a7ccefc68e3d7359bfd9a6262701641da380d37))
+* **process:** gate sampling on initialized PTY root ([57938a8](https://github.com/morluto/rea/commit/57938a8465add2d6e89dae13e66059bad7f72a45))
+* **process:** gate sampling on initialized PTY roots ([e831a41](https://github.com/morluto/rea/commit/e831a41375148336d72beadd5d13405047c82e67))
+* **process:** keep validation detail internal ([614a119](https://github.com/morluto/rea/commit/614a1197f5b699b61c46d82a24e0564bf0d87829))
+* **process:** restrict cleanup to captured group leaders ([40c6f60](https://github.com/morluto/rea/commit/40c6f60ac9a4b86f4cbe28a72e7692e1acf761b1))
+* **process:** settle exited zombie groups ([072ce5a](https://github.com/morluto/rea/commit/072ce5aede03a2dab59ce8776a04063218448925))
+* **process:** settle exited zombie groups ([4828326](https://github.com/morluto/rea/commit/482832607910a6e872bccc27c956eeaf55dd6056))
+* **process:** stabilize and speed up the test suite ([a3b7de9](https://github.com/morluto/rea/commit/a3b7de9fa5e89808a3c01a5623779709edb7c691))
+* **reference:** preserve distinct parse failures ([e02cb2f](https://github.com/morluto/rea/commit/e02cb2f877e8fd9874245ee6e15f68666afaeb46))
+* **reference:** preserve distinct parse failures ([543510f](https://github.com/morluto/rea/commit/543510f62fd257b42e6a7dfc876112dda0e0ea01))
+* rollup batch of fixes ([b348b2c](https://github.com/morluto/rea/commit/b348b2c98772b3d38b33e6aa4d14ae7dce78a4b9))
+* **runtime:** apply permission reloads atomically ([49e843e](https://github.com/morluto/rea/commit/49e843e8ff2eb87bf1c6174823191cc97ad1ced8))
+* **runtime:** apply permission reloads atomically ([3ae7109](https://github.com/morluto/rea/commit/3ae7109faa29175e84ef695b296ad4db14097a37))
+* **runtime:** serialize permission reloads ([7e53dd6](https://github.com/morluto/rea/commit/7e53dd6ad321f9b75dbe458f9e116da7637d740c))
+* **runtime:** unregister shutdown handlers ([71072d8](https://github.com/morluto/rea/commit/71072d86b161530d523a10e920e5d67ca220a7e9))
+* **runtime:** unregister shutdown handlers ([f9e3c23](https://github.com/morluto/rea/commit/f9e3c23987bdf37be07d6c4602666c6ac90ae0ed))
+* **session:** isolate availability observers ([43766fd](https://github.com/morluto/rea/commit/43766fda699f5498909af21e386ae4817159e4cf))
+* **session:** isolate availability observers ([e5a80d4](https://github.com/morluto/rea/commit/e5a80d4f06cd0d4bf64e6b94b50f7430829c336a))
+* **session:** reopen replaced targets ([e98413c](https://github.com/morluto/rea/commit/e98413c3d5b0adae72ac9f3814f401ad9eec2bb6))
+* **session:** reopen replaced targets ([5c55999](https://github.com/morluto/rea/commit/5c559998e14bcb9be1e589a1266e31296a8f2af8))
+* **setup:** configure every detected client ([69744a4](https://github.com/morluto/rea/commit/69744a421a28bad525fe95697938b99d7ffcf5b6))
+* **setup:** configure every detected client ([24f9a1f](https://github.com/morluto/rea/commit/24f9a1ff11e4d1a6361071739fa937d88159fb33))
+* **setup:** omit aligned client configurations from plan ([a86da4f](https://github.com/morluto/rea/commit/a86da4ff3f9279e4ca3fc792e6f18542fee9e0ce))
+* **setup:** omit aligned skill from plan ([d81687f](https://github.com/morluto/rea/commit/d81687f38393128b0a91ca83deb9b250190fb509))
+* **setup:** omit aligned skill from plan ([2984fa7](https://github.com/morluto/rea/commit/2984fa74acfb6f7cbb504677a348e20bff85b806))
+* **setup:** preserve client config symlinks ([85285f1](https://github.com/morluto/rea/commit/85285f1563d8d24bb934e1fe227cb91fe36c6dd4))
+* **setup:** preserve client config symlinks ([df87544](https://github.com/morluto/rea/commit/df87544a5dcee13f15aa6e435c2b61fb3b220397))
+* **test:** adapt mainReload shutdown seam to registerShutdown signature ([0a430c1](https://github.com/morluto/rea/commit/0a430c12c158cf7f1ef04cdf537d5277c08c6106))
+* **tooling:** isolate concurrent repository checks ([fb17156](https://github.com/morluto/rea/commit/fb17156499c592b5e18ffae996c55c372e3727d0))
+* **tooling:** isolate concurrent repository checks ([ab8c5c1](https://github.com/morluto/rea/commit/ab8c5c1e13041690e07896f2f2f0dfa2134ad97e))
+* **upgrade:** prevent version downgrades ([a204840](https://github.com/morluto/rea/commit/a2048406302b808e4f897eabd6c00ce64c529c16))
+* **upgrade:** prevent version downgrades ([1d1d234](https://github.com/morluto/rea/commit/1d1d234eedd3b73108cd2fb41878680ca107bb7c))
+* **verify:** reconcile PR-212/215/228 package E2E expectations ([cfa110c](https://github.com/morluto/rea/commit/cfa110ccb4021d383cc8be1caa17fef923edc183))
+
+
+### Performance Improvements
+
+* **application:** scan version artifacts in parallel ([528c05e](https://github.com/morluto/rea/commit/528c05e2faa557e17b6b83ccd7e1b0e779ba892a))
+* **application:** scan version artifacts in parallel ([c00739b](https://github.com/morluto/rea/commit/c00739bb1f1ae3cb6f00464e8fd9f5b5f7dc6b6e))
+
+
+### Tests
+
+* **application:** verify packaged MCP replay ([6601e0c](https://github.com/morluto/rea/commit/6601e0cb7e57fe94cf0ae65bf0d04de25a3a7b49))
+* **browser:** harden Chrome startup on CI ([74c5121](https://github.com/morluto/rea/commit/74c512130c5bc25d6c119eda72a86e73fcc9f1ff))
+* **browser:** route discovery sockets through proxy ([e363f0e](https://github.com/morluto/rea/commit/e363f0eab8325a9f83568295d4669d70e7d47a2d))
+* **browser:** verify page-scoped Chrome transport ([c252536](https://github.com/morluto/rea/commit/c252536494c15f36e69978eaf068eae176e71688))
+* **cli:** verify packaged policy revocation ([3d71737](https://github.com/morluto/rea/commit/3d71737dc9ba8b449c0d174da90c3f1df54789d2))
+* **hopper:** cover verified Linux rejection ([db202c2](https://github.com/morluto/rea/commit/db202c2b6ac9ce771c401cc558c56ecf6d2e51ee))
+* **hopper:** retry after cancelled startup ([6de726f](https://github.com/morluto/rea/commit/6de726ffddc54ea354e6970f022eaab2f0863586))
+* **hopper:** verify alternate Linux launcher path ([d93257b](https://github.com/morluto/rea/commit/d93257b50fae81272cbd2da28ba24d03647c2c99))
+* **package:** cover aligned setup plan ([a597639](https://github.com/morluto/rea/commit/a5976396eb424933232844e161cdab84b452b361))
+* **package:** cover config symlink lifecycle ([d1ef7a5](https://github.com/morluto/rea/commit/d1ef7a54394ff2ed4316ba01cfe0aa4aac313aed))
+* **package:** preserve unrelated symlink config ([c50e51e](https://github.com/morluto/rea/commit/c50e51eb6fe5686ad9d680abe0d96b3e4b58dc78))
+* reduce test suite runtime ([2223da1](https://github.com/morluto/rea/commit/2223da19166a3ec485d98a0d005113a9d0358f37))
+* **reference:** cover failure normalization ([3d5041f](https://github.com/morluto/rea/commit/3d5041fb2f8964c30f0273615b4f039620eef0bf))
+* **runtime:** cover idempotent handler cleanup ([1bdb59e](https://github.com/morluto/rea/commit/1bdb59e201a26b53f5ed8b2eb870941ca4b788f7))
+* serialize subprocess-heavy integrations ([f46fc7f](https://github.com/morluto/rea/commit/f46fc7f1f3a265123c69d007c64c928a8974d98f))
+* **session:** reopen replaced target through MCP ([1c32880](https://github.com/morluto/rea/commit/1c32880e56450b610d766c5a6c1bee6873ee6323))
+* **setup:** cover later clients after failure ([8f73112](https://github.com/morluto/rea/commit/8f7311285b2ba7a1ed427d61e437dd2665e20d12))
+
 ## [1.5.0](https://github.com/morluto/rea/compare/rea-agents-1.4.0...rea-agents-1.5.0) (2026-07-14)
 
 
