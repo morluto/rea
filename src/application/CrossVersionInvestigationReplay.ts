@@ -1,4 +1,8 @@
-import { changedBehaviorResultSchema } from "../domain/changedBehavior.js";
+import {
+  changedBehaviorResultSchema,
+  type ChangedBehaviorResult,
+} from "../domain/changedBehavior.js";
+import type { Evidence } from "../domain/evidence.js";
 import {
   EvidenceIntegrityError,
   InvestigationWorkspaceError,
@@ -87,65 +91,90 @@ const validateCompletedReplayEvidence = (
   workspace: InvestigationWorkspace,
   run: InvestigationRun,
 ): Result<null, EvidenceIntegrityError> => {
-  const comparison = workspace.bundle.records.find(
-    ({ evidence_id: evidenceId }) => evidenceId === run.comparison_evidence_id,
-  );
-  const result = workspace.bundle.records.find(
-    ({ evidence_id: evidenceId }) => evidenceId === run.result_evidence_id,
-  );
-  const parsedResult = changedBehaviorResultSchema.safeParse(
-    result?.normalized_result,
-  );
-  const summary = parsedResult.success
-    ? parsedResult.data.investigation_run
-    : undefined;
-  const parsedResultLinks = parsedResult.success
-    ? parsedResult.data.evidence_links
-    : [];
   const inventoryIds = [
     ...run.left_inventory_evidence_ids,
     ...run.right_inventory_evidence_ids,
   ];
-  const resultLinks =
-    comparison === undefined
-      ? []
-      : [...new Set([comparison.evidence_id, ...inventoryIds])].sort(
-          (left, right) => left.localeCompare(right, "en"),
-        );
-  const valid =
-    comparison?.operation === "compare_artifacts" &&
-    comparison.predicate_type === "rea.artifact-comparison/v1" &&
-    providerMatches(comparison.provider, ARTIFACT_COMPARISON_PROVIDER) &&
-    comparison.subject === null &&
-    comparison.confidence === "derived" &&
-    comparison.authority === "analyst-inference" &&
-    JSON.stringify(comparison.evidence_links) ===
-      JSON.stringify(inventoryIds) &&
-    comparisonParametersMatch(comparison.parameters, run) &&
-    result?.operation === "find_changed_behavior" &&
-    result.predicate_type === "rea.changed-behavior/v1" &&
-    providerMatches(result.provider, CHANGED_BEHAVIOR_PROVIDER) &&
-    result.subject === null &&
-    result.confidence === "derived" &&
-    result.authority === "analyst-inference" &&
-    JSON.stringify(result.evidence_links) === JSON.stringify(resultLinks) &&
-    resultParametersMatch(result.parameters, workspace, run) &&
+  const comparison = workspace.bundle.records.find(
+    ({ evidence_id: evidenceId }) => evidenceId === run.comparison_evidence_id,
+  );
+  if (!comparisonEvidenceMatches(comparison, inventoryIds, run))
+    return inconsistentReplayEvidence();
+  const resultLinks = [
+    ...new Set([comparison.evidence_id, ...inventoryIds]),
+  ].sort((left, right) => left.localeCompare(right, "en"));
+  const result = workspace.bundle.records.find(
+    ({ evidence_id: evidenceId }) => evidenceId === run.result_evidence_id,
+  );
+  if (!resultEvidenceMatches(result, resultLinks, workspace, run))
+    return inconsistentReplayEvidence();
+  const parsedResult = changedBehaviorResultSchema.safeParse(
+    result.normalized_result,
+  );
+  if (
+    !parsedResult.success ||
+    !resultPayloadMatches(parsedResult.data, resultLinks, workspace, run)
+  )
+    return inconsistentReplayEvidence();
+  return ok(null);
+};
+
+const comparisonEvidenceMatches = (
+  comparison: Evidence | undefined,
+  inventoryIds: readonly string[],
+  run: InvestigationRun,
+): comparison is Evidence =>
+  comparison?.operation === "compare_artifacts" &&
+  comparison.predicate_type === "rea.artifact-comparison/v1" &&
+  providerMatches(comparison.provider, ARTIFACT_COMPARISON_PROVIDER) &&
+  comparison.subject === null &&
+  comparison.confidence === "derived" &&
+  comparison.authority === "analyst-inference" &&
+  valuesMatch(comparison.evidence_links, inventoryIds) &&
+  comparisonParametersMatch(comparison.parameters, run);
+
+const resultEvidenceMatches = (
+  result: Evidence | undefined,
+  resultLinks: readonly string[],
+  workspace: InvestigationWorkspace,
+  run: InvestigationRun,
+): result is Evidence =>
+  result?.operation === "find_changed_behavior" &&
+  result.predicate_type === "rea.changed-behavior/v1" &&
+  providerMatches(result.provider, CHANGED_BEHAVIOR_PROVIDER) &&
+  result.subject === null &&
+  result.confidence === "derived" &&
+  result.authority === "analyst-inference" &&
+  valuesMatch(result.evidence_links, resultLinks) &&
+  resultParametersMatch(result.parameters, workspace, run);
+
+const resultPayloadMatches = (
+  result: ChangedBehaviorResult,
+  resultLinks: readonly string[],
+  workspace: InvestigationWorkspace,
+  run: InvestigationRun,
+): boolean => {
+  const summary = result.investigation_run;
+  return (
     summary?.workspace_id === workspace.workspace_id &&
     summary.run_id === run.run_id &&
     summary.left_manifest_id === run.left.manifest_id &&
     summary.right_manifest_id === run.right.manifest_id &&
-    summary.inventory_evidence_count === inventoryIds.length &&
+    summary.inventory_evidence_count ===
+      run.left_inventory_evidence_ids.length +
+        run.right_inventory_evidence_ids.length &&
     summary.comparison_evidence_id === run.comparison_evidence_id &&
-    JSON.stringify(summary.limitations) === JSON.stringify(run.limitations) &&
-    JSON.stringify(parsedResultLinks) === JSON.stringify(resultLinks);
-  return valid
-    ? ok(null)
-    : err(
-        new EvidenceIntegrityError(
-          "Completed investigation replay Evidence is inconsistent",
-        ),
-      );
+    valuesMatch(summary.limitations, run.limitations) &&
+    valuesMatch(result.evidence_links, resultLinks)
+  );
 };
+
+const inconsistentReplayEvidence = (): Result<never, EvidenceIntegrityError> =>
+  err(
+    new EvidenceIntegrityError(
+      "Completed investigation replay Evidence is inconsistent",
+    ),
+  );
 
 const comparisonParametersMatch = (
   parameters: Readonly<Record<string, unknown>>,
@@ -187,3 +216,6 @@ const providerMatches = (
   actual.id === expected.id &&
   actual.name === expected.name &&
   actual.version === expected.version;
+
+const valuesMatch = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
