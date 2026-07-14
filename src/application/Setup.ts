@@ -75,6 +75,11 @@ export interface SetupHost {
     hopperPath: string | undefined,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
+  clientNeedsConfigure(
+    client: SetupClient,
+    hopperPath: string | undefined,
+    command: readonly string[],
+  ): Promise<boolean>;
   skillNeedsInstall(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
@@ -223,18 +228,41 @@ const discoverSetupActions = async (
     host.detectedClients(),
     host.skillNeedsInstall(),
   ]);
+  const command = registrationCommand();
+  const clients = installHopper
+    ? detectedClients
+    : await filterClientsNeedingConfigure(
+        host,
+        detectedClients,
+        hopperPath,
+        command,
+      );
   const plannedActions = setupPlan(
     host.platform,
     installHopper,
     installSkill,
-    detectedClients,
+    clients,
   );
   return {
     installHopper,
     installSkill,
-    detectedClients,
+    detectedClients: clients,
     plannedActions,
   };
+};
+
+const filterClientsNeedingConfigure = async (
+  host: SetupHost,
+  detectedClients: readonly SetupClient[],
+  hopperPath: string | undefined,
+  command: readonly string[],
+): Promise<readonly SetupClient[]> => {
+  const needs = await Promise.all(
+    detectedClients.map((client) =>
+      host.clientNeedsConfigure(client, hopperPath, command),
+    ),
+  );
+  return detectedClients.filter((_, index) => needs[index]);
 };
 
 const finalSetupRemediation = (
@@ -293,6 +321,10 @@ const systemSetupHost = (): SetupHost => {
         : client.format === "toml"
           ? configureTomlClient(client, hopperPath, command)
           : configureJsonClient(client, hopperPath, command),
+    clientNeedsConfigure: (client, hopperPath, command) =>
+      clientConfigurationAligned(client, hopperPath, command).then(
+        (aligned) => !aligned,
+      ),
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
@@ -490,5 +522,43 @@ const restoreConfig = async (
     else await writeFile(path, original, { encoding: "utf8", mode: 0o600 });
   } catch {
     // The backup remains available for the remediation reported by setup.
+  }
+};
+
+const clientConfigurationDesired = (
+  hopperPath: string | undefined,
+  command: readonly string[],
+) => ({
+  command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
+  args: command.slice(1),
+  ...(hopperPath === undefined
+    ? {}
+    : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
+});
+
+const clientConfigurationAligned = async (
+  client: SetupClient,
+  hopperPath: string | undefined,
+  command: readonly string[],
+): Promise<boolean> => {
+  const desired = clientConfigurationDesired(hopperPath, command);
+  try {
+    const original = await readFile(client.configPath, "utf8");
+    if (client.format === "toml") {
+      const document = objectSchema.parse(parseToml(original));
+      const servers = parseOptionalObject(document.mcp_servers);
+      return (
+        JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+        JSON.stringify(desired)
+      );
+    }
+    const document = parseObject(original);
+    const servers = parseOptionalObject(document.mcpServers);
+    return (
+      JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+      JSON.stringify(desired)
+    );
+  } catch {
+    return false;
   }
 };

@@ -63,6 +63,10 @@ class FakeSetupHost implements SetupHost {
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
   };
+  clientNeedsConfigure = (client: SetupClient): Promise<boolean> =>
+    Promise.resolve(
+      this.clientResults.get(client.name)?.status !== "unchanged",
+    );
   skillNeedsInstall = (): Promise<boolean> =>
     Promise.resolve(this.skill !== "unchanged");
   installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {

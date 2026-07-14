@@ -387,8 +387,8 @@ try {
       second.status !== status ||
       firstExecution.status !== (status === "ready" ? 0 : 1) ||
       secondExecution.status !== (status === "ready" ? 0 : 1) ||
-      aligned.status !== "ready" ||
-      alignedExecution.status !== 0 ||
+      aligned.status !== status ||
+      alignedExecution.status !== (status === "ready" ? 0 : 1) ||
       aligned.plannedActions.length !== 0 ||
       aligned.appliedActions.length !== 0 ||
       second.appliedActions.length !== 0
