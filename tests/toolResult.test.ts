@@ -6,6 +6,7 @@ import { ok } from "../src/domain/result.js";
 import { err } from "../src/domain/result.js";
 import { HopperProcessError } from "../src/domain/errors.js";
 import { toCallToolResult } from "../src/server/toolResult.js";
+import { createEvidence, evidenceSchema } from "../src/domain/evidence.js";
 
 const contract: ToolContract = {
   name: "provider_neutral_fixture",
@@ -27,7 +28,8 @@ describe("tool result projection", () => {
     const result = toCallToolResult(err(new HopperProcessError(76)), contract);
     expect(result.structuredContent).toMatchObject({
       error: {
-        code: "unsupported_demo_dialog",
+        code: "provider_unavailable",
+        details: { failure_code: "unsupported_demo_dialog" },
         category: "execution_failure",
       },
     });
@@ -43,12 +45,54 @@ describe("tool result projection", () => {
       ],
       structuredContent: {
         error: {
+          code: "unreadable_output",
           category: "execution_failure",
           message:
             "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+          retryable: false,
+          remediation: {
+            action:
+              "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+            restart_required: false,
+          },
         },
       },
       isError: true,
     });
+  });
+
+  it("links successful evidence only when its session resource exists", () => {
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "fixture",
+        parameters: {},
+        result: { value: "observed" },
+        limitations: [],
+      },
+    );
+    const evidenceContract: ToolContract = {
+      ...contract,
+      outputSchema: evidenceSchema,
+    };
+
+    expect(
+      toCallToolResult(ok(evidence), evidenceContract).content,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "resource_link" }),
+      ]),
+    );
+    expect(
+      toCallToolResult(ok(evidence), evidenceContract, {
+        evidenceResourcesAvailable: true,
+      }).content,
+    ).toContainEqual(
+      expect.objectContaining({
+        type: "resource_link",
+        uri: `rea://evidence/${evidence.evidence_id}`,
+      }),
+    );
   });
 });

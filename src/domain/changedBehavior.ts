@@ -331,9 +331,11 @@ const artifactFindings = (evidence: Evidence): Finding[] => {
       scope: "static_candidate",
       status: change.classification,
       classification:
-        change.classification === "unknown"
-          ? "unresolved_branch"
-          : "derived_relationship",
+        change.classification === "contradiction"
+          ? "contradiction"
+          : change.classification === "unknown"
+            ? "unresolved_branch"
+            : "derived_relationship",
       limitations: result.limitations,
       links: change.evidence_links,
     }),

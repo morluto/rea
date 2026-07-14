@@ -5,6 +5,7 @@ import {
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
+  type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
 import { inventoryArtifact } from "../application/ArtifactInventory.js";
 import { extractArtifact } from "../application/ArtifactExtraction.js";
@@ -32,7 +33,10 @@ const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
-  constructor(private readonly nativeMountEnabled = false) {}
+  constructor(
+    private readonly nativeMountEnabled = false,
+    private readonly integrityContinueEnabled = false,
+  ) {}
 
   readonly #capabilities: readonly CapabilityDescriptor[] = Object.freeze(
     ARTIFACT_TOOL_CONTRACTS.map((contract) =>
@@ -76,7 +80,11 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(target, this.nativeMountEnabled);
+    return new ArtifactClient(
+      target,
+      this.nativeMountEnabled,
+      this.integrityContinueEnabled,
+    );
   }
 }
 
@@ -84,12 +92,13 @@ class ArtifactClient implements AnalysisClient {
   constructor(
     private readonly target: BinaryTarget,
     private readonly nativeMountEnabled: boolean,
+    private readonly integrityContinueEnabled: boolean,
   ) {}
 
   async execute(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
-    options?: { readonly signal?: AbortSignal },
+    options?: ExecutionOptions,
   ) {
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
@@ -150,6 +159,12 @@ class ArtifactClient implements AnalysisClient {
           nativeMount: {
             nativeMountApproved: parsed.native_mount_approved === true,
             nativeMountEnabled: this.nativeMountEnabled,
+          },
+          integrity: {
+            mode: parsed.integrity_policy,
+            approved: parsed.integrity_continue_approved === true,
+            enabled: this.integrityContinueEnabled,
+            maxMismatches: parsed.max_integrity_mismatches,
           },
         },
       );

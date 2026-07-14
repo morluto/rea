@@ -14,6 +14,7 @@ import { resolveSessionEvidence } from "./sessionEvidence.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
@@ -24,18 +25,17 @@ export const registerArtifactComparisonTool = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    (input) => {
+    async (input, context) => {
       const parsed = artifactComparisonInputSchema.parse(input);
       const left = resolveSessionEvidence(session, parsed.left);
       if (!left.ok) return toCallToolResult(left, contract);
       const right = resolveSessionEvidence(session, parsed.right);
       if (!right.ok) return toCallToolResult(right, contract);
-      const comparison = compareArtifacts(
-        left.value,
-        right.value,
-        parsed.offset,
-        parsed.limit,
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        compareArtifacts(left.value, right.value, parsed.offset, parsed.limit),
       );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const comparison = computed.value;
       const leftEvidenceIds = evidenceIds(parsed.left);
       const rightEvidenceIds = evidenceIds(parsed.right);
       const evidence = createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {

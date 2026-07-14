@@ -311,9 +311,16 @@ describe("enhanced MCP tools", () => {
             address: "0x2",
             status: "error",
             error: {
+              code: "unreadable_output",
               category: "execution_failure",
               message:
                 "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+              retryable: false,
+              remediation: {
+                action:
+                  "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+                restart_required: false,
+              },
             },
           },
         ],

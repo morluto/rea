@@ -12,6 +12,9 @@ import { silentLogger, type Logger } from "../logger.js";
 import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
+import { registerEvidenceResources } from "./registerEvidenceResources.js";
+import { createServerIdentity } from "../serverIdentity.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -19,6 +22,12 @@ export interface CreateServerOptions {
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
   readonly investigationInputRoots?: readonly string[];
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly artifactIntegrityContinueEnabled?: () => boolean;
+  readonly availabilityPolicy?: () => {
+    readonly processCaptureEnabled: boolean;
+    readonly evidenceFileRoots: number;
+  };
 }
 
 /**
@@ -31,15 +40,57 @@ export const createServer = (
   session?: BinarySessionPort,
   options: CreateServerOptions = {},
 ): McpServer => {
+  const startedAt = new Date().toISOString();
   const logger = options.logger ?? silentLogger;
   const server = new McpServer(
-    { name: PRODUCT_IDENTITY.mcpServerKey, version: "0.1.0" },
     {
-      capabilities: { tools: {} },
+      name: PRODUCT_IDENTITY.mcpServerKey,
+      version: PRODUCT_IDENTITY.packageVersion,
+    },
+    {
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { listChanged: true },
+      },
       instructions:
         session === undefined
           ? "Reverse-engineering tools for an active analysis target. Start with binary_overview."
           : "Reverse-engineering tools for configured analysis providers. Open a target with open_binary, then start with binary_overview.",
+    },
+  );
+  session?.onAvailabilityChanged?.(() => server.sendToolListChanged());
+  server.registerResource(
+    "server-identity",
+    "rea://server/identity",
+    {
+      title: "REA server identity",
+      description: "Live package, SDK, protocol, and catalog identity.",
+      mimeType: "application/json",
+    },
+    (uri) => {
+      const client = server.server.getClientVersion();
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(
+              createServerIdentity({
+                startedAt,
+                ...(client === undefined ? {} : { client }),
+                ...(server.server.getNegotiatedProtocolVersion() === undefined
+                  ? {}
+                  : {
+                      protocolVersion:
+                        server.server.getNegotiatedProtocolVersion(),
+                    }),
+              }),
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     },
   );
   const toolLogger = logger.child({ layer: "server" });
@@ -48,8 +99,12 @@ export const createServer = (
   const recordEvidence =
     session === undefined
       ? undefined
-      : (evidence: Parameters<typeof session.recordEvidence>[0]) =>
-          session.recordEvidence(evidence);
+      : (evidence: Parameters<typeof session.recordEvidence>[0]) => {
+          const recorded = session.recordEvidence(evidence);
+          if (recorded.ok && recorded.value === "added")
+            server.sendResourceListChanged();
+          return recorded;
+        };
   registerOfficialTools(server, analysis, {
     logger: toolLogger,
     activeTarget,
@@ -77,9 +132,17 @@ export const createServer = (
     logger: toolLogger,
     activeTarget,
     recordEvidence,
+    ...(options.permissionAuthority === undefined
+      ? {}
+      : { permissionAuthority: options.permissionAuthority }),
   });
   registerGuidedPrompts(server, analysis, session);
-  if (session !== undefined)
-    registerSessionTools(server, session, toolLogger, options);
+  if (session !== undefined) {
+    registerEvidenceResources(server, session);
+    registerSessionTools(server, session, toolLogger, {
+      ...options,
+      startedAt,
+    });
+  }
   return server;
 };

@@ -30,6 +30,14 @@ import {
 } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import {
+  AnalysisProtocolError,
+  PermissionRequiredError,
+} from "../domain/errors.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+import { runDerivedOperation } from "./runDerivedOperation.js";
 
 /** Register Evidence-composed differential investigation workflows. */
 export const registerInvestigationTools = (
@@ -52,13 +60,23 @@ export const registerInvestigationTools = (
 interface InvestigationToolPolicies {
   readonly evidenceFiles: EvidenceFilePolicy;
   readonly inputRoots: readonly string[];
+  readonly permissionAuthority?: PermissionAuthority;
+  readonly integrityContinueEnabled?: () => boolean;
 }
 
 const investigationExecution = (
   session: BinarySessionPort,
   signal: AbortSignal,
   inputRoots: readonly string[],
-) => ({ session, signal, inputRoots });
+  integrityContinueEnabled: boolean,
+  progress?: ProgressReporter,
+) => ({
+  session,
+  signal,
+  inputRoots,
+  integrityContinueEnabled,
+  ...(progress === undefined ? {} : { progress }),
+});
 
 const isIncomplete = (status: string): boolean =>
   status === "unknown" || status === "truncated";
@@ -75,6 +93,50 @@ const registerChangedBehavior = (
     async (input, context) => {
       const parsed = changedBehaviorInputSchema.parse(input);
       if (parsed.investigation_run !== undefined) {
+        const progress = mcpProgressReporter(context);
+        if (policies.permissionAuthority !== undefined) {
+          const scopes = [
+            {
+              capability: "investigation_workspace_read" as const,
+              roots: [parsed.investigation_run.workspace_path],
+            },
+            {
+              capability: "investigation_workspace_write" as const,
+              roots: [parsed.investigation_run.workspace_path],
+            },
+            {
+              capability: "investigation_input" as const,
+              roots: [
+                parsed.investigation_run.left_path,
+                parsed.investigation_run.right_path,
+              ],
+            },
+          ];
+          for (const scope of scopes) {
+            const authorized = await policies.permissionAuthority.authorize(
+              {
+                ...scope,
+                executables: [],
+                environment_names: [],
+                network: "none",
+                mount: false,
+                operation_identity: `${contract.name}:${scope.capability}:${scope.roots.join(":")}`,
+              },
+              scope.capability === "investigation_input" ? "read" : "write",
+            );
+            if (!authorized.ok)
+              return toCallToolResult(
+                err(
+                  authorized.error instanceof PermissionRequiredError
+                    ? authorized.error
+                    : new AnalysisProtocolError(authorized.error.message, {
+                        cause: authorized.error,
+                      }),
+                ),
+                contract,
+              );
+          }
+        }
         const investigated = await runCrossVersionInvestigation(
           parsed.investigation_run,
           policies.evidenceFiles,
@@ -82,13 +144,18 @@ const registerChangedBehavior = (
             session,
             context.mcpReq.signal,
             policies.inputRoots,
+            policies.integrityContinueEnabled?.() ?? false,
+            progress,
           ),
         );
         if (!investigated.ok) return toCallToolResult(investigated, contract);
+        const workspace = investigated.value.workspace;
+        if (session.retainInvestigationWorkspace(workspace) === "added")
+          server.sendResourceListChanged();
         const result = changedBehaviorResultSchema.parse(
           investigated.value.evidence.normalized_result,
         );
-        return toCallToolResult(
+        const toolResult = toCallToolResult(
           recordWorkflowEvidence(
             session,
             investigated.value.evidence,
@@ -110,6 +177,20 @@ const registerChangedBehavior = (
           ),
           contract,
         );
+        return {
+          ...toolResult,
+          content: [
+            ...toolResult.content,
+            {
+              type: "resource_link" as const,
+              uri: `rea://workspace/${workspace.workspace_id}/revision/${String(workspace.revision)}`,
+              name: `${workspace.workspace_id} revision ${String(workspace.revision)}`,
+              description:
+                "Immutable CAS-linked investigation workspace revision",
+              mimeType: "application/json",
+            },
+          ],
+        };
       }
       const closure = evidenceClosure(
         session,
@@ -117,11 +198,11 @@ const registerChangedBehavior = (
       );
       if (!closure.ok) return toCallToolResult(closure, contract);
       const links = closure.value;
-      const result = findChangedBehavior(
-        parsed.comparisons,
-        parsed.offset,
-        parsed.limit,
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        findChangedBehavior(parsed.comparisons, parsed.offset, parsed.limit),
       );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const result = computed.value;
       const evidence = createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
         predicateType: "rea.changed-behavior/v1",
         operation: contract.name,
@@ -168,54 +249,62 @@ const registerCallPath = (
   session: BinarySessionPort,
   contract: ToolContract<"build_call_path">,
 ): void => {
-  server.registerTool(contract.name, contractOptions(contract), (input) => {
-    const parsed = callPathInputSchema.parse(input);
-    const closure = evidenceClosure(
-      session,
-      functionEvidenceIds(parsed.functions),
-    );
-    if (!closure.ok) return toCallToolResult(closure, contract);
-    const links = closure.value;
-    const result = buildCallPath(parsed);
-    const evidence = createEvidence(undefined, CALL_PATH_PROVIDER, {
-      predicateType: "rea.call-path/v1",
-      operation: contract.name,
-      parameters: {
-        start: parsed.start.address,
-        goal: parsed.goal.address,
-        max_depth: parsed.max_depth,
-        max_paths: parsed.max_paths,
-        offset: parsed.offset,
-        limit: parsed.limit,
-      },
-      result: jsonValueSchema.parse(result),
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: links,
-    });
-    const recorded = recordWorkflowEvidence(
-      session,
-      evidence,
-      parsed.unknown_registry_approved,
-      result.status === "unknown" || result.status === "truncated",
-      {
-        question:
-          "Can the requested call path be established from complete analysis?",
-        domain: "call-path",
-        requiredAuthority: "shipped-artifact",
-        requiredConfidence: "derived",
-        probes: [
-          {
-            operation: "analyze_function",
-            rationale:
-              "Collect complete callee dossiers for the reported frontier addresses.",
-          },
-        ],
-      },
-    );
-    return toCallToolResult(recorded, contract);
-  });
+  server.registerTool(
+    contract.name,
+    contractOptions(contract),
+    async (input, context) => {
+      const parsed = callPathInputSchema.parse(input);
+      const closure = evidenceClosure(
+        session,
+        functionEvidenceIds(parsed.functions),
+      );
+      if (!closure.ok) return toCallToolResult(closure, contract);
+      const links = closure.value;
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        buildCallPath(parsed),
+      );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const result = computed.value;
+      const evidence = createEvidence(undefined, CALL_PATH_PROVIDER, {
+        predicateType: "rea.call-path/v1",
+        operation: contract.name,
+        parameters: {
+          start: parsed.start.address,
+          goal: parsed.goal.address,
+          max_depth: parsed.max_depth,
+          max_paths: parsed.max_paths,
+          offset: parsed.offset,
+          limit: parsed.limit,
+        },
+        result: jsonValueSchema.parse(result),
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: links,
+      });
+      const recorded = recordWorkflowEvidence(
+        session,
+        evidence,
+        parsed.unknown_registry_approved,
+        result.status === "unknown" || result.status === "truncated",
+        {
+          question:
+            "Can the requested call path be established from complete analysis?",
+          domain: "call-path",
+          requiredAuthority: "shipped-artifact",
+          requiredConfidence: "derived",
+          probes: [
+            {
+              operation: "analyze_function",
+              rationale:
+                "Collect complete callee dossiers for the reported frontier addresses.",
+            },
+          ],
+        },
+      );
+      return toCallToolResult(recorded, contract);
+    },
+  );
 };
 
 const registerStaticRuntime = (
@@ -223,56 +312,64 @@ const registerStaticRuntime = (
   session: BinarySessionPort,
   contract: ToolContract<"correlate_static_and_runtime">,
 ): void => {
-  server.registerTool(contract.name, contractOptions(contract), (input) => {
-    const parsed = staticRuntimeCorrelationInputSchema.parse(input);
-    const closure = evidenceClosure(
-      session,
-      comparisonClosure([
-        ...parsed.static_comparisons,
-        ...parsed.runtime_comparisons,
-      ]),
-    );
-    if (!closure.ok) return toCallToolResult(closure, contract);
-    const links = closure.value;
-    const result = correlateStaticAndRuntime(parsed);
-    const evidence = createEvidence(undefined, STATIC_RUNTIME_PROVIDER, {
-      predicateType: "rea.static-runtime-correlation/v1",
-      operation: contract.name,
-      parameters: {
-        mapping_count: parsed.mappings.length,
-        offset: parsed.offset,
-        limit: parsed.limit,
-      },
-      result: jsonValueSchema.parse(result),
-      confidence: "inferred",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: links,
-    });
-    return toCallToolResult(
-      recordWorkflowEvidence(
+  server.registerTool(
+    contract.name,
+    contractOptions(contract),
+    async (input, context) => {
+      const parsed = staticRuntimeCorrelationInputSchema.parse(input);
+      const closure = evidenceClosure(
         session,
-        evidence,
-        parsed.unknown_registry_approved,
-        result.status === "unknown" || result.status === "truncated",
-        {
-          question:
-            "Does runtime behavior match the available static analysis?",
-          domain: "static-runtime-correlation",
-          requiredAuthority: null,
-          requiredConfidence: "derived",
-          probes: [
-            {
-              operation: "capture_process_scenario",
-              rationale:
-                "Repeat runtime observations and complete the mapped static comparison Evidence.",
-            },
-          ],
+        comparisonClosure([
+          ...parsed.static_comparisons,
+          ...parsed.runtime_comparisons,
+        ]),
+      );
+      if (!closure.ok) return toCallToolResult(closure, contract);
+      const links = closure.value;
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        correlateStaticAndRuntime(parsed),
+      );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const result = computed.value;
+      const evidence = createEvidence(undefined, STATIC_RUNTIME_PROVIDER, {
+        predicateType: "rea.static-runtime-correlation/v1",
+        operation: contract.name,
+        parameters: {
+          mapping_count: parsed.mappings.length,
+          offset: parsed.offset,
+          limit: parsed.limit,
         },
-      ),
-      contract,
-    );
-  });
+        result: jsonValueSchema.parse(result),
+        confidence: "inferred",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: links,
+      });
+      return toCallToolResult(
+        recordWorkflowEvidence(
+          session,
+          evidence,
+          parsed.unknown_registry_approved,
+          result.status === "unknown" || result.status === "truncated",
+          {
+            question:
+              "Does runtime behavior match the available static analysis?",
+            domain: "static-runtime-correlation",
+            requiredAuthority: null,
+            requiredConfidence: "derived",
+            probes: [
+              {
+                operation: "capture_process_scenario",
+                rationale:
+                  "Repeat runtime observations and complete the mapped static comparison Evidence.",
+              },
+            ],
+          },
+        ),
+        contract,
+      );
+    },
+  );
 };
 
 const registerReconstruction = (
@@ -280,75 +377,85 @@ const registerReconstruction = (
   session: BinarySessionPort,
   contract: ToolContract<"verify_reconstruction">,
 ): void => {
-  server.registerTool(contract.name, contractOptions(contract), (input) => {
-    const parsed = reconstructionVerificationInputSchema.parse(input);
-    const owned = session.exportEvidenceBundle();
-    const ownedUnknowns = new Set(
-      owned.unknowns.map(({ revision_digest: digest }) => digest),
-    );
-    const ownedEvidenceIds = new Set(
-      owned.records.map(({ evidence_id: id }) => id),
-    );
-    if (
-      parsed.evidence_bundle.records.some(
-        ({ evidence_id: id }) => !ownedEvidenceIds.has(id),
-      ) ||
-      parsed.evidence_bundle.unknowns.some(
-        ({ revision_digest: digest }) => !ownedUnknowns.has(digest),
+  server.registerTool(
+    contract.name,
+    contractOptions(contract),
+    async (input, context) => {
+      const parsed = reconstructionVerificationInputSchema.parse(input);
+      const owned = session.exportEvidenceBundle();
+      const ownedUnknowns = new Set(
+        owned.unknowns.map(({ revision_digest: digest }) => digest),
+      );
+      const ownedEvidenceIds = new Set(
+        owned.records.map(({ evidence_id: id }) => id),
+      );
+      if (
+        parsed.evidence_bundle.records.some(
+          ({ evidence_id: id }) => !ownedEvidenceIds.has(id),
+        ) ||
+        parsed.evidence_bundle.unknowns.some(
+          ({ revision_digest: digest }) => !ownedUnknowns.has(digest),
+        )
       )
-    )
-      return toCallToolResult(
-        err(
-          new EvidenceIntegrityError(
-            "Reconstruction input unknown history is not present in this session",
+        return toCallToolResult(
+          err(
+            new EvidenceIntegrityError(
+              "Reconstruction input unknown history is not present in this session",
+            ),
           ),
+          contract,
+        );
+      const computed = await runDerivedOperation(context, contract.name, () =>
+        verifyReconstruction(
+          parsed.specification,
+          owned,
+          parsed.offset,
+          parsed.limit,
+        ),
+      );
+      if (!computed.ok) return toCallToolResult(computed, contract);
+      const result = computed.value;
+      const closure = evidenceClosure(session, result.evidence_links);
+      if (!closure.ok) return toCallToolResult(closure, contract);
+      const links = closure.value;
+      const evidence = createEvidence(undefined, RECONSTRUCTION_PROVIDER, {
+        predicateType: "rea.reconstruction-verification/v1",
+        operation: contract.name,
+        parameters: {
+          specification_sha256: result.specification_sha256,
+          claim_ids: parsed.specification.claims.map(({ claim_id: id }) => id),
+          offset: parsed.offset,
+          limit: parsed.limit,
+        },
+        result: jsonValueSchema.parse(result),
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: result.limitations,
+        evidenceLinks: links,
+      });
+      return toCallToolResult(
+        recordWorkflowEvidence(
+          session,
+          evidence,
+          parsed.unknown_registry_approved,
+          result.status === "unknown",
+          {
+            question: "Does the reconstruction satisfy every declared claim?",
+            domain: "reconstruction-verification",
+            requiredAuthority: null,
+            requiredConfidence: "derived",
+            probes: result.recommended_probes.map(
+              ({ operation, rationale }) => ({
+                operation,
+                rationale,
+              }),
+            ),
+          },
         ),
         contract,
       );
-    const result = verifyReconstruction(
-      parsed.specification,
-      owned,
-      parsed.offset,
-      parsed.limit,
-    );
-    const closure = evidenceClosure(session, result.evidence_links);
-    if (!closure.ok) return toCallToolResult(closure, contract);
-    const links = closure.value;
-    const evidence = createEvidence(undefined, RECONSTRUCTION_PROVIDER, {
-      predicateType: "rea.reconstruction-verification/v1",
-      operation: contract.name,
-      parameters: {
-        specification_sha256: result.specification_sha256,
-        claim_ids: parsed.specification.claims.map(({ claim_id: id }) => id),
-        offset: parsed.offset,
-        limit: parsed.limit,
-      },
-      result: jsonValueSchema.parse(result),
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: result.limitations,
-      evidenceLinks: links,
-    });
-    return toCallToolResult(
-      recordWorkflowEvidence(
-        session,
-        evidence,
-        parsed.unknown_registry_approved,
-        result.status === "unknown",
-        {
-          question: "Does the reconstruction satisfy every declared claim?",
-          domain: "reconstruction-verification",
-          requiredAuthority: null,
-          requiredConfidence: "derived",
-          probes: result.recommended_probes.map(({ operation, rationale }) => ({
-            operation,
-            rationale,
-          })),
-        },
-      ),
-      contract,
-    );
-  });
+    },
+  );
 };
 
 const contractOptions = (contract: ToolContract) => ({

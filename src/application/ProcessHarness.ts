@@ -174,7 +174,10 @@ const cleanupFailedStartup = async (options: {
     sampledProcessGroupIds: [],
   });
   if (cleanupFailure !== undefined)
-    throw new ProcessCaptureError(cleanupFailure, { cause: options.cause });
+    throw new ProcessCaptureError(cleanupFailure, {
+      cause: options.cause,
+      reason: "cleanup_incomplete",
+    });
   throw options.cause;
 };
 

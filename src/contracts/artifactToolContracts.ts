@@ -33,11 +33,26 @@ const traversalLimitsInput = {
 };
 
 /** Exact caller boundary for deterministic artifact inventory. */
-export const artifactInventoryInputSchema = z.object({
-  native_mount_approved: z.boolean().default(false),
-  ...pageInput,
-  ...traversalLimitsInput,
-});
+export const artifactInventoryInputSchema = z
+  .object({
+    native_mount_approved: z.boolean().default(false),
+    integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
+    integrity_continue_approved: z.boolean().default(false),
+    max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
+    ...pageInput,
+    ...traversalLimitsInput,
+  })
+  .superRefine((input, context) => {
+    if (
+      input.integrity_policy === "record-and-continue" &&
+      input.integrity_continue_approved !== true
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["integrity_continue_approved"],
+        message: "record-and-continue requires explicit approval",
+      });
+  });
 
 /** Exact caller boundary for approved artifact extraction. */
 export const artifactExtractionInputSchema = z.object({

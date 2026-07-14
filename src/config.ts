@@ -6,6 +6,10 @@ import type { LogLevel } from "./logger.js";
 import type { ProcessExecutionPolicy } from "./domain/processCapture.js";
 import type { EvidenceFilePolicy } from "./domain/evidenceBundle.js";
 import type { ReferenceSourcePolicy } from "./domain/referenceSourcePolicy.js";
+import type {
+  PermissionCeiling,
+  PermissionGrant,
+} from "./domain/permissionPolicy.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -22,34 +26,58 @@ export interface AppConfig {
   readonly logLevel: LogLevel;
   readonly processExecutionPolicy: ProcessExecutionPolicy;
   readonly artifactNativeMountEnabled: boolean;
+  readonly artifactIntegrityContinueEnabled: boolean;
   readonly evidenceFilePolicy: EvidenceFilePolicy;
   readonly investigationInputRoots: readonly string[];
   readonly analysisSnapshotFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
+  readonly permissionCeilings: readonly PermissionCeiling[];
+  readonly administratorPermissionGrants: readonly PermissionGrant[];
+  readonly permissionProjectRoot: string | undefined;
+  readonly permissionProjectStore: string | undefined;
 }
 
-const environmentSchema = z.object({
-  HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
-  HOPPER_TARGET_PATH: z.string().min(1).optional(),
-  HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),
-  HOPPER_LOADER_ARGS_JSON: z.string().optional(),
-  REA_LOG_LEVEL: z
-    .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
-    .default("info"),
-  REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
-  REA_ARTIFACT_NATIVE_MOUNT_ENABLED: z.enum(["true", "false"]).default("false"),
-  REA_PROCESS_ALLOW_EXTERNAL_NETWORK: z
-    .enum(["true", "false"])
-    .default("false"),
-  REA_PROCESS_EXECUTABLE_ROOTS_JSON: z.string().default("[]"),
-  REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
-  REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
-  REA_EVIDENCE_ROOTS_JSON: z.string().default("[]"),
-  REA_INVESTIGATION_INPUT_ROOTS_JSON: z.string().default("[]"),
-  REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: z.string().default("[]"),
-  REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
-  REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
-});
+const environmentSchema = z
+  .object({
+    HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
+    HOPPER_TARGET_PATH: z.string().min(1).optional(),
+    HOPPER_TARGET_KIND: z
+      .enum(["executable", "database"])
+      .default("executable"),
+    HOPPER_LOADER_ARGS_JSON: z.string().optional(),
+    REA_LOG_LEVEL: z
+      .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
+      .default("info"),
+    REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_ARTIFACT_NATIVE_MOUNT_ENABLED: z
+      .enum(["true", "false"])
+      .default("false"),
+    REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED: z
+      .enum(["true", "false"])
+      .default("false"),
+    REA_PROCESS_ALLOW_EXTERNAL_NETWORK: z
+      .enum(["true", "false"])
+      .default("false"),
+    REA_PROCESS_EXECUTABLE_ROOTS_JSON: z.string().default("[]"),
+    REA_PROCESS_WORKING_ROOTS_JSON: z.string().default("[]"),
+    REA_PROCESS_ALLOWED_ENV_JSON: z.string().default("[]"),
+    REA_EVIDENCE_ROOTS_JSON: z.string().default("[]"),
+    REA_INVESTIGATION_INPUT_ROOTS_JSON: z.string().default("[]"),
+    REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: z.string().default("[]"),
+    REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
+    REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
+    REA_PERMISSION_PROJECT_ROOT: z.string().min(1).optional(),
+    REA_PERMISSION_PROJECT_STORE: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) =>
+      (value.REA_PERMISSION_PROJECT_ROOT === undefined) ===
+      (value.REA_PERMISSION_PROJECT_STORE === undefined),
+    {
+      message:
+        "REA_PERMISSION_PROJECT_ROOT and REA_PERMISSION_PROJECT_STORE must be configured together",
+    },
+  );
 
 const parseStringArray = (
   encoded: string,
@@ -79,6 +107,30 @@ const filePolicy = (roots: readonly string[]): EvidenceFilePolicy => ({
   maxStringLength: 1024 * 1024,
   maxNodes: 1_000_000,
 });
+
+const permissionScope = (
+  capability: PermissionCeiling["capability"],
+  roots: readonly string[],
+  options: Partial<Omit<PermissionCeiling, "capability" | "roots">> = {},
+): PermissionCeiling => ({
+  capability,
+  roots,
+  executables: options.executables ?? [],
+  environment_names: options.environment_names ?? [],
+  network: options.network ?? "none",
+  mount: options.mount ?? false,
+});
+
+const administratorGrants = (
+  ceilings: readonly PermissionCeiling[],
+): readonly PermissionGrant[] =>
+  ceilings.map((ceiling) => ({
+    ...ceiling,
+    grant_id: `administrator:${ceiling.capability}`,
+    lifetime: "administrator",
+    operation_identity: null,
+    expires_at: null,
+  }));
 
 const parseLoaderArgs = (
   encoded: string | undefined,
@@ -166,6 +218,33 @@ export const parseConfig = (
     "REA_REFERENCE_SECRET_PATTERNS_JSON",
   );
   if (!secretPatterns.ok) return secretPatterns;
+  const permissionCeilings = [
+    ...(parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true"
+      ? [
+          permissionScope("process_capture", workingRoots.value, {
+            executables: executableRoots.value,
+            environment_names: allowedEnvironment.value,
+            network:
+              parsedEnvironment.data.REA_PROCESS_ALLOW_EXTERNAL_NETWORK ===
+              "true"
+                ? "external"
+                : "none",
+          }),
+        ]
+      : []),
+    permissionScope("evidence_read", evidenceRoots.value),
+    permissionScope("evidence_write", evidenceRoots.value),
+    permissionScope("investigation_input", investigationInputRoots.value),
+    permissionScope("investigation_workspace_read", evidenceRoots.value),
+    permissionScope("investigation_workspace_write", evidenceRoots.value),
+    permissionScope("snapshot_read", analysisSnapshotRoots.value),
+    permissionScope("snapshot_write", analysisSnapshotRoots.value),
+    permissionScope("artifact_extract", ["/"]),
+    permissionScope("reference_read", referenceRoots.value),
+    ...(parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true"
+      ? [permissionScope("native_mount", [], { mount: true })]
+      : []),
+  ] satisfies readonly PermissionCeiling[];
   return ok({
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
@@ -184,6 +263,8 @@ export const parseConfig = (
     },
     artifactNativeMountEnabled:
       parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true",
+    artifactIntegrityContinueEnabled:
+      parsedEnvironment.data.REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED === "true",
     evidenceFilePolicy: filePolicy(evidenceRoots.value),
     investigationInputRoots: investigationInputRoots.value,
     analysisSnapshotFilePolicy: filePolicy(analysisSnapshotRoots.value),
@@ -195,5 +276,9 @@ export const parseConfig = (
       maxDepth: 32,
       maxPathBytes: 4_096,
     },
+    permissionCeilings,
+    administratorPermissionGrants: administratorGrants(permissionCeilings),
+    permissionProjectRoot: parsedEnvironment.data.REA_PERMISSION_PROJECT_ROOT,
+    permissionProjectStore: parsedEnvironment.data.REA_PERMISSION_PROJECT_STORE,
   });
 };

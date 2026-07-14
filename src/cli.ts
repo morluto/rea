@@ -19,8 +19,14 @@ import { importReferenceSource } from "./application/ReferenceSourceImport.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cliProcessCommands.js";
 import { registerInvestigationCommands } from "./cliInvestigationCommands.js";
-import { projectAnalysisError } from "./domain/errors.js";
+import {
+  AnalysisProtocolError,
+  PermissionRequiredError,
+  projectAnalysisError,
+} from "./domain/errors.js";
 import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
+import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
+import { registerPolicyCommands } from "./cliPolicyCommands.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -35,7 +41,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
       : parseLogLevel(process.env.REA_LOG_LEVEL),
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
-    version: process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
+    version: PRODUCT_IDENTITY.packageVersion,
     description: "Reverse engineer anything from your terminal or agent.",
     mcp: {
       command: PRODUCT_IDENTITY.mcpCommand,
@@ -66,6 +72,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerEvidenceCommands(cli, logger);
   registerReferenceSourceCommand(cli, logger);
   registerProcessCommands(cli, logger);
+  registerPolicyCommands(cli, logger);
   return cli;
 };
 
@@ -190,7 +197,7 @@ const registerSetupCommands = (
     run: ({ formatExplicit }) =>
       logCliCommand(logger, "upgrade", () =>
         runUpgrade(
-          process.env.REA_PACKAGE_VERSION ?? "0.0.0-development",
+          PRODUCT_IDENTITY.packageVersion,
           systemUpgradeHost(),
           formatExplicit ? "structured" : "human",
         ),
@@ -391,6 +398,36 @@ const registerReferenceSourceCommand = (
             error: "Import failed",
             ...projectAnalysisError(config.error),
           };
+        const authority = await loadConfiguredPermissionAuthority(config.value);
+        if (!authority.ok)
+          return {
+            error: "Import failed",
+            ...projectAnalysisError(authority.error),
+          };
+        const authorized = await authority.value.authorize(
+          {
+            capability: "reference_read",
+            roots: [args.root],
+            executables: [],
+            environment_names: [],
+            network: "none",
+            mount: false,
+            operation_identity: `import_reference_source:${args.root}`,
+          },
+          "read",
+        );
+        if (!authorized.ok) {
+          const error =
+            authorized.error instanceof PermissionRequiredError
+              ? authorized.error
+              : new AnalysisProtocolError(authorized.error.message, {
+                  cause: authorized.error,
+                });
+          return {
+            error: "Import failed",
+            ...projectAnalysisError(error),
+          };
+        }
         const imported = await importReferenceSource({
           root: args.root,
           caller: "rea-cli",
@@ -420,7 +457,17 @@ const registerArtifactCommands = (
     options: z.object({
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(500).default(100),
+      integrityPolicy: z.enum(["fail", "record-and-continue"]).default("fail"),
+      integrityContinueApproved: z.boolean().default(false),
+      maxIntegrityMismatches: z.number().int().min(1).max(100).default(10),
+      nativeMountApproved: z.boolean().default(false),
     }),
+    alias: {
+      integrityPolicy: "integrity-policy",
+      integrityContinueApproved: "integrity-continue-approved",
+      maxIntegrityMismatches: "max-integrity-mismatches",
+      nativeMountApproved: "native-mount-approved",
+    },
     run: ({ args, options }) =>
       logCliCommand(logger, "inventory-artifact", () =>
         runProviderAnalysis(
@@ -433,6 +480,10 @@ const registerArtifactCommands = (
             occurrence_limit: options.limit,
             edge_offset: options.offset,
             edge_limit: options.limit,
+            integrity_policy: options.integrityPolicy,
+            integrity_continue_approved: options.integrityContinueApproved,
+            max_integrity_mismatches: options.maxIntegrityMismatches,
+            native_mount_approved: options.nativeMountApproved,
           },
           logger,
         ),

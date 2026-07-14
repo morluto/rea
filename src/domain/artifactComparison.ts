@@ -20,8 +20,15 @@ const comparisonStatusSchema = z.enum([
   "changed",
   "truncated",
   "unknown",
+  "contradiction",
 ]);
-const changeKindSchema = z.enum(["added", "removed", "changed", "unknown"]);
+const changeKindSchema = z.enum([
+  "added",
+  "removed",
+  "changed",
+  "unknown",
+  "contradiction",
+]);
 const comparisonDimensionSchema = z.enum([
   "content",
   "kind",
@@ -31,6 +38,7 @@ const comparisonDimensionSchema = z.enum([
   "relations",
   "metadata",
   "availability",
+  "integrity",
 ]);
 
 /** Strict Evidence-backed input for deterministic artifact comparison. */
@@ -80,6 +88,7 @@ export const artifactComparisonResultSchema = z.object({
     removed: z.number().int().min(0),
     changed: z.number().int().min(0),
     unknown: z.number().int().min(0),
+    contradiction: z.number().int().min(0).default(0),
   }),
   changes: z.object({
     items: z.array(artifactChangeSchema).max(500),
@@ -107,9 +116,10 @@ export const compareArtifacts = (
   const right = parseArtifactInventoryEvidence(rightEvidence);
   const leftComplete = left.inventory.complete;
   const rightComplete = right.inventory.complete;
-  const leftCovered = leftComplete && left.inventory.limitations.length === 0;
+  const leftCovered =
+    leftComplete && !hasCoverageLimitation(left.inventory.limitations);
   const rightCovered =
-    rightComplete && right.inventory.limitations.length === 0;
+    rightComplete && !hasCoverageLimitation(right.inventory.limitations);
   const limitations = [
     ...left.inventory.limitations.map((item) => `Left: ${item}`),
     ...right.inventory.limitations.map((item) => `Right: ${item}`),
@@ -136,13 +146,17 @@ export const compareArtifacts = (
     status:
       !leftComplete || !rightComplete
         ? "truncated"
-        : !leftCovered || !rightCovered
-          ? "unknown"
-          : changes.some(({ classification }) => classification === "unknown")
+        : changes.some(
+              ({ classification }) => classification === "contradiction",
+            )
+          ? "contradiction"
+          : !leftCovered || !rightCovered
             ? "unknown"
-            : changes.length === 0
-              ? "unchanged"
-              : "changed",
+            : changes.some(({ classification }) => classification === "unknown")
+              ? "unknown"
+              : changes.length === 0
+                ? "unchanged"
+                : "changed",
     left_manifest_id: left.inventory.manifest.manifest_id,
     right_manifest_id: right.inventory.manifest.manifest_id,
     summary,
@@ -229,6 +243,15 @@ const classifyPath = (input: {
       ...base,
       classification: input.complete ? "removed" : "unknown",
       dimensions: [input.complete ? "content" : "availability"],
+    };
+  if (
+    input.leftOccurrence.hash_status === "mismatched" ||
+    input.rightOccurrence.hash_status === "mismatched"
+  )
+    return {
+      ...base,
+      classification: "contradiction",
+      dimensions: ["integrity"],
     };
   if (
     input.leftOccurrence.hash_status !== "verified" ||
@@ -362,7 +385,13 @@ const summarize = (
   changes: readonly ArtifactChange[],
   covered: boolean,
 ) => {
-  const counts = { added: 0, removed: 0, changed: 0, unknown: 0 };
+  const counts = {
+    added: 0,
+    removed: 0,
+    changed: 0,
+    unknown: 0,
+    contradiction: 0,
+  };
   for (const change of changes) counts[change.classification] += 1;
   return {
     unchanged: covered
@@ -370,6 +399,7 @@ const summarize = (
           0,
           Math.min(left.occurrences.length, right.occurrences.length) -
             counts.changed -
+            counts.contradiction -
             counts.unknown,
         )
       : 0,
@@ -384,7 +414,14 @@ const summarize = (
           ) -
             counts.added -
             counts.removed -
-            counts.changed,
+            counts.changed -
+            counts.contradiction,
         ),
   };
 };
+
+const hasCoverageLimitation = (limitations: readonly string[]): boolean =>
+  limitations.some(
+    (limitation) =>
+      !/integrity contradiction\(s\) were recorded/u.test(limitation),
+  );

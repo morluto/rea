@@ -6,6 +6,7 @@ const occurrenceIdSchema = z.string().regex(/^occ_[a-f0-9]{64}$/u);
 const edgeIdSchema = z.string().regex(/^edge_[a-f0-9]{64}$/u);
 const manifestIdSchema = z.string().regex(/^agm_[a-f0-9]{64}$/u);
 const extractionIdSchema = z.string().regex(/^aex_[a-f0-9]{64}$/u);
+const contradictionIdSchema = z.string().regex(/^ic_[a-f0-9]{64}$/u);
 const boundedRelativePathSchema = z
   .string()
   .min(1)
@@ -121,9 +122,29 @@ const artifactOccurrenceSchema = z.object({
     .nullable(),
   executable: z.boolean(),
   encrypted: z.boolean(),
-  hash_status: z.enum(["verified", "not-hashed-limit", "unavailable"]),
+  hash_status: z.enum([
+    "verified",
+    "mismatched",
+    "not-hashed-limit",
+    "unavailable",
+  ]),
   source_location: artifactByteRangeSchema.nullable(),
   limitations: z.array(z.string()),
+});
+
+/** Observed bytes that contradict a container's declared integrity identity. */
+const integrityContradictionSchema = z.object({
+  contradiction_id: contradictionIdSchema,
+  occurrence_id: occurrenceIdSchema,
+  parent_artifact_id: artifactIdSchema,
+  logical_path: boundedRelativePathSchema,
+  declared_sha256: sha256Schema,
+  observed_sha256: sha256Schema,
+  entry_kind: z.enum(["file", "slice"]),
+  unpacked: z.boolean(),
+  trust: z.literal("observed-untrusted"),
+  provenance: z.literal("container-integrity-metadata-versus-observed-bytes"),
+  limitations: z.array(z.string()).min(1),
 });
 
 /** Parent-child derivation relation between two content-addressed artifacts. */
@@ -177,6 +198,10 @@ export const artifactInventoryResultSchema = z.object({
   edges: artifactPageSchema(artifactEdgeSchema),
   limits: artifactTraversalLimitsSchema,
   provenance: z.array(artifactCommandSchema).max(256),
+  integrity_contradictions: z
+    .array(integrityContradictionSchema)
+    .max(100)
+    .default([]),
   limitations: z.array(z.string()),
 });
 
@@ -224,6 +249,9 @@ export type ArtifactEdge = z.infer<typeof artifactEdgeSchema>;
 
 /** Parsed artifact occurrence. */
 export type ArtifactOccurrence = z.infer<typeof artifactOccurrenceSchema>;
+export type IntegrityContradiction = z.infer<
+  typeof integrityContradictionSchema
+>;
 
 /** Parsed deterministic artifact graph manifest. */
 export type ArtifactGraphManifest = z.infer<typeof artifactGraphManifestSchema>;

@@ -17,6 +17,7 @@ import {
   AnalysisCapabilityUnavailableError,
   UnknownRegistryError,
 } from "../domain/errors.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
@@ -63,14 +64,29 @@ const registerOfficialTool = (
     },
     async (input, context) => {
       const arguments_ = projectOfficialArguments(contract, input);
+      const progress = mcpProgressReporter(context);
+      await progress.report({
+        phase: contract.name,
+        completed: 0,
+        total: 1,
+        message: "started",
+      });
       const result = await logToolExecution(
         registration.logger,
         contract.name,
         () =>
           analysis.execute(contract.name, arguments_, {
             signal: context.mcpReq.signal,
+            progress,
           }),
       );
+      await progress.report({
+        phase: contract.name,
+        completed: 1,
+        total: 1,
+        message: result.ok ? "completed" : "failed",
+        terminal: true,
+      });
       if (result.ok) {
         const evidence = createEvidence(
           result.value.subject ?? registration.activeTarget?.(),
@@ -87,7 +103,9 @@ const registerOfficialTool = (
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
           return toCallToolResult(recorded, contract);
-        return toCallToolResult({ ok: true, value: evidence }, contract);
+        return toCallToolResult({ ok: true, value: evidence }, contract, {
+          evidenceResourcesAvailable: recorded !== undefined,
+        });
       }
       if (
         result.error instanceof AnalysisCapabilityUnavailableError &&
