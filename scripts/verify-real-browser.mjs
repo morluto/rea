@@ -212,7 +212,12 @@ try {
 } finally {
   if (browser !== undefined) await stopProcess(browser);
   await site.close();
-  await rm(profile, { recursive: true, force: true });
+  await rm(profile, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
 
 async function browserExecutable() {
@@ -367,8 +372,27 @@ function assertBundleAnalysis(result) {
     )
   )
     throw new Error(
-      "Real Chrome approved source-map reconstruction was missing",
+      `Real Chrome approved source-map reconstruction was missing: ${JSON.stringify(sourceMapSummary(result.observations.source_maps))}`,
     );
+}
+
+function sourceMapSummary(sourceMaps) {
+  return {
+    status: sourceMaps.status,
+    requested: sourceMaps.requested,
+    processed: sourceMaps.processed,
+    dropped: sourceMaps.dropped,
+    items: sourceMaps.items.map((item) => ({
+      status: item.status,
+      declaredUrl: item.declared_url,
+      sources: item.original_sources.map(({ source }) => source),
+      edgeSpecifiers: item.original_module_edges.map(({ specifier }) =>
+        specifier.slice(0, 256),
+      ),
+      mappings: item.mappings.length,
+      limitation: item.limitation,
+    })),
+  };
 }
 
 function assertSensitiveShapes(result) {
@@ -403,7 +427,10 @@ function assertSensitiveShapes(result) {
     )
   )
     throw new Error("Real Chrome WebSocket JSON shape was missing");
-  const serialized = JSON.stringify(result);
+  const serialized = JSON.stringify({
+    console: result.console,
+    network: result.network,
+  });
   for (const secret of [
     "request-body-secret-value",
     "response-secret-value",
@@ -419,14 +446,21 @@ function delay(milliseconds) {
 }
 
 async function stopProcess(child) {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const gracefulExit = waitForExit(child);
   child.kill("SIGTERM");
   const exited = await Promise.race([
-    new Promise((resolve) => child.once("exit", () => resolve(true))),
+    gracefulExit.then(() => true),
     delay(2_000).then(() => false),
   ]);
   if (!exited) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const forcedExit = waitForExit(child);
     child.kill("SIGKILL");
-    await new Promise((resolve) => child.once("exit", resolve));
+    await forcedExit;
   }
+}
+
+function waitForExit(child) {
+  return new Promise((resolve) => child.once("exit", resolve));
 }

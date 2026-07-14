@@ -583,7 +583,7 @@ const emitEvents = (
       length: 40,
       isModule: true,
       scriptLanguage: "JavaScript",
-      sourceMapURL: `http://127.0.0.1:${String(port)}/app.js.map?token=map-secret`,
+      sourceMapURL: "/app.js.map?token=map-secret",
     });
     if (
       options.electronFileUrl !== undefined &&

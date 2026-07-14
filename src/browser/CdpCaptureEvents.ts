@@ -142,7 +142,7 @@ export class CdpCaptureEvents {
       this.completeness.drop("scripts");
       return;
     }
-    const sourceMap = this.#sourceMap(params.sourceMapURL);
+    const sourceMap = this.#sourceMap(params.sourceMapURL, rawUrl);
     this.scripts.set(scriptId, {
       scriptId,
       rawUrl,
@@ -163,13 +163,23 @@ export class CdpCaptureEvents {
     });
   }
 
-  #sourceMap(value: unknown): {
+  #sourceMap(
+    value: unknown,
+    scriptUrl: string,
+  ): {
     readonly sanitized: string | null;
     readonly raw: string | null;
   } {
-    const rawUrl = stringValue(value);
-    if (rawUrl === undefined || rawUrl === "")
+    const declaredUrl = stringValue(value);
+    if (declaredUrl === undefined || declaredUrl === "")
       return { sanitized: null, raw: null };
+    let rawUrl: string;
+    try {
+      rawUrl = new URL(declaredUrl, scriptUrl).href;
+    } catch {
+      this.completeness.exclude("source_maps", "unsupported_url");
+      return { sanitized: null, raw: null };
+    }
     const sanitized = allowedSanitizedUrl(rawUrl, this.allowedOrigins);
     if (sanitized !== undefined)
       return { sanitized: sanitized.url, raw: rawUrl };
