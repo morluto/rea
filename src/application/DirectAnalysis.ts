@@ -1,4 +1,4 @@
-import { parseConfig } from "../config.js";
+import { parseConfig, type AppConfig } from "../config.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -30,6 +30,10 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
 import type { PermissionAuthority } from "./PermissionAuthority.js";
+import {
+  authorizeFileReadWithDeferredWrite,
+  type DeferredFileWriteAuthorization,
+} from "./DeferredFileAuthorization.js";
 
 const WORKFLOW_PROVIDER = {
   id: "rea-workflow",
@@ -59,6 +63,7 @@ export const runDirectAnalysis = async (
     readonly logger?: Logger;
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
+    readonly permissionAuthority?: PermissionAuthority;
   } = {},
 ): Promise<JsonValue> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -66,6 +71,9 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
+      ...(options.permissionAuthority === undefined
+        ? {}
+        : { permissionAuthority: options.permissionAuthority }),
     }),
   );
 
@@ -108,23 +116,8 @@ const authorizeAnalysis = async (
   authority: PermissionAuthority,
   tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
-  snapshotPath: string | undefined,
 ): Promise<Result<null, AnalysisError>> => {
   const requests = [];
-  if (snapshotPath !== undefined) {
-    requests.push(
-      {
-        capability: "snapshot_read" as const,
-        path: snapshotPath,
-        access: "write" as const,
-      },
-      {
-        capability: "snapshot_write" as const,
-        path: snapshotPath,
-        access: "write" as const,
-      },
-    );
-  }
   if (tool === "extract_artifact" && typeof arguments_.output_root === "string")
     requests.push({
       capability: "artifact_extract" as const,
@@ -181,6 +174,62 @@ const authorizeAnalysis = async (
   return ok(null);
 };
 
+const permissionAuthorityFor = (
+  config: AppConfig,
+  supplied: PermissionAuthority | undefined,
+): ReturnType<typeof loadConfiguredPermissionAuthority> =>
+  supplied === undefined
+    ? loadConfiguredPermissionAuthority(config)
+    : Promise.resolve(ok(supplied));
+
+const authorizeSnapshotAccess = async (
+  authority: PermissionAuthority,
+  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  snapshotPath: string | undefined,
+): Promise<
+  Result<DeferredFileWriteAuthorization | undefined, AnalysisError>
+> =>
+  snapshotPath === undefined
+    ? ok(undefined)
+    : authorizeFileReadWithDeferredWrite(authority, {
+        path: snapshotPath,
+        readCapability: "snapshot_read",
+        writeCapability: "snapshot_write",
+        operation: tool,
+      });
+
+const authorizeDeferredWrite = (
+  authorization: DeferredFileWriteAuthorization | undefined,
+): Promise<Result<null, AnalysisError>> =>
+  authorization?.authorizeWrite() ?? Promise.resolve(ok(null));
+
+const authorizeAnalysisRun = async (input: {
+  readonly config: AppConfig;
+  readonly suppliedAuthority: PermissionAuthority | undefined;
+  readonly tool: NativeToolName | ArtifactToolName | DirectAnalysisTool;
+  readonly arguments: Readonly<Record<string, JsonValue>>;
+  readonly snapshotPath: string | undefined;
+}): Promise<
+  Result<DeferredFileWriteAuthorization | undefined, AnalysisError>
+> => {
+  const authority = await permissionAuthorityFor(
+    input.config,
+    input.suppliedAuthority,
+  );
+  if (!authority.ok) return authority;
+  const operation = await authorizeAnalysis(
+    authority.value,
+    input.tool,
+    input.arguments,
+  );
+  if (!operation.ok) return operation;
+  return authorizeSnapshotAccess(
+    authority.value,
+    input.tool,
+    input.snapshotPath,
+  );
+};
+
 const runAnalysis = async (
   path: string,
   tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
@@ -189,22 +238,20 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
+    readonly permissionAuthority?: PermissionAuthority;
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
   const config = parseConfig(process.env);
   if (!config.ok) return cliError(config.error);
-  const permissionAuthority = await loadConfiguredPermissionAuthority(
-    config.value,
-  );
-  if (!permissionAuthority.ok) return cliError(permissionAuthority.error);
-  const authorized = await authorizeAnalysis(
-    permissionAuthority.value,
+  const authorization = await authorizeAnalysisRun({
+    config: config.value,
+    suppliedAuthority: options.permissionAuthority,
     tool,
-    arguments_,
+    arguments: arguments_,
     snapshotPath,
-  );
-  if (!authorized.ok) return cliError(authorized.error);
+  });
+  if (!authorization.ok) return cliError(authorization.error);
   const unavailable = snapshotUnavailable(
     snapshotPath,
     config.value.hopperLoaderArgs,
@@ -222,6 +269,8 @@ const runAnalysis = async (
     });
     if (!prepared.ok) return cliError(prepared.error);
     if (prepared.value.evidence !== undefined) return prepared.value.evidence;
+    const writable = await authorizeDeferredWrite(authorization.value);
+    if (!writable.ok) return cliError(writable.error);
     const { snapshot } = prepared.value;
     const opened = await session.open(
       path,

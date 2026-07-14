@@ -31,13 +31,14 @@ import {
 import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
-import {
-  AnalysisProtocolError,
-  PermissionRequiredError,
-} from "../domain/errors.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import {
+  authorizeFileReadWithDeferredWrite,
+  authorizeRootPermission,
+  type DeferredFileWriteAuthorization,
+} from "../application/DeferredFileAuthorization.js";
 
 /** Register Evidence-composed differential investigation workflows. */
 export const registerInvestigationTools = (
@@ -94,59 +95,53 @@ const registerChangedBehavior = (
       const parsed = changedBehaviorInputSchema.parse(input);
       if (parsed.investigation_run !== undefined) {
         const progress = mcpProgressReporter(context);
+        let workspaceAuthorization: DeferredFileWriteAuthorization | undefined;
         if (policies.permissionAuthority !== undefined) {
-          const scopes = [
+          const authorizedWorkspace = await authorizeFileReadWithDeferredWrite(
+            policies.permissionAuthority,
             {
-              capability: "investigation_workspace_read" as const,
-              roots: [parsed.investigation_run.workspace_path],
+              path: parsed.investigation_run.workspace_path,
+              readCapability: "investigation_workspace_read",
+              writeCapability: "investigation_workspace_write",
+              operation: contract.name,
             },
+          );
+          if (!authorizedWorkspace.ok)
+            return toCallToolResult(authorizedWorkspace, contract);
+          workspaceAuthorization = authorizedWorkspace.value;
+          const authorizedInput = await authorizeRootPermission(
+            policies.permissionAuthority,
             {
-              capability: "investigation_workspace_write" as const,
-              roots: [parsed.investigation_run.workspace_path],
-            },
-            {
-              capability: "investigation_input" as const,
+              capability: "investigation_input",
               roots: [
                 parsed.investigation_run.left_path,
                 parsed.investigation_run.right_path,
               ],
+              access: "read",
+              operation: contract.name,
             },
-          ];
-          for (const scope of scopes) {
-            const authorized = await policies.permissionAuthority.authorize(
-              {
-                ...scope,
-                executables: [],
-                environment_names: [],
-                network: "none",
-                mount: false,
-                operation_identity: `${contract.name}:${scope.capability}:${scope.roots.join(":")}`,
-              },
-              scope.capability === "investigation_input" ? "read" : "write",
-            );
-            if (!authorized.ok)
-              return toCallToolResult(
-                err(
-                  authorized.error instanceof PermissionRequiredError
-                    ? authorized.error
-                    : new AnalysisProtocolError(authorized.error.message, {
-                        cause: authorized.error,
-                      }),
-                ),
-                contract,
-              );
-          }
+          );
+          if (!authorizedInput.ok)
+            return toCallToolResult(authorizedInput, contract);
         }
         const investigated = await runCrossVersionInvestigation(
           parsed.investigation_run,
           policies.evidenceFiles,
-          investigationExecution(
-            session,
-            context.mcpReq.signal,
-            policies.inputRoots,
-            policies.integrityContinueEnabled?.() ?? false,
-            progress,
-          ),
+          {
+            ...investigationExecution(
+              session,
+              context.mcpReq.signal,
+              policies.inputRoots,
+              policies.integrityContinueEnabled?.() ?? false,
+              progress,
+            ),
+            ...(workspaceAuthorization === undefined
+              ? {}
+              : {
+                  authorizeWorkspaceWrite:
+                    workspaceAuthorization.authorizeWrite,
+                }),
+          },
         );
         if (!investigated.ok) return toCallToolResult(investigated, contract);
         const workspace = investigated.value.workspace;

@@ -59,6 +59,7 @@ export interface CrossVersionInvestigationExecution {
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   readonly integrityContinueEnabled?: boolean;
+  readonly authorizeWorkspaceWrite?: () => Promise<Result<null, AnalysisError>>;
 }
 
 /** Run or resume a deterministic cross-version artifact investigation. */
@@ -111,6 +112,7 @@ export const runCrossVersionInvestigation = async (
     session: execution.session,
     signal: execution.signal,
     progress: execution.progress,
+    authorizeWorkspaceWrite: execution.authorizeWorkspaceWrite,
   });
 };
 
@@ -127,6 +129,9 @@ const continueInvestigation = async (context: {
   readonly session: BinarySessionPort | undefined;
   readonly signal: AbortSignal | undefined;
   readonly progress: ProgressReporter | undefined;
+  readonly authorizeWorkspaceWrite:
+    | (() => Promise<Result<null, AnalysisError>>)
+    | undefined;
 }): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {
   const left = targetFor(context.snapshots.left);
   const right = targetFor(context.snapshots.right);
@@ -155,6 +160,10 @@ const continueInvestigation = async (context: {
   );
   if (context.initial !== null && existing?.status === "complete")
     return completeOutcome(context.initial, existing, true, context.session);
+  if (context.authorizeWorkspaceWrite !== undefined) {
+    const authorized = await context.authorizeWorkspaceWrite();
+    if (!authorized.ok) return authorized;
+  }
   const pages = createInventoryEvidencePages(context.input, context.snapshots);
   if (!pages.ok) return pages;
   if (isCancelled(context.signal))

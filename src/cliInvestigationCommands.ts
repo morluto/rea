@@ -3,14 +3,13 @@ import { Cli, z } from "incur";
 import { runCrossVersionInvestigation } from "./application/CrossVersionInvestigation.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
-import {
-  AnalysisProtocolError,
-  PermissionRequiredError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "./domain/errors.js";
+import { projectAnalysisError, type AnalysisError } from "./domain/errors.js";
 import type { Logger } from "./logger.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
+import {
+  authorizeFileReadWithDeferredWrite,
+  authorizeRootPermission,
+} from "./application/DeferredFileAuthorization.js";
 
 const investigationOptionsSchema = z.object({
   yes: z
@@ -90,44 +89,23 @@ const runInvestigation = async (
   if (!config.ok) return cliError(config.error);
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) return cliError(authority.error);
-  for (const scope of [
+  const workspaceAuthorization = await authorizeFileReadWithDeferredWrite(
+    authority.value,
     {
-      capability: "investigation_workspace_read" as const,
-      roots: [args.workspacePath],
-      access: "write" as const,
+      path: args.workspacePath,
+      readCapability: "investigation_workspace_read",
+      writeCapability: "investigation_workspace_write",
+      operation: "investigate_versions",
     },
-    {
-      capability: "investigation_workspace_write" as const,
-      roots: [args.workspacePath],
-      access: "write" as const,
-    },
-    {
-      capability: "investigation_input" as const,
-      roots: [args.leftPath, args.rightPath],
-      access: "read" as const,
-    },
-  ]) {
-    const authorized = await authority.value.authorize(
-      {
-        capability: scope.capability,
-        roots: scope.roots,
-        executables: [],
-        environment_names: [],
-        network: "none",
-        mount: false,
-        operation_identity: `investigate_versions:${scope.capability}:${scope.roots.join(":")}`,
-      },
-      scope.access,
-    );
-    if (!authorized.ok)
-      return cliError(
-        authorized.error instanceof PermissionRequiredError
-          ? authorized.error
-          : new AnalysisProtocolError(authorized.error.message, {
-              cause: authorized.error,
-            }),
-      );
-  }
+  );
+  if (!workspaceAuthorization.ok) return cliError(workspaceAuthorization.error);
+  const inputAuthorization = await authorizeRootPermission(authority.value, {
+    capability: "investigation_input",
+    roots: [args.leftPath, args.rightPath],
+    access: "read",
+    operation: "investigate_versions",
+  });
+  if (!inputAuthorization.ok) return cliError(inputAuthorization.error);
   const investigated = await runCrossVersionInvestigation(
     {
       approved: true,
@@ -156,6 +134,7 @@ const runInvestigation = async (
     {
       inputRoots: config.value.investigationInputRoots,
       integrityContinueEnabled: config.value.artifactIntegrityContinueEnabled,
+      authorizeWorkspaceWrite: workspaceAuthorization.value.authorizeWrite,
     },
   );
   return investigated.ok

@@ -20,6 +20,8 @@ import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 import { readInvestigationWorkspace } from "../src/application/InvestigationWorkspaceStore.js";
 import type { EvidenceFilePolicy } from "../src/domain/evidenceBundle.js";
+import type { PermissionAuthority } from "../src/application/PermissionAuthority.js";
+import { permissionAuthorityForRoot } from "./fixtures/permissionAuthority.js";
 
 describe("investigation MCP workflows", () => {
   it("never retains derived evidence after request cancellation", async () => {
@@ -143,6 +145,71 @@ describe("investigation MCP workflows", () => {
       ).toMatchObject({ ok: true, value: { revision: 3 } });
     } finally {
       await close(session, server, client);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("replays a complete workspace without write authority", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-read-"));
+    const left = join(directory, "left");
+    const right = join(directory, "right");
+    const workspace = join(directory, "workspace.json");
+    await Promise.all([mkdir(left), mkdir(right)]);
+    await Promise.all([
+      writeFile(join(left, "feature.txt"), "old\n"),
+      writeFile(join(right, "feature.txt"), "new\n"),
+    ]);
+    const filePolicy = evidencePolicy(directory);
+    const arguments_ = {
+      investigation_run: {
+        approved: true,
+        workspace_path: workspace,
+        workspace_name: "read-only-replay",
+        left_path: left,
+        right_path: right,
+        options: { page_size: 500, change_limit: 100 },
+      },
+    };
+    const writer = await investigationAuthority(directory, true);
+    const initial = await connected(filePolicy, [directory], writer);
+    try {
+      const created = await initial.client.callTool({
+        name: "find_changed_behavior",
+        arguments: arguments_,
+      });
+      expect(created.isError, JSON.stringify(created)).not.toBe(true);
+    } finally {
+      await close(initial.session, initial.server, initial.client);
+    }
+
+    const reader = await investigationAuthority(directory, false);
+    const replay = await connected(filePolicy, [directory], reader);
+    try {
+      const cached = await replay.client.callTool({
+        name: "find_changed_behavior",
+        arguments: arguments_,
+      });
+      expect(cached.isError, JSON.stringify(cached)).not.toBe(true);
+      expect(
+        await readInvestigationWorkspace(workspace, filePolicy),
+      ).toMatchObject({ ok: true, value: { revision: 3 } });
+
+      await writeFile(join(right, "feature.txt"), "changed again\n");
+      const denied = await replay.client.callTool({
+        name: "find_changed_behavior",
+        arguments: arguments_,
+      });
+      expect(denied).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "permission_required",
+            details: { capability: "investigation_workspace_write" },
+          },
+        },
+      });
+    } finally {
+      await close(replay.session, replay.server, replay.client);
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -492,22 +559,22 @@ describe("investigation MCP workflows", () => {
 const connected = async (
   evidenceFilePolicy?: EvidenceFilePolicy,
   investigationInputRoots: readonly string[] = evidenceFilePolicy?.roots ?? [],
+  permissionAuthority?: PermissionAuthority,
 ) => {
   const session = new BinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
-  const server = createServer(
-    session,
-    session,
-    evidenceFilePolicy === undefined
+  const server = createServer(session, session, {
+    ...(evidenceFilePolicy === undefined
       ? {}
       : {
           evidenceFilePolicy,
           investigationInputRoots,
-        },
-  );
+        }),
+    ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
+  });
   const client = new Client({ name: "investigation-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -523,6 +590,24 @@ const evidencePolicy = (root: string): EvidenceFilePolicy => ({
   maxStringLength: 1024 * 1024,
   maxNodes: 1_000_000,
 });
+
+const investigationAuthority = async (
+  root: string,
+  includeWrite: boolean,
+): Promise<PermissionAuthority> =>
+  permissionAuthorityForRoot(
+    root,
+    [
+      "investigation_workspace_read",
+      "investigation_workspace_write",
+      "investigation_input",
+    ],
+    [
+      "investigation_workspace_read",
+      "investigation_input",
+      ...(includeWrite ? (["investigation_workspace_write"] as const) : []),
+    ],
+  );
 
 const close = async (
   session: BinarySession,
