@@ -17,6 +17,7 @@ import { readProjectPermissionStore } from "./application/ProjectPermissionStore
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
+import type { PermissionGrant } from "./domain/permissionPolicy.js";
 
 const MCP_CONNECTION_LOST =
   "REA lost its MCP client connection. Restart REA from your MCP client.";
@@ -35,6 +36,8 @@ interface RuntimeDependencies {
   readonly setExitCode: (code: number) => void;
   readonly registerShutdown: (handler: () => void) => void;
   readonly registerReload?: (handler: () => void) => () => void;
+  readonly createServer?: typeof createServer;
+  readonly readProjectPermissionStore?: typeof readProjectPermissionStore;
 }
 
 const runtimeDependencies = (): RuntimeDependencies => ({
@@ -123,30 +126,35 @@ export const run = async (
   try {
     handle = dependencies.serve(
       () => {
-        const server = createServer(session, session, {
-          logger,
-          processPolicy: runtimeProcessPolicy,
-          evidenceFilePolicy: runtimeEvidencePolicy,
-          investigationInputRoots: runtimeInvestigationRoots,
-          analysisSnapshotFilePolicy: runtimeSnapshotPolicy,
-          permissionAuthority: permissionAuthority.value,
-          browserObservation,
-          electronObservation,
-          artifactIntegrityContinueEnabled: () =>
-            currentConfig.artifactIntegrityContinueEnabled,
-          availabilityPolicy: () => ({
-            processCaptureEnabled: currentConfig.processExecutionPolicy.enabled,
-            evidenceFileRoots: currentConfig.evidenceFilePolicy.roots.length,
-            browserObservationEnabled:
-              currentConfig.browserObservationEnabled &&
-              currentConfig.browserCdpEndpoints.length > 0 &&
-              currentConfig.browserAllowedOrigins.length > 0,
-            electronObservationEnabled:
-              currentConfig.electronObservationEnabled &&
-              currentConfig.electronCdpEndpoints.length > 0 &&
-              currentConfig.electronFileRoots.length > 0,
-          }),
-        });
+        const server = (dependencies.createServer ?? createServer)(
+          session,
+          session,
+          {
+            logger,
+            processPolicy: runtimeProcessPolicy,
+            evidenceFilePolicy: runtimeEvidencePolicy,
+            investigationInputRoots: runtimeInvestigationRoots,
+            analysisSnapshotFilePolicy: runtimeSnapshotPolicy,
+            permissionAuthority: permissionAuthority.value,
+            browserObservation,
+            electronObservation,
+            artifactIntegrityContinueEnabled: () =>
+              currentConfig.artifactIntegrityContinueEnabled,
+            availabilityPolicy: () => ({
+              processCaptureEnabled:
+                currentConfig.processExecutionPolicy.enabled,
+              evidenceFileRoots: currentConfig.evidenceFilePolicy.roots.length,
+              browserObservationEnabled:
+                currentConfig.browserObservationEnabled &&
+                currentConfig.browserCdpEndpoints.length > 0 &&
+                currentConfig.browserAllowedOrigins.length > 0,
+              electronObservationEnabled:
+                currentConfig.electronObservationEnabled &&
+                currentConfig.electronCdpEndpoints.length > 0 &&
+                currentConfig.electronFileRoots.length > 0,
+            }),
+          },
+        );
         liveServers.add(server);
         return server;
       },
@@ -164,38 +172,24 @@ export const run = async (
     return 1;
   }
 
+  let reloadQueue = Promise.resolve();
   const unregisterReload =
     dependencies.registerReload?.(() => {
-      void (async () => {
-        const refreshed = parseConfig(dependencies.env);
-        if (!refreshed.ok) {
-          serverLogger.error("Reloaded permission policy is invalid");
-          return;
-        }
-        const reloaded = await permissionAuthority.value.reload(
-          refreshed.value.permissionCeilings,
-        );
-        if (!reloaded.ok) {
-          serverLogger.error(
-            "Reloaded permission ceiling could not be applied",
-          );
-          return;
-        }
-        const administrators =
-          await permissionAuthority.value.replaceAdministratorGrants(
-            refreshed.value.administratorPermissionGrants,
-          );
-        if (!administrators.ok) {
-          serverLogger.error(
-            "Reloaded administrator grants could not be applied",
-          );
-          return;
-        }
+      const refreshed = parseConfig(dependencies.env);
+      if (!refreshed.ok) {
+        serverLogger.error("Reloaded permission policy is invalid");
+        return;
+      }
+      reloadQueue = reloadQueue.then(async () => {
+        let projectGrants: readonly PermissionGrant[] = [];
         if (
           refreshed.value.permissionProjectRoot !== undefined &&
           refreshed.value.permissionProjectStore !== undefined
         ) {
-          const project = await readProjectPermissionStore(
+          const project = await (
+            dependencies.readProjectPermissionStore ??
+            readProjectPermissionStore
+          )(
             refreshed.value.permissionProjectStore,
             refreshed.value.permissionProjectRoot,
           );
@@ -203,21 +197,17 @@ export const run = async (
             serverLogger.error("Reloaded project grants could not be read");
             return;
           }
-          const projects = await permissionAuthority.value.replaceProjectGrants(
-            project.value?.grants ?? [],
-          );
-          if (!projects.ok) {
-            serverLogger.error("Reloaded project grants could not be applied");
-            return;
-          }
-        } else {
-          const projects = await permissionAuthority.value.replaceProjectGrants(
-            [],
-          );
-          if (!projects.ok) {
-            serverLogger.error("Reloaded project grants could not be cleared");
-            return;
-          }
+          projectGrants = project.value?.grants ?? [];
+        }
+        const reloaded =
+          await permissionAuthority.value.replaceConfiguredPolicy({
+            ceilings: refreshed.value.permissionCeilings,
+            administratorGrants: refreshed.value.administratorPermissionGrants,
+            projectGrants,
+          });
+        if (!reloaded.ok) {
+          serverLogger.error("Reloaded permission policy could not be applied");
+          return;
         }
         currentConfig = refreshed.value;
         Object.assign(
@@ -238,7 +228,7 @@ export const run = async (
           ...refreshed.value.investigationInputRoots,
         );
         for (const server of liveServers) server.sendToolListChanged();
-      })();
+      });
     }) ?? (() => undefined);
 
   let shutdownPromise: Promise<void> | undefined;

@@ -232,6 +232,46 @@ export class PermissionAuthority {
     return ok(null);
   }
 
+  /** Atomically replace reloadable ceilings and persisted grants. */
+  async replaceConfiguredPolicy(configuration: {
+    readonly ceilings: readonly PermissionCeiling[];
+    readonly administratorGrants: readonly PermissionGrant[];
+    readonly projectGrants: readonly PermissionGrant[];
+  }): Promise<Result<null, PermissionPathError>> {
+    const ceilings = await canonicalizePermissionCeilings(
+      configuration.ceilings,
+    );
+    if (!ceilings.ok) return ceilings;
+    const grants: PermissionGrant[] = [];
+    for (const grant of [
+      ...configuration.administratorGrants,
+      ...configuration.projectGrants,
+    ]) {
+      const canonical = await canonicalizeGrant(grant);
+      if (!canonical.ok) return canonical;
+      grants.push(canonical.value);
+    }
+    let candidate: PermissionPolicy = {
+      ...reloadPermissionCeilings(this.policy, ceilings.value),
+      grants: this.policy.grants.filter(
+        ({ lifetime }) =>
+          lifetime !== "administrator" && lifetime !== "project",
+      ),
+    };
+    for (const grant of grants) {
+      const added = grantPermission(candidate, grant);
+      if (!added.ok)
+        return err(
+          new PermissionPathError(grant.grant_id, "io", {
+            cause: added.error,
+          }),
+        );
+      candidate = added.value;
+    }
+    this.policy = candidate;
+    return ok(null);
+  }
+
   /** Replace ceilings without restarting the MCP process. */
   async reload(
     ceilings: readonly PermissionCeiling[],
