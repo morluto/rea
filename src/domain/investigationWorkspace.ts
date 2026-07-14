@@ -398,8 +398,8 @@ const migrateLegacyWorkspace = (input: unknown): InvestigationWorkspace => {
   const migrated = buildWorkspace({
     workspaceId: parsed.workspace_id,
     name: parsed.name,
-    revision: parsed.revision + 1,
-    previousRevisionDigest: parsed.revision_digest,
+    revision: parsed.revision,
+    previousRevisionDigest: parsed.previous_revision_digest,
     bundle,
     runs: runs.map((run) => ({
       ...run,

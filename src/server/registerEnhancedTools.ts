@@ -116,7 +116,9 @@ const registerEnhancedTool = (
           recordUnknown: registration.recordUnknown,
         });
         if (!unknowns.ok) return toCallToolResult(unknowns, contract);
-        return toCallToolResult({ ok: true, value: evidence }, contract);
+        return toCallToolResult({ ok: true, value: evidence }, contract, {
+          evidenceResourcesAvailable: recorded !== undefined,
+        });
       }
       return toCallToolResult(result, contract);
     },

@@ -164,6 +164,11 @@ describe("official Hopper proxy tools", () => {
         arguments: VALID_INPUTS[contract.name],
       });
       expect(result.isError).not.toBe(true);
+      expect(result.content).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "resource_link" }),
+        ]),
+      );
     }
 
     expect(invocations.map(({ name }) => name)).toEqual(

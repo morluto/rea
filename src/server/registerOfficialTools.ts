@@ -103,7 +103,9 @@ const registerOfficialTool = (
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
           return toCallToolResult(recorded, contract);
-        return toCallToolResult({ ok: true, value: evidence }, contract);
+        return toCallToolResult({ ok: true, value: evidence }, contract, {
+          evidenceResourcesAvailable: recorded !== undefined,
+        });
       }
       if (
         result.error instanceof AnalysisCapabilityUnavailableError &&

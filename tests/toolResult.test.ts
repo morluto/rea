@@ -61,7 +61,7 @@ describe("tool result projection", () => {
     });
   });
 
-  it("links successful evidence to its session resource URI", () => {
+  it("links successful evidence only when its session resource exists", () => {
     const evidence = createEvidence(
       undefined,
       { id: "fixture", name: "Fixture", version: "1" },
@@ -79,6 +79,15 @@ describe("tool result projection", () => {
 
     expect(
       toCallToolResult(ok(evidence), evidenceContract).content,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "resource_link" }),
+      ]),
+    );
+    expect(
+      toCallToolResult(ok(evidence), evidenceContract, {
+        evidenceResourcesAvailable: true,
+      }).content,
     ).toContainEqual(
       expect.objectContaining({
         type: "resource_link",

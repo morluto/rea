@@ -155,8 +155,8 @@ describe("persistent cross-version investigation workspace", () => {
     });
 
     expect(migrated).toMatchObject({
-      revision: current.revision + 1,
-      previous_revision_digest: legacyDigest,
+      revision: current.revision,
+      previous_revision_digest: current.previous_revision_digest,
       runs: [
         {
           legacy_request_identity: true,
@@ -174,9 +174,11 @@ describe("persistent cross-version investigation workspace", () => {
       throw new TypeError("legacy fixture is not canonical");
     await writeFile(input.workspace_path, encodedLegacy, { mode: 0o600 });
     await expect(
-      runCrossVersionInvestigation(input, policy(directory), {
-        inputRoots: [directory],
-      }),
+      runCrossVersionInvestigation(
+        { ...input, expected_workspace_revision: current.revision },
+        policy(directory),
+        { inputRoots: [directory] },
+      ),
     ).resolves.toMatchObject({ ok: true, value: { reused: true } });
     await expect(
       runCrossVersionInvestigation(
