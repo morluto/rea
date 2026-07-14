@@ -121,6 +121,13 @@ const systemHost: ProcessOwnershipHost = {
   },
 };
 
+/** Read the capture run token currently exposed by one live process. */
+export const readProcessRunId = async (
+  pid: number,
+  host: ProcessOwnershipHost = systemHost,
+): Promise<string | undefined> =>
+  (await host.environment(pid)).REA_PROCESS_RUN_ID;
+
 /**
  * Verify run-token ownership before signaling a POSIX process group.
  *
