@@ -30,3 +30,4 @@ jobs:
       - run: npm run verify:browser
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+          REA_BROWSER_NO_SANDBOX: "true"

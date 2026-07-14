@@ -38,6 +38,9 @@ try {
     executable,
     [
       "--headless=new",
+      ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
+        ? ["--no-sandbox"]
+        : []),
       "--remote-debugging-address=127.0.0.1",
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
@@ -45,6 +48,7 @@ try {
       "--no-default-browser-check",
       "--disable-background-networking",
       "--disable-component-update",
+      "--disable-dev-shm-usage",
       "--disable-sync",
       "--metrics-recording-only",
       `${site.origin}/app?startup=browser-secret-value`,
@@ -309,7 +313,7 @@ async function browserExecutable() {
 
 async function devtoolsPort(profile, child, stderr) {
   const activePort = join(profile, "DevToolsActivePort");
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     if (child.exitCode !== null)
       throw new Error(`Chrome exited before CDP startup: ${stderr()}`);
     try {
