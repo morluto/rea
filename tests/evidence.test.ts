@@ -204,6 +204,47 @@ describe("analysis evidence", () => {
     expect(byteBound.export().records).toEqual([]);
   });
 
+  it("counts unknown revisions when enforcing direct record limits", () => {
+    const ledger = new EvidenceLedger({
+      maxRecords: 2,
+      maxBytes: 1_000_000,
+    });
+    const mutation = createEvidence(undefined, PROVIDER, {
+      predicateType: "rea.residual-unknown-mutation/v1",
+      operation: "record_unknown",
+      parameters: {},
+      result: { action: "record" },
+    });
+    const unknown = recordUnknownInputSchema.parse({
+      approved: true,
+      question: "What remains unresolved?",
+      severity: "high",
+      domain: "record-limit-test",
+      supporting_evidence_ids: [],
+      contradicting_evidence_ids: [],
+      required_authority: "shipped-artifact",
+      required_confidence: "observed",
+      required_environment: null,
+      recommended_probes: [],
+      relationships: [],
+    });
+    expect(ledger.recordUnknown(unknown, mutation).ok).toBe(true);
+
+    const direct = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: true,
+    });
+    expect(ledger.record(direct)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceLimitError", limit: "records", maximum: 2 },
+    });
+    expect(ledger.export()).toMatchObject({
+      records: [mutation],
+      unknowns: [expect.objectContaining({ domain: "record-limit-test" })],
+    });
+  });
+
   it("derives byte-stable manifests independent of record insertion order", () => {
     const artifactEvidence = createEvidence(TARGET, PROVIDER, {
       operation: "health",
