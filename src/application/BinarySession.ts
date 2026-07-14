@@ -82,7 +82,7 @@ export class BinarySession implements BinarySessionPort {
     string,
     { readonly available: boolean; readonly reason: string | null }
   >();
-  readonly #availabilityListeners = new Set<() => void>();
+  readonly #availabilityListeners = new Set<() => void | Promise<void>>();
   readonly #snapshotsEnabled: boolean;
   #snapshotInvalidated = false;
 
@@ -132,7 +132,7 @@ export class BinarySession implements BinarySessionPort {
   }
 
   /** Observe runtime provider-health changes that affect discovery metadata. */
-  onAvailabilityChanged(listener: () => void): () => void {
+  onAvailabilityChanged(listener: () => void | Promise<void>): () => void {
     this.#availabilityListeners.add(listener);
     return () => this.#availabilityListeners.delete(listener);
   }
@@ -583,7 +583,16 @@ export class BinarySession implements BinarySessionPort {
   }
 
   #emitAvailabilityChanged(): void {
-    for (const listener of this.#availabilityListeners) listener();
+    for (const listener of this.#availabilityListeners) {
+      try {
+        const notification = listener();
+        if (notification !== undefined)
+          void notification.catch(() => undefined);
+      } catch {
+        // External observers are best-effort notifications. Contain only the
+        // callback failure so state transitions and other listeners continue.
+      }
+    }
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {

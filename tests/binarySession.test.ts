@@ -254,6 +254,55 @@ describe("binary session", () => {
     expect(changes).toBe(2);
   });
 
+  it("isolates availability observers from execution results and session state", async () => {
+    const [first] = await targets();
+    const provider = cacheProvider([]);
+    let providerCalls = 0;
+    provider.createClient = () => ({
+      execute: (operation) => {
+        if (operation === "health") return Promise.resolve(ok(null));
+        providerCalls += 1;
+        return Promise.resolve(
+          providerCalls === 1
+            ? err(new ProviderAdapterError("fixture", operation))
+            : ok(operation),
+        );
+      },
+      close: () => Promise.resolve(),
+    });
+    const session = new BinarySession(provider);
+    expect((await session.open(first)).ok).toBe(true);
+    const input = { address: "0x1000", document: "first" };
+    expect((await session.execute("address_name", input)).ok).toBe(false);
+
+    session.onAvailabilityChanged(() => {
+      throw new Error("external observer failed");
+    });
+    session.onAvailabilityChanged(() =>
+      Promise.reject(new Error("async external observer failed")),
+    );
+    let delivered = 0;
+    session.onAvailabilityChanged(() => {
+      delivered += 1;
+    });
+
+    await expect(session.execute("address_name", input)).resolves.toMatchObject(
+      { ok: true },
+    );
+    expect(delivered).toBe(1);
+    expect(session.status()).toMatchObject({
+      capabilities: expect.arrayContaining([
+        expect.objectContaining({
+          operation: "address_name",
+          available: true,
+          reason: null,
+        }),
+      ]),
+    });
+    expect((await session.execute("address_name", input)).ok).toBe(true);
+    expect(providerCalls).toBe(2);
+  });
+
   it("does not replay operations with filesystem side effects", async () => {
     const [first] = await targets();
     const calls: string[] = [];
