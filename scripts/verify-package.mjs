@@ -450,7 +450,7 @@ try {
       (await readFile(cursorConfig, "utf8")) !== "malformed"
     )
       throw new Error("packaged setup failure recovery did not preserve input");
-    await writeFile(cursorConfig, "{}\n");
+    await writeFile(cursorConfig, '{"existing":true}\n');
     const recoveredExecution = await runWithStatus(
       cli,
       ["setup", "--yes", "--json"],
