@@ -5,6 +5,7 @@ import { err, ok, type Result } from "./result.js";
 /** Local capabilities governed by the shared REA permission policy. */
 export type PermissionCapability =
   | "process_capture"
+  | "browser_observe"
   | "evidence_read"
   | "evidence_write"
   | "investigation_input"
@@ -25,6 +26,7 @@ export interface PermissionScope {
   readonly roots: readonly string[];
   readonly executables: readonly string[];
   readonly environment_names: readonly string[];
+  readonly origins?: readonly string[] | undefined;
   readonly network: PermissionNetwork;
   readonly mount: boolean;
 }
@@ -50,6 +52,7 @@ export interface MissingPermissionScope {
   readonly roots?: readonly string[];
   readonly executables?: readonly string[];
   readonly environment_names?: readonly string[];
+  readonly origins?: readonly string[];
   readonly network?: PermissionNetwork;
   readonly mount?: true;
 }
@@ -220,6 +223,9 @@ const normalizeScope = (scope: PermissionScope): PermissionScope => ({
   roots: uniqueSorted(scope.roots.map((path) => resolve(path))),
   executables: uniqueSorted(scope.executables.map((path) => resolve(path))),
   environment_names: uniqueSorted(scope.environment_names),
+  ...(scope.origins === undefined
+    ? {}
+    : { origins: uniqueSorted(scope.origins) }),
   network: scope.network,
   mount: scope.mount,
 });
@@ -253,6 +259,10 @@ const missingFromScopes = (
   const environmentNames = request.environment_names.filter(
     (name) => !relevant.some((scope) => scope.environment_names.includes(name)),
   );
+  const origins = (request.origins ?? []).filter(
+    (origin) =>
+      !relevant.some((scope) => (scope.origins ?? []).includes(origin)),
+  );
   const network =
     request.network === "none" ||
     relevant.some(
@@ -270,6 +280,7 @@ const missingFromScopes = (
     ...(environmentNames.length === 0
       ? {}
       : { environment_names: environmentNames }),
+    ...(origins.length === 0 ? {} : { origins }),
     ...(network === undefined ? {} : { network }),
     ...(mount === undefined ? {} : { mount }),
   };

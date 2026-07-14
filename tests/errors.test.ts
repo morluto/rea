@@ -9,6 +9,7 @@ import {
   AnalysisTimeoutError,
   ArtifactOperationError,
   BinaryTargetError,
+  BrowserObservationError,
   ConfigurationError,
   EvidenceFileError,
   EvidenceIntegrityError,
@@ -88,6 +89,11 @@ describe("analysis error projection", () => {
       ProviderAdapterError: new ProviderAdapterError("fixture", "overview", {
         cause: secretCause,
       }),
+      BrowserObservationError: new BrowserObservationError(
+        "inspect_web_page",
+        "endpoint_unreachable",
+        { cause: secretCause },
+      ),
       ArtifactOperationError: new ArtifactOperationError(
         "inventory_artifact",
         "integrity",
@@ -147,7 +153,7 @@ describe("analysis error projection", () => {
     } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
-    expect(projected).toHaveLength(25);
+    expect(projected).toHaveLength(26);
     const serialized = JSON.stringify(projected);
     for (const hidden of [
       "secret-token",

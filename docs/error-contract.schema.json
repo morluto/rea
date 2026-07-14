@@ -460,6 +460,7 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "origins": { "type": "array", "items": { "type": "string" } },
                 "network": {
                   "type": "string",
                   "enum": ["none", "loopback", "external"]
@@ -488,6 +489,7 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "origins": { "type": "array", "items": { "type": "string" } },
                 "network": {
                   "type": "string",
                   "enum": ["none", "loopback", "external"]
@@ -508,6 +510,10 @@
                       "items": { "type": "string" }
                     },
                     "environment_names": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "origins": {
                       "type": "array",
                       "items": { "type": "string" }
                     },

@@ -12,6 +12,7 @@ const grantSchema = z.object({
   grant_id: z.string().min(1),
   capability: z.enum([
     "process_capture",
+    "browser_observe",
     "evidence_read",
     "evidence_write",
     "investigation_input",
@@ -26,6 +27,7 @@ const grantSchema = z.object({
   roots: z.array(z.string()),
   executables: z.array(z.string()),
   environment_names: z.array(z.string()),
+  origins: z.array(z.string()).optional(),
   network: z.enum(["none", "loopback", "external"]),
   mount: z.boolean(),
   lifetime: z.literal("project"),

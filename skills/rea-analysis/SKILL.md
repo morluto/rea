@@ -1,14 +1,29 @@
 ---
 name: rea-analysis
-description: Reverse engineer apps with REA. Explore how features work, then build a version tailored to your project.
+description: Reverse engineer apps and websites with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "12"
-  tool_count: 68
+  version: "13"
+  tool_count: 70
 ---
 
 # REA
 
 Use REA when the user wants to understand how an app or feature works, compare app versions, decompile code, or build a similar feature.
+
+For a website already open in a user-owned Chrome-family browser, use
+`list_browser_targets` and `inspect_web_page` instead of opening a binary. Ask
+the user to approve the exact page origins and loopback CDP endpoint before the
+first call. Browser observation is disabled unless the operator configured
+`REA_BROWSER_OBSERVE_ENABLED`, `REA_BROWSER_CDP_ENDPOINTS_JSON`, and
+`REA_BROWSER_ALLOWED_ORIGINS_JSON` before starting REA.
+
+Browser inspection is passive. Never claim that it clicked, navigated,
+evaluated page JavaScript, captured prior activity, or contained the page's
+network. Query values, headers, bodies, cookies, storage values, console values,
+and WebSocket payloads are deliberately absent. Request script sources or
+storage key names only when the user separately approves those more sensitive
+outputs. Treat truncation and attach-window coverage as explicit limitations,
+and cite the returned Evidence v2 IDs.
 
 ## Understand the request
 

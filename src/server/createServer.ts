@@ -15,6 +15,8 @@ import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerEvidenceResources } from "./registerEvidenceResources.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import { registerBrowserTools } from "./registerBrowserTools.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -23,10 +25,12 @@ export interface CreateServerOptions {
   readonly investigationInputRoots?: readonly string[];
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
   readonly permissionAuthority?: PermissionAuthority;
+  readonly browserObservation?: BrowserObservationPort;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   };
 }
 
@@ -135,6 +139,12 @@ export const createServer = (
     ...(options.permissionAuthority === undefined
       ? {}
       : { permissionAuthority: options.permissionAuthority }),
+  });
+  registerBrowserTools(server, {
+    logger: toolLogger,
+    browser: options.browserObservation,
+    permissionAuthority: options.permissionAuthority,
+    recordEvidence,
   });
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

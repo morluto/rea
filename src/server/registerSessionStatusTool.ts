@@ -19,6 +19,7 @@ export const registerSessionStatusTool = (
   availabilityPolicy: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   },
 ): void => {
   server.registerTool(

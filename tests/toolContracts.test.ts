@@ -8,13 +8,18 @@ import {
 } from "../src/contracts/toolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
+import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 
 describe("tool contract inventory", () => {
-  it("publishes 50 analysis contracts and eighteen session tools", () => {
+  it("publishes 52 analysis contracts and eighteen session tools", () => {
     expect(OFFICIAL_TOOL_CONTRACTS).toHaveLength(33);
     expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(10);
     expect(NATIVE_TOOL_CONTRACTS).toHaveLength(5);
     expect(ARTIFACT_TOOL_CONTRACTS).toHaveLength(2);
+    expect(BROWSER_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
+      "list_browser_targets",
+      "inspect_web_page",
+    ]);
     expect(SESSION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "open_binary",
       "close_binary",
@@ -35,8 +40,8 @@ describe("tool contract inventory", () => {
       "update_unknown",
       "verify_unknown_resolution",
     ]);
-    expect(TOOL_CONTRACTS).toHaveLength(68);
-    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(68);
+    expect(TOOL_CONTRACTS).toHaveLength(70);
+    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(70);
   });
 
   it("retains documented enhanced-tool limits at the input boundary", () => {

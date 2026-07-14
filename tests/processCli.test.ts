@@ -17,6 +17,7 @@ import { PROCESS_PROVIDER } from "../src/application/ProcessEvidence.js";
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
+const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
 afterEach(async () => {
   await Promise.all(
@@ -31,18 +32,22 @@ const fixture = async (): Promise<string> => {
 };
 
 describe("process CLI errors", () => {
-  it("exits unsuccessfully without writing failure-shaped evidence", async () => {
-    await expect(
-      execFileAsync(
-        process.execPath,
-        ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
-        { cwd: process.cwd() },
-      ),
-    ).rejects.toMatchObject({
-      code: 1,
-      stdout: expect.stringContaining("category: invalid_input"),
-    });
-  });
+  it(
+    "exits unsuccessfully without writing failure-shaped evidence",
+    async () => {
+      await expect(
+        execFileAsync(
+          process.execPath,
+          ["scripts/rea.mjs", "capture-process", "/missing/scenario.json"],
+          { cwd: process.cwd() },
+        ),
+      ).rejects.toMatchObject({
+        code: 1,
+        stdout: expect.stringContaining("category: invalid_input"),
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
 
   it("projects unexpected causes without their message or stack", () => {
     const projected = projectProcessCliError(

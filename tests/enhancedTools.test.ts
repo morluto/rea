@@ -183,7 +183,7 @@ describe("enhanced MCP tools", () => {
   it("lists the complete 33 plus 10 surface", async () => {
     const client = await connect();
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(50);
+    expect(listed.tools).toHaveLength(52);
     expect(
       listed.tools
         .map(({ name }) => name)

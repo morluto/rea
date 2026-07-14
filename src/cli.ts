@@ -27,6 +27,7 @@ import {
 import { projectReferenceSourceImportError } from "./application/ReferenceSourceImportTypes.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { registerPolicyCommands } from "./cliPolicyCommands.js";
+import { registerBrowserCommands } from "./cliBrowserCommands.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -73,6 +74,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerReferenceSourceCommand(cli, logger);
   registerProcessCommands(cli, logger);
   registerPolicyCommands(cli, logger);
+  registerBrowserCommands(cli, logger);
   return cli;
 };
 

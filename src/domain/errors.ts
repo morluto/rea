@@ -20,6 +20,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisTimeoutError",
   "ProviderSelectionError",
   "ProviderAdapterError",
+  "BrowserObservationError",
   "ArtifactOperationError",
   "ProcessCaptureError",
   "EvidenceIntegrityError",
@@ -140,6 +141,27 @@ export class ProviderAdapterError extends AnalysisError {
     options?: ErrorOptions,
   ) {
     super(`Provider ${providerId} adapter failed during ${operation}`, options);
+  }
+}
+
+/** A bounded passive browser observation failed at its CDP boundary. */
+export class BrowserObservationError extends AnalysisError {
+  readonly _tag = "BrowserObservationError";
+
+  constructor(
+    readonly operation: "list_browser_targets" | "inspect_web_page",
+    readonly reason:
+      | "endpoint_unreachable"
+      | "invalid_endpoint_response"
+      | "target_not_found"
+      | "target_not_allowed"
+      | "target_changed"
+      | "protocol_error"
+      | "disconnected"
+      | "payload_limit",
+    options?: ErrorOptions,
+  ) {
+    super(`Browser observation ${operation} failed: ${reason}`, options);
   }
 }
 
@@ -424,6 +446,21 @@ export const projectAnalysisError = (
 
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
   if (error instanceof PermissionRequiredError) return "permission_required";
+  if (error instanceof BrowserObservationError) {
+    if (error.reason === "payload_limit") return "truncated";
+    if (
+      error.reason === "target_not_found" ||
+      error.reason === "target_not_allowed" ||
+      error.reason === "target_changed"
+    )
+      return "target_unavailable";
+    if (
+      error.reason === "endpoint_unreachable" ||
+      error.reason === "disconnected"
+    )
+      return "provider_unavailable";
+    return "unreadable_output";
+  }
   if (error instanceof ArtifactOperationError)
     return error.reason === "integrity" && error.artifactDetails !== undefined
       ? "artifact_integrity_mismatch"
@@ -501,6 +538,8 @@ const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
     case "ProviderAdapterError":
     case "HopperRemoteError":
       return "execution_failure";
+    case "BrowserObservationError":
+      throw new TypeError("Unhandled specialized browser error");
     case "ArtifactOperationError":
     case "EvidenceFileError":
     case "InvestigationWorkspaceError":
@@ -552,6 +591,8 @@ const errorDetails = (
     return { provider_id: error.providerId, operation: error.operation };
   if (error instanceof ProviderAdapterError)
     return { provider_id: error.providerId, operation: error.operation };
+  if (error instanceof BrowserObservationError)
+    return { operation: error.operation, reason: error.reason };
   if (error instanceof HopperRemoteError)
     return { provider_code: error.code, diagnostic_type: error.diagnosticType };
   if (error instanceof HopperProcessError && error.failureCode !== undefined)
@@ -577,6 +618,7 @@ const scopeDetails = (
   roots: [...scope.roots],
   executables: [...scope.executables],
   environment_names: [...scope.environment_names],
+  ...(scope.origins === undefined ? {} : { origins: [...scope.origins] }),
   network: scope.network,
   mount: scope.mount,
 });
@@ -591,6 +633,7 @@ const missingScopeDetails = (
   ...(scope.environment_names === undefined
     ? {}
     : { environment_names: [...scope.environment_names] }),
+  ...(scope.origins === undefined ? {} : { origins: [...scope.origins] }),
   ...(scope.network === undefined ? {} : { network: scope.network }),
   ...(scope.mount === undefined ? {} : { mount: scope.mount }),
 });
@@ -616,6 +659,17 @@ const errorCategory = (
   if (error instanceof PermissionRequiredError) return "permission_required";
   if (error._tag === "ProcessCaptureError")
     return error.userCategory ?? "execution_failure";
+  if (error instanceof BrowserObservationError) {
+    if (error.reason === "payload_limit") return "truncated";
+    if (
+      error.reason === "target_not_found" ||
+      error.reason === "target_not_allowed" ||
+      error.reason === "target_changed" ||
+      error.reason === "endpoint_unreachable" ||
+      error.reason === "disconnected"
+    )
+      return "unavailable";
+  }
   if (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"
@@ -799,6 +853,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisTimeoutError: true,
   ProviderSelectionError: true,
   ProviderAdapterError: true,
+  BrowserObservationError: true,
   ArtifactOperationError: true,
   ProcessCaptureError: true,
   EvidenceIntegrityError: true,

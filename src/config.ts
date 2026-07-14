@@ -10,6 +10,10 @@ import type {
   PermissionCeiling,
   PermissionGrant,
 } from "./domain/permissionPolicy.js";
+import {
+  browserEndpointSchema,
+  browserOriginSchema,
+} from "./domain/browserObservation.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -31,6 +35,9 @@ export interface AppConfig {
   readonly investigationInputRoots: readonly string[];
   readonly analysisSnapshotFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
+  readonly browserObservationEnabled: boolean;
+  readonly browserCdpEndpoints: readonly string[];
+  readonly browserAllowedOrigins: readonly string[];
   readonly permissionCeilings: readonly PermissionCeiling[];
   readonly administratorPermissionGrants: readonly PermissionGrant[];
   readonly permissionProjectRoot: string | undefined;
@@ -66,6 +73,9 @@ const environmentSchema = z
     REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: z.string().default("[]"),
     REA_REFERENCE_ROOTS_JSON: z.string().default("[]"),
     REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
+    REA_BROWSER_OBSERVE_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_BROWSER_CDP_ENDPOINTS_JSON: z.string().default("[]"),
+    REA_BROWSER_ALLOWED_ORIGINS_JSON: z.string().default("[]"),
     REA_PERMISSION_PROJECT_ROOT: z.string().min(1).optional(),
     REA_PERMISSION_PROJECT_STORE: z.string().min(1).optional(),
   })
@@ -100,6 +110,29 @@ const parseStringArray = (
   }
 };
 
+const parseBrowserArray = (
+  encoded: string,
+  name: string,
+  itemSchema: z.ZodType<string>,
+  maximum: number,
+): Result<readonly string[], ConfigurationError> => {
+  try {
+    const parsed = z
+      .array(itemSchema)
+      .max(maximum)
+      .safeParse(JSON.parse(encoded));
+    return parsed.success
+      ? ok([...new Set(parsed.data)].sort())
+      : err(
+          new ConfigurationError(`${name} must encode valid browser scopes`, {
+            cause: parsed.error,
+          }),
+        );
+  } catch (cause: unknown) {
+    return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
+  }
+};
+
 const filePolicy = (roots: readonly string[]): EvidenceFilePolicy => ({
   roots,
   maxBytes: 64 * 1024 * 1024,
@@ -117,6 +150,7 @@ const permissionScope = (
   roots,
   executables: options.executables ?? [],
   environment_names: options.environment_names ?? [],
+  ...(options.origins === undefined ? {} : { origins: options.origins }),
   network: options.network ?? "none",
   mount: options.mount ?? false,
 });
@@ -218,6 +252,20 @@ export const parseConfig = (
     "REA_REFERENCE_SECRET_PATTERNS_JSON",
   );
   if (!secretPatterns.ok) return secretPatterns;
+  const browserEndpoints = parseBrowserArray(
+    parsedEnvironment.data.REA_BROWSER_CDP_ENDPOINTS_JSON,
+    "REA_BROWSER_CDP_ENDPOINTS_JSON",
+    browserEndpointSchema,
+    16,
+  );
+  if (!browserEndpoints.ok) return browserEndpoints;
+  const browserOrigins = parseBrowserArray(
+    parsedEnvironment.data.REA_BROWSER_ALLOWED_ORIGINS_JSON,
+    "REA_BROWSER_ALLOWED_ORIGINS_JSON",
+    browserOriginSchema,
+    32,
+  );
+  if (!browserOrigins.ok) return browserOrigins;
   const permissionCeilings = [
     ...(parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true"
       ? [
@@ -241,6 +289,14 @@ export const parseConfig = (
     permissionScope("snapshot_write", analysisSnapshotRoots.value),
     permissionScope("artifact_extract", ["/"]),
     permissionScope("reference_read", referenceRoots.value),
+    ...(parsedEnvironment.data.REA_BROWSER_OBSERVE_ENABLED === "true"
+      ? [
+          permissionScope("browser_observe", [], {
+            origins: [...browserEndpoints.value, ...browserOrigins.value],
+            network: browserNetworkScope(browserOrigins.value),
+          }),
+        ]
+      : []),
     ...(parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true"
       ? [permissionScope("native_mount", [], { mount: true })]
       : []),
@@ -276,9 +332,23 @@ export const parseConfig = (
       maxDepth: 32,
       maxPathBytes: 4_096,
     },
+    browserObservationEnabled:
+      parsedEnvironment.data.REA_BROWSER_OBSERVE_ENABLED === "true",
+    browserCdpEndpoints: browserEndpoints.value,
+    browserAllowedOrigins: browserOrigins.value,
     permissionCeilings,
     administratorPermissionGrants: administratorGrants(permissionCeilings),
     permissionProjectRoot: parsedEnvironment.data.REA_PERMISSION_PROJECT_ROOT,
     permissionProjectStore: parsedEnvironment.data.REA_PERMISSION_PROJECT_STORE,
   });
 };
+
+const browserNetworkScope = (
+  origins: readonly string[],
+): "loopback" | "external" =>
+  origins.every((origin) => {
+    const hostname = new URL(origin).hostname;
+    return hostname === "127.0.0.1" || hostname === "[::1]";
+  })
+    ? "loopback"
+    : "external";

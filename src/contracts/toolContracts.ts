@@ -26,6 +26,7 @@ import {
 import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
 import {
   closeBinaryInputSchema,
   openBinaryInputSchema,
@@ -512,15 +513,12 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
-/**
- * Complete ordered public inventory used by registration and verification.
- * Keep this collection at 68 tools unless a deliberate contract change updates
- * snapshots, package verification, and real-Hopper verification together.
- */
+/** Complete ordered public inventory used by registration and verification. */
 export const TOOL_CONTRACTS = [
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS,
   ...NATIVE_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
+  ...BROWSER_TOOL_CONTRACTS,
   ...SESSION_TOOL_CONTRACTS,
 ] as const;
