@@ -64,9 +64,10 @@ export const capturePage = async (
 ): Promise<WebPageInspection> => {
   const allowedOrigins = new Set(context.input.allowed_origins);
   const events = new CdpCaptureEvents(context.input, allowedOrigins);
-  const removeListener = context.connection.onEvent((event) =>
-    events.ingest(event),
-  );
+  const removeListener = context.connection.onEvent((event) => {
+    if (event.sessionId !== context.sessionId) return;
+    events.ingest(event);
+  });
   const state: CaptureState = {
     context,
     events,

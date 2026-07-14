@@ -84,27 +84,31 @@ describe("browser CLI parity", () => {
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  it("requires explicit approval before opening the CDP endpoint", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const result = await runCli(
-      ["list-browser-targets", browser.endpoint, "--json"],
-      {
-        ...process.env,
-        REA_BROWSER_OBSERVE_ENABLED: "true",
-        REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-        REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-          browser.allowedOrigin,
-        ]),
-      },
-    );
-    expect(result).toMatchObject({
-      error: "Browser observation failed",
-      code: "invalid_request",
-      category: "invalid_input",
-    });
-    expect(browser.commands).toHaveLength(0);
-  });
+  it(
+    "requires explicit approval before opening the CDP endpoint",
+    async () => {
+      const browser = await startFakeCdpBrowser();
+      browsers.push(browser);
+      const result = await runCli(
+        ["list-browser-targets", browser.endpoint, "--json"],
+        {
+          ...process.env,
+          REA_BROWSER_OBSERVE_ENABLED: "true",
+          REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
+          REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
+            browser.allowedOrigin,
+          ]),
+        },
+      );
+      expect(result).toMatchObject({
+        error: "Browser observation failed",
+        code: "invalid_request",
+        category: "invalid_input",
+      });
+      expect(browser.commands).toHaveLength(0);
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });
 
 const runCli = async (

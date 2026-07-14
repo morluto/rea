@@ -154,20 +154,35 @@ export class CdpConnection {
       this.#failPending("protocol_error");
       return;
     }
-    if ("id" in message && typeof message.id === "number") {
+    if ("id" in message) {
+      if (
+        typeof message.id !== "number" ||
+        !Number.isSafeInteger(message.id) ||
+        message.id < 1
+      ) {
+        this.#failPending("protocol_error");
+        return;
+      }
       this.#receiveResponse(message, message.id);
       return;
     }
-    if ("method" in message && typeof message.method === "string") {
-      const event: CdpEvent = {
-        method: message.method,
-        params: "params" in message ? message.params : {},
-        ...(typeof message.sessionId === "string"
-          ? { sessionId: message.sessionId }
-          : {}),
-      };
-      for (const listener of this.#listeners) listener(event);
+    if (
+      typeof message.method !== "string" ||
+      message.method.length === 0 ||
+      ("params" in message && !isRecord(message.params)) ||
+      ("sessionId" in message && typeof message.sessionId !== "string")
+    ) {
+      this.#failPending("protocol_error");
+      return;
     }
+    const event: CdpEvent = {
+      method: message.method,
+      params: "params" in message ? message.params : {},
+      ...(typeof message.sessionId === "string"
+        ? { sessionId: message.sessionId }
+        : {}),
+    };
+    for (const listener of this.#listeners) listener(event);
   }
 
   #receiveResponse(message: Record<string, unknown>, id: number): void {
@@ -216,7 +231,7 @@ const waitForOpen = async (
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      socket.terminate();
+      terminateSocket(socket);
       reject(new AnalysisTimeoutError("inspect_web_page", CONNECT_TIMEOUT_MS));
     }, CONNECT_TIMEOUT_MS);
     const onOpen = (): void => {
@@ -236,7 +251,7 @@ const waitForOpen = async (
       );
     };
     const onAbort = (): void => {
-      socket.terminate();
+      terminateSocket(socket);
       onFailure(new AnalysisCancelledError("inspect_web_page"));
     };
     const cleanup = (): void => {
@@ -250,3 +265,8 @@ const waitForOpen = async (
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted === true) onAbort();
   });
+
+const terminateSocket = (socket: WebSocket): void => {
+  socket.once("error", () => undefined);
+  socket.terminate();
+};

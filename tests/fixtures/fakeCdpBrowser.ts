@@ -23,6 +23,7 @@ interface FakeOptions {
   readonly invalidBrowserWebSocket?: boolean;
   readonly malformedMessageOnMethod?: string;
   readonly malformedEventOnMethod?: string;
+  readonly malformedEventShapeOnMethod?: string;
   readonly closeOnMethod?: string;
   readonly hangOnMethod?: string;
   readonly unsupportedMethods?: readonly string[];
@@ -31,6 +32,7 @@ interface FakeOptions {
   readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
   readonly extraCollections?: boolean;
+  readonly foreignSessionEvents?: boolean;
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -114,6 +116,8 @@ export const startFakeCdpBrowser = async (
       );
       if (options.malformedEventOnMethod === command.method)
         socket.send("{not-json");
+      if (options.malformedEventShapeOnMethod === command.method)
+        socket.send(JSON.stringify({ method: 42 }));
       emitEvents(socket, command, port, options);
     });
   });
@@ -426,6 +430,14 @@ const emitEvents = (
   options: FakeOptions,
 ): void => {
   if (command.method === "Debugger.enable") {
+    if (options.foreignSessionEvents === true)
+      event(socket, "Debugger.scriptParsed", "foreign-session", {
+        scriptId: "script-foreign",
+        url: `http://127.0.0.1:${String(port)}/foreign.js`,
+        hash: "foreign-hash",
+        length: 20,
+        isModule: false,
+      });
     event(socket, "Debugger.scriptParsed", command.sessionId, {
       scriptId: "script-allowed",
       url: `http://127.0.0.1:${String(port)}/app.js?token=script-secret`,

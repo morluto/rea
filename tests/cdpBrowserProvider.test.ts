@@ -50,7 +50,7 @@ describe("CdpBrowserProvider", () => {
   });
 
   it("captures bounded passive evidence without retaining sensitive values", async () => {
-    const browser = await startFakeCdpBrowser();
+    const browser = await startFakeCdpBrowser({ foreignSessionEvents: true });
     browsers.push(browser);
     const provider = new CdpBrowserProvider();
     const result = await provider.inspectPage(
@@ -71,6 +71,7 @@ describe("CdpBrowserProvider", () => {
     expect(result.value.dom.nodes[1]?.attribute_names).toEqual(["token"]);
     expect(result.value.accessibility.nodes[0]?.name).toBe("Submit report");
     expect(result.value.scripts.items).toHaveLength(1);
+    expect(result.value.scripts.items[0]?.script_id).toBe("script-allowed");
     expect(result.value.scripts.items[0]?.source).toEqual({
       included: false,
       reason: "source capture was not approved",
@@ -384,6 +385,24 @@ describe("CdpBrowserProvider", () => {
       ok: false,
       error: { _tag: "BrowserObservationError", reason: "protocol_error" },
     });
+
+    const malformedEventShape = await startFakeCdpBrowser({
+      malformedEventShapeOnMethod: "Debugger.enable",
+    });
+    browsers.push(malformedEventShape);
+    const eventShapeProtocol = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: malformedEventShape.endpoint,
+        allowed_origins: [malformedEventShape.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    expect(eventShapeProtocol).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+    });
   });
 
   it("cancels observation and still detaches without closing the page", async () => {
@@ -400,7 +419,8 @@ describe("CdpBrowserProvider", () => {
       }),
       { signal: controller.signal },
     );
-    setTimeout(() => controller.abort(), 20);
+    await waitForCommand(browser, "Target.attachToTarget");
+    controller.abort();
     const result = await pending;
     expect(result).toMatchObject({
       ok: false,
@@ -495,3 +515,14 @@ describe("CdpBrowserProvider", () => {
     });
   });
 });
+
+const waitForCommand = async (
+  browser: FakeCdpBrowser,
+  method: string,
+): Promise<void> => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (browser.commands.some((command) => command.method === method)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for fake CDP command ${method}`);
+};
