@@ -50,6 +50,20 @@ export async function verifyPackagedInvestigation(input) {
     persisted.runs?.[0]?.status !== "complete"
   )
     throw new Error("packaged persistent investigation CLI failed");
+  return {
+    arguments: {
+      approved: true,
+      workspace_path: workspacePath,
+      workspace_name: "package-versions",
+      expected_workspace_revision: persisted.revision,
+      replay_run_id: runId,
+      left_path: input.artifactArchive,
+      right_path: artifactArchiveV2,
+    },
+    evidenceId: investigated.evidence_id,
+    workspacePath,
+    revision: persisted.revision,
+  };
 }
 
 async function runJson(command, args, environment) {

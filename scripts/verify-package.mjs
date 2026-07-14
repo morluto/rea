@@ -169,7 +169,7 @@ try {
   )
     throw new Error("packaged artifact inventory CLI failed");
   // prettier-ignore
-  await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
+  const investigationReplay = await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
   const overview = json(
     await run(cli, ["analyze", process.execPath, "--json"], environment),
   );
@@ -448,7 +448,10 @@ try {
   const transport = new StdioClientTransport({
     command: cli,
     args: ["mcp"],
-    env: environment,
+    env: {
+      ...environment,
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([]),
+    },
     stderr: "pipe",
   });
   let mcpStderr = "";
@@ -466,6 +469,25 @@ try {
       throw new Error("packaged MCP tool inventory diverged from contracts");
     await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
     await prompts.verifyPromptCompletion(client, mcpOptions, false);
+    const replay = await client.callTool(
+      {
+        name: "find_changed_behavior",
+        arguments: { investigation_run: investigationReplay.arguments },
+      },
+      mcpOptions,
+    );
+    const replayEvidence = json(prompts.mcpText(replay));
+    const replayWorkspace = json(
+      await readFile(investigationReplay.workspacePath, "utf8"),
+    );
+    if (
+      replay.isError === true ||
+      replayEvidence.evidence_id !== investigationReplay.evidenceId ||
+      replayWorkspace.revision !== investigationReplay.revision
+    )
+      throw new Error(
+        "packaged MCP did not replay with workspace-only authority",
+      );
     const result = await client.callTool(
       { name: "current_document", arguments: {} },
       mcpOptions,
