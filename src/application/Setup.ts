@@ -25,7 +25,10 @@ import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 export type { SetupClient } from "./SupportedClients.js";
-import { installCanonicalSkill } from "./SetupSkill.js";
+import {
+  canonicalSkillInstallationNeeded,
+  installCanonicalSkill,
+} from "./SetupSkill.js";
 import { setupPlan } from "./SetupPlan.js";
 import {
   setupInstallFailure,
@@ -69,6 +72,7 @@ export interface SetupHost {
     hopperPath: string | undefined,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
+  skillInstallationNeeded(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
@@ -140,7 +144,13 @@ export const runSetup = async (
   );
   const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
   const detectedClients = await host.detectedClients();
-  plannedActions = setupPlan(host.platform, installHopper, detectedClients);
+  const installSkill = await host.skillInstallationNeeded();
+  plannedActions = setupPlan(
+    host.platform,
+    installHopper,
+    detectedClients,
+    installSkill,
+  );
   let approved = options.approved;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
@@ -182,12 +192,14 @@ export const runSetup = async (
     appliedActions,
   });
   if (clientFailure !== undefined) return fail(clientFailure);
-  const skill = await host.installSkill();
-  if (skill === "failed")
-    return fail(
-      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
-    );
-  if (skill === "installed") appliedActions.push("installed_skill");
+  if (installSkill) {
+    const skill = await host.installSkill();
+    if (skill === "failed")
+      return fail(
+        "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+      );
+    if (skill === "installed") appliedActions.push("installed_skill");
+  }
   const doctor = await host.doctor();
   const remediation = finalSetupRemediation(
     host.platform,
@@ -261,6 +273,7 @@ const systemSetupHost = (): SetupHost => {
         : client.format === "toml"
           ? configureTomlClient(client, hopperPath, command)
           : configureJsonClient(client, hopperPath, command),
+    skillInstallationNeeded: () => canonicalSkillInstallationNeeded(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
   };

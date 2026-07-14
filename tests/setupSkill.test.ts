@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { installCanonicalSkill } from "../src/application/Setup.js";
+import { canonicalSkillInstallationNeeded } from "../src/application/SetupSkill.js";
 import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 
 const roots: string[] = [];
@@ -32,6 +33,18 @@ describe("canonical skill transaction", () => {
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
+    expect(await canonicalSkillInstallationNeeded(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
+  });
+
+  it("reports a missing or stale canonical skill as needing installation", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-skill-plan-test-"));
+    roots.push(home);
+    const destination = join(home, ".agents/skills/rea-analysis/SKILL.md");
+
+    expect(await canonicalSkillInstallationNeeded(home)).toBe(true);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, "stale managed skill\n");
+    expect(await canonicalSkillInstallationNeeded(home)).toBe(true);
   });
 });

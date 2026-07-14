@@ -19,9 +19,11 @@ class FakeSetupHost implements SetupHost {
   hopper: string | undefined;
   hopperInstallSucceeds = true;
   skill: "installed" | "unchanged" | "failed" = "installed";
+  skillNeedsInstallation = true;
   clients: readonly SetupClient[] = [];
   clientResults = new Map<string, ClientConfigurationResult>();
   hopperInstalls = 0;
+  skillInstallations = 0;
   configurations = 0;
   doctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
@@ -62,8 +64,12 @@ class FakeSetupHost implements SetupHost {
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
   };
-  installSkill = (): Promise<"installed" | "unchanged" | "failed"> =>
-    Promise.resolve(this.skill);
+  skillInstallationNeeded = (): Promise<boolean> =>
+    Promise.resolve(this.skillNeedsInstallation);
+  installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {
+    this.skillInstallations += 1;
+    return Promise.resolve(this.skill);
+  };
   doctor = (): Promise<{
     healthy: boolean;
     hopperPath?: string;
@@ -124,6 +130,21 @@ describe("setup workflow", () => {
     expect(result.remediation).toBe(
       "Review the setup plan, then rerun interactively or with --yes.",
     );
+  });
+
+  it("omits an aligned skill from the plan and does not reinstall it", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skillNeedsInstallation = false;
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions.map(({ kind }) => kind)).not.toContain(
+      "install_skill",
+    );
+    expect(result.appliedActions).toEqual([]);
+    expect(host.skillInstallations).toBe(0);
   });
 
   it("reports ready after an accepted Linux plan installs healthy Hopper", async () => {
@@ -218,6 +239,19 @@ describe("setup workflow", () => {
     expect(host.hopperInstalls).toBe(0);
   });
 
+  it("treats --install-hopper as approval, not a healthy reinstall request", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+
+    const result = await runSetup(options(true, true), host);
+
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions.map(({ kind }) => kind)).not.toContain(
+      "install_hopper",
+    );
+    expect(host.hopperInstalls).toBe(0);
+  });
+
   it("installs missing Linux demo dependencies for existing Hopper", async () => {
     const host = new FakeSetupHost("linux");
     host.distribution = {
@@ -295,6 +329,34 @@ describe("setup workflow", () => {
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(message);
     expect(result.remediation).not.toContain("internal_client_key");
+  });
+
+  it("records later client outcomes after an earlier configuration fails", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      { name: "before", configPath: "/before.json" },
+      { name: "broken", configPath: "/broken.json" },
+      { name: "after", configPath: "/after.json" },
+    ];
+    host.clientResults.set("broken", { status: "failed", reason: "write" });
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("needs_human");
+    expect(host.configurations).toBe(3);
+    expect(result.clients).toEqual({
+      before: { status: "configured" },
+      broken: { status: "failed", reason: "write" },
+      after: { status: "configured" },
+    });
+    expect(result.appliedActions).toEqual([
+      "configured_before",
+      "configured_after",
+    ]);
+    expect(result.remediation).toBe(
+      "Agent configuration could not be updated. Check file permissions, then rerun setup.",
+    );
   });
 
   it("explains skill installation recovery", async () => {

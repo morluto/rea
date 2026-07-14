@@ -160,7 +160,9 @@ const registerSetupCommands = (
       installHopper: z
         .boolean()
         .default(false)
-        .describe("Also approve Hopper installation with --yes"),
+        .describe(
+          "Approve Hopper installation when missing or repair is needed (requires --yes)",
+        ),
     }),
     alias: { yes: "y", installHopper: "install-hopper" },
     run: ({ options, formatExplicit }) =>

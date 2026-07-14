@@ -194,6 +194,8 @@ const runCommand = (
 ): Promise<boolean> =>
   new Promise((resolveResult) => {
     const child = spawn(command, [...arguments_], {
+      // Reserve parent stdout for Incur's structured result. Array positions
+      // are child fds 0/1/2, so npm stdout and stderr both reach parent stderr.
       stdio:
         output === "human" ? "inherit" : ["inherit", process.stderr, "inherit"],
     });

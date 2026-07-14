@@ -1,4 +1,5 @@
 import { Cli, z } from "incur";
+import { createInterface } from "node:readline/promises";
 
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import {
@@ -49,9 +50,13 @@ export const registerPolicyCommands = (
       network: z.enum(["none", "loopback", "external"]).default("none"),
       mount: z.boolean().default(false),
       write: z.boolean().default(false),
+      yes: z
+        .boolean()
+        .default(false)
+        .describe("Confirm a destructive policy revocation without prompting"),
     }),
-    alias: { environmentNames: "environment-names" },
-    run: ({ args, options }) =>
+    alias: { environmentNames: "environment-names", yes: "y" },
+    run: ({ args, options, formatExplicit }) =>
       logCliCommand(logger, "policy", async () => {
         const config = parseConfig(process.env);
         if (!config.ok) return failure(config.error);
@@ -76,6 +81,22 @@ export const registerPolicyCommands = (
             permissionProjectStore === undefined
           )
             return { error: "Project policy is not configured" };
+          if (!options.yes) {
+            if (formatExplicit || process.stdin.isTTY !== true)
+              return {
+                error: "ConfirmationRequired",
+                message: "Policy grant revocation requires confirmation",
+                grant_id: args.value,
+                remediation:
+                  "Verify the grant ID, then rerun the same command with --yes.",
+              };
+            if (!(await confirmRevocation(args.value)))
+              return {
+                error: "Cancelled",
+                message: "Policy grant revocation was cancelled",
+                grant_id: args.value,
+              };
+          }
           const revoked = await revokeProjectPermissionGrant(
             permissionProjectStore,
             permissionProjectRoot,
@@ -98,6 +119,23 @@ export const registerPolicyCommands = (
         return explain(config.value, capability.data, options);
       }),
   });
+};
+
+const confirmRevocation = async (grantId: string): Promise<boolean> => {
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (
+      await prompt.question(`Revoke policy grant "${grantId}"? [y/N] `)
+    )
+      .trim()
+      .toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    prompt.close();
+  }
 };
 
 const explain = async (

@@ -187,9 +187,7 @@ const linuxDemoLaunch = (
 };
 
 const usesLinuxDemo = (options: HopperApplicationLauncherOptions): boolean =>
-  process.platform === "linux" &&
-  basename(options.launcherPath) === "Hopper" &&
-  options.demoHelperPath !== undefined;
+  process.platform === "linux" && options.demoHelperPath !== undefined;
 
 const spawnLauncher = async (
   command: string,
