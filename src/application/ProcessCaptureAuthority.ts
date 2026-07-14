@@ -8,6 +8,7 @@ import {
   ProcessCaptureError,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
+import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
 const isWithin = (candidate: string, root: string): boolean =>
   candidate === root ||
@@ -18,17 +19,15 @@ export const assertRealPathAuthority = async (
   policy: ProcessExecutionPolicy,
 ): Promise<void> => {
   const executable = await realpath(scenario.executable);
-  const executableRoots = await Promise.all(
-    policy.executableRoots.map((root) => realpath(root)),
+  const executableRoots = await canonicalizeConfiguredRoots(
+    policy.executableRoots,
   );
   if (!executableRoots.some((root) => isWithin(executable, root)))
     throw new ProcessCaptureError(
       "resolved executable is outside approved roots",
     );
   const workingDirectory = await realpath(scenario.working_directory);
-  const workingRoots = await Promise.all(
-    policy.workingRoots.map((root) => realpath(root)),
-  );
+  const workingRoots = await canonicalizeConfiguredRoots(policy.workingRoots);
   if (!workingRoots.some((root) => isWithin(workingDirectory, root)))
     throw new ProcessCaptureError(
       "resolved working directory is outside approved roots",

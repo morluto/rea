@@ -1067,6 +1067,47 @@ describe("process capture adapter", () => {
     expect(result.value.exit.code).toBe(0);
   });
 
+  it("dispatches scheduled events before a silent PTY produces output", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: process.execPath,
+        arguments: [processFixture, "silent-interactive"],
+        working_directory: dirname(processFixture),
+        events: [
+          { type: "resize", at_ms: 25, columns: 100, rows: 40 },
+          { type: "input", at_ms: 50, data: "answer" },
+        ],
+        timeout_ms: 2_000,
+        idle_timeout_ms: 2_000,
+      }),
+      {
+        enabled: true,
+        executableRoots: [
+          join(dirname(process.execPath), "missing"),
+          dirname(process.execPath),
+        ],
+        workingRoots: [
+          join(dirname(processFixture), "missing"),
+          dirname(processFixture),
+        ],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value.frames.map(({ data }) => data).join("")).toContain(
+      "input:answer",
+    );
+    expect(result.value.interaction_events).toMatchObject([
+      { type: "resize", outcome: "dispatched" },
+      { type: "input", outcome: "dispatched" },
+    ]);
+  });
+
   it("samples and cleans a source-owned child and grandchild process tree", async () => {
     const capability = await probeProcessCaptureCapability();
     if (!capability.available) return;

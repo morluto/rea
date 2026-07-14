@@ -34,12 +34,16 @@ const fixture = async (parent: string, name: string): Promise<string> => {
   return root;
 };
 
-const importTree = (root: string, approvedRoot: string, signal?: AbortSignal) =>
+const importTree = (
+  root: string,
+  approvedRoot: string | readonly string[],
+  signal?: AbortSignal,
+) =>
   importReferenceSource({
     root,
     caller: "reference-import-test",
     policy: {
-      roots: [approvedRoot],
+      roots: typeof approvedRoot === "string" ? [approvedRoot] : approvedRoot,
       secretPatterns: [".env", ".env.*"],
       ...limits,
     },
@@ -150,6 +154,20 @@ describe("reference source import", () => {
         rm(parent, { recursive: true, force: true }),
         rm(outside, { recursive: true, force: true }),
       ]);
+    }
+  });
+
+  it("uses a valid reference root when another configured root is missing", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "rea-reference-roots-"));
+    try {
+      const root = await fixture(parent, "tree");
+      const imported = await importTree(root, [
+        join(parent, "missing"),
+        parent,
+      ]);
+      expect(imported).toMatchObject({ ok: true });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
     }
   });
 

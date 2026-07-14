@@ -338,14 +338,12 @@ export const captureTerminalFrames = (options: {
   readonly started: number;
   readonly temporaryRoot: string;
   readonly onOutput: () => void;
-  readonly onFirstOutput: () => void;
   readonly renderer: TerminalRenderer;
   readonly checkpoints: ProcessCheckpoints;
 }): (() => boolean) => {
   let outputBytes = 0;
   let truncated = false;
   options.terminal.onData((data) => {
-    options.onFirstOutput();
     options.onOutput();
     const bytes = Buffer.byteLength(data);
     if (

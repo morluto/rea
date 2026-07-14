@@ -93,6 +93,21 @@ describe("evidence bundle filesystem adapter", () => {
     ).toMatchObject({ ok: true });
   });
 
+  it("uses valid evidence roots when another configured root is missing", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-evidence-roots-"));
+    const path = join(directory, "bundle.json");
+    const configured = {
+      ...policy(directory),
+      roots: [join(directory, "missing"), directory],
+    };
+    expect(
+      await writeEvidenceBundle(bundle(), path, false, configured),
+    ).toMatchObject({ ok: true });
+    expect(await readEvidenceBundle(path, configured)).toMatchObject({
+      ok: true,
+    });
+  });
+
   it("rejects traversal and symlink escape from approved roots", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-evidence-"));
     const root = join(directory, "approved");
