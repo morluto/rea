@@ -91,6 +91,8 @@ never enabled by default. Send `SIGHUP` to the REA MCP process after a trusted
 local policy change; ceilings, administrator grants, and project grants reload
 without restarting. Revocation affects future operations; an already-running
 operation retains the decision made at its preflight boundary.
+`rea policy revoke <grant-id>` displays the exact grant and requires interactive
+confirmation; automation must pass `--yes` (or `-y`) explicitly.
 
 Denials use the shared `permission_required` schema with requested scope, missing
 scope, administrator ceiling, elicitation support, and exact restart status.
