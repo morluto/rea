@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { add, commit, init } from "isomorphic-git";
 import { describe, expect, it } from "vitest";
 
-import { importReferenceSource } from "../src/application/ReferenceSourceImport.js";
+import {
+  importReferenceSource,
+  normalizeHistoricalSourceParseFailures,
+} from "../src/application/ReferenceSourceImport.js";
 import { projectReferenceSourceEntryFailure } from "../src/application/ReferenceSourceImportEntries.js";
 import {
   projectReferenceSourceImportError,
@@ -52,6 +55,27 @@ const importTree = (
   });
 
 describe("reference source import", () => {
+  it("deduplicates exact parse failures without collapsing distinct reasons", () => {
+    const malformed = {
+      path: "src/main.ts",
+      parser: "babel",
+      reason: "Malformed input",
+    };
+    const unexpected = {
+      path: "src/main.ts",
+      parser: "babel",
+      reason: "Unexpected token",
+    };
+
+    expect(
+      normalizeHistoricalSourceParseFailures([
+        unexpected,
+        malformed,
+        unexpected,
+      ]),
+    ).toEqual([malformed, unexpected]);
+  });
+
   it("projects entry failures without low-level reader diagnostics", () => {
     for (const [kind, code] of [
       ["directory", "io"],

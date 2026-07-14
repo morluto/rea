@@ -67,6 +67,27 @@ const deduplicateRelationships = (
   return result;
 };
 
+/** Sort parse failures deterministically while retaining distinct reasons. */
+export const normalizeHistoricalSourceParseFailures = (
+  failures: HistoricalSourceGraphInput["parse_failures"],
+): HistoricalSourceGraphInput["parse_failures"] =>
+  [...failures]
+    .sort((left, right) =>
+      byCodePoint(
+        historicalSourceParseFailureKey(left),
+        historicalSourceParseFailureKey(right),
+      ),
+    )
+    .filter((value, index, array) => {
+      if (index === 0) return true;
+      const previous = array[index - 1];
+      return (
+        previous === undefined ||
+        historicalSourceParseFailureKey(value) !==
+          historicalSourceParseFailureKey(previous)
+      );
+    });
+
 const buildProvenance = (
   options: ReferenceSourceImportOptions,
 ): HistoricalSourceGraphInput["provenance"] => ({
@@ -205,22 +226,7 @@ export const importReferenceSource = async (
   if (isAborted(options.signal)) return err(cancelled());
 
   const uniqueRelationships = deduplicateRelationships(relationships);
-  const uniqueFailures = [...parseFailures]
-    .sort((left, right) =>
-      byCodePoint(
-        historicalSourceParseFailureKey(left),
-        historicalSourceParseFailureKey(right),
-      ),
-    )
-    .filter((value, index, array) => {
-      if (index === 0) return true;
-      const previous = array[index - 1];
-      if (previous === undefined) return true;
-      return (
-        historicalSourceParseFailureKey(value) !==
-        historicalSourceParseFailureKey(previous)
-      );
-    });
+  const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
 
   const sortedEntries = [...entries].sort((left, right) =>
     byCodePoint(left.path, right.path),
