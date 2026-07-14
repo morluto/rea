@@ -192,6 +192,23 @@ describe("historical source graph", () => {
       ).toThrow(/Complete inventory/u);
   });
 
+  it("keeps distinct failure reasons for the same path and parser", () => {
+    const partial = graphInput();
+    partial.inventory_state = "partial";
+    partial.parse_failures = [
+      { path: "src/main.ts", parser: "babel", reason: "First failure" },
+      { path: "src/main.ts", parser: "babel", reason: "Second failure" },
+    ];
+
+    expect(createHistoricalSourceGraph(partial).parse_failures).toEqual(
+      partial.parse_failures,
+    );
+    partial.parse_failures.push(partial.parse_failures[1]!);
+    expect(() => createHistoricalSourceGraph(partial)).toThrow(
+      /parse_failures.*unique/iu,
+    );
+  });
+
   it("rejects strict unknown fields, invalid VCS, dangling internal edges, and false manifests", () => {
     expect(() =>
       createHistoricalSourceGraph({ ...graphInput(), surprise: true }),

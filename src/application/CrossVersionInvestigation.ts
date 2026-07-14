@@ -45,6 +45,7 @@ import {
   ARTIFACT_COMPARISON_PROVIDER,
   CHANGED_BEHAVIOR_PROVIDER,
 } from "./InvestigationProviders.js";
+import { selectCompletedInvestigationReplay } from "./CrossVersionInvestigationReplay.js";
 
 export interface CrossVersionInvestigationOutcome {
   readonly evidence: Evidence;
@@ -59,6 +60,7 @@ export interface CrossVersionInvestigationExecution {
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   readonly integrityContinueEnabled?: boolean;
+  readonly authorizeInputRead?: () => Promise<Result<null, AnalysisError>>;
   readonly authorizeWorkspaceWrite?: () => Promise<Result<null, AnalysisError>>;
 }
 
@@ -84,6 +86,23 @@ export const runCrossVersionInvestigation = async (
   if (!preflight.ok) return preflight;
   if (isCancelled(execution.signal))
     return err(new AnalysisCancelledError("find_changed_behavior"));
+  if (parsed.data.replay_run_id !== undefined) {
+    const replay = selectCompletedInvestigationReplay(
+      initial.value,
+      parsed.data,
+    );
+    if (!replay.ok) return replay;
+    return completeOutcome(
+      replay.value.workspace,
+      replay.value.run,
+      true,
+      execution.session,
+    );
+  }
+  if (execution.authorizeInputRead !== undefined) {
+    const authorized = await execution.authorizeInputRead();
+    if (!authorized.ok) return authorized;
+  }
   await execution.progress?.report({
     phase: "scan_versions",
     completed: 0,

@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
 import canonicalize from "canonicalize";
 
@@ -31,6 +31,7 @@ import {
   parseInvestigationWorkspace,
   serializeInvestigationWorkspace,
 } from "../src/domain/investigationWorkspace.js";
+import { ok } from "../src/domain/result.js";
 
 const digestCanonical = (value: unknown): string => {
   const encoded = canonicalize(value);
@@ -239,6 +240,57 @@ describe("persistent cross-version investigation workspace", () => {
     });
   });
 
+  it("replays an explicitly selected complete run without input access", async () => {
+    const { left, right, input } = await fixture();
+    if (directory === undefined) throw new Error("missing fixture root");
+    const completed = await runCrossVersionInvestigation(
+      input,
+      policy(directory),
+      { inputRoots: [directory] },
+    );
+    if (!completed.ok) throw completed.error;
+    const run = completed.value.workspace.runs[0];
+    if (run === undefined) throw new Error("missing completed run");
+    await Promise.all([
+      rm(left, { recursive: true, force: true }),
+      rm(right, { recursive: true, force: true }),
+    ]);
+    const authorizeInputRead = vi.fn(() => Promise.resolve(ok(null)));
+
+    await expect(
+      runCrossVersionInvestigation(
+        { ...input, replay_run_id: run.run_id },
+        policy(directory),
+        { inputRoots: [], authorizeInputRead },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        reused: true,
+        evidence: { evidence_id: completed.value.evidence.evidence_id },
+      },
+    });
+    expect(authorizeInputRead).not.toHaveBeenCalled();
+
+    for (const replayInput of [
+      { ...input, replay_run_id: `run_${"f".repeat(64)}` },
+      { ...input, right_path: `${right}-other`, replay_run_id: run.run_id },
+    ])
+      await expect(
+        runCrossVersionInvestigation(replayInput, policy(directory), {
+          inputRoots: [],
+          authorizeInputRead,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          _tag: "InvestigationWorkspaceError",
+          reason: "revision-conflict",
+        },
+      });
+    expect(authorizeInputRead).not.toHaveBeenCalled();
+  });
+
   it("enforces shared JSON depth limits while reading workspaces", async () => {
     const { path, input } = await fixture();
     if (directory === undefined) throw new Error("missing fixture root");
@@ -299,6 +351,26 @@ describe("persistent cross-version investigation workspace", () => {
         policy(directory),
       ),
     ).toMatchObject({ ok: true });
+
+    const authorizeInputRead = vi.fn(() => Promise.resolve(ok(null)));
+    await expect(
+      runCrossVersionInvestigation(
+        {
+          ...input,
+          workspace_path: resumePath,
+          replay_run_id: partialRun.run_id,
+        },
+        policy(directory),
+        { inputRoots: [], authorizeInputRead },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "InvestigationWorkspaceError",
+        reason: "revision-conflict",
+      },
+    });
+    expect(authorizeInputRead).not.toHaveBeenCalled();
 
     const resumed = await runCrossVersionInvestigation(
       { ...input, workspace_path: resumePath },

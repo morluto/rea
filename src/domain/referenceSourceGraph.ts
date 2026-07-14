@@ -128,6 +128,11 @@ const parseFailureSchema = z.strictObject({
   reason: boundedTextSchema,
 });
 
+/** Stable identity for one distinct reference-source parse failure. */
+export const referenceSourceParseFailureKey = (
+  failure: z.infer<typeof parseFailureSchema>,
+): string => JSON.stringify([failure.path, failure.parser, failure.reason]);
+
 const exclusionSchema = z.strictObject({
   path: relativePathSchema,
   reason: z.enum([
@@ -400,7 +405,7 @@ function checkGraphInvariants(
     context,
   );
   checkSortedUnique(
-    graph.parse_failures.map(({ path, parser }) => `${path}\u0000${parser}`),
+    graph.parse_failures.map(referenceSourceParseFailureKey),
     "parse_failures",
     context,
   );

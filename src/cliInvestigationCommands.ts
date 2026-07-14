@@ -18,6 +18,11 @@ const investigationOptionsSchema = z.object({
     .describe("Approve persistent workspace writes"),
   workspaceName: z.string().trim().min(1).max(200).default("default"),
   expectedRevision: z.number().int().min(1).optional(),
+  replayRunId: z
+    .string()
+    .regex(/^run_[a-f0-9]{64}$/u)
+    .optional()
+    .describe("Replay one verified complete workspace run without rescanning"),
   maxEntries: z.number().int().min(1).max(50_000).default(10_000),
   maxTotalBytes: z
     .number()
@@ -55,6 +60,7 @@ export const registerInvestigationCommands = (
     alias: {
       workspaceName: "workspace-name",
       expectedRevision: "expected-revision",
+      replayRunId: "replay-run-id",
       maxEntries: "max-entries",
       maxTotalBytes: "max-total-bytes",
       maxEntryBytes: "max-entry-bytes",
@@ -99,13 +105,6 @@ const runInvestigation = async (
     },
   );
   if (!workspaceAuthorization.ok) return cliError(workspaceAuthorization.error);
-  const inputAuthorization = await authorizeRootPermission(authority.value, {
-    capability: "investigation_input",
-    roots: [args.leftPath, args.rightPath],
-    access: "read",
-    operation: "investigate_versions",
-  });
-  if (!inputAuthorization.ok) return cliError(inputAuthorization.error);
   const investigated = await runCrossVersionInvestigation(
     {
       approved: true,
@@ -114,6 +113,9 @@ const runInvestigation = async (
       ...(options.expectedRevision === undefined
         ? {}
         : { expected_workspace_revision: options.expectedRevision }),
+      ...(options.replayRunId === undefined
+        ? {}
+        : { replay_run_id: options.replayRunId }),
       left_path: args.leftPath,
       right_path: args.rightPath,
       integrity_policy: options.integrityPolicy,
@@ -134,6 +136,13 @@ const runInvestigation = async (
     {
       inputRoots: config.value.investigationInputRoots,
       integrityContinueEnabled: config.value.artifactIntegrityContinueEnabled,
+      authorizeInputRead: () =>
+        authorizeRootPermission(authority.value, {
+          capability: "investigation_input",
+          roots: [args.leftPath, args.rightPath],
+          access: "read",
+          operation: "investigate_versions",
+        }),
       authorizeWorkspaceWrite: workspaceAuthorization.value.authorizeWrite,
     },
   );

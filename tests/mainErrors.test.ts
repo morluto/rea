@@ -18,7 +18,13 @@ const dependencies = (
   serve,
   writeStderr: (text) => output.push(text),
   setExitCode: (code) => exitCodes.push(code),
-  registerShutdown: (handler) => shutdown.push(handler),
+  registerShutdown: (handler) => {
+    shutdown.push(handler);
+    return () => {
+      const index = shutdown.indexOf(handler);
+      if (index >= 0) shutdown.splice(index, 1);
+    };
+  },
 });
 
 describe("MCP runtime errors", () => {
@@ -52,6 +58,7 @@ describe("MCP runtime errors", () => {
     shutdown[0]?.();
     await nextTurn();
     expect(closeCalls).toBe(1);
+    expect(shutdown).toEqual([]);
   });
 
   it("reports transport startup failure without its cause", async () => {
@@ -87,6 +94,7 @@ describe("MCP runtime errors", () => {
     );
     shutdown[0]?.();
     await nextTurn();
+    expect(shutdown).toEqual([]);
     expect(exitCodes).toEqual([1]);
     expect(output).toEqual([
       "REA could not close cleanly. End the REA process before starting it again.\n",
