@@ -6,7 +6,11 @@ export type SetupFailureCode =
   | "launcher_missing"
   | "runtime_dependency_unavailable"
   | "unsupported_hopper_build"
-  | "setup_cancelled";
+  | "setup_cancelled"
+  | "destination_exists"
+  | "mount_failed"
+  | "bundle_invalid"
+  | "copy_failed";
 
 export type SetupHopperInstallResult =
   | { readonly status: "installed"; readonly launcherPath: string }
@@ -83,6 +87,34 @@ export const setupInstallFailure = (
         code: "setup_cancelled",
         remediation:
           "Setup was cancelled before Hopper was installed. Rerun rea setup when ready.",
+      };
+    case "destination_exists":
+      return {
+        status: "failed",
+        code: "destination_exists",
+        remediation:
+          "The Hopper installation destination already exists and was not replaced. Reuse the existing installation or move it aside, then rerun rea setup.",
+      };
+    case "mount":
+      return {
+        status: "failed",
+        code: "mount_failed",
+        remediation:
+          "The verified Hopper disk image could not be mounted. Eject any stale Hopper image, check local disk access, then rerun rea setup.",
+      };
+    case "bundle":
+      return {
+        status: "failed",
+        code: "bundle_invalid",
+        remediation:
+          "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
+      };
+    case "copy":
+      return {
+        status: "failed",
+        code: "copy_failed",
+        remediation:
+          "The verified Hopper application could not be copied to the installation destination. Check destination permissions and free space, then rerun rea setup.",
       };
     default:
       return {

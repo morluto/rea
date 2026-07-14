@@ -125,6 +125,19 @@ describe("runtime configuration", () => {
     },
   );
 
+  it("reports the configured string-array size limit", () => {
+    const result = parseConfig({
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify(
+        Array.from({ length: 129 }, (_, index) => `/input/${String(index)}`),
+      ),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.message).toBe(
+        "REA_INVESTIGATION_INPUT_ROOTS_JSON must encode at most 128 strings",
+      );
+  });
+
   it("parses supported log levels and rejects unknown levels", () => {
     const configured = parseConfig({ REA_LOG_LEVEL: "debug" });
     expect(configured.ok && configured.value.logLevel).toBe("debug");

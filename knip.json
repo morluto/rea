@@ -1,18 +1,7 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": [
-    "src/main.ts",
-    "src/cli.ts",
-    "scripts/rea.mjs",
-    "scripts/scan-todos.mjs"
-  ],
-  "project": [
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "scripts/**/*.mjs",
-    "vitest.config.ts"
-  ],
-  "ignore": ["dist/**", "docs/**", ".codex/**", ".devin/**"],
+  "entry": ["src/main.ts", "src/cli.ts"],
+  "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "ignoreDependencies": [],
   "rules": {
     "files": "error",
