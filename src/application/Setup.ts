@@ -25,7 +25,10 @@ import { installMacHopper } from "./MacHopper.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 export type { SetupClient } from "./SupportedClients.js";
-import { installCanonicalSkill } from "./SetupSkill.js";
+import {
+  canonicalSkillNeedsInstall,
+  installCanonicalSkill,
+} from "./SetupSkill.js";
 import { setupPlan } from "./SetupPlan.js";
 import {
   setupInstallFailure,
@@ -34,7 +37,10 @@ import {
 } from "./SetupInstallFailure.js";
 export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 
-export { installCanonicalSkill } from "./SetupSkill.js";
+export {
+  canonicalSkillNeedsInstall,
+  installCanonicalSkill,
+} from "./SetupSkill.js";
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
@@ -69,6 +75,12 @@ export interface SetupHost {
     hopperPath: string | undefined,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
+  clientNeedsConfigure(
+    client: SetupClient,
+    hopperPath: string | undefined,
+    command: readonly string[],
+  ): Promise<boolean>;
+  skillNeedsInstall(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
@@ -131,17 +143,10 @@ export const runSetup = async (
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
-  const initialDoctor = await host.doctor();
-  const linuxHopperRepairNeeded = initialDoctor.checks.some(
-    ({ name, ok, detail }) =>
-      !ok &&
-      (name === "hopper-demo-runtime" ||
-        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
-  );
-  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
-  const detectedClients = await host.detectedClients();
-  plannedActions = setupPlan(host.platform, installHopper, detectedClients);
-  let approved = options.approved;
+  const discovery = await discoverSetupActions(host, hopperPath);
+  const { detectedClients, installHopper, installSkill } = discovery;
+  plannedActions = discovery.plannedActions;
+  let approved = options.approved || plannedActions.length === 0;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
     interactiveApproval = await confirm(plannedActions);
@@ -182,12 +187,14 @@ export const runSetup = async (
     appliedActions,
   });
   if (clientFailure !== undefined) return fail(clientFailure);
-  const skill = await host.installSkill();
-  if (skill === "failed")
-    return fail(
-      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
-    );
-  if (skill === "installed") appliedActions.push("installed_skill");
+  if (installSkill) {
+    const skill = await host.installSkill();
+    if (skill === "failed")
+      return fail(
+        "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+      );
+    if (skill === "installed") appliedActions.push("installed_skill");
+  }
   const doctor = await host.doctor();
   const remediation = finalSetupRemediation(
     host.platform,
@@ -203,6 +210,59 @@ export const runSetup = async (
     doctor,
     ...(remediation === undefined ? {} : { remediation }),
   };
+};
+
+const discoverSetupActions = async (
+  host: SetupHost,
+  hopperPath: string | undefined,
+) => {
+  const initialDoctor = await host.doctor();
+  const linuxHopperRepairNeeded = initialDoctor.checks.some(
+    ({ name, ok, detail }) =>
+      !ok &&
+      (name === "hopper-demo-runtime" ||
+        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
+  );
+  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
+  const [detectedClients, installSkill] = await Promise.all([
+    host.detectedClients(),
+    host.skillNeedsInstall(),
+  ]);
+  const command = registrationCommand();
+  const clients = installHopper
+    ? detectedClients
+    : await filterClientsNeedingConfigure(
+        host,
+        detectedClients,
+        hopperPath,
+        command,
+      );
+  const plannedActions = setupPlan(
+    host.platform,
+    installHopper,
+    installSkill,
+    clients,
+  );
+  return {
+    installHopper,
+    installSkill,
+    detectedClients: clients,
+    plannedActions,
+  };
+};
+
+const filterClientsNeedingConfigure = async (
+  host: SetupHost,
+  detectedClients: readonly SetupClient[],
+  hopperPath: string | undefined,
+  command: readonly string[],
+): Promise<readonly SetupClient[]> => {
+  const needs = await Promise.all(
+    detectedClients.map((client) =>
+      host.clientNeedsConfigure(client, hopperPath, command),
+    ),
+  );
+  return detectedClients.filter((_, index) => needs[index]);
 };
 
 const finalSetupRemediation = (
@@ -261,6 +321,11 @@ const systemSetupHost = (): SetupHost => {
         : client.format === "toml"
           ? configureTomlClient(client, hopperPath, command)
           : configureJsonClient(client, hopperPath, command),
+    clientNeedsConfigure: (client, hopperPath, command) =>
+      clientConfigurationAligned(client, hopperPath, command).then(
+        (aligned) => !aligned,
+      ),
+    skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
   };
@@ -467,5 +532,43 @@ const restoreConfig = async (
     else await writeFile(path, original, { encoding: "utf8", mode: 0o600 });
   } catch {
     // The backup remains available for the remediation reported by setup.
+  }
+};
+
+const clientConfigurationDesired = (
+  hopperPath: string | undefined,
+  command: readonly string[],
+) => ({
+  command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
+  args: command.slice(1),
+  ...(hopperPath === undefined
+    ? {}
+    : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
+});
+
+const clientConfigurationAligned = async (
+  client: SetupClient,
+  hopperPath: string | undefined,
+  command: readonly string[],
+): Promise<boolean> => {
+  const desired = clientConfigurationDesired(hopperPath, command);
+  try {
+    const original = await readFile(client.configPath, "utf8");
+    if (client.format === "toml") {
+      const document = objectSchema.parse(parseToml(original));
+      const servers = parseOptionalObject(document.mcp_servers);
+      return (
+        JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+        JSON.stringify(desired)
+      );
+    }
+    const document = parseObject(original);
+    const servers = parseOptionalObject(document.mcpServers);
+    return (
+      JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+      JSON.stringify(desired)
+    );
+  } catch {
+    return false;
   }
 };
