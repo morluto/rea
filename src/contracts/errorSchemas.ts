@@ -36,6 +36,7 @@ const scopeSchema = z
     roots: z.array(z.string()),
     executables: z.array(z.string()),
     environment_names: z.array(z.string()),
+    origins: z.array(z.string()).optional(),
     network: z.enum(["none", "loopback", "external"]),
     mount: z.boolean(),
   })
@@ -45,6 +46,7 @@ const missingScopeSchema = z
     roots: z.array(z.string()).optional(),
     executables: z.array(z.string()).optional(),
     environment_names: z.array(z.string()).optional(),
+    origins: z.array(z.string()).optional(),
     network: z.enum(["none", "loopback", "external"]).optional(),
     mount: z.literal(true).optional(),
   })

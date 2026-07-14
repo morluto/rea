@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![68 MCP tools](https://img.shields.io/badge/MCP_tools-68-5c4ee5?style=flat-square)](#68-tools-for-investigation)
+[![70 MCP tools](https://img.shields.io/badge/MCP_tools-70-5c4ee5?style=flat-square)](#70-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [68 tools](#68-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [70 tools](#70-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -294,15 +294,16 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 68 tools for investigation
+## 70 tools for investigation
 
-| Tool family               | Count | Examples                                                                                                                |
-| ------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                        |
-| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery |
-| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing           |
-| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree      |
-| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle |
+| Tool family               | Count | Examples                                                                                                                           |
+| ------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                   |
+| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery            |
+| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                      |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                 |
+| Browser observation       |     2 | exact-origin CDP page discovery and passive DOM, accessibility, script, resource, network, console, worker, and storage inspection |
+| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle            |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
@@ -311,6 +312,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 REA is already useful for native application investigation on macOS:
 
 - Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
+- Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint, list only pages on approved exact origins, and capture bounded passive web evidence without navigation or JavaScript evaluation.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -331,12 +333,27 @@ REA is already useful for native application investigation on macOS:
 
 Hopper is the first provider, not the boundary of the project. Some current workflows still require Hopper and macOS; every evidence record identifies the provider and limitations behind its result.
 
+### Website observation with CDP
+
+REA can inspect an already-running Chrome-family browser that you own. Browser observation is disabled by default and requires a literal loopback CDP endpoint plus exact approved page origins:
+
+```bash
+export REA_BROWSER_OBSERVE_ENABLED=true
+export REA_BROWSER_CDP_ENDPOINTS_JSON='["http://127.0.0.1:9222"]'
+export REA_BROWSER_ALLOWED_ORIGINS_JSON='["http://127.0.0.1:3000"]'
+
+rea list-browser-targets http://127.0.0.1:9222 --approved --json
+rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --approved --json
+```
+
+`list_browser_targets` and `inspect_web_page` expose the same Evidence v2 contracts over MCP. Inspection is passive: REA does not evaluate page JavaScript, navigate, click, close the page, or close the browser. It redacts query values and never retains headers, bodies, cookies, storage values, console argument values, or WebSocket payloads. Existing activity before attach is explicitly unavailable. See [Website observation with CDP](docs/browser-observation.md) for browser startup, schemas, limits, and the threat model.
+
 ## Roadmap
 
 REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The next capability families are:
 
 1. **Artifact decomposition** — DMG, ASAR, ZIP, packages, universal-binary slices, application resources, embedded frameworks, mobile packages, and artifact graphs.
-2. **Web and Electron investigation** — Playwright/CDP capture of DOM, accessibility trees, screenshots, storage, console, IPC, HTTP, WebSocket, routes, and visual or structural differences.
+2. **Web and Electron investigation** — extend the shipped passive CDP observation with approved interaction, screenshots, Electron IPC, route discovery, controlled replay, and visual or structural differences.
 3. **Deterministic behavior harnesses** — stronger process-tree ownership, protocol fixtures, network policy, filesystem tracing, signals, reconnects, and cross-version comparison.
 4. **JavaScript and source recovery** — bundle indexing, AST/module reconstruction, source-map discovery, historical-source matching, and CodeDB-backed cross-references.
 5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.
@@ -381,8 +398,9 @@ flowchart LR
     Router --> Hopper["Hopper provider"]
     Router --> Native["Native macOS provider"]
     Router --> Artifact["Artifact graph provider"]
+    Router --> Browser["Browser CDP provider"]
     Router --> Process["Process capture provider"]
-    Router -. roadmap .-> More["Browser, dynamic,<br/>and additional static providers"]
+    Router -. roadmap .-> More["Dynamic and additional<br/>static providers"]
     Hopper --> Target["Target software"]
     Process --> Target
     Native --> Target

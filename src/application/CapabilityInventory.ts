@@ -54,6 +54,7 @@ export const buildCapabilityInventory = (
   policy: {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   },
 ) => {
   const status = statusSchema.parse(sessionStatus);
@@ -97,6 +98,7 @@ const availabilityFor = (
   policy: {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   },
 ): {
   readonly reason: ToolAvailabilityReason;
@@ -113,6 +115,14 @@ const availabilityFor = (
       reason: "policy_disabled",
       remediation: "Configure or grant an evidence_read root.",
     };
+  if (kind === "browser-provider")
+    return policy.browserObservationEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "policy_disabled",
+          remediation:
+            "Enable browser observation and configure exact CDP endpoint and page origins.",
+        };
   if (kind === "session") return { reason: "available", remediation: null };
   if (!targetOpen)
     return {

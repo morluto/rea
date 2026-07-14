@@ -13,7 +13,7 @@ npm run build
 npm test
 ```
 
-Keep dependencies flowing inward through the existing domain, contracts, Hopper, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, and 18 session tools (68 total) unless a deliberate contract change updates every verifier and snapshot.
+Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 2 browser, and 18 session tools (70 total) unless a deliberate contract change updates every verifier and snapshot.
 
 Before submitting a pull request, run:
 
@@ -70,7 +70,7 @@ Publish the public package:
 npm publish --access public
 ```
 
-After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 68 tools:
+After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 70 tools:
 
 ```bash
 npx -y rea-agents --help

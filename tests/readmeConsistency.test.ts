@@ -10,6 +10,7 @@ import {
 } from "../src/contracts/toolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
+import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 
 const readmes = [
   "README.md",
@@ -24,14 +25,15 @@ const expectedToolCounts = [
   ENHANCED_TOOL_CONTRACTS.length,
   NATIVE_TOOL_CONTRACTS.length,
   ARTIFACT_TOOL_CONTRACTS.length,
+  BROWSER_TOOL_CONTRACTS.length,
   SESSION_TOOL_CONTRACTS.length,
 ] as const;
 
 const toolCountsFromReadme = (content: string, path: string): number[] => {
   const lines = content.split(/\r?\n/u);
-  const headingIndex = lines.findIndex((line) => /^## .*68/u.test(line));
+  const headingIndex = lines.findIndex((line) => /^## .*70/u.test(line));
   if (headingIndex === -1)
-    throw new Error(`Missing 68-tool heading in ${path}`);
+    throw new Error(`Missing 70-tool heading in ${path}`);
 
   const counts: number[] = [];
   for (const line of lines.slice(headingIndex + 1)) {

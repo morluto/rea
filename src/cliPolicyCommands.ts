@@ -16,6 +16,7 @@ import type { Logger } from "./logger.js";
 
 const capabilitySchema = z.enum([
   "process_capture",
+  "browser_observe",
   "evidence_read",
   "evidence_write",
   "investigation_input",
@@ -43,6 +44,7 @@ export const registerPolicyCommands = (
       root: z.string().optional(),
       executable: z.string().optional(),
       environmentNames: z.array(z.string()).default([]),
+      origins: z.array(z.string()).default([]),
       network: z.enum(["none", "loopback", "external"]).default("none"),
       mount: z.boolean().default(false),
       write: z.boolean().default(false),
@@ -102,6 +104,7 @@ const explain = async (
     readonly root?: string | undefined;
     readonly executable?: string | undefined;
     readonly environmentNames: readonly string[];
+    readonly origins: readonly string[];
     readonly network: "none" | "loopback" | "external";
     readonly mount: boolean;
     readonly write: boolean;
@@ -115,6 +118,7 @@ const explain = async (
       roots: options.root === undefined ? [] : [options.root],
       executables: options.executable === undefined ? [] : [options.executable],
       environment_names: options.environmentNames,
+      origins: options.origins,
       network: options.network,
       mount: options.mount,
       operation_identity: `policy_explain:${capability}`,

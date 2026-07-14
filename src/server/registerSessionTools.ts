@@ -432,6 +432,7 @@ interface LifecycleToolRegistration {
   readonly availabilityPolicy: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   };
   readonly permissionAuthority?: PermissionAuthority;
 }
@@ -592,6 +593,7 @@ export interface SessionToolOptions {
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
+    readonly browserObservationEnabled?: boolean;
   };
 }
 
@@ -638,6 +640,7 @@ export const registerSessionTools = (
       (() => ({
         processCaptureEnabled: processPolicy.enabled,
         evidenceFileRoots: evidenceFilePolicy.roots.length,
+        browserObservationEnabled: false,
       })),
     ...(options.permissionAuthority === undefined
       ? {}

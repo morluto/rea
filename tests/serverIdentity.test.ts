@@ -24,11 +24,11 @@ describe("server and catalog identity", () => {
     });
     expect(PRODUCT_IDENTITY.packageVersion).toBe(packageJson.version);
     expect(SDK_IDENTITY.server).toBe("2.0.0-beta.4");
-    expect(CLI_COMMAND_NAMES).toHaveLength(28);
-    expect(new Set(CLI_COMMAND_NAMES).size).toBe(28);
+    expect(CLI_COMMAND_NAMES).toHaveLength(30);
+    expect(new Set(CLI_COMMAND_NAMES).size).toBe(30);
     expect(CATALOG_IDENTITY.counts).toEqual({
-      cli_commands: 28,
-      mcp_tools: 68,
+      cli_commands: 30,
+      mcp_tools: 70,
       mcp_prompts: 6,
       mcp_resources: 2,
       mcp_resource_templates: 7,
@@ -162,7 +162,7 @@ describe("server and catalog identity", () => {
       expect(status.structuredContent).toMatchObject({
         result: {
           server_identity: {
-            catalog: { counts: { mcp_tools: 68, cli_commands: 28 } },
+            catalog: { counts: { mcp_tools: 70, cli_commands: 30 } },
             alignment: { state: "mcp_server_restart_required" },
           },
           tool_availability: expect.arrayContaining([
@@ -173,6 +173,11 @@ describe("server and catalog identity", () => {
             }),
             expect.objectContaining({
               name: "capture_process_scenario",
+              available: false,
+              reason: "policy_disabled",
+            }),
+            expect.objectContaining({
+              name: "inspect_web_page",
               available: false,
               reason: "policy_disabled",
             }),

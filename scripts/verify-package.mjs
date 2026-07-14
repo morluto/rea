@@ -130,6 +130,8 @@ try {
     !help.includes("extract-artifact") ||
     !help.includes("investigate-versions") ||
     !help.includes("import-reference-source") ||
+    !help.includes("list-browser-targets") ||
+    !help.includes("inspect-web-page") ||
     !help.includes("compare") ||
     !llms.includes("decompile") ||
     !llms.includes("function") ||
@@ -140,6 +142,8 @@ try {
     !llms.includes("capabilities") ||
     !llms.includes("providers") ||
     !llms.includes("inventory-artifact") ||
+    !llms.includes("list-browser-targets") ||
+    !llms.includes("inspect-web-page") ||
     doctor.healthy !== expectedDoctorHealth ||
     doctorExecution.status !== (expectedDoctorHealth ? 0 : 1) ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true

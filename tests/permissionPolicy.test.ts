@@ -88,6 +88,45 @@ describe("permission policy", () => {
     });
   });
 
+  it("authorizes browser observation only for exact declared origins", () => {
+    const scope = {
+      capability: "browser_observe" as const,
+      roots: [],
+      executables: [],
+      environment_names: [],
+      origins: ["http://127.0.0.1:9222", "https://app.example.test"],
+      network: "external" as const,
+      mount: false,
+    };
+    const granted = grantPermission(createPermissionPolicy([scope]), {
+      ...scope,
+      grant_id: "browser-session",
+      lifetime: "session",
+      operation_identity: null,
+      expires_at: null,
+    });
+    expect(granted.ok).toBe(true);
+    if (!granted.ok) return;
+
+    expect(
+      evaluatePermission(granted.value, {
+        ...scope,
+        operation_identity: "inspect:page-1",
+      }),
+    ).toMatchObject({ allowed: true });
+    expect(
+      evaluatePermission(granted.value, {
+        ...scope,
+        origins: ["http://127.0.0.1:9222", "https://cdn.example.test"],
+        operation_identity: "inspect:page-2",
+      }),
+    ).toMatchObject({
+      allowed: false,
+      reason: "outside_administrator_ceiling",
+      missing: { origins: ["https://cdn.example.test"] },
+    });
+  });
+
   it("consumes once grants and applies revocation and ceiling reload immediately", () => {
     const ceiling = {
       capability: "evidence_write" as const,

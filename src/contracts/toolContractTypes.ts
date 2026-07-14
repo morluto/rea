@@ -22,6 +22,7 @@ export type ToolKind =
   | "enhanced"
   | "native-provider"
   | "artifact-provider"
+  | "browser-provider"
   | "session";
 
 /** Single source of truth for a public MCP tool. */

@@ -20,8 +20,12 @@ graph TD
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
     end
 
+    subgraph "Browser Provider Layer"
+        BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
+    end
+
     subgraph "Contracts Layer"
-        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>68 direct, enhanced, native, artifact, and session tools"]
+        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>70 analysis, browser, and session tools"]
     end
 
     subgraph "Domain Layer"
@@ -29,11 +33,11 @@ graph TD
     end
 
     subgraph "Configuration"
-        CONFIG["src/config.ts<br/>Zod-validated env parsing<br/>provider settings and approved roots"]
+        CONFIG["src/config.ts<br/>Zod-validated env parsing<br/>provider settings, origins, and approved roots"]
     end
 
     subgraph "Tests"
-        TESTS["tests/<br/>Vitest suite<br/>fixtures/ holds fake launcher & bridge seams"]
+        TESTS["tests/<br/>Vitest suite<br/>fixtures/ holds fake launcher, bridge, and CDP seams"]
     end
 
     DISPATCH --> CLI
@@ -47,9 +51,12 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> HOPPER
+    APP --> BROWSER
     HOPPER --> BRIDGE
     APP --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
+    BROWSER --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
+    TESTS -.-> BROWSER

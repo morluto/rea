@@ -26,6 +26,9 @@ describe("runtime configuration", () => {
         maxDepth: 32,
         maxPathBytes: 4_096,
       });
+      expect(result.value.browserObservationEnabled).toBe(false);
+      expect(result.value.browserCdpEndpoints).toEqual([]);
+      expect(result.value.browserAllowedOrigins).toEqual([]);
     }
   });
 
@@ -157,4 +160,55 @@ describe("runtime configuration", () => {
       ).toBe(false);
     },
   );
+
+  it("builds an exact-origin browser observation ceiling only when enabled", () => {
+    const result = parseConfig({
+      REA_BROWSER_OBSERVE_ENABLED: "true",
+      REA_BROWSER_CDP_ENDPOINTS_JSON: '["http://127.0.0.1:9222"]',
+      REA_BROWSER_ALLOWED_ORIGINS_JSON:
+        '["https://app.example.test", "http://127.0.0.1:3000"]',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.permissionCeilings).toContainEqual({
+      capability: "browser_observe",
+      roots: [],
+      executables: [],
+      environment_names: [],
+      origins: [
+        "http://127.0.0.1:9222",
+        "http://127.0.0.1:3000",
+        "https://app.example.test",
+      ],
+      network: "external",
+      mount: false,
+    });
+    expect(result.value.administratorPermissionGrants).toContainEqual(
+      expect.objectContaining({
+        capability: "browser_observe",
+        lifetime: "administrator",
+      }),
+    );
+  });
+
+  it.each([
+    '["http://localhost:9222"]',
+    '["http://192.168.1.5:9222"]',
+    '["https://127.0.0.1:9222"]',
+  ])("rejects unsafe browser CDP endpoint scopes: %s", (encoded) => {
+    expect(parseConfig({ REA_BROWSER_CDP_ENDPOINTS_JSON: encoded }).ok).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    '["https://*.example.test"]',
+    '["https://app.example.test/private"]',
+    '["https://user:pass@app.example.test"]',
+    '["file:///tmp/application.html"]',
+  ])("rejects non-exact browser origin scopes: %s", (encoded) => {
+    expect(parseConfig({ REA_BROWSER_ALLOWED_ORIGINS_JSON: encoded }).ok).toBe(
+      false,
+    );
+  });
 });

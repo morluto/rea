@@ -36,6 +36,8 @@ export const CLI_COMMAND_NAMES = [
   "capture-process",
   "compare-process-captures",
   "policy",
+  "list-browser-targets",
+  "inspect-web-page",
 ] as const;
 
 const toolCatalog = TOOL_CONTRACTS.map((contract) => ({
