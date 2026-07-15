@@ -31,6 +31,16 @@ const expectedToolCounts = [
   SESSION_TOOL_CONTRACTS.length,
 ] as const;
 
+const setupClientNames = [
+  "Claude Code",
+  "Claude Desktop",
+  "Codex",
+  "Cursor",
+  "Gemini CLI",
+  "Windsurf",
+  "Devin",
+] as const;
+
 const toolCountsFromReadme = (content: string, path: string): number[] => {
   const lines = content.split(/\r?\n/u);
   const headingIndex = lines.findIndex((line) => /^## .*78/u.test(line));
@@ -73,6 +83,7 @@ describe("localized README product facts", () => {
       expect(content).toContain("Ubuntu 24.04");
       expect(content).toContain("Fedora 41");
       expect(content).toContain("Arch Linux");
+      for (const client of setupClientNames) expect(content).toContain(client);
       if (path === "README_ar.md")
         expect(content).toContain("Windows غير مدعوم حاليًا");
       expect(content).toContain(`MCP_tools-${String(TOOL_CONTRACTS.length)}`);

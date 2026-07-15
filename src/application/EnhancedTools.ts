@@ -38,7 +38,7 @@ type TraceReference = {
 };
 
 /**
- * Composes official Hopper operations into bounded reverse-engineering tools.
+ * Composes direct provider operations into bounded reverse-engineering tools.
  * Inputs are parsed again at this application boundary even though MCP normally
  * validates them, allowing direct callers to use the same service safely.
  */

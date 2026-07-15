@@ -82,7 +82,7 @@ npx skills add morluto/rea
 
 على Ubuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت، ينزّل REA حزمة DEB أو RPM أو Arch الرسمية، ويتحقق من الحجم وقيمة التحقق المنشورين، ثم يستخدم `apt-get` أو `dnf` أو `pacman` لحل الاعتماديات. عند التشغيل دون root يعرض `pkexec` طلب تفويض النظام. لا يستدعي REA الأمر `sudo`.
 
-مسار المشغّل الافتراضي هو `/opt/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا أبلغ Doctor عن غياب محرك التحليل، شغّل `ldd /opt/hopper/bin/Hopper | grep 'not found'`، وثبّت المكتبات الناقصة ثم أعد `rea setup`. يتطلب التحليل الحقيقي `DISPLAY` أو `WAYLAND_DISPLAY` وترخيص Hopper مفعّلًا. أضف `~/.local/bin` إلى `PATH` أيضًا.
+مسار المشغّل الافتراضي هو `/opt/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا أبلغ Doctor عن غياب محرك التحليل، شغّل `ldd /opt/hopper/bin/Hopper | grep 'not found'`، وثبّت المكتبات الناقصة ثم أعد `rea setup`. يشغّل REA إصدار Hopper التجريبي المدعوم على شاشة Xvfb خاصة ويختار وضع التجربة الذي يقدمه Hopper لكل جلسة تحليل؛ لا يلزم `DISPLAY` لسطح المكتب ولا ترخيص مدفوع، مع بقاء حدود الإصدار التجريبي التي يحددها المورّد. أضف `~/.local/bin` إلى `PATH` أيضًا.
 
 ### 1. إعداد REA
 
@@ -95,7 +95,7 @@ npx -y rea-agents setup
 
 ### 2. إعادة تشغيل وكيل البرمجة
 
-يهيئ Setup تلقائيًا نسخ Claude Desktop وCursor التي يعثر عليها. أعد تشغيل التطبيق كي يحمّل REA.
+يكتشف Setup كلاً من Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin. ويهيئ تلقائيًا أول ستة عملاء عند اكتشافهم؛ أما Devin فيُبلّغ عن اكتشافه فقط ولا يُعدّله لعدم وجود حد موثق لإعداد MCP المحلي. أعد تشغيل العملاء الذين جرى إعدادهم كي يحمّلوا REA.
 
 ### 3. اطلب من الوكيل
 
@@ -169,7 +169,7 @@ rea uninstall --purge-data
 
 ## استخدام REA مع وكلاء برمجة آخرين
 
-يهيئ Setup حاليًا Claude Desktop وCursor تلقائيًا. يمكن لأي وكيل برمجة يدعم خوادم MCP المحلية استخدام REA بالإعداد التالي:
+يكتشف Setup كلاً من Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin، ويهيئ تلقائيًا أول ستة عملاء. أما Devin فيُبلّغ عن اكتشافه فقط ولا يُعدّله. يمكن لأي وكيل برمجة يدعم خوادم MCP المحلية استخدام REA بالإعداد التالي:
 
 ```json
 {
