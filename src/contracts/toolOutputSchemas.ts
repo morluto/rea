@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceEnvelopeSchema } from "../domain/evidence.js";
 import {
   processCaptureComparisonSchema,
   processCaptureSchema,
@@ -28,7 +28,7 @@ import { reconstructionVerificationResultSchema } from "../domain/reconstruction
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 
 const resultOf = (schema: z.ZodType) =>
-  evidenceSchema
+  evidenceEnvelopeSchema
     .omit({ normalized_result: true })
     .extend({ normalized_result: schema });
 const lifecycleResultOf = (schema: z.ZodType) => z.object({ result: schema });
@@ -45,6 +45,7 @@ export const requireOutputSchema = (
 };
 const targetFormatSchema = z.enum([
   "hopper",
+  "analysis-database",
   "mach-o",
   "elf",
   "pe",
@@ -473,47 +474,47 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     }),
   ),
   capture_process_scenario: lifecycleResultOf(
-    evidenceSchema
+    evidenceEnvelopeSchema
       .omit({ normalized_result: true })
       .extend({ normalized_result: processCaptureSchema }),
   ),
   compare_process_captures: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: processCaptureComparisonSchema,
     }),
   ),
   compare_artifacts: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: artifactComparisonResultSchema,
     }),
   ),
   compare_functions: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: functionComparisonResultSchema,
     }),
   ),
   compare_bundles: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: bundleComparisonResultSchema,
     }),
   ),
   find_changed_behavior: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: changedBehaviorResultSchema,
     }),
   ),
   build_call_path: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: callPathResultSchema,
     }),
   ),
   correlate_static_and_runtime: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: staticRuntimeCorrelationResultSchema,
     }),
   ),
   verify_reconstruction: lifecycleResultOf(
-    evidenceSchema.omit({ normalized_result: true }).extend({
+    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
       normalized_result: reconstructionVerificationResultSchema,
     }),
   ),

@@ -95,6 +95,9 @@ const registerOfficialTool = (
             operation: contract.name,
             parameters: arguments_,
             result: result.value.result,
+            ...(result.value.analysisProfile === undefined
+              ? {}
+              : { analysisProfile: result.value.analysisProfile }),
             rawResult: result.value.rawResult,
             limitations: result.value.limitations,
             locations: result.value.locations,

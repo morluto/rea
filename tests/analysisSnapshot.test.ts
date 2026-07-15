@@ -4,22 +4,39 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createAnalysisExecution } from "../src/application/AnalysisProvider.js";
+import { AnalysisSnapshotCache } from "../src/application/AnalysisSnapshotCache.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
 } from "../src/application/AnalysisSnapshotFiles.js";
-import { AnalysisSnapshotCache } from "../src/application/AnalysisSnapshotCache.js";
+import { createAnalysisProfile } from "../src/domain/analysisProfile.js";
 import {
   createAnalysisSnapshotEntry,
   parseAnalysisSnapshot,
+  snapshotBinding,
   snapshotEvidenceForQuery,
+  snapshotTarget,
   type AnalysisSnapshot,
 } from "../src/domain/analysisSnapshot.js";
-import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
+import type { BinaryTarget } from "../src/domain/binaryTarget.js";
 import { createEvidence } from "../src/domain/evidence.js";
-import { createAnalysisExecution } from "../src/application/AnalysisProvider.js";
+import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
 
 let directory: string | undefined;
+
+const TARGET: BinaryTarget = {
+  path: "/tmp/app",
+  sha256: "a".repeat(64),
+  kind: "executable",
+  format: "mach-o",
+  architecture: "arm64",
+  availableArchitectures: ["arm64"],
+};
+const PROVIDER = { id: "fixture", name: "Fixture", version: "1" } as const;
+const PROFILE = createAnalysisProfile(PROVIDER, 1, {
+  loader: "mach-o-arm64",
+});
 
 afterEach(async () => {
   if (directory !== undefined)
@@ -28,24 +45,19 @@ afterEach(async () => {
 });
 
 describe("analysis snapshots", () => {
-  it("returns detached cache entries and evidence bundles", () => {
+  it("returns detached cache data only from the exact provider/profile partition", () => {
     const cache = new AnalysisSnapshotCache();
-    const target = {
-      path: "/tmp/app",
-      sha256: "a".repeat(64),
-      kind: "executable",
-      format: "mach-o",
-      architecture: "arm64",
-      loaderArgs: [],
-    } as const;
-    const provider = { id: "fixture", name: "Fixture", version: "1" };
-    cache.record(
-      target,
-      "address_name",
-      { address: "0x1000", document: "fixture" },
-      createAnalysisExecution("main", provider),
-    );
-    const exported = cache.export(target, createEvidenceBundle([]));
+    const execution = createAnalysisExecution("main", PROVIDER, {
+      analysisProfile: PROFILE,
+    });
+    cache.record({
+      target: TARGET,
+      profile: PROFILE,
+      operation: "address_name",
+      parameters: { address: "0x1000", document: "fixture" },
+      execution,
+    });
+    const exported = cache.export(TARGET, PROFILE, createEvidenceBundle([]));
     expect(exported.ok).toBe(true);
     if (!exported.ok) return;
     const entry = exported.value.entries[0];
@@ -55,95 +67,100 @@ describe("analysis snapshots", () => {
         name: "Forged",
         version: "9",
       });
-      (entry.execution.limitations as string[]).push("forged");
+      entry.execution.limitations.push("forged");
     }
 
     expect(
-      cache.lookup(
-        target,
-        "address_name",
-        { address: "0x1000", document: "fixture" },
-        provider,
-      ),
+      cache.lookup(TARGET, PROFILE, "address_name", {
+        address: "0x1000",
+        document: "fixture",
+      }),
     ).toMatchObject({
-      provider,
+      provider: PROVIDER,
+      analysisProfile: PROFILE,
       limitations: [expect.stringContaining("local REA analysis snapshot")],
     });
-  });
-
-  it("finds exact CLI evidence for provider-free replay", () => {
-    const target = {
-      path: "/tmp/app",
-      sha256: "b".repeat(64),
-      kind: "executable",
-      format: "mach-o",
-      architecture: "arm64",
-      loaderArgs: [],
-    } as const;
-    const evidence = createEvidence(
-      target,
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "analyze_function",
-        parameters: { procedure: "main" },
-        result: { summary: "cached" },
-      },
-    );
-    const snapshot: AnalysisSnapshot = {
-      snapshot_version: 1,
-      target: {
-        sha256: target.sha256,
-        format: target.format,
-        architecture: target.architecture,
-        loader_args: [],
-      },
-      entries: [],
-      evidence_bundle: createEvidenceBundle([evidence]),
-    };
+    const changedProfile = createAnalysisProfile(PROVIDER, 1, {
+      loader: "configured-override",
+    });
     expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target,
-        operation: "analyze_function",
-        parameters: {
-          procedure: "main",
-        },
-        provider: { id: "fixture", name: "Fixture", version: "1" },
+      cache.lookup(TARGET, changedProfile, "address_name", {
+        address: "0x1000",
+        document: "fixture",
       }),
-    ).toEqual(evidence);
+    ).toBeUndefined();
+    const changedProviderProfile = createAnalysisProfile(
+      { id: "other", name: "Other", version: "1" },
+      1,
+      { loader: "mach-o-arm64" },
+    );
     expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target,
-        operation: "analyze_function",
-        parameters: {
-          procedure: "other",
-        },
-        provider: { id: "fixture", name: "Fixture", version: "1" },
+      cache.lookup(TARGET, changedProviderProfile, "address_name", {
+        address: "0x1000",
+        document: "fixture",
       }),
     ).toBeUndefined();
   });
 
-  it("writes canonical private JSON and rejects a changed query identity", async () => {
+  it("finds only Evidence committed to the exact binding and evidence profile", () => {
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "analyze_function",
+      parameters: { procedure: "main" },
+      result: { summary: "cached" },
+      analysisProfile: PROFILE,
+    });
+    const legacy = createEvidence(TARGET, PROVIDER, {
+      operation: "legacy_query",
+      parameters: {},
+      result: { summary: "legacy" },
+    });
+    const snapshot: AnalysisSnapshot = {
+      snapshot_version: 2,
+      target: snapshotTarget(TARGET),
+      binding: snapshotBinding(PROFILE),
+      entries: [],
+      evidence_bundle: createEvidenceBundle([evidence, legacy]),
+    };
+    expect(
+      snapshotEvidenceForQuery(snapshot, {
+        target: TARGET,
+        bindingProfile: PROFILE,
+        operation: "analyze_function",
+        parameters: { procedure: "main" },
+        provider: PROVIDER,
+        evidenceProfile: PROFILE,
+      }),
+    ).toEqual(evidence);
+    expect(
+      snapshotEvidenceForQuery(snapshot, {
+        target: TARGET,
+        bindingProfile: PROFILE,
+        operation: "legacy_query",
+        parameters: {},
+        provider: PROVIDER,
+        evidenceProfile: PROFILE,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("writes canonical private v2 JSON and rejects changed query identity", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-analysis-snapshot-"));
     const path = join(directory, "analysis.json");
-    const target: AnalysisSnapshot["target"] = {
-      sha256: "a".repeat(64),
-      format: "mach-o",
-      architecture: "arm64",
-      loader_args: [],
-    };
-    const entry = createAnalysisSnapshotEntry(
+    const target = snapshotTarget(TARGET);
+    const binding = snapshotBinding(PROFILE);
+    const entry = createAnalysisSnapshotEntry({
       target,
-      "address_name",
-      { address: "0x1000" },
-      createAnalysisExecution("main", {
-        id: "fixture",
-        name: "Fixture analysis provider",
-        version: "1",
+      binding,
+      operation: "address_name",
+      parameters: { address: "0x1000" },
+      execution: createAnalysisExecution("main", PROVIDER, {
+        analysisProfile: PROFILE,
       }),
-    );
+    });
     const snapshot: AnalysisSnapshot = {
-      snapshot_version: 1,
+      snapshot_version: 2,
       target,
+      binding,
       entries: [entry],
       evidence_bundle: createEvidenceBundle([]),
     };
@@ -160,12 +177,34 @@ describe("analysis snapshots", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect((await readAnalysisSnapshot(path, policy)).ok).toBe(true);
 
-    const altered = JSON.parse(await readFile(path, "utf8"));
-    altered.entries[0].parameters.address = "0x2000";
+    const altered: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (
+      typeof altered !== "object" ||
+      altered === null ||
+      !("entries" in altered) ||
+      !Array.isArray(altered.entries)
+    )
+      throw new TypeError("fixture snapshot is malformed");
+    const first: unknown = altered.entries[0];
+    if (
+      typeof first !== "object" ||
+      first === null ||
+      !("parameters" in first) ||
+      typeof first.parameters !== "object" ||
+      first.parameters === null
+    )
+      throw new TypeError("fixture entry is malformed");
+    Reflect.set(first.parameters, "address", "0x2000");
     await writeFile(path, JSON.stringify(altered));
     const loaded = await readAnalysisSnapshot(path, policy);
     expect(loaded.ok).toBe(false);
     if (!loaded.ok) expect(loaded.error._tag).toBe("EvidenceIntegrityError");
     expect(() => parseAnalysisSnapshot(altered)).toThrow(/identifier/u);
+  });
+
+  it("rejects snapshot v1 with explicit recapture guidance", () => {
+    expect(() => parseAnalysisSnapshot({ snapshot_version: 1 })).toThrow(
+      /v1.*recapture.*v2/iu,
+    );
   });
 });

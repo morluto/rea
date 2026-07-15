@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,10 +7,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { writeAnalysisSnapshot } from "../src/application/AnalysisSnapshotFiles.js";
 import { runDirectAnalysis } from "../src/application/DirectAnalysis.js";
 import type { AnalysisSnapshot } from "../src/domain/analysisSnapshot.js";
+import {
+  snapshotBinding,
+  snapshotTarget,
+} from "../src/domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../src/domain/binaryTarget.js";
 import { createEvidence } from "../src/domain/evidence.js";
 import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
 import { permissionAuthorityForRoot } from "./fixtures/permissionAuthority.js";
+import {
+  REA_WORKFLOW_PROVIDER,
+  workflowAnalysisProfile,
+} from "../src/application/InvestigationProviders.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../src/hopper/HopperProvider.js";
+import { resolveHopperAnalysisProfile } from "../src/hopper/HopperAnalysisProfile.js";
 
 let directory: string | undefined;
 
@@ -25,26 +35,29 @@ describe("direct analysis snapshot permissions", () => {
   it("replays a cache hit with snapshot read authority only", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-direct-snapshot-"));
     const snapshotPath = join(directory, "analysis.json");
+    const launcherPath = join(directory, "hopper-launcher");
+    await writeFile(launcherPath, "fixture Hopper launcher");
     const target = await parseBinaryTarget(process.execPath);
     if (!target.ok) throw target.error;
-    const provider = {
-      id: "rea-workflow",
-      name: "REA composed investigation workflow",
-      version: "1",
-    } as const;
-    const evidence = createEvidence(target.value, provider, {
+    const resolved = await resolveHopperAnalysisProfile(target.value, {
+      launcherPath,
+      loaderArgsOverride: [],
+      provider: HOPPER_PROVIDER_IDENTITY,
+    });
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("fixture Hopper profile did not resolve");
+    const profile = resolved.value.profile;
+    const workflowProfile = workflowAnalysisProfile(profile);
+    const evidence = createEvidence(target.value, REA_WORKFLOW_PROVIDER, {
       operation: "binary_overview",
       parameters: {},
       result: { cached: true },
+      analysisProfile: workflowProfile,
     });
     const snapshot: AnalysisSnapshot = {
-      snapshot_version: 1,
-      target: {
-        sha256: target.value.sha256,
-        format: target.value.format,
-        architecture: target.value.architecture ?? null,
-        loader_args: [...target.value.loaderArgs],
-      },
+      snapshot_version: 2,
+      target: snapshotTarget(target.value),
+      binding: snapshotBinding(profile),
       entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
@@ -64,6 +77,7 @@ describe("direct analysis snapshot permissions", () => {
       ["snapshot_read"],
     );
     vi.stubEnv("REA_ANALYSIS_SNAPSHOT_ROOTS_JSON", JSON.stringify([directory]));
+    vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(
       runDirectAnalysis(

@@ -8,8 +8,8 @@ import { silentLogger, type Logger } from "../logger.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
- * This is the sole production wiring point for Hopper so neither adapter shells
- * out to the other and both retain identical loader and bridge semantics.
+ * This is the sole production wiring point, so both adapters share identical
+ * provider selection, profile, lifecycle, and Evidence semantics.
  */
 export const createBinarySession = (
   config: AppConfig,
@@ -24,6 +24,5 @@ export const createBinarySession = (
       new NativeMacOSProvider(),
       new HopperProvider(config, logger),
     ]),
-    { snapshotsEnabled: config.hopperLoaderArgs.length === 0 },
   );
 };

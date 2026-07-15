@@ -4,6 +4,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
 import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -29,6 +30,7 @@ export interface AnalysisExecution {
   readonly result: JsonValue;
   readonly rawResult: JsonValue | null;
   readonly provider: ProviderIdentity;
+  readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
@@ -40,6 +42,7 @@ export const createAnalysisExecution = (
   provider: ProviderIdentity,
   options: {
     readonly rawResult?: unknown;
+    readonly analysisProfile?: AnalysisProfileCommitment;
     readonly limitations?: readonly string[];
     readonly locations?: readonly EvidenceLocation[];
     readonly subject?: EvidenceSubjectTarget;
@@ -51,6 +54,9 @@ export const createAnalysisExecution = (
       ? jsonValueSchema.parse(result)
       : jsonValueSchema.parse(options.rawResult),
   provider,
+  ...(options.analysisProfile === undefined
+    ? {}
+    : { analysisProfile: structuredClone(options.analysisProfile) }),
   limitations: [...(options.limitations ?? [])],
   locations: [...(options.locations ?? [])],
   subject: options.subject ?? null,
@@ -70,12 +76,21 @@ export interface AnalysisClient extends AnalysisOperationPort {
   close(): Promise<void>;
 }
 
-export type AnalysisClientFactory = (target: BinaryTarget) => AnalysisClient;
+export type AnalysisClientFactory = (
+  target: BinaryTarget,
+  profile?: AnalysisProfileCommitment,
+) => AnalysisClient;
 
 export interface ProviderIdentity {
   readonly id: string;
   readonly name: string;
   readonly version: string | null;
+}
+
+/** Profile plus opaque compatibility output resolved before provider startup. */
+export interface AnalysisProfileResolution {
+  readonly profile: AnalysisProfileCommitment | null;
+  readonly compatibility: Readonly<Record<string, JsonValue>>;
 }
 
 interface CapabilityEffects {
@@ -114,5 +129,11 @@ export type CapabilityDescriptor = CapabilityAvailability & {
 export interface AnalysisProvider {
   identity(): ProviderIdentity;
   capabilities(): readonly CapabilityDescriptor[];
-  createClient(target: BinaryTarget): AnalysisClient;
+  resolveAnalysisProfile?(
+    target: BinaryTarget,
+  ): Promise<Result<AnalysisProfileResolution, AnalysisError>>;
+  createClient(
+    target: BinaryTarget,
+    profile?: AnalysisProfileCommitment,
+  ): AnalysisClient;
 }

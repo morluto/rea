@@ -18,12 +18,11 @@ import { err, ok, type Result } from "./result.js";
 
 const execFileAsync = promisify(execFile);
 
-/** CPU families understood by the supported executable loaders. */
-type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
+/** Provider-neutral CPU families detected from supported executable headers. */
+export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
 /**
- * A canonical local target plus deterministic Hopper loader arguments.
- * Explicit loader and architecture flags prevent Hopper from presenting modal
- * format or FAT-architecture selection dialogs during agent-driven analysis.
+ * Canonical local target identity and provider-neutral file classification.
+ * Provider adapters translate this metadata into their own open options.
  */
 export interface BinaryTarget {
   readonly path: string;
@@ -31,7 +30,7 @@ export interface BinaryTarget {
   readonly sha256: string;
   readonly kind: "executable" | "database" | "archive" | "artifact";
   readonly format:
-    | "hopper"
+    | "analysis-database"
     | "mach-o"
     | "elf"
     | "pe"
@@ -46,11 +45,10 @@ export interface BinaryTarget {
     | "source-map";
   readonly architecture?: BinaryArchitecture;
   readonly availableArchitectures?: readonly BinaryArchitecture[];
-  readonly loaderArgs: readonly string[];
 }
 
 /**
- * Resolve and classify a readable local target before Hopper is launched.
+ * Resolve and classify a readable local target before a provider is selected.
  * FAT Mach-O inputs select only a host-compatible architecture so setup remains
  * non-interactive; unsupported or ambiguous inputs are returned as typed errors.
  */
@@ -78,8 +76,7 @@ export const parseBinaryTarget = async (
         sourcePath: canonical,
         sha256: await sha256File(path),
         kind: "database",
-        format: "hopper",
-        loaderArgs: [],
+        format: "analysis-database",
       });
     const handle = await open(path, "r");
     let detected: Result<ExecutableMetadata, string>;
@@ -92,7 +89,6 @@ export const parseBinaryTarget = async (
           sha256: await sha256File(path),
           kind: isArchiveFormat(artifactFormat) ? "archive" : "artifact",
           format: artifactFormat,
-          loaderArgs: [],
         });
       detected = await readExecutableMetadata(handle, hostArchitecture);
     } finally {
@@ -117,7 +113,10 @@ const detectArtifactFormat = async (
   path: string,
   handle: FileHandle,
 ): Promise<
-  | Exclude<BinaryTarget["format"], "hopper" | "mach-o" | "elf" | "pe">
+  | Exclude<
+      BinaryTarget["format"],
+      "analysis-database" | "mach-o" | "elf" | "pe"
+    >
   | undefined
 > => {
   const lower = path.toLowerCase();
@@ -263,7 +262,7 @@ const decodeXml = (value: string): string =>
 
 type ExecutableMetadata = Pick<
   BinaryTarget,
-  "format" | "architecture" | "availableArchitectures" | "loaderArgs"
+  "format" | "architecture" | "availableArchitectures"
 >;
 
 const readExecutableMetadata = async (
@@ -303,9 +302,8 @@ const readExecutableMetadata = async (
 };
 
 /**
- * Parse supported executable headers without I/O and derive explicit Hopper
- * loader arguments. The caller must supply the host architecture used for FAT
- * Mach-O slice selection.
+ * Parse supported executable headers without I/O. The caller supplies the host
+ * architecture used for deterministic FAT Mach-O slice selection.
  */
 export const parseExecutableHeader = (
   bytes: Buffer,
@@ -341,7 +339,6 @@ const parseThinMachO = (
     format: "mach-o",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "Mach-O", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -381,13 +378,6 @@ const parseFatMachO = (
     format: "mach-o",
     architecture: preferred,
     availableArchitectures: architectures,
-    loaderArgs: [
-      "-l",
-      "FAT",
-      hopperArchitectureFlag(preferred),
-      "-l",
-      "Mach-O",
-    ],
   });
 };
 
@@ -403,7 +393,6 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
     format: "elf",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "ELF", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -423,7 +412,6 @@ const parsePeRecord = (record: Buffer): Result<ExecutableMetadata, string> => {
     format: "pe",
     architecture,
     availableArchitectures: [architecture],
-    loaderArgs: ["-l", "WinPE", hopperArchitectureFlag(architecture)],
   });
 };
 
@@ -467,17 +455,4 @@ const peArchitecture = (machine: number): BinaryArchitecture | undefined => {
       return "arm64";
   }
   return undefined;
-};
-
-const hopperArchitectureFlag = (architecture: BinaryArchitecture): string => {
-  switch (architecture) {
-    case "x86":
-      return "--intel-32";
-    case "x86_64":
-      return "--intel-64";
-    case "arm":
-      return "--armv7";
-    case "arm64":
-      return "--aarch64";
-  }
 };

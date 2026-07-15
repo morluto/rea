@@ -1,15 +1,21 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { parseBinaryTarget } from "../domain/binaryTarget.js";
 import {
+  analysisProfileSchema,
+  analysisProfilesEqual,
+  type AnalysisProfileCommitment,
+} from "../domain/analysisProfile.js";
+import {
   AnalysisCapabilityUnavailableError,
   EvidenceIntegrityError,
   EvidenceLimitError,
   AnalysisCancelledError,
   NoBinaryOpenError,
+  ProviderAdapterError,
   type AnalysisError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Evidence } from "../domain/evidence.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
@@ -18,6 +24,7 @@ import type {
   AnalysisClient,
   AnalysisExecution,
   AnalysisClientFactory,
+  AnalysisProfileResolution,
   AnalysisOperationPort,
   AnalysisProvider,
   CapabilityDescriptor,
@@ -36,6 +43,7 @@ import { enhancedToolNameSchema } from "../contracts/enhancedInputs.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import {
+  snapshotMatchesBinding,
   snapshotMatchesTarget,
   snapshotTarget,
 } from "../domain/analysisSnapshot.js";
@@ -67,11 +75,19 @@ const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
  */
 export class BinarySession implements BinarySessionPort {
   #active:
-    | { readonly target: BinaryTarget; readonly client: AnalysisClient }
+    | {
+        readonly target: BinaryTarget;
+        readonly client: AnalysisClient;
+        readonly profile: AnalysisProfileCommitment | null;
+        readonly compatibility: Readonly<Record<string, JsonValue>>;
+      }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
   readonly #calls = new Set<Promise<unknown>>();
   readonly #createClient: AnalysisClientFactory;
+  readonly #resolveAnalysisProfile: (
+    target: BinaryTarget,
+  ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
   readonly #providerIdentity: ProviderIdentity;
   readonly #capabilities: ReadonlyMap<string, CapabilityDescriptor> | undefined;
   readonly #evidence = new EvidenceLedger({
@@ -85,18 +101,28 @@ export class BinarySession implements BinarySessionPort {
     { readonly available: boolean; readonly reason: string | null }
   >();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
-  readonly #snapshotsEnabled: boolean;
   #snapshotInvalidated = false;
 
   constructor(
     readonly provider: AnalysisProvider | AnalysisClientFactory,
-    options: { readonly snapshotsEnabled?: boolean } = {},
+    options: {
+      readonly resolveAnalysisProfile?: (
+        target: BinaryTarget,
+      ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
+    } = {},
   ) {
-    this.#snapshotsEnabled = options.snapshotsEnabled ?? true;
     this.#createClient =
       typeof provider === "function"
         ? provider
-        : (target) => provider.createClient(target);
+        : (target, profile) => provider.createClient(target, profile);
+    this.#resolveAnalysisProfile =
+      options.resolveAnalysisProfile ??
+      (typeof provider === "function" ||
+      provider.resolveAnalysisProfile === undefined
+        ? () => Promise.resolve(ok({ profile: null, compatibility: {} }))
+        : (target) =>
+            provider.resolveAnalysisProfile?.(target) ??
+            Promise.resolve(ok({ profile: null, compatibility: {} })));
     this.#providerIdentity =
       typeof provider === "function"
         ? { id: "unidentified", name: "Unidentified provider", version: null }
@@ -113,10 +139,11 @@ export class BinarySession implements BinarySessionPort {
 
   /** Identify the provider producing evidence for this session. */
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity {
+    let selected = this.#providerIdentity;
     if (operation !== undefined) {
       const exact = this.#capabilities?.get(operation)?.provider;
-      if (exact !== undefined) return structuredClone(exact);
-      if (enhancedToolNameSchema.safeParse(operation).success) {
+      if (exact !== undefined) selected = exact;
+      else if (enhancedToolNameSchema.safeParse(operation).success) {
         const providers = new Map<string, ProviderIdentity>();
         for (const descriptor of this.#capabilities?.values() ?? [])
           if (
@@ -126,11 +153,37 @@ export class BinarySession implements BinarySessionPort {
             providers.set(descriptor.provider.id, descriptor.provider);
         if (providers.size === 1) {
           const provider = providers.values().next().value;
-          if (provider !== undefined) return structuredClone(provider);
+          if (provider !== undefined) selected = provider;
         }
       }
     }
-    return structuredClone(this.#providerIdentity);
+    const profile = this.#active?.profile;
+    return structuredClone(
+      profile !== null &&
+        profile !== undefined &&
+        profile.provider.id === selected.id
+        ? profile.provider
+        : selected,
+    );
+  }
+
+  /** Return the selected immutable profile, optionally scoped to an operation. */
+  analysisProfile(
+    operation?: AnalysisOperation,
+  ): AnalysisProfileCommitment | undefined {
+    const profile = this.#active?.profile;
+    if (profile === null || profile === undefined) return undefined;
+    if (
+      operation !== undefined &&
+      this.providerIdentity(operation).id !== profile.provider.id
+    )
+      return undefined;
+    return structuredClone(profile);
+  }
+
+  /** Return opaque adapter metadata retained for legacy open_binary output. */
+  openCompatibility(): Readonly<Record<string, JsonValue>> {
+    return structuredClone(this.#active?.compatibility ?? {});
   }
 
   /** Observe runtime provider-health changes that affect discovery metadata. */
@@ -173,12 +226,6 @@ export class BinarySession implements BinarySessionPort {
 
   /** Export immutable cached calls and session evidence for the active target. */
   exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError> {
-    if (!this.#snapshotsEnabled)
-      return err(
-        new EvidenceIntegrityError(
-          "Analysis snapshots are unavailable with custom Hopper loader arguments",
-        ),
-      );
     if (this.#snapshotInvalidated)
       return err(
         new EvidenceIntegrityError(
@@ -186,8 +233,16 @@ export class BinarySession implements BinarySessionPort {
         ),
       );
     const target = this.#active?.target;
+    const profile = this.#active?.profile ?? undefined;
+    if (target !== undefined && profile === undefined)
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshots require a concrete provider analysis profile",
+        ),
+      );
     return this.#snapshot.export(
       target,
+      profile,
       target === undefined
         ? this.#evidence.export()
         : evidenceBundleForTarget(this.#evidence.export(), target.sha256),
@@ -198,14 +253,19 @@ export class BinarySession implements BinarySessionPort {
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
   ): Result<number, AnalysisError> {
-    if (!this.#snapshotsEnabled)
+    const active = this.#active;
+    if (active?.profile === null)
       return err(
         new EvidenceIntegrityError(
-          "Analysis snapshots are unavailable with custom Hopper loader arguments",
+          "Analysis snapshot profile_mismatch: the active target has no concrete analysis profile",
         ),
       );
-    return this.#snapshot.import(snapshot, this.#active?.target, (bundle) =>
-      this.#evidence.import(bundle),
+    return this.#snapshot.import(
+      snapshot,
+      active === undefined
+        ? undefined
+        : { target: active.target, profile: active.profile },
+      (bundle) => this.#evidence.import(bundle),
     );
   }
 
@@ -333,26 +393,47 @@ export class BinarySession implements BinarySessionPort {
         options.targetKind,
       );
       if (!parsed.ok) return parsed;
+      const resolvedProfile = await this.#resolveAnalysisProfile(parsed.value);
+      if (!resolvedProfile.ok) return resolvedProfile;
+      const normalizedProfile = normalizeProfileResolution(
+        resolvedProfile.value,
+        this.#providerIdentity.id,
+      );
+      if (!normalizedProfile.ok) return normalizedProfile;
+      const { profile, compatibility } = normalizedProfile.value;
       if (
         options.snapshot !== undefined &&
-        !snapshotMatchesTarget(options.snapshot.target, parsed.value)
+        (profile === null ||
+          !snapshotMatchesBinding(options.snapshot, parsed.value, profile))
       )
         return err(
           new EvidenceIntegrityError(
-            "Analysis snapshot target does not match the requested binary",
+            "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the requested binary",
           ),
         );
-      if (this.#active === undefined && !this.#snapshot.matches(parsed.value))
+      if (
+        this.#active === undefined &&
+        !this.#snapshot.matches(parsed.value, profile ?? undefined)
+      )
         return err(
           new EvidenceIntegrityError(
-            "Analysis snapshot target does not match the requested binary",
+            "Analysis snapshot profile_mismatch: staged target, provider, or analysis profile does not match",
           ),
         );
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
+      const activeProfile = this.#active?.profile;
+      const sameProfile =
+        activeProfile === null || activeProfile === undefined
+          ? profile === null
+          : profile !== null && analysisProfilesEqual(activeProfile, profile);
       if (
         this.#active?.target.path === parsed.value.path &&
-        snapshotMatchesTarget(snapshotTarget(this.#active.target), parsed.value)
+        snapshotMatchesTarget(
+          snapshotTarget(this.#active.target),
+          parsed.value,
+        ) &&
+        sameProfile
       ) {
         if (options.snapshot !== undefined) {
           const imported = this.importAnalysisSnapshot(options.snapshot);
@@ -364,7 +445,7 @@ export class BinarySession implements BinarySessionPort {
       const previous = this.#active;
       this.#active = undefined;
       await previous?.client.close();
-      const client = this.#createClient(parsed.value);
+      const client = this.#createClient(parsed.value, profile ?? undefined);
       const started = await client.execute("health", {}, options);
       if (!started.ok) {
         await client.close();
@@ -376,9 +457,15 @@ export class BinarySession implements BinarySessionPort {
         await this.#restore(previous);
         return err(new AnalysisCancelledError("open_binary"));
       }
-      this.#active = { target: parsed.value, client };
+      this.#active = {
+        target: parsed.value,
+        client,
+        profile,
+        compatibility: structuredClone(compatibility),
+      };
       this.#clearRuntimeAvailability();
-      this.#snapshot.select(parsed.value);
+      if (profile === null) this.#snapshot.clear();
+      else this.#snapshot.select(parsed.value, profile);
       if (options.snapshot !== undefined) {
         const imported = this.importAnalysisSnapshot(options.snapshot);
         if (!imported.ok) {
@@ -504,28 +591,38 @@ export class BinarySession implements BinarySessionPort {
       );
     const active = this.#active;
     if (active === undefined) return err(new NoBinaryOpenError());
-    const cacheable = isSnapshotCacheable(name, capability, arguments_);
+    const profile =
+      active.profile !== null &&
+      (capability === undefined ||
+        capability.provider.id === active.profile.provider.id)
+        ? active.profile
+        : undefined;
+    const cacheable =
+      profile !== undefined &&
+      isSnapshotCacheable(name, capability, arguments_);
     const cached = cacheable
-      ? this.#snapshot.lookup(
-          active.target,
-          name,
-          arguments_,
-          capability.provider,
-        )
+      ? this.#snapshot.lookup(active.target, profile, name, arguments_)
       : undefined;
     if (cached !== undefined) return ok(cached);
     const call = active.client.execute(name, arguments_, options);
     this.#calls.add(call);
     try {
       const result = await call;
-      this.#observeRuntimeAvailability(name, result);
-      if (result.ok && cacheable)
-        this.#snapshot.record(active.target, name, arguments_, result.value);
-      else if (result.ok && capability?.effects.mutatesArtifact === true) {
+      const profiled = commitExecutionProfile(name, result, profile);
+      this.#observeRuntimeAvailability(name, profiled);
+      if (profiled.ok && cacheable)
+        this.#snapshot.record({
+          target: active.target,
+          profile,
+          operation: name,
+          parameters: arguments_,
+          execution: profiled.value,
+        });
+      else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
         this.#snapshot.clear();
         this.#snapshotInvalidated = true;
       }
-      return result;
+      return profiled;
     } finally {
       this.#calls.delete(call);
     }
@@ -615,13 +712,27 @@ export class BinarySession implements BinarySessionPort {
 
   async #restore(
     previous:
-      | { readonly target: BinaryTarget; readonly client: AnalysisClient }
+      | {
+          readonly target: BinaryTarget;
+          readonly client: AnalysisClient;
+          readonly profile: AnalysisProfileCommitment | null;
+          readonly compatibility: Readonly<Record<string, JsonValue>>;
+        }
       | undefined,
   ): Promise<void> {
     if (previous === undefined) return;
-    const client = this.#createClient(previous.target);
+    const client = this.#createClient(
+      previous.target,
+      previous.profile ?? undefined,
+    );
     const started = await client.execute("health", {});
-    if (started.ok) this.#active = { target: previous.target, client };
+    if (started.ok)
+      this.#active = {
+        target: previous.target,
+        client,
+        profile: previous.profile,
+        compatibility: previous.compatibility,
+      };
     else await client.close();
   }
 
@@ -664,3 +775,45 @@ export class BinarySession implements BinarySessionPort {
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
+
+const commitExecutionProfile = (
+  operation: AnalysisOperation,
+  result: Result<AnalysisExecution, AnalysisError>,
+  profile: AnalysisProfileCommitment | undefined,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok || profile === undefined) return result;
+  const provider = result.value.provider;
+  if (
+    provider.id !== profile.provider.id ||
+    provider.name !== profile.provider.name ||
+    provider.version !== profile.provider.version
+  )
+    return err(
+      new ProviderAdapterError(profile.provider.id, `${operation}:profile`),
+    );
+  return ok({
+    ...result.value,
+    analysisProfile: structuredClone(profile),
+  });
+};
+
+const normalizeProfileResolution = (
+  resolution: AnalysisProfileResolution,
+  providerId: string,
+): Result<AnalysisProfileResolution, ProviderAdapterError> => {
+  try {
+    return ok({
+      profile:
+        resolution.profile === null
+          ? null
+          : analysisProfileSchema.parse(resolution.profile),
+      compatibility: jsonObjectSchema.parse(resolution.compatibility),
+    });
+  } catch (cause: unknown) {
+    return err(
+      new ProviderAdapterError(providerId, "resolve_analysis_profile", {
+        cause,
+      }),
+    );
+  }
+};

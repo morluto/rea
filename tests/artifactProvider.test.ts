@@ -413,7 +413,6 @@ const target = (
   sha256: "0".repeat(64),
   kind: format === "directory" ? "executable" : "archive",
   format: format === "directory" ? "mach-o" : format,
-  loaderArgs: [],
 });
 
 const limits = () => ({ maxDepth: 20, maxPathBytes: 4_096 });

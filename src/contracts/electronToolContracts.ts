@@ -1,5 +1,5 @@
 import type { ToolContract } from "./toolContracts.js";
-import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceEnvelopeSchema } from "../domain/evidence.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
@@ -7,10 +7,10 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
 
-const listOutputSchema = evidenceSchema
+const listOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: electronTargetListSchema });
-const inspectionOutputSchema = evidenceSchema
+const inspectionOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: electronPageInspectionSchema });
 

@@ -125,6 +125,8 @@ export const createServer = (
   registerEnhancedTools(server, analysis, {
     logger: toolLogger,
     activeTarget,
+    analysisProfile:
+      session === undefined ? undefined : () => session.analysisProfile(),
     recordEvidence,
     recordUnknown:
       session === undefined

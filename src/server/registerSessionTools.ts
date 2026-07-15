@@ -507,7 +507,9 @@ const registerLifecycleTools = ({
                 path: opened.value.path,
                 format: opened.value.format,
                 kind: opened.value.kind,
-                loaderArgs: [...opened.value.loaderArgs],
+                loaderArgs: z
+                  .array(z.string())
+                  .parse(session.openCompatibility().loaderArgs ?? []),
                 sha256: opened.value.sha256,
                 architecture: opened.value.architecture ?? null,
               },

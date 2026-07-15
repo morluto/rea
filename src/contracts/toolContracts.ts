@@ -405,7 +405,7 @@ export const binarySessionInputSchema = z.object({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or Hopper database after validation. An optional provider-neutral snapshot is imported atomically and must match the binary digest, format, and architecture exactly; provider resources may still start before an MCP cache replay.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. An optional snapshot v2 is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; provider resources may still start before an MCP cache replay.",
     openBinaryInputSchema,
   ),
   session(

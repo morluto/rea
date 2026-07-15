@@ -339,7 +339,6 @@ const machoTarget = (path: string, sourcePath?: string): BinaryTarget => ({
   format: "mach-o",
   architecture: "arm64",
   availableArchitectures: ["x86_64", "arm64"],
-  loaderArgs: [],
 });
 
 const fixture = (name: string): Promise<string> =>

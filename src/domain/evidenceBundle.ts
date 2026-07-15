@@ -1,26 +1,35 @@
 import { z } from "zod";
 import canonicalize from "canonicalize";
 
-import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
+import {
+  evidenceEnvelopeSchema,
+  evidenceRecordSchema,
+  parseEvidence,
+  providerSchema,
+  type Evidence,
+} from "./evidence.js";
 import {
   residualUnknownSchema,
   type ResidualUnknown,
 } from "./residualUnknown.js";
 
-const artifactManifestSchema = evidenceSchema.shape.subject.unwrap().pick({
-  digest: true,
-  format: true,
-  architecture: true,
-});
-const providerManifestSchema = evidenceSchema.shape.provider;
-const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
+const artifactManifestSchema = evidenceEnvelopeSchema.shape.subject
+  .unwrap()
+  .pick({
+    digest: true,
+    format: true,
+    architecture: true,
+  });
+const providerManifestSchema = providerSchema;
+const environmentManifestSchema =
+  evidenceEnvelopeSchema.shape.environment.unwrap();
 const scenarioManifestSchema = z.object({
-  evidence_id: evidenceSchema.shape.evidence_id,
+  evidence_id: evidenceEnvelopeSchema.shape.evidence_id,
   operation: z.string().min(1),
   authority: z.literal("controlled-replay"),
 });
 const captureManifestSchema = z.object({
-  evidence_id: evidenceSchema.shape.evidence_id,
+  evidence_id: evidenceEnvelopeSchema.shape.evidence_id,
   predicate_type: z.string().min(1),
 });
 
@@ -32,7 +41,7 @@ export const evidenceBundleSchema = z.object({
   scenarios: z.array(scenarioManifestSchema),
   captures: z.array(captureManifestSchema),
   unknowns: z.array(residualUnknownSchema),
-  records: z.array(evidenceSchema),
+  records: z.array(evidenceRecordSchema),
 });
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;

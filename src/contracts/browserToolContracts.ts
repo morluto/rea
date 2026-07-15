@@ -1,6 +1,6 @@
 import type { ToolContract } from "./toolContracts.js";
 import { z } from "zod";
-import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceEnvelopeSchema } from "../domain/evidence.js";
 import {
   browserTargetListSchema,
   inspectWebPageInputSchema,
@@ -31,17 +31,17 @@ import {
 } from "../domain/webScreenshot.js";
 
 const evidenceResult = <Schema extends z.ZodType>(schema: Schema) =>
-  evidenceSchema
+  evidenceEnvelopeSchema
     .omit({ normalized_result: true })
     .extend({ normalized_result: schema });
 const listOutputSchema = evidenceResult(browserTargetListSchema);
-const inspectionOutputSchema = evidenceSchema
+const inspectionOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: webPageInspectionSchema });
-const bundleOutputSchema = evidenceSchema
+const bundleOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: webBundleAnalysisSchema });
-const observationSessionOutputSchema = evidenceSchema
+const observationSessionOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: webObservationSessionSchema });
 const webMcpOutputSchema = evidenceResult(webMcpDiscoverySchema);
