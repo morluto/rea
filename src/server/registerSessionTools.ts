@@ -495,6 +495,9 @@ const registerLifecycleTools = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(parsed.path, {
           signal: context.mcpReq.signal,
+          ...(parsed.provider_id === undefined
+            ? {}
+            : { providerId: parsed.provider_id }),
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );

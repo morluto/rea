@@ -2,24 +2,25 @@
 
 - Status: Accepted
 - Date: 2026-07-15
-- Implementation status: Planned; this record does not claim Ghidra support is
-  shipped
+- Implementation status: The provider registry, deterministic selection,
+  target binding, analysis-profile commitment, and snapshot/Evidence migration
+  are implemented. Ghidra support is not yet shipped.
 
 ## Context
 
-REA currently composes the artifact, native macOS, and Hopper providers with
-`CompositeProvider`. That class intentionally requires every operation to have
-one route. Hopper and Ghidra will both implement the deep static-analysis
-operation family, so putting both into the current composite would either fail
-at construction or make array order an undeclared selection policy.
+Before this decision, REA composed the artifact, native macOS, and Hopper
+providers with `CompositeProvider`. That class intentionally requires every
+operation to have one route. Hopper and Ghidra will both implement the deep
+static-analysis operation family, so putting both into that composite would
+either fail at construction or make array order an undeclared selection policy.
 
-The active `BinarySession` also owns one composite client. `open_binary` has no
-provider selector, and the domain `BinaryTarget` contains Hopper loader
-arguments. Analysis snapshot v1 commits those loader arguments and each cached
-entry's provider identity, but it does not commit the selected analysis engine,
-engine version, or complete analysis configuration. Two analyses of the same
-bytes can therefore disagree because of language, compiler, loader, analyzer,
-or provider-version differences while appearing target-compatible.
+The active `BinarySession` also owned one composite client. `open_binary` had no
+provider selector, and the domain `BinaryTarget` contained Hopper loader
+arguments. Analysis snapshot v1 committed those loader arguments and each
+cached entry's provider identity, but it did not commit the selected analysis
+engine, engine version, or complete analysis configuration. Two analyses of the
+same bytes could therefore disagree because of language, compiler, loader,
+analyzer, or provider-version differences while appearing target-compatible.
 
 These constraints are embodied in the current
 [`CompositeProvider`](../../src/application/CompositeProvider.ts),

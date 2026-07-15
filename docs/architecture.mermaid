@@ -12,15 +12,15 @@ graph TD
     end
 
     subgraph "Application Layer"
-        APP["src/application/<br/>Shared CLI/MCP session composition<br/>lifecycle, enhanced workflows, persistent investigations"]
+        APP["src/application/<br/>Shared CLI/MCP workflows<br/>enhanced analysis and investigations"]
+        SESSION["SessionProviderRouter + BinarySession<br/>one immutable deep binding per target<br/>disjoint auxiliary routing"]
+        REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback"]
         WORKSPACE["Investigation workspace store<br/>approved roots, canonical JSON<br/>atomic CAS revisions and locks"]
     end
 
-    subgraph "Hopper Layer"
+    subgraph "Provider Layers"
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
-    end
-
-    subgraph "Browser Provider Layer"
+        AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
     end
 
@@ -46,16 +46,20 @@ graph TD
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    APP --> SESSION
+    SESSION --> REGISTRY
+    REGISTRY --> HOPPER
+    SESSION --> AUX
     APP --> WORKSPACE
     APP --> INSTALL
     SERVER --> CONTRACTS
     SERVER --> APP
-    APP --> HOPPER
     APP --> BROWSER
     HOPPER --> BRIDGE
     APP --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
+    AUX --> DOMAIN
     BROWSER --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER

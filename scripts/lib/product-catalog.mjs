@@ -62,6 +62,23 @@ export const createCliInventory = (cli) => {
   };
 };
 
+/** Read one primary command's declared option names from the Incur router. */
+export const cliCommandOptionNames = (cli, name) => {
+  const commands = Cli.toCommands.get(cli);
+  const command = commands?.get(name);
+  if (
+    command === undefined ||
+    "_alias" in command ||
+    !("options" in command) ||
+    command.options === undefined
+  )
+    return [];
+  const schema = z.toJSONSchema(command.options);
+  return Object.keys(schema.properties ?? {}).sort((left, right) =>
+    left.localeCompare(right),
+  );
+};
+
 const assertSameNames = (label, actual, expected) => {
   const actualSet = new Set(actual);
   const expectedSet = new Set(expected);

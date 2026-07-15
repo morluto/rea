@@ -10,13 +10,18 @@ import type {
   BinaryArchitecture,
   BinaryTarget,
 } from "../domain/binaryTarget.js";
-import { ProviderAdapterError, type AnalysisError } from "../domain/errors.js";
+import {
+  AnalysisCancelledError,
+  ProviderAdapterError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
   readonly loaderArgsOverride: readonly string[];
   readonly provider: ProviderIdentity;
+  readonly signal?: AbortSignal;
 }
 
 /** Resolve Hopper open semantics without placing its CLI flags in BinaryTarget. */
@@ -33,12 +38,14 @@ export const resolveHopperAnalysisProfile = async (
       ? derived.value
       : [...options.loaderArgsOverride];
   const compatibility = { loaderArgs: [...loaderArgs] };
-  const launcherDigest = await sha256File(options.launcherPath);
-  if (launcherDigest === undefined) return ok({ profile: null, compatibility });
+  const launcherDigest = await sha256File(options.launcherPath, options.signal);
+  if (!launcherDigest.ok) return launcherDigest;
+  if (launcherDigest.value === undefined)
+    return ok({ profile: null, compatibility });
   const provider = {
     id: options.provider.id,
     name: options.provider.name,
-    version: `launcher-sha256:${launcherDigest}`,
+    version: `launcher-sha256:${launcherDigest.value}`,
   };
   return ok({
     profile: createAnalysisProfile(provider, 1, {
@@ -103,12 +110,31 @@ const hopperArchitectureFlag = (architecture: BinaryArchitecture): string => {
   }
 };
 
-const sha256File = async (path: string): Promise<string | undefined> => {
+const sha256File = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<string | undefined, AnalysisCancelledError>> => {
+  if (signalIsAborted(signal))
+    return err(new AnalysisCancelledError("open_binary"));
+  const stream = createReadStream(path);
+  const onAbort = (): void => {
+    stream.destroy();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
     const hash = createHash("sha256");
-    for await (const chunk of createReadStream(path)) hash.update(chunk);
-    return hash.digest("hex");
+    for await (const chunk of stream) hash.update(chunk);
+    return signalIsAborted(signal)
+      ? err(new AnalysisCancelledError("open_binary"))
+      : ok(hash.digest("hex"));
   } catch {
-    return undefined;
+    return signalIsAborted(signal)
+      ? err(new AnalysisCancelledError("open_binary"))
+      : ok(undefined);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 };
+
+const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;

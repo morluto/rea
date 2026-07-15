@@ -58,6 +58,10 @@ describe("composite analysis provider", () => {
     });
     expect(hopperCalls).toEqual(["address_name"]);
     expect(nativeCalls).toEqual(["analyze_function"]);
+    expect(await client.execute("list_names", {})).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError" },
+    });
   });
 
   it("publishes exact operation provenance and rejects ambiguous routes", () => {

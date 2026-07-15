@@ -16,6 +16,17 @@ operation with a stable availability reason instead of silently hiding it.
 Opening or closing a target, reloading policy, or observing a provider health
 transition emits `notifications/tools/list_changed`.
 
+`binary_session.analysis_provider_candidates` is authoritative for deep-engine
+discovery. Target-free discovery is sorted by provider ID, reports host
+availability and `unknown` target support, and does not create an analysis
+client. `open_binary.provider_id` accepts a concrete provider ID or `auto`; it
+uses the same parser and selection policy as CLI `--provider` and
+`REA_ANALYSIS_PROVIDER`. A successful deep open exposes one immutable provider,
+concrete version, selection source, and complete analysis profile through
+`analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
+choices return typed selection details. A selected provider is never replaced
+automatically after a runtime failure.
+
 ## Progress and cancellation
 
 REA accepts ordinary `tools/call` progress tokens. Updates are monotonic,

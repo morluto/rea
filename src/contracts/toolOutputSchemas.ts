@@ -26,6 +26,11 @@ import { callPathResultSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import { analysisProfileSchema } from "../domain/analysisProfile.js";
+import {
+  PROVIDER_REJECTION_CODES,
+  type ProviderRejectionCode,
+} from "./providerSelection.js";
 
 const resultOf = (schema: z.ZodType) =>
   evidenceEnvelopeSchema
@@ -94,10 +99,72 @@ const providerIdentity = z.object({
   name: z.string(),
   version: z.string().nullable(),
 });
+const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
+  PROVIDER_REJECTION_CODES,
+);
+const providerDiagnostics = z.record(z.string(), z.json());
+const providerAvailability = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("available"),
+    code: z.null(),
+    reason: z.null(),
+    diagnostics: providerDiagnostics,
+  }),
+  z.object({
+    status: z.literal("unavailable"),
+    code: providerRejectionCode,
+    reason: z.string().min(1),
+    diagnostics: providerDiagnostics,
+  }),
+]);
+const providerTargetSupport = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("unknown"),
+    code: z.null(),
+    reason: z.string().min(1),
+    diagnostics: providerDiagnostics,
+  }),
+  z.object({
+    status: z.literal("supported"),
+    code: z.null(),
+    reason: z.null(),
+    diagnostics: providerDiagnostics,
+  }),
+  z.object({
+    status: z.literal("unsupported"),
+    code: z.enum([
+      "target_kind_unsupported",
+      "target_format_unsupported",
+      "architecture_unsupported",
+    ]),
+    reason: z.string().min(1),
+    diagnostics: providerDiagnostics,
+  }),
+]);
 const sessionProvider = z.object({
   provider: providerIdentity,
   providers: z.array(providerIdentity),
   capabilities: z.array(providerCapability),
+  analysis_provider_binding: z
+    .object({
+      provider: providerIdentity,
+      selection_source: z.enum([
+        "request",
+        "environment",
+        "auto-single-candidate",
+      ]),
+      analysis_profile: analysisProfileSchema,
+    })
+    .nullable(),
+  analysis_provider_candidates: z.array(
+    z.object({
+      provider: providerIdentity,
+      availability: providerAvailability,
+      target_support: providerTargetSupport,
+      selected: z.boolean(),
+      capabilities: z.array(providerCapability),
+    }),
+  ),
   tool_availability: z.array(
     z.object({
       name: z.string(),

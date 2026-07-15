@@ -31,6 +31,10 @@ import { registerBrowserCommands } from "./cliBrowserCommands.js";
 import { registerAdvancedBrowserCommands } from "./cliBrowserAdvancedCommands.js";
 import { registerElectronCommands } from "./cliElectronCommands.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
+import {
+  analysisProviderSelectorSchema,
+  type AnalysisProviderSelector,
+} from "./contracts/providerSelection.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -95,6 +99,7 @@ const registerCoreCommands = (
       .min(1)
       .optional()
       .describe("Load and update a local analysis snapshot"),
+    provider: providerSelectionOption,
   });
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
@@ -108,7 +113,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -124,7 +129,7 @@ const registerCoreCommands = (
           args.path,
           "binary_overview",
           { detail: options.detail, limit: options.limit },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -134,14 +139,17 @@ const registerCoreCommands = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Procedure address"),
     }),
-    options: z.object({ snapshot: z.string().min(1).optional() }),
+    options: z.object({
+      snapshot: z.string().min(1).optional(),
+      provider: providerSelectionOption,
+    }),
     run: ({ args, options }) =>
       logCliCommand(logger, "decompile", () =>
         runDirectAnalysis(
           args.path,
           "procedure_pseudo_code",
           { procedure: args.address },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -244,14 +252,17 @@ const registerXrefsCommand = (
       path: z.string().describe("App or program path"),
       address: z.string().describe("Hexadecimal address"),
     }),
-    options: z.object({ snapshot: z.string().min(1).optional() }),
+    options: z.object({
+      snapshot: z.string().min(1).optional(),
+      provider: providerSelectionOption,
+    }),
     run: ({ args, options }) =>
       logCliCommand(logger, "xrefs", () =>
         runDirectAnalysis(
           args.path,
           "xrefs",
           { address: args.address },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -272,6 +283,7 @@ const registerTraceCommand = (
       limit: z.number().int().min(1).max(100).default(20),
       maxOperations: z.number().int().min(1).max(100).default(20),
       snapshot: z.string().min(1).optional(),
+      provider: providerSelectionOption,
     }),
     alias: {
       caseSensitive: "case-sensitive",
@@ -288,7 +300,7 @@ const registerTraceCommand = (
             limit: options.limit,
             max_operations: options.maxOperations,
           },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -328,6 +340,7 @@ const registerFunctionCommand = (
       maxPseudocodeChars: z.number().int().min(1).max(100_000).default(20_000),
       maxInstructions: z.number().int().min(1).max(5_000).default(500),
       snapshot: z.string().min(1).optional(),
+      provider: providerSelectionOption,
     }),
     alias: {
       includeAssembly: "include-assembly",
@@ -346,7 +359,7 @@ const registerFunctionCommand = (
             max_pseudocode_chars: options.maxPseudocodeChars,
             max_instructions: options.maxInstructions,
           },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -369,6 +382,7 @@ const registerSearchCommand = (
       offset: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(100).default(100),
       snapshot: z.string().min(1).optional(),
+      provider: providerSelectionOption,
     }),
     alias: { caseSensitive: "case-sensitive" },
     run: ({ args, options }) =>
@@ -383,7 +397,7 @@ const registerSearchCommand = (
             offset: options.offset,
             limit: options.limit,
           },
-          { logger, snapshotPath: options.snapshot },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
         ),
       ),
   });
@@ -578,3 +592,19 @@ const registerNativeCommands = (
       ),
   });
 };
+
+const providerSelectionOption = analysisProviderSelectorSchema
+  .optional()
+  .describe(
+    "Bind deep analysis to a provider ID or use deterministic auto selection",
+  );
+
+const directAnalysisOptions = (
+  logger: Logger,
+  snapshotPath: string | undefined,
+  providerId: AnalysisProviderSelector | undefined,
+) => ({
+  logger,
+  snapshotPath,
+  ...(providerId === undefined ? {} : { providerId }),
+});
