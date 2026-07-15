@@ -69,7 +69,7 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
-  installHopper(): Promise<SetupHopperInstallResult>;
+  installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
@@ -170,7 +170,7 @@ export const runSetup = async (
     };
 
   if (installHopper && (interactiveApproval || options.installHopper)) {
-    const installed = await host.installHopper();
+    const installed = await host.installHopper(options.installHopper);
     if (installed.status === "failed")
       return {
         status: "needs_human",
@@ -320,11 +320,11 @@ const systemSetupHost = (): SetupHost => {
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
-    installHopper: async () => {
+    installHopper: async (replaceExisting) => {
       const result =
         process.platform === "linux"
           ? await installLinuxHopper()
-          : await installMacHopper();
+          : await installMacHopper({ replaceExisting });
       if (result.status === "installed") return result;
       return setupInstallFailure(result.reason);
     },

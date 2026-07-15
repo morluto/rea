@@ -22,6 +22,7 @@ class FakeSetupHost implements SetupHost {
   clients: readonly SetupClient[] = [];
   clientResults = new Map<string, ClientConfigurationResult>();
   hopperInstalls = 0;
+  hopperReplaceRequests: boolean[] = [];
   configurations = 0;
   skillInstalls = 0;
   checkedHopperPaths: Array<string | undefined> = [];
@@ -38,8 +39,11 @@ class FakeSetupHost implements SetupHost {
   linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distribution);
   hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
-  installHopper = (): Promise<SetupHopperInstallResult> => {
+  installHopper = (
+    replaceExisting: boolean,
+  ): Promise<SetupHopperInstallResult> => {
     this.hopperInstalls += 1;
+    this.hopperReplaceRequests.push(replaceExisting);
     this.linuxDemoRuntimeMissing = false;
     if (this.hopperInstallSucceeds) {
       this.hopper = "/manual/Hopper";
@@ -248,6 +252,7 @@ describe("setup workflow", () => {
     ]);
     expect(result.appliedActions).toEqual(["installed_hopper"]);
     expect(host.hopperInstalls).toBe(1);
+    expect(host.hopperReplaceRequests).toEqual([true]);
     expect(host.configurations).toBe(0);
     expect(host.checkedHopperPaths).toEqual(["/manual/Hopper"]);
   });
