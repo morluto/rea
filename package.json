@@ -1,6 +1,6 @@
 {
   "name": "rea-agents",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
