@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.7.0](https://github.com/morluto/rea/compare/rea-agents-1.6.0...rea-agents-1.7.0) (2026-07-15)
+
+
+### Features
+
+* **artifact:** reconstruct JavaScript application structure ([aa46abf](https://github.com/morluto/rea/commit/aa46abfe1b59ecab160029c88b0c925ff68d6033))
+* **domain:** add versioned JavaScript Application Graph ([2ca5672](https://github.com/morluto/rea/commit/2ca56724e4be7429372904ad26fe97fa5943bcf4))
+* **ghidra:** add function analysis and conformance ([d8321de](https://github.com/morluto/rea/commit/d8321defd77c57df424b2635a4a70d38fe9a1fae))
+* **ghidra:** add private headless provider session ([f0e625d](https://github.com/morluto/rea/commit/f0e625d7ee5a3f79158514aa93f89fca81a2da6a))
+* **ghidra:** implement read-only inventory operations ([b1c07dd](https://github.com/morluto/rea/commit/b1c07dd9c6fe8c4dd109fefe67f4b16fdd1115d1))
+* **session:** add explicit provider registry and target binding ([941d710](https://github.com/morluto/rea/commit/941d7101dd3c8b7cdd790724c55ff00a90f42270))
+
+
+### Bug Fixes
+
+* address setup, upgrade, and process test regressions ([960d759](https://github.com/morluto/rea/commit/960d759cc1979a32ae416c50e6095abfd629fbe7))
+* address setup, upgrade, and process test regressions ([02f12b9](https://github.com/morluto/rea/commit/02f12b927a17615150d6e1126d1b841c5dca648b))
+* **cli:** make clean source checkouts start reliably ([ed17e76](https://github.com/morluto/rea/commit/ed17e764733c819a1123372ad64d4122ba0c06e3))
+* **cli:** make clean source checkouts start reliably ([6ba9765](https://github.com/morluto/rea/commit/6ba97656ca73e97ae1dbecc15a86a193978298b6))
+* **setup:** replace managed Hopper on reinstall ([0ca93f9](https://github.com/morluto/rea/commit/0ca93f9779bc6c576479561c488982963fbb9167))
+
+
+### Code Refactoring
+
+* **domain:** remove provider-specific target and snapshot state ([21da71e](https://github.com/morluto/rea/commit/21da71ec6d30a63e497b871d16a69ab02f5b210b))
+* **process:** extract reusable provider lifecycle primitives ([70e1a0f](https://github.com/morluto/rea/commit/70e1a0f5326fa1598e4f4e673a4ba1545cef5b65))
+
+
+### Documentation
+
+* **api:** refresh profile source anchors ([bd3cf96](https://github.com/morluto/rea/commit/bd3cf964d62bea2571559cfde6bdfe686922255f))
+* **api:** refresh provider source anchors ([a7621c2](https://github.com/morluto/rea/commit/a7621c263392a92c63162febf511824c9c788548))
+* **architecture:** define provider selection and analysis profiles ([75f8696](https://github.com/morluto/rea/commit/75f8696a57cf25a2a72a2a337d8076214f04ece4))
+* **architecture:** define provider selection and analysis profiles ([f9f2fbe](https://github.com/morluto/rea/commit/f9f2fbe2fc04bd202d9fd580fc54c30529809fc0))
+* reconcile product documentation with shipped behavior ([addc208](https://github.com/morluto/rea/commit/addc208f12790e3b0e48697c75e978e08814d303))
+* reconcile product documentation with shipped behavior ([54056a9](https://github.com/morluto/rea/commit/54056a9782f3f51f8f1b510d8b9c1bf4c3c9f067))
+* refresh Ghidra inventory API links ([a45de27](https://github.com/morluto/rea/commit/a45de27d9e97b8c7a76b3e6da12b0b4efdfa5dcb))
+* regenerate JavaScript graph API with Node 24 ([da4817a](https://github.com/morluto/rea/commit/da4817abd10fe2d6b68bf4d393d067ce42ece910))
+
+
+### Tests
+
+* keep package setup verification read-only ([acaf030](https://github.com/morluto/rea/commit/acaf03056d6b457d85c6b7744565d6c7d56c424c))
+
 ## [1.6.0](https://github.com/morluto/rea/compare/rea-agents-1.5.0...rea-agents-1.6.0) (2026-07-14)
 
 
