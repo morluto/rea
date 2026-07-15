@@ -265,7 +265,7 @@
   "schemas": [
     {
       "id": "analysis_snapshot",
-      "version": 1
+      "version": 2
     },
     {
       "id": "artifact_extraction",
@@ -406,10 +406,10 @@
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "881033cf0352b32a37124556fbbced145e2e879d11462a2b447f0c7d25f70965",
+      "tools_sha256": "8f88beb52a0a1686d0a63bbf23bd1d45d6aa3d419bc57a9d2cf4280e776520d4",
       "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "f6bc43b72d2c5ba79af09e849e2be41df846c24423661a460d805fd07d30931e"
+      "combined_sha256": "f850da5e4c57aefe257a942608c50bf8e00f774f26f98edbb8243640f2b5696d"
     }
   }
 }

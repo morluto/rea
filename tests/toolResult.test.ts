@@ -6,7 +6,10 @@ import { ok } from "../src/domain/result.js";
 import { err } from "../src/domain/result.js";
 import { HopperProcessError } from "../src/domain/errors.js";
 import { toCallToolResult } from "../src/server/toolResult.js";
-import { createEvidence, evidenceSchema } from "../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceEnvelopeSchema,
+} from "../src/domain/evidence.js";
 
 const contract: ToolContract = {
   name: "provider_neutral_fixture",
@@ -74,7 +77,7 @@ describe("tool result projection", () => {
     );
     const evidenceContract: ToolContract = {
       ...contract,
-      outputSchema: evidenceSchema,
+      outputSchema: evidenceEnvelopeSchema,
     };
 
     expect(

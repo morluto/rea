@@ -17,20 +17,22 @@ import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { UnknownRegistryError } from "../domain/errors.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import {
+  REA_WORKFLOW_PROVIDER,
+  workflowAnalysisProfile,
+} from "../application/InvestigationProviders.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+  readonly analysisProfile:
+    | (() => AnalysisProfileCommitment | undefined)
+    | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
   readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
 }
-
-const WORKFLOW_PROVIDER = {
-  id: "rea-workflow",
-  name: "REA composed investigation workflow",
-  version: "1",
-} as const;
 
 /** Register composed workflows against the same port as direct bridge tools. */
 export const registerEnhancedTools = (
@@ -43,6 +45,7 @@ export const registerEnhancedTools = (
     registerEnhancedTool(server, services, contract, {
       logger: options.logger,
       activeTarget: options.activeTarget,
+      analysisProfile: options.analysisProfile,
       recordEvidence: options.recordEvidence,
       recordUnknown: options.recordUnknown,
     });
@@ -56,6 +59,9 @@ const registerEnhancedTool = (
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+    readonly analysisProfile:
+      | (() => AnalysisProfileCommitment | undefined)
+      | undefined;
     readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
     readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
   },
@@ -92,13 +98,19 @@ const registerEnhancedTool = (
         terminal: true,
       });
       if (result.ok) {
+        const upstreamProfile = registration.analysisProfile?.();
         const evidence = createEvidence(
           registration.activeTarget?.(),
-          WORKFLOW_PROVIDER,
+          REA_WORKFLOW_PROVIDER,
           {
             operation: name,
             parameters,
             result: result.value,
+            ...(upstreamProfile === undefined
+              ? {}
+              : {
+                  analysisProfile: workflowAnalysisProfile(upstreamProfile),
+                }),
             confidence: "derived",
             limitations: [
               "Derived by an REA workflow from one or more provider observations.",

@@ -1,4 +1,5 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import {
@@ -11,17 +12,19 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   analysisQueryId,
   createAnalysisSnapshotEntry,
+  snapshotBinding,
+  snapshotMatchesProfile,
   snapshotMatchesTarget,
   snapshotTarget,
   type AnalysisSnapshot,
   type AnalysisSnapshotEntry,
+  type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
 } from "../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
-  ProviderIdentity,
 } from "./AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 
@@ -72,30 +75,44 @@ export const isSnapshotCacheable = (
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
   #target: AnalysisSnapshotTarget | undefined;
+  #binding: AnalysisSnapshotBinding | undefined;
 
-  /** Whether staged entries belong to the supplied binary. */
-  matches(target: BinaryTarget): boolean {
+  /** Whether staged entries belong to the supplied target and profile. */
+  matches(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | undefined,
+  ): boolean {
     return (
-      this.#target === undefined || snapshotMatchesTarget(this.#target, target)
+      (this.#target === undefined && this.#binding === undefined) ||
+      (this.#target !== undefined &&
+        this.#binding !== undefined &&
+        profile !== undefined &&
+        snapshotMatchesTarget(this.#target, target) &&
+        snapshotMatchesProfile(this.#binding, profile))
     );
   }
 
-  /** Replace cache state when the active binary identity changes. */
-  select(target: BinaryTarget): void {
-    if (!this.matches(target)) this.#entries.clear();
+  /** Replace cache state when the target or selected profile changes. */
+  select(target: BinaryTarget, profile: AnalysisProfileCommitment): void {
+    if (!this.matches(target, profile)) this.#entries.clear();
     this.#target = snapshotTarget(target);
+    this.#binding = snapshotBinding(profile);
   }
 
   /** Merge already-validated entries and return the new-entry count. */
   stage(snapshot: AnalysisSnapshot): number {
     if (
-      this.#target !== undefined &&
-      (this.#target.sha256 !== snapshot.target.sha256 ||
-        this.#target.format !== snapshot.target.format ||
-        this.#target.architecture !== snapshot.target.architecture)
+      (this.#target !== undefined &&
+        JSON.stringify(this.#target) !== JSON.stringify(snapshot.target)) ||
+      (this.#binding !== undefined &&
+        !snapshotMatchesProfile(
+          this.#binding,
+          snapshot.binding.analysis_profile,
+        ))
     )
       this.#entries.clear();
     this.#target = structuredClone(snapshot.target);
+    this.#binding = structuredClone(snapshot.binding);
     let imported = 0;
     for (const entry of snapshot.entries) {
       if (!this.#entries.has(entry.query_id)) imported += 1;
@@ -107,12 +124,15 @@ export class AnalysisSnapshotCache {
   /** Build a complete snapshot for an active target. */
   export(
     target: BinaryTarget | undefined,
+    profile: AnalysisProfileCommitment | undefined,
     evidenceBundle: EvidenceBundle,
   ): Result<AnalysisSnapshot, NoBinaryOpenError> {
-    if (target === undefined) return err(new NoBinaryOpenError());
+    if (target === undefined || profile === undefined)
+      return err(new NoBinaryOpenError());
     return ok({
-      snapshot_version: 1,
+      snapshot_version: 2,
       target: snapshotTarget(target),
+      binding: snapshotBinding(profile),
       entries: this.entries(),
       evidence_bundle: structuredClone(evidenceBundle),
     });
@@ -121,15 +141,24 @@ export class AnalysisSnapshotCache {
   /** Validate target identity, merge evidence atomically, then stage entries. */
   import(
     snapshot: AnalysisSnapshot,
-    active: BinaryTarget | undefined,
+    active:
+      | {
+          readonly target: BinaryTarget;
+          readonly profile: AnalysisProfileCommitment;
+        }
+      | undefined,
     mergeEvidence: (
       bundle: EvidenceBundle,
     ) => Result<number, EvidenceIntegrityError | EvidenceLimitError>,
   ): Result<number, AnalysisError> {
-    if (active !== undefined && !snapshotMatchesTarget(snapshot.target, active))
+    if (
+      active !== undefined &&
+      (!snapshotMatchesTarget(snapshot.target, active.target) ||
+        !snapshotMatchesProfile(snapshot.binding, active.profile))
+    )
       return err(
         new EvidenceIntegrityError(
-          "Analysis snapshot target does not match the active binary",
+          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
         ),
       );
     const importedEvidence = mergeEvidence(snapshot.evidence_bundle);
@@ -146,15 +175,15 @@ export class AnalysisSnapshotCache {
   /** Replay an exact provider-specific query, marking its cached provenance. */
   lookup(
     target: BinaryTarget,
+    profile: AnalysisProfileCommitment,
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
-    provider: ProviderIdentity,
   ): AnalysisExecution | undefined {
     const queryId = analysisQueryId(
       snapshotTarget(target),
+      snapshotBinding(profile),
       operation,
       parameters,
-      provider,
     );
     const cached = this.#entries.get(queryId);
     if (cached === undefined) return undefined;
@@ -163,6 +192,7 @@ export class AnalysisSnapshotCache {
       result: cached.execution.result,
       rawResult: cached.execution.raw_result,
       provider: cached.execution.provider,
+      analysisProfile: structuredClone(profile),
       limitations: [
         ...cached.execution.limitations,
         "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
@@ -187,20 +217,23 @@ export class AnalysisSnapshotCache {
   }
 
   /** Record one successful immutable call unless the cache is full. */
-  record(
-    target: BinaryTarget,
-    operation: AnalysisOperation,
-    parameters: Readonly<Record<string, JsonValue>>,
-    execution: AnalysisExecution,
-  ): void {
+  record(input: {
+    readonly target: BinaryTarget;
+    readonly profile: AnalysisProfileCommitment;
+    readonly operation: AnalysisOperation;
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly execution: AnalysisExecution;
+  }): void {
+    const { target, profile, operation, parameters, execution } = input;
     if (this.#entries.size >= 10_000) return;
-    this.select(target);
-    const entry = createAnalysisSnapshotEntry(
-      snapshotTarget(target),
+    this.select(target, profile);
+    const entry = createAnalysisSnapshotEntry({
+      target: snapshotTarget(target),
+      binding: snapshotBinding(profile),
       operation,
       parameters,
       execution,
-    );
+    });
     this.#entries.set(entry.query_id, entry);
   }
 
@@ -208,5 +241,6 @@ export class AnalysisSnapshotCache {
   clear(): void {
     this.#entries.clear();
     this.#target = undefined;
+    this.#binding = undefined;
   }
 }

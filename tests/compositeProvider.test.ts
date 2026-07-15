@@ -15,9 +15,8 @@ import { ok } from "../src/domain/result.js";
 const target: BinaryTarget = {
   path: "/fixture",
   kind: "database",
-  format: "hopper",
+  format: "analysis-database",
   sha256: "0".repeat(64),
-  loaderArgs: [],
 };
 
 describe("composite analysis provider", () => {

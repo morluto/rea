@@ -1,3 +1,23 @@
+import {
+  createAnalysisProfile,
+  type AnalysisProfileCommitment,
+} from "../domain/analysisProfile.js";
+
+/** Provider identity for deterministic composed analysis workflows. */
+export const REA_WORKFLOW_PROVIDER = {
+  id: "rea-workflow",
+  name: "REA composed investigation workflow",
+  version: "1",
+} as const;
+
+/** Commit a workflow result to the exact upstream deep-analysis profile. */
+export const workflowAnalysisProfile = (
+  upstream: AnalysisProfileCommitment,
+): AnalysisProfileCommitment =>
+  createAnalysisProfile(REA_WORKFLOW_PROVIDER, 1, {
+    upstream_analysis_profile: upstream,
+  });
+
 /** Provider identity for deterministic artifact inventories. */
 export const ARTIFACT_GRAPH_PROVIDER = {
   id: "rea-artifact-graph",

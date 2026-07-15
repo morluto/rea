@@ -13,8 +13,9 @@ import {
   HopperStartError,
   ProviderAdapterError,
 } from "../src/domain/errors.js";
-import { err } from "../src/domain/result.js";
+import { err, ok as resultOk } from "../src/domain/result.js";
 import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
+import { createAnalysisProfile } from "../src/domain/analysisProfile.js";
 import { createInvestigationWorkspace } from "../src/domain/investigationWorkspace.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
 
@@ -195,6 +196,47 @@ describe("binary session", () => {
     expect(opened.ok).toBe(false);
     if (!opened.ok) expect(opened.error._tag).toBe("EvidenceIntegrityError");
     await mismatch.close();
+
+    const profileMismatchCalls: string[] = [];
+    const profileMismatchProvider = cacheProvider(profileMismatchCalls);
+    const identity = profileMismatchProvider.identity();
+    profileMismatchProvider.resolveAnalysisProfile = () =>
+      Promise.resolve(
+        resultOk({
+          profile: createAnalysisProfile(
+            {
+              id: identity.id,
+              name: identity.name,
+              version: identity.version ?? "fixture-unresolved",
+            },
+            1,
+            { fixture: "different-profile" },
+          ),
+          compatibility: {},
+        }),
+      );
+    const profileMismatch = new BinarySession(profileMismatchProvider);
+    expect(profileMismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(
+      true,
+    );
+    const profileOpened = await profileMismatch.open(first);
+    expect(profileOpened.ok).toBe(false);
+    if (!profileOpened.ok) {
+      expect(profileOpened.error._tag).toBe("EvidenceIntegrityError");
+      expect(profileOpened.error.message).toContain("profile_mismatch");
+    }
+    expect(profileMismatchCalls).toEqual([]);
+    await profileMismatch.close();
+
+    const activeProfileMismatch = new BinarySession(profileMismatchProvider);
+    expect((await activeProfileMismatch.open(first)).ok).toBe(true);
+    const activeImport = activeProfileMismatch.importAnalysisSnapshot(
+      snapshot.value,
+    );
+    expect(activeImport.ok).toBe(false);
+    if (!activeImport.ok)
+      expect(activeImport.error.message).toContain("profile_mismatch");
+    await activeProfileMismatch.close();
   });
 
   it("does not snapshot reads that depend on the provider cursor", async () => {
@@ -594,6 +636,13 @@ const cacheProvider = (
   } as const;
   return {
     identity: () => identity,
+    resolveAnalysisProfile: () =>
+      Promise.resolve(
+        resultOk({
+          profile: createAnalysisProfile(identity, 1, { fixture: true }),
+          compatibility: {},
+        }),
+      ),
     capabilities: () => [
       cacheCapability(identity, "address_name", false, mayWriteFilesystem),
       cacheCapability(identity, "set_address_name", true),

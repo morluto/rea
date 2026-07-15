@@ -26,6 +26,7 @@ import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
@@ -34,12 +35,10 @@ import {
   authorizeFileReadWithDeferredWrite,
   type DeferredFileWriteAuthorization,
 } from "./DeferredFileAuthorization.js";
-
-const WORKFLOW_PROVIDER = {
-  id: "rea-workflow",
-  name: "REA composed investigation workflow",
-  version: "1",
-} as const;
+import {
+  REA_WORKFLOW_PROVIDER,
+  workflowAnalysisProfile,
+} from "./InvestigationProviders.js";
 
 type DirectAnalysisTool =
   | "binary_overview"
@@ -51,9 +50,9 @@ type DirectAnalysisTool =
   | "trace_feature";
 
 /**
- * Open one binary, execute one tool, and always release the bridge session.
+ * Open one binary, execute one tool, and always release provider resources.
  * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
- * retain a target or bridge resources for a subsequent command.
+ * retain a target or provider client for a subsequent command.
  */
 export const runDirectAnalysis = async (
   path: string,
@@ -93,7 +92,7 @@ export const runProviderAnalysis = async (
     }),
   );
 
-/** Describe configured providers without opening a target or launching Hopper. */
+/** Describe configured providers without opening a target or starting one. */
 export const runSessionStatus = async (
   logger: Logger = silentLogger,
 ): Promise<JsonValue> => {
@@ -252,31 +251,39 @@ const runAnalysis = async (
     snapshotPath,
   });
   if (!authorization.ok) return cliError(authorization.error);
-  const unavailable = snapshotUnavailable(
-    snapshotPath,
-    config.value.hopperLoaderArgs,
-  );
-  if (unavailable !== undefined) return cliError(unavailable);
   const session = createBinarySession(config.value, logger);
   try {
     const prepared = await prepareSnapshot({
       path,
-      tool,
-      arguments: arguments_,
       snapshotPath,
       policy: config.value.analysisSnapshotFilePolicy,
-      provider: replayProviderFor(session, tool),
     });
     if (!prepared.ok) return cliError(prepared.error);
-    if (prepared.value.evidence !== undefined) return prepared.value.evidence;
-    const writable = await authorizeDeferredWrite(authorization.value);
-    if (!writable.ok) return cliError(writable.error);
     const { snapshot } = prepared.value;
     const opened = await session.open(
       path,
       snapshot === undefined ? { signal } : { signal, snapshot },
     );
     if (!opened.ok) return cliError(opened.error);
+    const evidenceProfile = analysisProfileForEvidence(session, tool);
+    const bindingProfile = session.analysisProfile();
+    if (
+      snapshot !== undefined &&
+      evidenceProfile !== undefined &&
+      bindingProfile !== undefined
+    ) {
+      const cached = snapshotEvidenceForQuery(snapshot, {
+        target: opened.value,
+        bindingProfile,
+        operation: tool,
+        parameters: arguments_,
+        provider: replayProviderFor(session, tool),
+        evidenceProfile,
+      });
+      if (cached !== undefined) return cached;
+    }
+    const writable = await authorizeDeferredWrite(authorization.value);
+    if (!writable.ok) return cliError(writable.error);
     let output: JsonValue;
     let evidence: Evidence | undefined;
     if (
@@ -295,11 +302,14 @@ const runAnalysis = async (
           opened.value,
           tool === "analyze_function"
             ? session.providerIdentity(tool)
-            : WORKFLOW_PROVIDER,
+            : REA_WORKFLOW_PROVIDER,
           {
             operation: tool,
             parameters: arguments_,
             result: result.value,
+            ...(evidenceProfile === undefined
+              ? {}
+              : { analysisProfile: evidenceProfile }),
             confidence: "derived",
             limitations: ["Derived by an REA composed workflow."],
           },
@@ -317,6 +327,9 @@ const runAnalysis = async (
             operation: tool,
             parameters: arguments_,
             result: result.value.result,
+            ...(result.value.analysisProfile === undefined
+              ? {}
+              : { analysisProfile: result.value.analysisProfile }),
             rawResult: result.value.rawResult,
             limitations: result.value.limitations,
             locations: result.value.locations,
@@ -360,25 +373,12 @@ const withProcessCancellation = async <Value>(
 
 const prepareSnapshot = async (options: {
   readonly path: string;
-  readonly tool: string;
-  readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly snapshotPath: string | undefined;
   readonly policy: Parameters<typeof readAnalysisSnapshot>[1];
-  readonly provider: Parameters<typeof snapshotEvidenceForQuery>[1]["provider"];
 }): Promise<
-  Result<
-    { readonly snapshot?: AnalysisSnapshot; readonly evidence?: Evidence },
-    AnalysisError
-  >
+  Result<{ readonly snapshot?: AnalysisSnapshot }, AnalysisError>
 > => {
-  const {
-    path,
-    tool,
-    arguments: arguments_,
-    snapshotPath,
-    policy,
-    provider,
-  } = options;
+  const { path, snapshotPath, policy } = options;
   if (snapshotPath === undefined || !(await fileExists(snapshotPath)))
     return ok({});
   const loaded = await readAnalysisSnapshot(snapshotPath, policy);
@@ -391,36 +391,26 @@ const prepareSnapshot = async (options: {
         "Analysis snapshot target does not match the requested binary",
       ),
     );
-  const evidence = snapshotEvidenceForQuery(loaded.value, {
-    target: target.value,
-    operation: tool,
-    parameters: arguments_,
-    provider,
-  });
-  return ok(
-    evidence === undefined
-      ? { snapshot: loaded.value }
-      : { snapshot: loaded.value, evidence },
-  );
+  return ok({ snapshot: loaded.value });
 };
-
-const snapshotUnavailable = (
-  snapshotPath: string | undefined,
-  loaderArgs: readonly string[],
-): EvidenceIntegrityError | undefined =>
-  snapshotPath !== undefined && loaderArgs.length > 0
-    ? new EvidenceIntegrityError(
-        "Analysis snapshots are unavailable with custom Hopper loader arguments",
-      )
-    : undefined;
 
 const replayProviderFor = (
   session: ReturnType<typeof createBinarySession>,
   tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
 ) =>
   tool === "binary_overview" || tool === "trace_feature"
-    ? WORKFLOW_PROVIDER
+    ? REA_WORKFLOW_PROVIDER
     : session.providerIdentity(tool);
+
+const analysisProfileForEvidence = (
+  session: ReturnType<typeof createBinarySession>,
+  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+): AnalysisProfileCommitment | undefined => {
+  if (tool !== "binary_overview" && tool !== "trace_feature")
+    return session.analysisProfile(tool);
+  const upstream = session.analysisProfile();
+  return upstream === undefined ? undefined : workflowAnalysisProfile(upstream);
+};
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {

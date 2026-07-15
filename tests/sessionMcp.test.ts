@@ -18,6 +18,14 @@ import {
 } from "../src/domain/evidenceBundle.js";
 import { createEvidence } from "../src/domain/evidence.js";
 import { silentLogger } from "../src/logger.js";
+import { createAnalysisProfile } from "../src/domain/analysisProfile.js";
+import { ok as resultOk } from "../src/domain/result.js";
+
+const SNAPSHOT_PROFILE = createAnalysisProfile(
+  { id: "fixture", name: "Fixture analysis provider", version: "1" },
+  1,
+  { fixture: true },
+);
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const processFixture = fileURLToPath(
@@ -37,7 +45,12 @@ describe("target-free MCP lifecycle", () => {
     const targetPath = join(directory, "mutable.hop");
     await writeFile(targetPath, "first");
     const closed: string[] = [];
-    const session = new BinarySession((target) => client(target.path, closed));
+    const session = new BinarySession((target) => client(target.path, closed), {
+      resolveAnalysisProfile: () =>
+        Promise.resolve(
+          resultOk({ profile: SNAPSHOT_PROFILE, compatibility: {} }),
+        ),
+    });
     const server = createServer(session, session, { logger: silentLogger });
     const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
     const [clientTransport, serverTransport] =
@@ -87,7 +100,12 @@ describe("target-free MCP lifecycle", () => {
     await writeFile(first, "one");
     await writeFile(second, "two");
     const closed: string[] = [];
-    const session = new BinarySession((target) => client(target.path, closed));
+    const session = new BinarySession((target) => client(target.path, closed), {
+      resolveAnalysisProfile: () =>
+        Promise.resolve(
+          resultOk({ profile: SNAPSHOT_PROFILE, compatibility: {} }),
+        ),
+    });
     const server = createServer(session, session, {
       logger: silentLogger,
       evidenceFilePolicy: {

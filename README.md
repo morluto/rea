@@ -240,13 +240,15 @@ Exports never replace an existing file unless `--overwrite` is explicit. Imports
 
 Provider-neutral analysis snapshots persist successful, immutable REA calls and
 their Evidence v2 records. They are exact caches rather than Hopper databases:
-REA reuses an entry only when the binary digest, format, architecture, operation
-parameters, loader arguments, and provider identity match. Custom Hopper loader
-overrides disable snapshots because their provider configuration cannot be
-replayed safely. Cursor-dependent and mutating calls are never cached. Snapshot
-files can contain proprietary analysis results and local
-paths, so REA keeps them local, writes them with owner-only permissions, and
-requires a separate approved root:
+REA reuses a v2 entry only when the binary digest, kind, format, architecture,
+operation parameters, concrete provider build, and canonical analysis-profile
+digest match. Hopper loader defaults and configured overrides are normalized by
+the Hopper adapter and committed to that profile, so overrides occupy a distinct
+safe cache partition instead of disabling snapshots. Snapshot v1 cannot prove
+those semantics and is rejected with recapture guidance. Cursor-dependent and
+mutating calls are never cached. Snapshot files can contain proprietary analysis
+results and local paths, so REA keeps them local, writes them with owner-only
+permissions, and requires a separate approved root:
 
 ```bash
 export REA_ANALYSIS_SNAPSHOT_ROOTS_JSON='["/absolute/path/to/analysis"]'
@@ -255,7 +257,7 @@ rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
 rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
 ```
 
-Exact CLI evidence replays happen before any provider starts. In MCP sessions,
+Exact CLI evidence replays happen before any provider process starts. In MCP sessions,
 pass `snapshot_path` to `open_binary` to import a snapshot atomically while
 opening its matching target; MCP providers may still start before a cached call
 is replayed. Pass `snapshot_path` and, when required, `overwrite: true` to
@@ -312,7 +314,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 
 REA is already useful for native application, browser, and Electron investigation on supported macOS and Linux hosts:
 
-- Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
+- Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and generic analysis-database targets; Hopper remains the only adapter that accepts legacy `.hop` databases.
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
 - Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.

@@ -7,6 +7,7 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
@@ -17,6 +18,10 @@ import {
   OFFICIAL_TOOL_CONTRACTS,
 } from "../contracts/toolContracts.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
+import {
+  hopperLoaderArgsForTarget,
+  resolveHopperAnalysisProfile,
+} from "./HopperAnalysisProfile.js";
 import { HopperClient } from "./HopperClient.js";
 
 /** Public identity committed by every Hopper-backed observation. */
@@ -90,7 +95,18 @@ export class HopperProvider implements AnalysisProvider {
     return CAPABILITIES;
   }
 
-  createClient(target: BinaryTarget): AnalysisClient {
+  resolveAnalysisProfile(target: BinaryTarget) {
+    return resolveHopperAnalysisProfile(target, {
+      launcherPath: this.config.hopperLauncherPath,
+      loaderArgsOverride: this.config.hopperLoaderArgs,
+      provider: IDENTITY,
+    });
+  }
+
+  createClient(
+    target: BinaryTarget,
+    profile?: AnalysisProfileCommitment,
+  ): AnalysisClient {
     if (target.kind !== "executable" && target.kind !== "database")
       return {
         execute: (operation) =>
@@ -105,6 +121,13 @@ export class HopperProvider implements AnalysisProvider {
           ),
         close: () => Promise.resolve(),
       };
+    const derivedLoaderArgs = hopperLoaderArgsForTarget(target);
+    if (!derivedLoaderArgs.ok)
+      return {
+        execute: () => Promise.resolve(err(derivedLoaderArgs.error)),
+        close: () => Promise.resolve(),
+      };
+    const executionProvider = profile?.provider ?? IDENTITY;
     const client = new HopperClient({
       launcher: new HopperApplicationLauncher({
         launcherPath: this.config.hopperLauncherPath,
@@ -113,7 +136,7 @@ export class HopperProvider implements AnalysisProvider {
         loaderArgs:
           this.config.hopperLoaderArgs.length > 0
             ? this.config.hopperLoaderArgs
-            : target.loaderArgs,
+            : derivedLoaderArgs.value,
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/hopper_bridge.py", import.meta.url),
         ),
@@ -134,7 +157,8 @@ export class HopperProvider implements AnalysisProvider {
         return result.ok
           ? {
               ok: true,
-              value: createAnalysisExecution(result.value, IDENTITY, {
+              value: createAnalysisExecution(result.value, executionProvider, {
+                ...(profile === undefined ? {} : { analysisProfile: profile }),
                 limitations: [
                   "Results depend on Hopper's completed static analysis.",
                 ],

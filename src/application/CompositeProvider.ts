@@ -1,6 +1,7 @@
 import { ProviderSelectionError } from "../domain/errors.js";
 import { err, ok } from "../domain/result.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
@@ -24,10 +25,19 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
+  readonly #profileProvider: AnalysisProvider | undefined;
 
   constructor(readonly providers: readonly AnalysisProvider[]) {
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
+    const profileProviders = providers.filter(
+      ({ resolveAnalysisProfile }) => resolveAnalysisProfile !== undefined,
+    );
+    if (profileProviders.length > 1)
+      throw new TypeError(
+        "CompositeProvider supports at most one target-bound analysis profile",
+      );
+    this.#profileProvider = profileProviders[0];
     this.#identity = Object.freeze(compositeIdentity(providers));
     const routes = new Map<string, AnalysisProvider>();
     const capabilities: CapabilityDescriptor[] = [];
@@ -59,12 +69,25 @@ export class CompositeProvider implements AnalysisProvider {
     return this.#capabilities;
   }
 
-  createClient(target: BinaryTarget): AnalysisClient {
+  resolveAnalysisProfile(target: BinaryTarget) {
+    const resolve = this.#profileProvider?.resolveAnalysisProfile;
+    return resolve === undefined
+      ? Promise.resolve(ok({ profile: null, compatibility: {} }))
+      : resolve.call(this.#profileProvider, target);
+  }
+
+  createClient(
+    target: BinaryTarget,
+    profile?: AnalysisProfileCommitment,
+  ): AnalysisClient {
     const clients = new Map<AnalysisProvider, AnalysisClient>();
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
       const existing = clients.get(provider);
       if (existing !== undefined) return existing;
-      const created = provider.createClient(target);
+      const created = provider.createClient(
+        target,
+        profile?.provider.id === provider.identity().id ? profile : undefined,
+      );
       clients.set(provider, created);
       return created;
     };

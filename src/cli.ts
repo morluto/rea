@@ -99,7 +99,7 @@ const registerCoreCommands = (
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
-      path: z.string().describe("App, program, or Hopper database path"),
+      path: z.string().describe("App, program, or analysis database path"),
     }),
     options: overviewOptions,
     run: ({ args, options }) =>
@@ -115,7 +115,7 @@ const registerCoreCommands = (
   cli.command(CLI_COMMANDS.inspect, {
     description: "Inspect an app overview with evidence",
     args: z.object({
-      path: z.string().describe("App, program, or Hopper database path"),
+      path: z.string().describe("App, program, or analysis database path"),
     }),
     options: overviewOptions,
     run: ({ args, options }) =>

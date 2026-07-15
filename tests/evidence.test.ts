@@ -10,6 +10,7 @@ import {
 } from "../src/domain/evidence.js";
 import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../src/domain/residualUnknown.js";
+import { createAnalysisProfile } from "../src/domain/analysisProfile.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -18,11 +19,25 @@ const TARGET: BinaryTarget = {
   format: "mach-o",
   architecture: "arm64",
   availableArchitectures: ["arm64"],
-  loaderArgs: ["-l", "Mach-O", "--aarch64"],
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
+const PROFILE = createAnalysisProfile(PROVIDER, 1, { loader: "default" });
 
 describe("analysis evidence", () => {
+  it("keeps the public object schema extensible for typed consumers", () => {
+    expect(evidenceSchema.shape.analysis_profile).toBeDefined();
+    expect(evidenceSchema.shape.provider).toBeDefined();
+  });
+
+  it("derives identity after normalizing prototype-named parameter keys", () => {
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: Object.fromEntries([["__proto__", false]]),
+      result: true,
+    });
+    expect(parseEvidence(evidence)).toEqual(evidence);
+  });
+
   it.prop([
     fc.dictionary(
       fc.string({ minLength: 1, maxLength: 12 }),
@@ -87,6 +102,37 @@ describe("analysis evidence", () => {
     });
     expect(evidence.evidence_id).toMatch(/^ev_[a-f0-9]{64}$/u);
     expect(createEvidence(TARGET, PROVIDER, observation)).toEqual(evidence);
+  });
+
+  it("preserves legacy IDs while committing profiles on new observations", () => {
+    const legacy = createEvidence(TARGET, PROVIDER, {
+      operation: "procedure_info",
+      parameters: { procedure: "main" },
+      result: { name: "main" },
+    });
+    expect("analysis_profile" in legacy).toBe(false);
+    expect(parseEvidence(legacy)).toEqual(legacy);
+
+    const profiled = createEvidence(TARGET, PROVIDER, {
+      operation: "procedure_info",
+      parameters: { procedure: "main" },
+      result: { name: "main" },
+      analysisProfile: PROFILE,
+    });
+    expect(profiled).toMatchObject({ analysis_profile: PROFILE });
+    expect(profiled.evidence_id).not.toBe(legacy.evidence_id);
+    expect(() =>
+      createEvidence(
+        TARGET,
+        { ...PROVIDER, id: "other" },
+        {
+          operation: "procedure_info",
+          parameters: {},
+          result: null,
+          analysisProfile: PROFILE,
+        },
+      ),
+    ).toThrow(/profile provider/u);
   });
 
   it("excludes local paths but includes redacted raw results in identity", () => {

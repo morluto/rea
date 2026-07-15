@@ -21,9 +21,7 @@ export const readAnalysisSnapshot = async (
     return ok(parseAnalysisSnapshot(loaded.value));
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError("Analysis snapshot validation failed", {
-        cause,
-      }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
   }
 };
@@ -42,10 +40,13 @@ export const writeAnalysisSnapshot = async (
     encoded = serializeAnalysisSnapshot(snapshot);
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError("Analysis snapshot validation failed", {
-        cause,
-      }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
   }
   return writeBoundedText(encoded, path, overwrite, policy);
 };
+
+const snapshotValidationMessage = (cause: unknown): string =>
+  cause instanceof TypeError
+    ? cause.message
+    : "Analysis snapshot validation failed";

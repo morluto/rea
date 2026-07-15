@@ -3,6 +3,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type {
   AnalysisError,
   EvidenceIntegrityError,
@@ -81,5 +82,9 @@ export interface BinarySessionPort extends AnalysisOperationPort {
     UnknownRegistryError
   >;
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity;
+  analysisProfile(
+    operation?: AnalysisOperation,
+  ): AnalysisProfileCommitment | undefined;
+  openCompatibility(): Readonly<Record<string, JsonValue>>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
 }
