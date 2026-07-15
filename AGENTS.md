@@ -25,7 +25,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/main.ts`: MCP adapter. Parses config, wires the shared session runtime, starts stdio transport, and owns process-lifetime shutdown.
 - `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
 - `src/config.ts`: Zod-validated parsing of environment configuration into `AppConfig`.
-- `src/domain/`: pure, side-effect-free modules. `errors.ts` (tagged error algebra), `result.ts` (`Result`/`ok`/`err`), `hopperValues.ts` (shared function-dossier values plus Hopper boundary parsers), `symbolAnalysis.ts` (Swift/ObjC name parsing).
+- `src/domain/`: pure, side-effect-free modules. `errors.ts` owns the tagged error algebra; `result.ts` owns `Result`/`ok`/`err`; `hopperValues.ts` owns shared function-dossier values plus Hopper boundary parsers; `symbolAnalysis.ts` parses Swift/ObjC names; `javascriptApplicationGraph.ts` validates and canonically commits the provider-neutral JavaScript Application Graph without performing I/O.
 - `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 2 Electron, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
 - `src/process/`: provider-neutral process ownership and lifecycle primitives. It owns private runtime roots, absolute startup deadlines, correlated request waits, bounded output capture, and TERM-to-KILL cleanup without defining any provider wire protocol.
 - `src/browser/`: loopback CDP discovery, bounded WebSocket transport, exact-origin target authorization, and passive browser observation normalization.
@@ -36,7 +36,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows. `AnalysisProviderRegistry` discovers overlapping deep candidates without starting them; `SessionProviderRouter` binds one candidate per target and composes it with disjoint auxiliary providers.
 - `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
 - `docs/product-catalog.json`: generated package, tool-family, provider, setup-client, schema-version, and CLI facts. Regenerate it from source; do not edit it by hand.
-- `tests/`: Vitest suite. `tests/fixtures/` holds reusable provider-process fixtures plus the fake launcher, Hopper bridge, and CDP seams.
+- `tests/`: Vitest suite. `tests/fixtures/` holds reusable provider-process fixtures, a source-owned synthetic JavaScript application graph, and the fake launcher, Hopper bridge, and CDP seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
 - `scripts/verify-real-ghidra.mjs`: real Linux Ghidra verifier for x86-64 debug/stripped ELF, AArch64 ELF, PE, and Mach-O function semantics plus complete cleanup.
 - `scripts/verify-real-browser.mjs`: real Chrome end-to-end verifier for the passive CDP provider.

@@ -30,7 +30,7 @@
 
 See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA gives agents one consistent way to investigate software. Today that includes deep native analysis and function dossiers through Hopper or bring-your-own Ghidra on Linux, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis and function dossiers through Hopper or bring-your-own Ghidra on Linux, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, bounded JavaScript/source-map reconstruction, and a versioned domain graph for connecting JavaScript application layers without confusing static inference with runtime observation. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
 
 Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
@@ -340,6 +340,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Discover deep-analysis candidates without starting them, choose deterministically, and retain one immutable provider/profile binding until an explicit switch or close; provider failures never trigger transparent fallback.
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
 - Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
+- Validate and canonically serialize a provider-neutral [JavaScript Application Graph v1](docs/javascript-application-graph.md) spanning packages, ASAR entries, Electron roles, JavaScript/source-map entities, browser/runtime instances, IPC, endpoints, storage, and native add-ons. This shipped domain contract performs no extraction or I/O by itself.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -384,7 +385,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
+2. **JavaScript application graph extractors** — populate the shipped v1 domain graph from artifact inventories, bundle analysis, source maps, Electron boundaries, passive runtime observations, and native analysis without widening authority.
 3. **Cross-provider conformance growth** — add source-owned architectures and difficult indirect/thunk cases while preserving semantic comparison and provider-specific text boundaries.
 
 ### Next
