@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -36,25 +37,45 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ghidra.app.util.headless.HeadlessScript;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileOptions;
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.block.BasicBlockModel;
+import ghidra.program.model.block.CodeBlock;
+import ghidra.program.model.block.CodeBlockIterator;
+import ghidra.program.model.block.CodeBlockReference;
+import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 
 public final class ReaGhidraBridge extends HeadlessScript {
-    private static final int BRIDGE_VERSION = 2;
+    private static final int BRIDGE_VERSION = 3;
     private static final int MAX_DESCRIPTOR_BYTES = 16 * 1024;
     private static final int MAX_REQUEST_CHARACTERS = 256 * 1024;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final int MAX_INVENTORY_ITEMS = 1_000_000;
+    private static final int MAX_FUNCTION_ITEMS = 100_000;
+    private static final int MAX_FUNCTION_INSTRUCTIONS = 100_000;
+    private static final int DECOMPILE_TIMEOUT_SECONDS = 30;
+    private static final int DECOMPILE_PAYLOAD_MBYTES = 8;
     private static final int MAX_LIST_VALUE_CODE_POINTS = 1_024;
     private static final int MAX_SEARCH_VALUE_CODE_POINTS = 4_096;
     private static final int MAX_REGEX_CANDIDATE_CHARACTERS = 4_096;
@@ -88,12 +109,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "procedure_address",
         "resolve_containing_procedure",
         "search_procedures",
-        "search_strings"
+        "search_strings",
+        "analyze_function",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_info",
+        "procedure_pseudo_code",
+        "procedure_references",
+        "xrefs"
     };
 
     private List<InventoryItem> nameInventory;
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
+    private DecompInterface decompiler;
     private static AddressSpace sessionDefaultAddressSpace;
 
     @Override
@@ -113,7 +143,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!Application.getApplicationVersion().equals(descriptor.providerVersion)) {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
-        serve(descriptor);
+        try {
+            initializeDecompiler();
+            serve(descriptor);
+        }
+        finally {
+            if (decompiler != null) {
+                decompiler.dispose();
+                decompiler = null;
+            }
+        }
     }
 
     private void serve(SessionDescriptor descriptor) throws Exception {
@@ -195,9 +234,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "list_segments" -> listSegments(request.params);
             case "list_strings" -> listStrings(request.params);
             case "procedure_address" -> procedureAddress(request.params);
+            case "procedure_assembly" -> procedureAssembly(request.params);
+            case "procedure_callees" -> procedureCalls(request.params, false);
+            case "procedure_callers" -> procedureCalls(request.params, true);
+            case "procedure_info" -> procedureInfo(request.params);
+            case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
             case "search_procedures" -> search(request.params, true);
             case "search_strings" -> search(request.params, false);
+            case "xrefs" -> xrefs(request.params);
+            case "analyze_function" -> analyzeFunction(request.params);
             default -> throw new RequestFailure(
                 "method_unavailable",
                 "Bridge method is unavailable"
@@ -235,6 +282,280 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("analysis_timed_out", timedOut);
         result.add("capabilities", GSON.toJsonTree(CAPABILITIES));
         result.add("target", target);
+        return result;
+    }
+
+    private void initializeDecompiler() {
+        DecompileOptions options = new DecompileOptions();
+        options.setDefaultTimeout(DECOMPILE_TIMEOUT_SECONDS);
+        options.setMaxPayloadMBytes(DECOMPILE_PAYLOAD_MBYTES);
+        options.setMaxInstructions(MAX_FUNCTION_INSTRUCTIONS);
+        decompiler = new DecompInterface();
+        decompiler.setOptions(options);
+        decompiler.toggleCCode(true);
+        decompiler.toggleSyntaxTree(true);
+        if (!decompiler.openProgram(currentProgram)) {
+            throw new IllegalStateException("Ghidra decompiler could not open the imported Program");
+        }
+    }
+
+    private JsonElement procedurePseudocode(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "procedure"));
+        requireDocument(params);
+        String value = decompile(resolveProcedure(requireString(params, "procedure")));
+        return value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value);
+    }
+
+    private JsonElement procedureAssembly(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "procedure"));
+        requireDocument(params);
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        InstructionScan scan = scanInstructions(function, MAX_FUNCTION_INSTRUCTIONS);
+        if (scan.truncated) {
+            throw functionLimit("Procedure assembly exceeds the 100000-instruction limit");
+        }
+        return GSON.toJsonTree(renderAssembly(scan.instructions));
+    }
+
+    private JsonArray procedureCalls(JsonObject params, boolean callers) throws Exception {
+        requireKeys(params, Set.of("document", "procedure"));
+        requireDocument(params);
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        Set<Function> observed = callers
+            ? function.getCallingFunctions(monitor)
+            : function.getCalledFunctions(monitor);
+        if (observed.size() > MAX_FUNCTION_ITEMS) {
+            throw functionLimit("Resolved call set exceeds the 100000-item limit");
+        }
+        List<Function> ordered = new ArrayList<>(observed);
+        ordered.sort(Comparator.comparing(Function::getEntryPoint));
+        JsonArray result = new JsonArray();
+        for (Function item : ordered) {
+            result.add(canonicalAddress(item.getEntryPoint()));
+        }
+        return result;
+    }
+
+    private JsonObject procedureInfo(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "procedure"));
+        requireDocument(params);
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        JsonObject result = new JsonObject();
+        result.addProperty("name", procedureName(function));
+        result.addProperty("entrypoint", canonicalAddress(function.getEntryPoint()));
+        result.addProperty("basicblock_count", basicBlocks(function).size());
+        result.addProperty("length", function.getBody().getNumAddresses());
+        result.addProperty("signature", function.getPrototypeString(false, true));
+        result.add("locals", functionLocals(function));
+        result.add("classification", functionClassification(function));
+        return result;
+    }
+
+    private JsonObject procedureReferences(JsonObject params) throws Exception {
+        requireKeys(
+            params,
+            Set.of(
+                "document",
+                "procedure",
+                "direction",
+                "offset",
+                "limit",
+                "max_instructions"
+            )
+        );
+        requireDocument(params);
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        String direction = requireString(params, "direction");
+        if (!direction.equals("incoming") && !direction.equals("outgoing")) {
+            throw new RequestFailure("invalid_request", "direction must be incoming or outgoing");
+        }
+        int offset = requireBoundedInteger(params, "offset", 0, Integer.MAX_VALUE);
+        int limit = requireBoundedInteger(params, "limit", 1, 500);
+        int maximum = requireBoundedInteger(params, "max_instructions", 1, 5_000);
+        InstructionScan scan = scanInstructions(function, maximum);
+        List<Reference> references = collectReferences(scan.instructions, direction);
+        JsonArray edges = new JsonArray();
+        for (Reference reference : references) {
+            edges.add(referenceEdge(reference));
+        }
+        JsonObject result = new JsonObject();
+        result.add("procedure", procedureIdentity(function));
+        result.addProperty("direction", direction);
+        result.add("references", bounded(edges, offset, limit, !scan.truncated));
+        result.addProperty("instructions_scanned", scan.instructions.size());
+        result.addProperty("instruction_scan_truncated", scan.truncated);
+        return result;
+    }
+
+    private JsonArray xrefs(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        ReferenceIterator references = currentProgram.getReferenceManager().getReferencesTo(address);
+        Set<Address> sources = new HashSet<>();
+        while (references.hasNext()) {
+            monitor.checkCancelled();
+            Reference reference = references.next();
+            if (reference.isEntryPointReference()) {
+                continue;
+            }
+            sources.add(reference.getFromAddress());
+            if (sources.size() > MAX_FUNCTION_ITEMS) {
+                throw functionLimit("Cross-reference set exceeds the 100000-item limit");
+            }
+        }
+        List<Address> ordered = new ArrayList<>(sources);
+        ordered.sort(Address::compareTo);
+        JsonArray result = new JsonArray();
+        for (Address source : ordered) {
+            result.add(canonicalAddress(source));
+        }
+        return result;
+    }
+
+    private JsonObject analyzeFunction(JsonObject params) throws Exception {
+        requireKeys(
+            params,
+            Set.of(
+                "procedure",
+                "include_assembly",
+                "limit",
+                "max_pseudocode_chars",
+                "max_instructions",
+                "pseudocode_offset",
+                "assembly_offset",
+                "collection_offset"
+            )
+        );
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        boolean includeAssembly = requireBoolean(params, "include_assembly");
+        int limit = requireBoundedInteger(params, "limit", 1, 500);
+        int maximumCharacters = requireBoundedInteger(
+            params,
+            "max_pseudocode_chars",
+            1,
+            100_000
+        );
+        int maximumInstructions = requireBoundedInteger(
+            params,
+            "max_instructions",
+            1,
+            5_000
+        );
+        int pseudocodeOffset = requireBoundedInteger(
+            params,
+            "pseudocode_offset",
+            0,
+            Integer.MAX_VALUE
+        );
+        int assemblyOffset = requireBoundedInteger(
+            params,
+            "assembly_offset",
+            0,
+            Integer.MAX_VALUE
+        );
+        JsonObject offsets = requireCollectionOffsets(params);
+        InstructionScan scan = scanInstructions(function, maximumInstructions);
+        String pseudocode = decompile(function);
+        if (pseudocode == null) {
+            pseudocode = "";
+        }
+        List<Reference> incomingReferences = collectReferences(scan.instructions, "incoming")
+            .stream()
+            .filter(reference -> !function.getBody().contains(reference.getFromAddress()))
+            .toList();
+        List<Reference> outgoingReferences = collectReferences(scan.instructions, "outgoing");
+        JsonArray incoming = referenceEdges(incomingReferences);
+        JsonArray outgoing = referenceEdges(outgoingReferences);
+        JsonArray comments = comments(scan.instructions);
+        JsonArray callers = procedureIdentities(function.getCallingFunctions(monitor));
+        JsonArray callees = procedureIdentities(function.getCalledFunctions(monitor));
+        JsonArray referencedStrings = referencedStrings(outgoingReferences);
+        JsonArray referencedNames = referencedNames(outgoingReferences);
+        JsonArray blocks = basicBlockValues(function);
+        JsonArray assembly = includeAssembly
+            ? GSON.toJsonTree(renderAssemblyLines(scan.instructions)).getAsJsonArray()
+            : new JsonArray();
+
+        JsonObject procedure = procedureIdentity(function);
+        procedure.addProperty("signature", function.getPrototypeString(false, true));
+        procedure.add("locals", functionLocals(function));
+        JsonObject result = new JsonObject();
+        result.add("procedure", procedure);
+        result.add(
+            "pseudocode",
+            pseudocodePage(pseudocode, pseudocodeOffset, maximumCharacters)
+        );
+        result.add(
+            "assembly",
+            includeAssembly
+                ? bounded(assembly, assemblyOffset, maximumInstructions, !scan.truncated)
+                : bounded(assembly, 0, maximumInstructions, true)
+        );
+        result.add(
+            "comments",
+            bounded(comments, collectionOffset(offsets, "comments"), limit, !scan.truncated)
+        );
+        result.add("callers", bounded(callers, collectionOffset(offsets, "callers"), limit, true));
+        result.add("callees", bounded(callees, collectionOffset(offsets, "callees"), limit, true));
+        result.add(
+            "incoming_references",
+            bounded(
+                incoming,
+                collectionOffset(offsets, "incoming_references"),
+                limit,
+                !scan.truncated
+            )
+        );
+        result.add(
+            "outgoing_references",
+            bounded(
+                outgoing,
+                collectionOffset(offsets, "outgoing_references"),
+                limit,
+                !scan.truncated
+            )
+        );
+        result.add(
+            "referenced_strings",
+            bounded(
+                referencedStrings,
+                collectionOffset(offsets, "referenced_strings"),
+                limit,
+                !scan.truncated
+            )
+        );
+        result.add(
+            "referenced_names",
+            bounded(
+                referencedNames,
+                collectionOffset(offsets, "referenced_names"),
+                limit,
+                !scan.truncated
+            )
+        );
+        result.add(
+            "basic_blocks",
+            bounded(blocks, collectionOffset(offsets, "basic_blocks"), limit, true)
+        );
+        JsonObject instructionScan = new JsonObject();
+        instructionScan.addProperty("scanned", scan.instructions.size());
+        instructionScan.addProperty("truncated", scan.truncated);
+        result.add("instruction_scan", instructionScan);
+        JsonArray limitations = new JsonArray();
+        limitations.add(
+            "Unresolved computed or indirect flows without target addresses are not represented as reference edges."
+        );
+        limitations.add(
+            "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls."
+        );
+        limitations.add(
+            "Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text."
+        );
+        limitations.add(
+            "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
+        );
+        result.add("limitations", limitations);
         return result;
     }
 
@@ -530,6 +851,450 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return matches.get(0);
     }
 
+    private String decompile(Function function) {
+        if (function.isExternal() || function.getBody().isEmpty()) {
+            return null;
+        }
+        DecompileResults results = decompiler.decompileFunction(
+            function,
+            DECOMPILE_TIMEOUT_SECONDS,
+            monitor
+        );
+        if (results.isTimedOut()) {
+            throw new RequestFailure(
+                "decompile_timeout",
+                "Ghidra decompilation reached its 30-second deadline"
+            );
+        }
+        if (results.isCancelled()) {
+            throw new RequestFailure("decompile_cancelled", "Ghidra decompilation was cancelled");
+        }
+        if (!results.decompileCompleted()) {
+            throw new RequestFailure(
+                "decompile_failed",
+                "Ghidra decompilation failed: " + boundedMessage(results.getErrorMessage())
+            );
+        }
+        DecompiledFunction value = results.getDecompiledFunction();
+        return value == null ? null : value.getC();
+    }
+
+    private InstructionScan scanInstructions(Function function, int maximum) throws Exception {
+        InstructionIterator iterator = currentProgram.getListing().getInstructions(
+            function.getBody(),
+            true
+        );
+        List<Instruction> instructions = new ArrayList<>();
+        while (iterator.hasNext() && instructions.size() < maximum) {
+            monitor.checkCancelled();
+            instructions.add(iterator.next());
+        }
+        return new InstructionScan(List.copyOf(instructions), iterator.hasNext());
+    }
+
+    private static String renderAssembly(List<Instruction> instructions) {
+        return String.join("\n", renderAssemblyLines(instructions));
+    }
+
+    private static List<String> renderAssemblyLines(List<Instruction> instructions) {
+        List<String> result = new ArrayList<>();
+        for (Instruction instruction : instructions) {
+            StringBuilder line = new StringBuilder();
+            line.append(canonicalAddress(instruction.getAddress()));
+            line.append(": ");
+            line.append(instruction.getMnemonicString());
+            for (int index = 0; index < instruction.getNumOperands(); index += 1) {
+                line.append(index == 0 ? " " : ", ");
+                line.append(instruction.getDefaultOperandRepresentation(index));
+            }
+            result.add(line.toString());
+        }
+        return result;
+    }
+
+    private List<Reference> collectReferences(
+            List<Instruction> instructions,
+            String direction) throws Exception {
+        TreeMap<String, Reference> observed = new TreeMap<>();
+        for (Instruction instruction : instructions) {
+            monitor.checkCancelled();
+            if (direction.equals("outgoing")) {
+                for (Reference reference : currentProgram.getReferenceManager()
+                        .getReferencesFrom(instruction.getAddress())) {
+                    addReference(observed, reference);
+                }
+            }
+            else {
+                ReferenceIterator iterator = currentProgram.getReferenceManager()
+                    .getReferencesTo(instruction.getAddress());
+                while (iterator.hasNext()) {
+                    addReference(observed, iterator.next());
+                }
+            }
+        }
+        List<Reference> result = new ArrayList<>(observed.values());
+        result.sort(REFERENCE_ORDER);
+        return result;
+    }
+
+    private static void addReference(TreeMap<String, Reference> observed, Reference reference) {
+        if (reference.isEntryPointReference()) {
+            return;
+        }
+        String key = canonicalAddress(reference.getFromAddress()) + "\u0000" +
+            canonicalAddress(reference.getToAddress()) + "\u0000" +
+            reference.getReferenceType().getName() + "\u0000" +
+            reference.getOperandIndex() + "\u0000" +
+            reference.isPrimary();
+        observed.putIfAbsent(key, reference);
+        if (observed.size() > MAX_FUNCTION_ITEMS) {
+            throw functionLimit("Reference set exceeds the 100000-item limit");
+        }
+    }
+
+    private JsonArray referenceEdges(List<Reference> references) {
+        JsonArray result = new JsonArray();
+        for (Reference reference : references) {
+            result.add(referenceEdge(reference));
+        }
+        return result;
+    }
+
+    private JsonObject referenceEdge(Reference reference) {
+        JsonObject result = new JsonObject();
+        result.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
+        result.addProperty("target_address", canonicalAddress(reference.getToAddress()));
+        Function source = containingFunction(reference.getFromAddress());
+        Function target = containingFunction(reference.getToAddress());
+        result.add(
+            "source_procedure",
+            source == null ? JsonNull.INSTANCE : procedureIdentity(source)
+        );
+        result.add(
+            "target_procedure",
+            target == null ? JsonNull.INSTANCE : procedureIdentity(target)
+        );
+        result.add("kind", referenceKind(reference));
+        return result;
+    }
+
+    private static JsonObject referenceKind(Reference reference) {
+        RefType type = reference.getReferenceType();
+        JsonObject result = new JsonObject();
+        result.addProperty("available", true);
+        result.addProperty("provenance", "ghidra-reference-manager");
+        result.addProperty("type", type.getName());
+        result.addProperty("flow", type.isFlow());
+        result.addProperty("call", type.isCall());
+        result.addProperty("jump", type.isJump());
+        result.addProperty("data", type.isData());
+        result.addProperty("read", type.isRead());
+        result.addProperty("write", type.isWrite());
+        result.addProperty("indirect", type.isIndirect());
+        result.addProperty("computed", type.isComputed());
+        result.addProperty("conditional", type.isConditional());
+        result.addProperty("terminal", type.isTerminal());
+        result.addProperty("primary", reference.isPrimary());
+        result.addProperty("operand_index", reference.getOperandIndex());
+        result.addProperty("external", reference.isExternalReference());
+        return result;
+    }
+
+    private Function containingFunction(Address address) {
+        Function result = currentProgram.getFunctionManager().getFunctionAt(address);
+        if (result == null && address.isMemoryAddress()) {
+            result = currentProgram.getFunctionManager().getFunctionContaining(address);
+        }
+        return result;
+    }
+
+    private static String procedureName(Function function) {
+        Symbol symbol = function.getSymbol();
+        return symbol == null ? function.getName() : symbol.getName(true);
+    }
+
+    private static JsonObject functionClassification(Function function) {
+        JsonObject result = new JsonObject();
+        result.addProperty("external", function.isExternal());
+        result.addProperty("thunk", function.isThunk());
+        Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
+        if (target == null) {
+            result.add("thunk_target", JsonNull.INSTANCE);
+        }
+        else {
+            result.addProperty("thunk_target", canonicalAddress(target.getEntryPoint()));
+        }
+        result.addProperty("provenance", "ghidra-function-manager");
+        return result;
+    }
+
+    private static JsonArray functionLocals(Function function) {
+        Variable[] variables = function.getLocalVariables();
+        if (variables.length > MAX_FUNCTION_ITEMS) {
+            throw functionLimit("Local-variable set exceeds the 100000-item limit");
+        }
+        List<Variable> ordered = new ArrayList<>(List.of(variables));
+        ordered.sort(
+            Comparator.comparing(Variable::getName)
+                .thenComparing(variable -> variable.getVariableStorage().toString())
+        );
+        JsonArray result = new JsonArray();
+        for (Variable variable : ordered) {
+            JsonObject item = new JsonObject();
+            item.addProperty(
+                "description",
+                variable.getDataType().getDisplayName() + " " + variable.getName() +
+                    " @ " + variable.getVariableStorage()
+            );
+            item.addProperty("provenance", "ghidra-function-database");
+            result.add(item);
+        }
+        return result;
+    }
+
+    private JsonArray procedureIdentities(Set<Function> functions) {
+        if (functions.size() > MAX_FUNCTION_ITEMS) {
+            throw functionLimit("Resolved call set exceeds the 100000-item limit");
+        }
+        List<Function> ordered = new ArrayList<>(functions);
+        ordered.sort(Comparator.comparing(Function::getEntryPoint));
+        JsonArray result = new JsonArray();
+        for (Function function : ordered) {
+            result.add(procedureIdentity(function));
+        }
+        return result;
+    }
+
+    private List<CodeBlock> basicBlocks(Function function) throws Exception {
+        BasicBlockModel model = new BasicBlockModel(currentProgram, false);
+        CodeBlockIterator iterator = model.getCodeBlocksContaining(function.getBody(), monitor);
+        List<CodeBlock> result = new ArrayList<>();
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            if (result.size() >= MAX_FUNCTION_ITEMS) {
+                throw functionLimit("Basic-block set exceeds the 100000-item limit");
+            }
+            result.add(iterator.next());
+        }
+        result.sort(Comparator.comparing(CodeBlock::getFirstStartAddress));
+        return result;
+    }
+
+    private JsonArray basicBlockValues(Function function) throws Exception {
+        JsonArray result = new JsonArray();
+        for (CodeBlock block : basicBlocks(function)) {
+            JsonObject item = new JsonObject();
+            item.addProperty("start", canonicalAddress(block.getFirstStartAddress()));
+            item.addProperty("end", exclusiveAddress(block.getMaxAddress()));
+            Set<Address> successors = new HashSet<>();
+            CodeBlockReferenceIterator destinations = block.getDestinations(monitor);
+            while (destinations.hasNext()) {
+                CodeBlockReference destination = destinations.next();
+                CodeBlock destinationBlock = destination.getDestinationBlock();
+                if (destinationBlock == null) {
+                    continue;
+                }
+                Address address = destinationBlock.getFirstStartAddress();
+                if (
+                    !destination.getFlowType().isCall() &&
+                    function.getBody().contains(address)
+                ) {
+                    successors.add(address);
+                }
+            }
+            List<Address> ordered = new ArrayList<>(successors);
+            ordered.sort(Address::compareTo);
+            JsonArray values = new JsonArray();
+            for (Address address : ordered) {
+                values.add(canonicalAddress(address));
+            }
+            item.add("successors", values);
+            result.add(item);
+        }
+        return result;
+    }
+
+    private static JsonArray comments(List<Instruction> instructions) {
+        TreeMap<String, JsonObject> observed = new TreeMap<>();
+        for (Instruction instruction : instructions) {
+            for (CommentType type : CommentType.values()) {
+                String text = instruction.getComment(type);
+                if (text == null || text.isEmpty()) {
+                    continue;
+                }
+                String kind = type == CommentType.EOL ? "inline" : "comment";
+                JsonObject item = new JsonObject();
+                item.addProperty("address", canonicalAddress(instruction.getAddress()));
+                item.addProperty("kind", kind);
+                item.addProperty("text", text);
+                String key = canonicalAddress(instruction.getAddress()) + "\u0000" +
+                    kind + "\u0000" + type.name() + "\u0000" + text;
+                observed.put(key, item);
+                if (observed.size() > MAX_FUNCTION_ITEMS) {
+                    throw functionLimit("Comment set exceeds the 100000-item limit");
+                }
+            }
+        }
+        JsonArray result = new JsonArray();
+        observed.values().forEach(result::add);
+        return result;
+    }
+
+    private JsonArray referencedStrings(List<Reference> references) {
+        TreeMap<String, JsonObject> observed = new TreeMap<>();
+        for (Reference reference : references) {
+            Data data = currentProgram.getListing().getDefinedDataContaining(
+                reference.getToAddress()
+            );
+            if (data == null || !data.hasStringValue()) {
+                continue;
+            }
+            String value = StringDataInstance.getStringDataInstance(data).getStringValue();
+            if (value == null) {
+                continue;
+            }
+            JsonObject item = new JsonObject();
+            item.addProperty("address", canonicalAddress(data.getAddress()));
+            item.addProperty("value", value);
+            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
+            String key = canonicalAddress(data.getAddress()) + "\u0000" + value + "\u0000" +
+                canonicalAddress(reference.getFromAddress());
+            observed.put(key, item);
+            if (observed.size() > MAX_FUNCTION_ITEMS) {
+                throw functionLimit("Referenced-string set exceeds the 100000-item limit");
+            }
+        }
+        JsonArray result = new JsonArray();
+        observed.values().forEach(result::add);
+        return result;
+    }
+
+    private JsonArray referencedNames(List<Reference> references) {
+        TreeMap<String, JsonObject> observed = new TreeMap<>();
+        for (Reference reference : references) {
+            Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(
+                reference.getToAddress()
+            );
+            if (symbol == null) {
+                continue;
+            }
+            JsonObject item = new JsonObject();
+            item.addProperty("address", canonicalAddress(reference.getToAddress()));
+            item.addProperty("value", symbol.getName(true));
+            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
+            String key = canonicalAddress(reference.getToAddress()) + "\u0000" +
+                symbol.getName(true) + "\u0000" + canonicalAddress(reference.getFromAddress());
+            observed.put(key, item);
+            if (observed.size() > MAX_FUNCTION_ITEMS) {
+                throw functionLimit("Referenced-name set exceeds the 100000-item limit");
+            }
+        }
+        JsonArray result = new JsonArray();
+        observed.values().forEach(result::add);
+        return result;
+    }
+
+    private static JsonObject pseudocodePage(String value, int offset, int limit) {
+        int total = value.codePointCount(0, value.length());
+        int start = Math.min(offset, total);
+        int returned = Math.min(limit, total - start);
+        int startIndex = value.offsetByCodePoints(0, start);
+        int endIndex = value.offsetByCodePoints(startIndex, returned);
+        int next = start + returned;
+        JsonObject result = new JsonObject();
+        result.addProperty("text", value.substring(startIndex, endIndex));
+        result.addProperty("total_chars", total);
+        result.addProperty("returned_chars", returned);
+        result.addProperty("truncated", next < total);
+        if (next < total) {
+            result.addProperty("next_offset", next);
+        }
+        else {
+            result.add("next_offset", JsonNull.INSTANCE);
+        }
+        return result;
+    }
+
+    private static JsonObject bounded(
+            JsonArray values,
+            int offset,
+            int limit,
+            boolean complete) {
+        int start = Math.min(offset, values.size());
+        int end = Math.min(values.size(), start + limit);
+        JsonArray items = new JsonArray();
+        for (int index = start; index < end; index += 1) {
+            items.add(values.get(index).deepCopy());
+        }
+        boolean hasMore = end < values.size();
+        JsonObject result = new JsonObject();
+        result.add("items", items);
+        if (complete) {
+            result.addProperty("total", values.size());
+        }
+        else {
+            result.add("total", JsonNull.INSTANCE);
+        }
+        result.addProperty("returned", items.size());
+        result.addProperty("truncated", !complete || hasMore);
+        if (complete && hasMore) {
+            result.addProperty("next_offset", end);
+        }
+        else {
+            result.add("next_offset", JsonNull.INSTANCE);
+        }
+        return result;
+    }
+
+    private static JsonObject requireCollectionOffsets(JsonObject params) {
+        JsonElement value = params.get("collection_offset");
+        if (value == null || !value.isJsonObject()) {
+            throw new RequestFailure("invalid_request", "collection_offset must be an object");
+        }
+        JsonObject result = value.getAsJsonObject();
+        requireKeys(
+            result,
+            Set.of(
+                "comments",
+                "callers",
+                "callees",
+                "incoming_references",
+                "outgoing_references",
+                "referenced_strings",
+                "referenced_names",
+                "basic_blocks"
+            )
+        );
+        for (String name : result.keySet()) {
+            requireBoundedInteger(result, name, 0, Integer.MAX_VALUE);
+        }
+        return result;
+    }
+
+    private static int collectionOffset(JsonObject offsets, String name) {
+        return requireBoundedInteger(offsets, name, 0, Integer.MAX_VALUE);
+    }
+
+    private static String exclusiveAddress(Address inclusive) {
+        Address next = inclusive.next();
+        if (next != null && next.getAddressSpace().equals(inclusive.getAddressSpace())) {
+            return canonicalAddress(next);
+        }
+        BigInteger offset = new BigInteger(Long.toUnsignedString(inclusive.getOffset()));
+        return canonicalOffset(inclusive.getAddressSpace(), offset.add(BigInteger.ONE));
+    }
+
+    private static String boundedMessage(String value) {
+        if (value == null || value.isBlank()) {
+            return "native decompiler returned no detail";
+        }
+        return truncate(value.replaceAll("[\\r\\n]+", " "), 512).value;
+    }
+
+    private static RequestFailure functionLimit(String message) {
+        return new RequestFailure("limit_exceeded", message);
+    }
+
     private JsonObject page(
             List<InventoryItem> inventory,
             int offset,
@@ -600,11 +1365,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static JsonObject procedureIdentity(Function function) {
         JsonObject result = new JsonObject();
         result.addProperty("address", canonicalAddress(function.getEntryPoint()));
-        Symbol symbol = function.getSymbol();
-        result.addProperty(
-            "name",
-            symbol == null ? function.getName() : symbol.getName(true)
-        );
+        result.addProperty("name", procedureName(function));
+        result.add("classification", functionClassification(function));
         return result;
     }
 
@@ -1021,9 +1783,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Comparator.comparing(InventoryItem::address)
             .thenComparing(InventoryItem::value)
             .thenComparing(item -> GSON.toJson(item.facts));
+    private static final Comparator<Reference> REFERENCE_ORDER =
+        Comparator.comparing(Reference::getFromAddress)
+            .thenComparing(Reference::getToAddress)
+            .thenComparing(reference -> reference.getReferenceType().getName())
+            .thenComparingInt(Reference::getOperandIndex)
+            .thenComparing(Reference::isPrimary);
 
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
+    private record InstructionScan(List<Instruction> instructions, boolean truncated) {}
     private record TruncatedValue(String value, boolean truncated) {}
     private record SessionDescriptor(
         String socketPath,

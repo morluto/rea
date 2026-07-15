@@ -95,7 +95,12 @@ export const parseFunctionEvidence = (input: unknown): FunctionSnapshot => {
     collections,
     instructionScan: first.dossier.instruction_scan,
     limitations: [
-      ...new Set(pages.flatMap(({ evidence }) => evidence.limitations)),
+      ...new Set(
+        pages.flatMap(({ evidence, dossier }) => [
+          ...evidence.limitations,
+          ...dossier.limitations,
+        ]),
+      ),
     ].sort((left, right) => left.localeCompare(right)),
   };
 };

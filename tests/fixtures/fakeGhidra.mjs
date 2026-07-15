@@ -102,6 +102,9 @@ else {
           );
           continue;
         }
+        if (mode === "exit_tools" && request.method !== "shutdown")
+          process.exit(74);
+        if (mode === "hang_tools" && request.method !== "shutdown") continue;
         const inventory = inventoryResult(request.method);
         if (inventory !== undefined) {
           socket.write(
@@ -132,7 +135,7 @@ const sessionInfo = ({
   timedOut,
 }) => ({
   name: "REA Ghidra bridge",
-  bridge_version: 2,
+  bridge_version: 3,
   run_id: sessionRunId,
   profile_digest: digest,
   provider: { id: "ghidra", version },
@@ -152,6 +155,14 @@ const sessionInfo = ({
     "resolve_containing_procedure",
     "search_procedures",
     "search_strings",
+    "analyze_function",
+    "procedure_assembly",
+    "procedure_callees",
+    "procedure_callers",
+    "procedure_info",
+    "procedure_pseudo_code",
+    "procedure_references",
+    "xrefs",
   ],
   target: {
     name: "fixture",
@@ -237,7 +248,16 @@ const inventoryResult = (method) => {
       return {
         query_address: "0x1001",
         found: true,
-        procedure: { address: "0x1000", name: "fixture_main" },
+        procedure: {
+          address: "0x1000",
+          name: "fixture_main",
+          classification: {
+            external: false,
+            thunk: false,
+            thunk_target: null,
+            provenance: "ghidra-function-manager",
+          },
+        },
       };
     case "search_procedures":
       return page([

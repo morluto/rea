@@ -33,7 +33,8 @@ export const isGhidraInventoryOperation = (
   operation: string,
 ): operation is GhidraInventoryOperation => operationSet.has(operation);
 
-const boundedIdentifier = z.string().min(1).max(4096);
+export const ghidraBoundedIdentifierSchema = z.string().min(1).max(4096);
+const boundedIdentifier = ghidraBoundedIdentifierSchema;
 const document = boundedIdentifier.nullable().default(null);
 const explicitAddress = boundedIdentifier;
 const filteredAddress = explicitAddress.nullable().default(null);
@@ -82,9 +83,10 @@ export const parseGhidraInventoryInput = (
   return ok(jsonObjectSchema.parse(parsed.data));
 };
 
-const canonicalAddress = z
+export const ghidraCanonicalAddressSchema = z
   .string()
   .regex(/^(?:0x[0-9a-f]+|(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+:0x[0-9a-f]+)$/u);
+const canonicalAddress = ghidraCanonicalAddressSchema;
 const valueTruncation = { value_truncated: z.boolean() };
 const symbolFacts = z
   .object({
@@ -101,6 +103,9 @@ const procedureFacts = z
     thunk: z.boolean(),
     thunk_target: canonicalAddress.nullable(),
   })
+  .strict();
+const functionClassification = procedureFacts
+  .extend({ provenance: z.literal("ghidra-function-manager") })
   .strict();
 const stringFacts = z
   .object({
@@ -198,7 +203,11 @@ const containingProcedure = z.discriminatedUnion("found", [
       query_address: canonicalAddress,
       found: z.literal(true),
       procedure: z
-        .object({ address: canonicalAddress, name: z.string().min(1) })
+        .object({
+          address: canonicalAddress,
+          name: z.string().min(1),
+          classification: functionClassification,
+        })
         .strict(),
     })
     .strict(),

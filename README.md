@@ -30,7 +30,7 @@
 
 See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, bring-your-own Ghidra read-only inventory on Linux, complete Hopper function dossiers, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis and function dossiers through Hopper or bring-your-own Ghidra on Linux, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
 
 Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
@@ -153,7 +153,7 @@ Choose either the no-install commands or the global installation. You do not nee
 - Node.js 22.19+ or 24.11+ (including newer releases)
 - npm; REA does not require or install a particular npm version
 
-Deep binary operations use [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license, or a caller-selected Ghidra provider. Ghidra currently supplies program identity, procedure/string/symbol inventories, memory blocks, address/name and containing-procedure resolution, and bounded search; decompilation, calls, xrefs, GUI state, and mutations remain unavailable through that provider. Setup reuses an existing Hopper installation or an operator-supplied Ghidra installation. It never downloads Ghidra or installs Java. If neither provider is ready, interactive setup proposes Hopper; unattended Hopper installation requires `rea setup --yes --install-hopper`.
+Deep binary operations use [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license, or a caller-selected Ghidra provider. Ghidra supplies read-only inventory, function metadata, decompilation, assembly, resolved calls, typed references, xrefs, CFG, and function dossiers; GUI state and mutations remain unavailable through that provider. Setup reuses an existing Hopper installation or an operator-supplied Ghidra installation. It never downloads Ghidra or installs Java. If neither provider is ready, interactive setup proposes Hopper; unattended Hopper installation requires `rea setup --yes --install-hopper`.
 
 If something is not working, run:
 
@@ -186,7 +186,7 @@ Install the missing distribution packages and rerun `rea setup`. Linux demo auto
 
 REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
 
-### Ghidra read-only inventory provider
+### Ghidra read-only analysis provider
 
 The current Ghidra adapter supports the exact official Ghidra 12.1.2 release on Linux x64 with a 64-bit full JDK 21. Download and extract those projects yourself, then configure absolute paths:
 
@@ -202,9 +202,11 @@ Doctor distinguishes missing configuration, a bad installation root, the wrong G
 
 REA loads its packaged Java `HeadlessScript` with `-scriptPath`, imports the target into a mode-0700 temporary project, enables `-readOnly` and `-deleteProject`, caps auto-analysis at 300 seconds with two CPUs and a 2 GiB Java heap, and authenticates every request over a mode-0600 Unix socket. It isolates Ghidra home/cache/config/temp paths and removes the owned project, socket, process group, and runtime root on close, cancellation, timeout, or process exit.
 
-The Ghidra adapter declares exactly ten direct operations: `list_documents`, `list_procedures`, `list_strings`, `list_names`, `list_segments`, `address_name`, `procedure_address`, `resolve_containing_procedure`, `search_procedures`, and `search_strings`. These also enable the shared Swift/Objective-C inventory workflows and `binary_overview`; workflows that require decompilation, calls, or xrefs remain unavailable. Default-space addresses are lowercase `0x` hexadecimal. Other spaces, including `EXTERNAL`, use `<percent-encoded-space>:0x<hex>`. Symbol results identify primary, dynamic, external, type, and source facts; procedures distinguish external functions and thunks; strings identify charset, missing-terminator state, byte length, and value truncation; memory-block ends are exclusive and permissions come directly from Ghidra.
+The Ghidra adapter declares 18 direct and enhanced operations. Its ten inventory operations are `list_documents`, `list_procedures`, `list_strings`, `list_names`, `list_segments`, `address_name`, `procedure_address`, `resolve_containing_procedure`, `search_procedures`, and `search_strings`. It also admits `procedure_info`, `procedure_pseudo_code`, `procedure_assembly`, `procedure_callers`, `procedure_callees`, `procedure_references`, `xrefs`, and `analyze_function`. These capabilities enable the shared Swift/Objective-C inventory workflows, `binary_overview`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, `trace_feature`, and complete function dossiers. Default-space addresses are lowercase `0x` hexadecimal. Other spaces, including `EXTERNAL`, use `<percent-encoded-space>:0x<hex>`. Symbol results identify primary, dynamic, external, type, and source facts; procedures distinguish external functions and thunks; strings identify charset, missing-terminator state, byte length, and value truncation; memory-block ends are exclusive and permissions come directly from Ghidra.
 
-The bridge serves operations only after auto-analysis completes. An analysis timeout, inventory safety limit, request timeout, or oversized response fails explicitly instead of returning a partial result labeled complete. `npm run verify:ghidra` compiles source-owned debug and stripped ELF fixtures, validates external symbols and every admitted operation against real Ghidra 12.1.2, and proves cleanup.
+The bridge serves operations only after auto-analysis completes. Each Program owns one persistent `DecompInterface`; a bounded 32-request FIFO serializes Ghidra API access, and every decompile has a 30-second native deadline. Reference results preserve Ghidra's call/jump/data/read/write/indirect/computed/external facts, while unresolved targetless flows remain explicitly unknown. Synthetic entry-point references without actionable memory sources are omitted. Pseudocode and assembly are provider-specific observations, not original source or Hopper-equivalent text. An analysis timeout, scan or inventory safety limit, request timeout, or oversized response fails explicitly instead of returning a partial result labeled complete.
+
+`npm run verify:ghidra` compiles source-owned x86-64 debug and stripped ELF, AArch64 ELF, x86-64 PE, and x86-64 Mach-O fixtures. Against real Ghidra 12.1.2 it validates every admitted operation, direct and indirect calls, imports/exports/thunks, typed references, strings/xrefs, multi-block CFG, cancellation, deadlines, concurrency, malformed inputs, and complete process/project cleanup. Set `REA_CC`, `REA_CLANG`, or `REA_LLD_LINK` only when the corresponding compiler command is not on `PATH`.
 
 To remove only REA-owned MCP registrations and the managed skill:
 
@@ -382,8 +384,8 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **Ghidra function analysis** — extend the shipped read-only inventory operations with individually admitted decompilation, assembly, call, xref, and CFG capabilities, verified on real source-owned binaries without pretending Hopper and Ghidra results are textually identical.
-3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
+2. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
+3. **Cross-provider conformance growth** — add source-owned architectures and difficult indirect/thunk cases while preserving semantic comparison and provider-specific text boundaries.
 
 ### Next
 
@@ -399,7 +401,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra inventory boundary, remaining admission gates, and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions.
 
 ## Using REA with other agents
 
@@ -433,7 +435,7 @@ flowchart LR
     REA --> Session["Target-bound session router"]
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
-    Registry --> Ghidra["Ghidra provider<br/>read-only inventory operations"]
+    Registry --> Ghidra["Ghidra provider<br/>read-only inventory + function analysis"]
     Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
     Ghidra --> Runtime
     Session --> Native["Native macOS provider"]
@@ -512,10 +514,10 @@ the authoritative `analysis_provider_candidates` and
 `analysis_provider_binding` fields. Reopening the same target without a selector
 keeps its binding; runtime failure never selects another provider silently.
 Ghidra can appear as an available, target-compatible candidate after doctor
-validates its exact installation. Its capability list contains only the ten
-admitted read-only inventory operations; selecting it does not make
-Hopper-only decompilation, call/xref, GUI, or mutation operations available and
-never triggers a silent fallback.
+validates its exact installation. Its capability list contains the 18 admitted
+read-only inventory and function-analysis operations; selecting it still does
+not make Hopper-only GUI or mutation operations available and never triggers a
+silent fallback.
 
 ### CLI exit status
 

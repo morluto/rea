@@ -78,7 +78,7 @@ npx skills add morluto/rea
 
 يعرض `rea setup` خطة التغييرات كاملة ويطلب التأكيد قبل تطبيقها. لا يثبت أو يحدّث Homebrew أو Node.js أو npm. إذا كان [Hopper](https://www.hopperapp.com/) مفقودًا، يقترح Setup الحزمة الرسمية. Hopper برنامج منفصل يحتاج إلى ترخيص خاص به.
 
-إذا كان Ghidra 12.1.2 PUBLIC وJDK 21 الكامل بنواة 64 بت مثبتين مسبقًا على Linux ‏64 بت، فيمكن لـ Setup أيضًا تسجيل `GHIDRA_INSTALL_DIR` و`JAVA_HOME` الاختياري بعد الموافقة. لا ينزّل REA أو يثبت أو يعدّل Ghidra أو Java. يقدّم هذا الإصدار أساس جلسة headless خاصة ومعزولة فقط، ولا يعرض بعد عمليات تحليل الملفات الثنائية عبر Ghidra؛ لذلك تستمر مسارات التحليل العميق الحالية باستخدام Hopper.
+إذا كان Ghidra 12.1.2 PUBLIC وJDK 21 الكامل بنواة 64 بت مثبتين مسبقًا على Linux ‏64 بت، فيمكن لـ Setup أيضًا تسجيل `GHIDRA_INSTALL_DIR` و`JAVA_HOME` الاختياري بعد الموافقة. لا ينزّل REA أو يثبت أو يعدّل Ghidra أو Java. يوفّر مزوّد Ghidra ضمن جلسة headless معزولة وللقراءة فقط الجرد، وفك الترجمة، والتجميع، وعلاقات الاستدعاء، والمراجع ذات الأنواع، وxref، وCFG، وملفات تحليل الدوال؛ وتبقى حالة الواجهة الرسومية وعمليات التعديل غير متاحة.
 
 #### التثبيت على Linux واستكشاف الأخطاء
 
@@ -193,8 +193,8 @@ flowchart LR
     Human -->|CLI| REA
     REA --> Hopper[عمليات تحليل Hopper]
     Hopper --> App[تطبيقك]
-    REA -.-> Ghidra[أساس Ghidra headless<br/>دون عمليات ثنائية]
-    Ghidra -.-> App
+    REA --> Ghidra[تحليل Ghidra للقراءة فقط<br/>جرد + تحليل الدوال]
+    Ghidra --> App
 ```
 
 يستخدم CLI وخادم MCP محرك التحليل نفسه. تغلق أوامر الطرفية التطبيق عند انتهائها، بينما تبقيه جلسة الوكيل مفتوحًا أثناء الاستقصاء.
@@ -251,7 +251,7 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-نعم، يعمل REA على macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت؛ Windows غير مدعوم حاليًا. تعتمد عمليات التحليل العميق الحالية على تطبيق Hopper وواجهة Python الخاصة به، بينما لا يقدّم أساس Ghidra الجديد عمليات تحليل ثنائية بعد.
+نعم، يعمل REA على macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت؛ Windows غير مدعوم حاليًا. يستخدم التحليل العميق Hopper أو مزوّد Ghidra للقراءة فقط الذي يختاره المستدعي؛ ويتطلب Ghidra على Linux الإصدار 12.1.2 وJDK 21 الكامل.
 
 </details>
 

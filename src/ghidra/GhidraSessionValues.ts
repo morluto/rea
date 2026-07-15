@@ -4,12 +4,14 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { GHIDRA_BRIDGE_VERSION } from "./GhidraDefaults.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 
 /** Exact methods proved by the bridge handshake after auto-analysis. */
 export const GHIDRA_SESSION_CAPABILITIES = [
   "ping",
   "shutdown",
   ...GHIDRA_INVENTORY_OPERATIONS,
+  ...GHIDRA_FUNCTION_OPERATIONS,
 ] as const;
 
 const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);

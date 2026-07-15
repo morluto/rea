@@ -71,8 +71,10 @@ desktop display. Unattended package-manager access requires
 REA's Ghidra provider is bring-your-own and currently supports Linux x64 with
 the exact official Ghidra 12.1.2 release and a 64-bit full JDK 21. It supplies
 discovery, analysis-profile commitment, an isolated read-only headless session,
-and ten bounded inventory/name/search operations. Decompilation, calls, xrefs,
-GUI state, and analysis mutations remain unavailable through Ghidra.
+ten bounded inventory/name/search operations, and eight function-analysis
+operations covering metadata, decompilation, assembly, resolved calls, typed
+references, xrefs, CFG, and dossiers. GUI state and analysis mutations remain
+unavailable through Ghidra.
 
 Extract Ghidra and install the JDK outside REA, then export absolute paths:
 
@@ -101,8 +103,17 @@ Operations begin only after default auto-analysis completes. A timeout fails
 the open rather than exposing partial analysis. One session contains exactly
 one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
+One persistent decompiler is owned by the Program, Ghidra API calls cross a
+bounded 32-request serial queue, and each native decompile is limited to 30
+seconds. Unresolved computed calls remain unknown, reference-kind provenance is
+preserved, and provider-specific pseudocode is never treated as original source
+or Hopper-equivalent text.
+
 Run `GHIDRA_INSTALL_DIR=... npm run verify:ghidra` from a source checkout to
-compile and analyze the source-owned debug and stripped conformance fixtures.
+compile and analyze source-owned x86-64 debug/stripped ELF, AArch64 ELF,
+x86-64 PE, and x86-64 Mach-O conformance fixtures. The verifier expects `cc`,
+`clang`, and `lld-link` on `PATH`; `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can
+select alternate command paths.
 
 ## Diagnose, update, and remove
 

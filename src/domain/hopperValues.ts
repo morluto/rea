@@ -86,16 +86,28 @@ const addressedPageSchema = z
       });
     }
   });
-const unavailableSchema = z
+const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
   .strict();
-const procedureIdentitySchema = z
-  .object({ address: z.string(), name: z.string() })
+export const procedureClassificationSchema = z
+  .object({
+    external: z.boolean(),
+    thunk: z.boolean(),
+    thunk_target: z.string().nullable(),
+    provenance: z.string().min(1),
+  })
   .strict();
-const localVariableSchema = z
+export const procedureIdentitySchema = z
+  .object({
+    address: z.string(),
+    name: z.string(),
+    classification: procedureClassificationSchema.nullable().default(null),
+  })
+  .strict();
+export const localVariableSchema = z
   .object({
     description: z.string(),
-    provenance: z.literal("hopper-public-python-api"),
+    provenance: z.string().min(1),
   })
   .strict();
 const boundedSchema = <T extends z.ZodType>(item: T) =>
@@ -131,13 +143,37 @@ const boundedSchema = <T extends z.ZodType>(item: T) =>
         });
       }
     });
+const availableReferenceKindSchema = z
+  .object({
+    available: z.literal(true),
+    provenance: z.string().min(1),
+    type: z.string(),
+    flow: z.boolean(),
+    call: z.boolean(),
+    jump: z.boolean(),
+    data: z.boolean(),
+    read: z.boolean(),
+    write: z.boolean(),
+    indirect: z.boolean(),
+    computed: z.boolean(),
+    conditional: z.boolean(),
+    terminal: z.boolean(),
+    primary: z.boolean(),
+    operand_index: z.number().int(),
+    external: z.boolean(),
+  })
+  .strict();
+export const referenceKindSchema = z.discriminatedUnion("available", [
+  unavailableAnalysisFactSchema,
+  availableReferenceKindSchema,
+]);
 const referenceEdgeSchema = z
   .object({
     source_address: z.string(),
     target_address: z.string(),
     source_procedure: procedureIdentitySchema.nullable(),
     target_procedure: procedureIdentitySchema.nullable(),
-    kind: unavailableSchema,
+    kind: referenceKindSchema,
   })
   .strict();
 export const functionDossierSchema = z
@@ -146,6 +182,7 @@ export const functionDossierSchema = z
       .object({
         address: z.string(),
         name: z.string(),
+        classification: procedureClassificationSchema.nullable().default(null),
         signature: z.string().nullable(),
         locals: z.array(localVariableSchema),
       })
@@ -226,13 +263,14 @@ export const functionDossierSchema = z
     instruction_scan: z
       .object({ scanned: z.number().int().min(0), truncated: z.boolean() })
       .strict(),
+    limitations: z.array(z.string()).default([]),
   })
   .strict();
 
 /** Strict analyzed-function dossier shared by provider and comparison boundaries. */
 export type FunctionDossier = z.infer<typeof functionDossierSchema>;
 
-/** Strictly parse a complete Hopper function dossier at the provider boundary. */
+/** Strictly parse a complete provider-neutral function dossier. */
 export const parseFunctionDossier = (
   value: JsonValue,
 ): Result<JsonValue, AnalysisOutputError> => {

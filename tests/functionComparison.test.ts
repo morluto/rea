@@ -55,6 +55,45 @@ const dossier = (
     instruction_scan: { scanned: 1, truncated: false },
   });
 
+const dossierWithReference = (
+  base: "0x1000" | "0x2000",
+  kind: "call" | "data" | "unavailable",
+) => {
+  const target = base === "0x1000" ? "0x1010" : "0x2010";
+  return functionDossierSchema.parse({
+    ...dossier("return helper();", base),
+    outgoing_references: bounded([
+      {
+        source_address: base,
+        target_address: target,
+        source_procedure: { address: base, name: "main" },
+        target_procedure: { address: target, name: "helper" },
+        kind:
+          kind === "unavailable"
+            ? { available: false, reason: "provider has no kind authority" }
+            : {
+                available: true,
+                provenance: "ghidra-reference-manager",
+                type: kind === "call" ? "UNCONDITIONAL_CALL" : "READ",
+                flow: kind === "call",
+                call: kind === "call",
+                jump: false,
+                data: kind === "data",
+                read: kind === "data",
+                write: false,
+                indirect: false,
+                computed: false,
+                conditional: false,
+                terminal: false,
+                primary: true,
+                operand_index: 0,
+                external: false,
+              },
+      },
+    ]),
+  });
+};
+
 const observe = (
   digit: string,
   value: ReturnType<typeof dossier>,
@@ -152,6 +191,36 @@ describe("function comparison", () => {
     expect(
       comparison.dimensions.every(({ status }) => status === "unchanged"),
     ).toBe(true);
+  });
+
+  it("compares exact reference kinds only when both providers expose them", () => {
+    const left = observe("d", dossierWithReference("0x1000", "call"));
+    const same = observe("e", dossierWithReference("0x2000", "call"));
+    expect(
+      compareFunctions(left, same, 0, 100).dimensions.find(
+        ({ dimension }) => dimension === "references",
+      ),
+    ).toMatchObject({ status: "unchanged" });
+
+    const changed = observe("f", dossierWithReference("0x2000", "data"));
+    expect(
+      compareFunctions(left, changed, 0, 100).dimensions.find(
+        ({ dimension }) => dimension === "references",
+      ),
+    ).toMatchObject({ status: "changed" });
+
+    const unavailable = observe(
+      "1",
+      dossierWithReference("0x2000", "unavailable"),
+    );
+    expect(
+      compareFunctions(left, unavailable, 0, 100).dimensions.find(
+        ({ dimension }) => dimension === "references",
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      limitations: [expect.stringContaining("did not expose reference kinds")],
+    });
   });
 
   it("does not promote address-derived names through equal signatures", () => {

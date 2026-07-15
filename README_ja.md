@@ -80,7 +80,7 @@ npx skills add morluto/rea
 
 `rea setup` は変更計画を表示し、確認後に適用します。Homebrew、Node.js、npm をインストールまたは更新しません。[Hopper](https://www.hopperapp.com/) がない場合は公式パッケージを提案します。Hopper は別製品で、ライセンスは別途必要です。
 
-64 ビット Linux に Ghidra 12.1.2 PUBLIC と完全な 64 ビット JDK 21 がすでにある場合、Setup は承認後に `GHIDRA_INSTALL_DIR` と任意の `JAVA_HOME` も登録できます。REA は Ghidra や Java をダウンロード、インストール、変更しません。このリリースが提供するのは隔離されたプライベート headless セッションの基盤であり、Ghidra のバイナリ解析操作はまだ公開されていないため、既存の深い解析ワークフローは引き続き Hopper を使用します。
+64 ビット Linux に Ghidra 12.1.2 PUBLIC と完全な 64 ビット JDK 21 がすでにある場合、Setup は承認後に `GHIDRA_INSTALL_DIR` と任意の `JAVA_HOME` も登録できます。REA は Ghidra や Java をダウンロード、インストール、変更しません。Ghidra プロバイダーは隔離された読み取り専用 headless セッションで、インベントリ、逆コンパイル、アセンブリ、呼び出し関係、型付き参照、xref、CFG、関数 dossier を提供します。GUI 状態と変更操作は引き続き利用できません。
 
 #### Linux のインストールとトラブルシューティング
 
@@ -182,8 +182,8 @@ flowchart LR
     Terminal["ターミナル"] --> REA
     REA --> Hopper["Hopper 解析操作"]
     Hopper --> App["あなたのアプリ"]
-    REA -.-> Ghidra["Ghidra headless 基盤<br/>バイナリ操作は未提供"]
-    Ghidra -.-> App
+    REA --> Ghidra["Ghidra 読み取り専用解析<br/>インベントリ + 関数解析"]
+    Ghidra --> App
 ```
 
 CLI と MCP サーバーは同じ解析エンジンを使います。ターミナルのコマンドは終了時にアプリを閉じ、エージェントのセッションは調査中アプリを開いたままにします。

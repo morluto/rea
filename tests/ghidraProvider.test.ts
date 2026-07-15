@@ -46,7 +46,7 @@ describe("Ghidra provider", () => {
     expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
       GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
     );
-    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(10);
+    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(18);
     expect(Object.isFrozen(ghidra.capabilities())).toBe(true);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
@@ -63,6 +63,20 @@ describe("Ghidra provider", () => {
             maxPayloadBytes: 1024 * 1024,
             timeoutMs: 10_000,
           },
+        }),
+        expect.objectContaining({
+          operation: "analyze_function",
+          pagination: "offset",
+          limits: {
+            maxResults: 500,
+            maxPayloadBytes: 1024 * 1024,
+            timeoutMs: 35_000,
+          },
+          limitations: expect.arrayContaining([
+            expect.stringContaining(
+              "unresolved targetless flows remain unknown",
+            ),
+          ]),
         }),
       ]),
     );
@@ -251,6 +265,45 @@ describe("Ghidra provider", () => {
     },
   );
 
+  it.each([
+    ["decompile_timeout", "AnalysisTimeoutError", 30_000],
+    ["decompile_cancelled", "AnalysisCancelledError", undefined],
+  ] as const)(
+    "projects remote %s as a provider-neutral interruption",
+    async (code, tag, timeoutMs) => {
+      const ghidra = provider(installationHost(), () => ({
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () =>
+          Promise.resolve(
+            err(
+              new GhidraSessionError(
+                "remote",
+                "Fixture decompiler interruption",
+                { remote_code: code },
+                { remoteCode: code },
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(),
+      }));
+      const resolved = await ghidra.resolveAnalysisProfile(
+        executableTarget("elf", "x86_64"),
+      );
+      if (!resolved.ok || resolved.value.profile === null) return;
+
+      const result = await ghidra
+        .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
+        .execute("procedure_pseudo_code", { procedure: "main" });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: tag,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        },
+      });
+    },
+  );
+
   it("returns cancellation before profile work", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -267,7 +320,7 @@ describe("Ghidra provider", () => {
 
 const sessionInfo = () => ({
   name: "REA Ghidra bridge" as const,
-  bridge_version: 2 as const,
+  bridge_version: 3 as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "a".repeat(64),
   provider: { id: "ghidra" as const, version: "12.1.2" },

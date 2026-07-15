@@ -251,12 +251,12 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_callees",
-    "Return Hopper's analyzed direct callees for one procedure identified by symbol or address. Indirect calls may be absent; use analyze_function and xrefs to corroborate the call path.",
+    "Return the provider's resolved direct callees for one procedure identified by symbol or address. Unresolved indirect calls may be absent; use analyze_function and typed references to preserve available edge uncertainty.",
     z.object({ procedure, document }),
   ),
   official(
     "procedure_callers",
-    "Return Hopper's analyzed direct callers for one procedure identified by symbol or address. Results reflect completed static analysis and may omit indirect references.",
+    "Return the provider's resolved direct callers for one procedure identified by symbol or address. Results reflect completed static analysis and may omit unresolved indirect references.",
     z.object({ procedure, document }),
   ),
   official(
@@ -266,7 +266,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return a bounded set of raw incoming or outgoing reference edges for one procedure. Endpoint procedures are resolved only when Hopper reports containment; reference kinds remain explicitly unavailable.",
+    "Return a bounded set of raw incoming or outgoing reference edges for one procedure. Endpoint procedures are resolved only from provider containment; Ghidra preserves observed reference kinds while providers without kind authority mark them unavailable.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
@@ -278,7 +278,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_pseudo_code",
-    "Decompile one analyzed procedure by symbol name or hexadecimal address. Returns Hopper pseudocode, not original source, and may return null; request procedure_assembly when instruction precision matters.",
+    "Decompile one analyzed procedure by symbol name or provider-normalized address. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null; request procedure_assembly when instruction precision matters.",
     z.object({ procedure, document }),
   ),
   official(
@@ -365,7 +365,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "get_call_graph",
-    "Traverse Hopper's caller or callee relationships from one symbol or address for at most five levels. Every node has an ok/error status and failures use safe typed projections; indirect calls may be missing and results are not a whole-program CFG.",
+    "Traverse the bound provider's caller or callee relationships from one symbol or address for at most five levels. Every node has an ok/error status and failures use safe typed projections; unresolved indirect calls may be missing and results are not a whole-program CFG.",
     enhancedInputSchemas.get_call_graph,
   ),
   enhanced(
@@ -375,7 +375,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve an exact name through Hopper's exhaustively paged name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; xrefs remain untyped.",
+    "Resolve an exact name through the bound provider's exhaustively paged name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this compact xref workflow returns address-only projections.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(
@@ -385,7 +385,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "analyze_function",
-    "Preferred bounded analysis for one procedure symbol or address. Returns identity, pseudocode, optional assembly, comments, calls, incoming references, and blocks; unsupported outgoing references and CFG edges carry explicit unavailable metadata.",
+    "Preferred bounded analysis for one procedure symbol or address. Returns identity, provider-specific pseudocode, optional assembly, comments, calls, typed-or-explicitly-unavailable references, referenced strings/names, and local CFG blocks with exact truncation metadata.",
     enhancedInputSchemas.analyze_function,
   ),
   enhanced(

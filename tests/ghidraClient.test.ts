@@ -34,6 +34,8 @@ type FixtureMode =
   | "analysis_timeout"
   | "remote_error"
   | "hang_after_start"
+  | "hang_tools"
+  | "exit_tools"
   | "silent"
   | "exit";
 
@@ -230,6 +232,104 @@ describe("GhidraClient", () => {
     });
   });
 
+  it("fails an established function request when the provider process exits", async () => {
+    const client = clientFor(new FixtureLauncher("exit_tools"));
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+
+    await expect(
+      client.callTool("procedure_pseudo_code", {
+        document: null,
+        procedure: "fixture_main",
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { kind: "process" } });
+  });
+
+  it("cancels an established queued operation promptly", async () => {
+    const client = clientFor(new FixtureLauncher("hang_tools"), {
+      requestTimeoutMs: 10_000,
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const activeController = new AbortController();
+    const active = client.callTool(
+      "procedure_pseudo_code",
+      { document: null, procedure: "fixture_main" },
+      { signal: activeController.signal },
+    );
+    await wait(5);
+    const queuedController = new AbortController();
+    const queued = client.callTool(
+      "procedure_info",
+      { document: null, procedure: "fixture_main" },
+      { signal: queuedController.signal },
+    );
+    queuedController.abort();
+
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    activeController.abort();
+    await active;
+  });
+
+  it("counts serial queue wait against the request deadline", async () => {
+    const client = clientFor(new FixtureLauncher("hang_tools"), {
+      requestTimeoutMs: 10_000,
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const activeController = new AbortController();
+    const active = client.callTool(
+      "procedure_pseudo_code",
+      { document: null, procedure: "fixture_main" },
+      { signal: activeController.signal },
+    );
+    await wait(5);
+
+    await expect(
+      client.callTool(
+        "procedure_info",
+        { document: null, procedure: "fixture_main" },
+        { timeoutMs: 5 },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "timeout",
+        timeoutMs: 5,
+        message: expect.stringContaining("serial queue"),
+      },
+    });
+    activeController.abort();
+    await active;
+  });
+
+  it("bounds the serial per-Program request queue", async () => {
+    const client = clientFor(new FixtureLauncher("hang_tools"), {
+      requestTimeoutMs: 10_000,
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const controller = new AbortController();
+    const requests = Array.from({ length: 33 }, () =>
+      client.callTool(
+        "procedure_pseudo_code",
+        { document: null, procedure: "fixture_main" },
+        { signal: controller.signal },
+      ),
+    );
+    const overflow = requests[32];
+    if (overflow === undefined) throw new Error("Queue probe was not created");
+
+    await expect(overflow).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "protocol",
+        message: expect.stringContaining("32-request limit"),
+      },
+    });
+    controller.abort();
+    await Promise.all(requests.slice(0, 32));
+  });
+
   it("makes double close idempotent and detaches process listeners", async () => {
     const launcher = new FixtureLauncher();
     const client = clientFor(launcher);
@@ -294,3 +394,6 @@ describe("GhidraClient", () => {
 const exited = (process_: ChildProcess | undefined): boolean =>
   process_ !== undefined &&
   (process_.exitCode !== null || process_.signalCode !== null);
+
+const wait = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));

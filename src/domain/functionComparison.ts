@@ -13,6 +13,7 @@ import {
   isAutoName,
   normalizeCfg,
   project,
+  referenceKindProjection,
   referenceProjection,
   sorted,
   stringAndNameProjection,
@@ -359,16 +360,30 @@ const compareReferences = (
       rightCount: rightProjection.length,
       textDelta: null,
       limitations: [
-        "Reference endpoints differ; exact reference kinds remain unavailable.",
+        "Reference endpoints differ independently of provider reference-kind metadata.",
       ],
     });
+  const leftKinds = referenceKindProjection(left);
+  const rightKinds = referenceKindProjection(right);
+  if (leftKinds !== null && rightKinds !== null)
+    return compareValues(
+      "references",
+      leftKinds,
+      rightKinds,
+      links,
+      true,
+      true,
+      providersDiffer,
+    );
   return unresolvedDimension(
     "references",
     "unknown",
     links,
     leftProjection.length,
     rightProjection.length,
-    ["Reference kinds are unavailable in the current dossier contract."],
+    [
+      "At least one provider did not expose reference kinds, so equal endpoints do not prove equal edge semantics.",
+    ],
   );
 };
 
