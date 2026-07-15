@@ -1,0 +1,98 @@
+# JavaScript artifact reconstruction
+
+REA can project an operator-supplied Electron/JavaScript application directory
+or ASAR into [JavaScript Application Graph v1](javascript-application-graph.md)
+without executing application code. This is an application-layer service used
+as the static foundation for the later Electron boundary workflow. It does not
+add a standalone CLI or MCP tool in this release.
+
+## What is reconstructed
+
+The projector reuses the content-addressed artifact inventory and safe artifact
+readers. It retains canonical artifact-relative paths, exact byte counts,
+SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
+status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
+directory are supported.
+
+Selected bounded text is then parsed as inert data to recover:
+
+- `package.json` metadata and declared main or renderer entrypoints;
+- Electron preload paths and renderer files visible in static syntax;
+- local HTML script entrypoints;
+- Webpack and Rspack chunk registrations and module factories represented as
+  AST literals;
+- static imports, dynamic imports, CommonJS `require` calls, workers, and
+  service workers;
+- route, network endpoint, storage, and vendor-marker observations;
+- local source-map declarations and, when separately approved, bounded original
+  source names and content digests;
+- native `.node` linkage without parsing or executing the add-on.
+
+Each recovered bundle module retains the exact factory-source digest. A complete
+bounded AST also receives a `babel-ast-v1` structural fingerprint that ignores
+ordinary identifier names while retaining syntax, literals, operators, object
+keys, and member properties. If fingerprint construction reaches its structural
+bound, the fingerprint is unavailable and its status is `truncated`; a bounded
+prefix is never presented as a complete stable fingerprint.
+
+## Authority and unknowns
+
+Artifact bytes and AST syntax are observations. Entrypoint resolution, imports,
+loads, calls, and persistence relationships are static inferences and explicitly
+say that syntax does not prove runtime execution. A malformed or unavailable
+JavaScript file, package record, or source map produces an `unknown` graph scope
+with `state: unavailable`; it is not treated as evidence that modules or source
+are absent.
+
+Source-map content has a separate `source_map_read_approved` input. Without that
+approval, REA inventories the map, links a static declaration when present, and
+records partial non-truncated coverage plus an unavailable parse scope. With
+approval, the graph stores original source names and optional content digests,
+not the raw `sourcesContent` text.
+
+Endpoint observations preserve useful local diagnostics while removing URL
+credentials, fragments, and query values. Artifact paths, digests, parse
+locations, and analysis metadata remain actionable because REA is local-only.
+
+## Safety boundary
+
+The reconstruction path never uses `eval`, `Function`, `vm.runInContext`, a DOM,
+bundle `push` handlers, or application bootstrap code. The Webpack/Rspack fixture
+used by the test suite mutates a global and throws if executed; reconstruction
+recovers its four module factories without triggering either side effect.
+
+Directory readers do not follow symlinks. Artifact paths pass through the shared
+normalizer and collision registry, ASAR entry bytes are rechecked against the
+inventory digest before parsing, and malformed ASAR operations return typed
+format diagnostics that retain the local container path. Native add-ons are
+represented by metadata only.
+
+## Bounds and coverage
+
+The input schema bounds artifact entries, cumulative artifact bytes, bytes per
+entry, compression ratio, path depth and length, selected text files, text bytes,
+AST nodes, static findings, bundle modules, source-map originals, and cooperative
+parse time. Source-map original limits are shared across all maps in one
+reconstruction. Combined input limits are rejected if their conservative graph
+projection could exceed the v1 contract's 100,000 nodes or 200,000 edges.
+
+Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
+checked before and between bounded parsing and traversal phases; the synchronous
+Babel and JSON parser calls cannot be preempted mid-call, so their input byte
+bounds remain the hard protection for an individual call.
+
+Byte-identical assets share a content-digest node. At most 64 distinct
+observations are retained on that node, as required by the graph contract; every
+inventoried containment edge remains present, and any omitted observations make
+top-level coverage partial and truncated. When an exact omission count is not
+knowable, `omitted_count` is `null` rather than a guessed value.
+
+## Verification boundary
+
+The source-owned fixture covers an extracted directory, a direct ASAR with an
+unpacked native add-on, and an ASAR nested beneath a directory. Tests also cover
+deterministic reruns, parse-not-execute behavior, source-map approval, global
+source-map limits, malformed structured data, invalid containers, traversal,
+symlink escape, oversized text, cancellation, AST truncation, and repeated
+content identities. These fixtures establish parser and artifact-reader claims;
+they do not replace the later operator-supplied real-application benchmark.

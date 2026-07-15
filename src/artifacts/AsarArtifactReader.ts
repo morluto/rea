@@ -21,14 +21,24 @@ export class AsarArtifactReader implements ArtifactReader {
   constructor(private readonly path: string) {}
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
-    const paths = listPackage(this.path, { isPack: false }).sort(
-      (left, right) => left.localeCompare(right, "en"),
-    );
+    let paths: string[];
+    try {
+      paths = listPackage(this.path, { isPack: false }).sort((left, right) =>
+        left.localeCompare(right, "en"),
+      );
+    } catch (cause: unknown) {
+      throw asarFailure(this.path, "inventory", cause);
+    }
     for (const listed of paths) {
       abortIfNeeded(signal);
       const path = listed.replace(/^\/+|\/+$/gu, "");
       if (path.length === 0) continue;
-      const metadata = statFile(this.path, path, false);
+      let metadata: ReturnType<typeof statFile>;
+      try {
+        metadata = statFile(this.path, path, false);
+      } catch (cause: unknown) {
+        throw asarFailure(this.path, `stat ${path}`, cause);
+      }
       const kind =
         "files" in metadata
           ? "directory"
@@ -67,9 +77,15 @@ export class AsarArtifactReader implements ArtifactReader {
       return Promise.reject(
         new ArtifactReaderFailure("format", "ASAR entry is not a regular file"),
       );
-    return Promise.resolve(
-      Readable.from(extractFile(this.path, entry.adapterKey, false)),
-    );
+    try {
+      return Promise.resolve(
+        Readable.from(extractFile(this.path, entry.adapterKey, false)),
+      );
+    } catch (cause: unknown) {
+      return Promise.reject(
+        asarFailure(this.path, `read ${entry.path}`, cause),
+      );
+    }
   }
 
   close(): Promise<void> {
@@ -85,3 +101,16 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure("cancelled", "ASAR operation cancelled");
 };
+
+const asarFailure = (
+  path: string,
+  operation: string,
+  cause: unknown,
+): ArtifactReaderFailure =>
+  cause instanceof ArtifactReaderFailure
+    ? cause
+    : new ArtifactReaderFailure(
+        "format",
+        `Malformed or unreadable ASAR during ${operation}: ${path}`,
+        { cause },
+      );
