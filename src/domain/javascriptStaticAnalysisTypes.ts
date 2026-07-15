@@ -1,3 +1,5 @@
+import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
+
 /** One source coordinate produced by the JavaScript parser. */
 export interface JavaScriptSourcePoint {
   readonly line: number;
@@ -95,6 +97,7 @@ export interface JavaScriptStaticAnalysis {
     readonly location: JavaScriptSourceRange;
   }[];
   readonly vendors: readonly string[];
+  readonly electron: ElectronStaticFindings;
   readonly limitations: readonly string[];
 }
 

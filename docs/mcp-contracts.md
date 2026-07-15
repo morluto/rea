@@ -109,6 +109,12 @@ Denials use the shared `permission_required` schema with requested scope, missin
 scope, administrator ceiling, elicitation support, and exact restart status.
 Client-provided roots are context only and never grants.
 
+`analyze_javascript_application` uses the `investigation_input` capability. Its
+absolute `input_path` must be inside `REA_INVESTIGATION_INPUT_ROOTS_JSON` and the
+request must set `approved: true` before any artifact read. Reading source-map
+contents additionally requires `source_map_read_approved: true`; ordinary input
+approval does not imply that separate authority.
+
 ## Integrity record-and-continue
 
 Artifact integrity remains fail-closed by default. Record-and-continue requires

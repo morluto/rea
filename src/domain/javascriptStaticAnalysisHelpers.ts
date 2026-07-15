@@ -24,11 +24,31 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
   role_paths: [],
   source_map_urls: [],
   vendors: [],
+  electron: {
+    browser_windows: [],
+    context_bridge_apis: [],
+    ipc: [],
+    sender_validations: [],
+    utility_processes: [],
+    native_addon_bindings: [],
+  },
   limitations: [
     "JavaScript source could not be parsed; absence of findings is not evidence of absence.",
     "JavaScript syntax was parsed as data and was never evaluated.",
   ],
 });
+
+/** Normalize one Babel call/new argument into the inert node shared by inspectors. */
+export const argumentNode = (
+  argument:
+    | t.Expression
+    | t.SpreadElement
+    | t.JSXNamespacedName
+    | t.ArgumentPlaceholder
+    | null
+    | undefined,
+): t.Node | undefined =>
+  argument !== null && t.isNode(argument) ? argument : undefined;
 
 /** Recognize the bounded runtime name for a Webpack/Rspack push call. */
 export const chunkRuntime = (call: t.CallExpression): string | undefined => {

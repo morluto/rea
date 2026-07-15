@@ -16,6 +16,7 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "./fixtures/fakeCdpBrowser.js";
+import { writeElectronBoundaryFixture } from "./fixtures/electronBoundaryApplication.js";
 
 describe("Electron MCP tools", () => {
   const browsers: FakeCdpBrowser[] = [];
@@ -127,5 +128,58 @@ describe("Electron MCP tools", () => {
       },
     });
     expect(browser.commands).toHaveLength(commandsBeforeDenial);
+  });
+
+  it("exposes the target-free static JavaScript application workflow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-static-mcp-"));
+    temporary.push(root);
+    await writeElectronBoundaryFixture(root);
+    const config = parseConfig({
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
+    });
+    if (!config.ok) throw config.error;
+    const authority = await loadConfiguredPermissionAuthority(config.value);
+    if (!authority.ok) throw authority.error;
+    const session = new BinarySession(() => ({
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const server = createServer(session, session, {
+      permissionAuthority: authority.value,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        evidenceFileRoots: 0,
+      }),
+    });
+    const client = new Client({
+      name: "electron-static-mcp-test",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server, session);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const analyzed = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: root, approved: true },
+    });
+
+    expect(analyzed.isError).not.toBe(true);
+    expect(analyzed.structuredContent).toMatchObject({
+      operation: "analyze_javascript_application",
+      provider: { id: "rea-javascript-application" },
+      normalized_result: {
+        schema_version: 1,
+        input_path: root,
+        summary: {
+          browser_windows: 3,
+          context_bridge_apis: 2,
+          ipc: { paired_renderer_transmissions: 4 },
+        },
+        graph: { schema: "JavaScriptApplicationGraph", schema_version: 1 },
+      },
+    });
   });
 });

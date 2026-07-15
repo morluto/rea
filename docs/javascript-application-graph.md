@@ -23,10 +23,11 @@ The graph complements existing REA models instead of replacing them:
 | JavaScript Application Graph | Cross-layer entity identity, evidence-bearing relationships, and canonical commitments | Preserves the combined application model                   |
 
 The shipped [JavaScript artifact reconstruction](javascript-artifact-reconstruction.md)
-service now projects bounded directory/ASAR, package, bundle, and source-map
-facts into this graph. Electron IPC/security boundaries, passive runtime
-reconciliation, and native-export projection remain separate later layers. The
-domain module itself never reaches outward to obtain any of those facts.
+service now projects bounded directory/ASAR, package, bundle, source-map,
+BrowserWindow, preload, contextBridge, IPC, utility-process, and JavaScript-side
+native binding facts into this graph. Passive runtime reconciliation and native
+binary export verification remain separate later layers. The domain module
+itself never reaches outward to obtain any of those facts.
 
 ## Versioned record
 
@@ -75,17 +76,18 @@ third-party application:
 
 ```text
 package contains app.asar
-app.asar contains preload
-preload exposes contextBridge API
-contextBridge API invokes IPC channel
-IPC channel handles main-process handler
-handler loads native add-on and calls native export
-native add-on contains native export
-preload observed_as runtime script instance
+main asset contains BrowserWindow
+BrowserWindow loads preload role
+preload asset exposes contextBridge API
+preload asset invokes uniquely matched main-process IPC handler
+main-process IPC handler handles literal IPC channel
+JavaScript asset imports requested native binding
+resolved native add-on exposes requested binding (not a verified binary export)
 ```
 
-The `invokes` and `calls` facts in that fixture remain static inferences. The
-runtime correspondence is a separately identified passive observation.
+The `loads`, `exposes`, `invokes`, `handles`, and `imports` relationships remain
+static inferences. Dynamic or ambiguous IPC is retained without a pairing edge,
+and runtime correspondence remains a separately identified passive observation.
 
 ## Evidence and authority
 

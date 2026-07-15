@@ -2,9 +2,41 @@
 
 REA can project an operator-supplied Electron/JavaScript application directory
 or ASAR into [JavaScript Application Graph v1](javascript-application-graph.md)
-without executing application code. This is an application-layer service used
-as the static foundation for the later Electron boundary workflow. It does not
-add a standalone CLI or MCP tool in this release.
+without executing application code. The target-free
+`analyze_javascript_application` MCP tool and
+`rea analyze-javascript-application` CLI command expose the same application
+service and return an Evidence v2 envelope containing the graph and an Electron
+boundary summary.
+
+## Public workflow
+
+The administrator first grants a canonical input root. Every request still
+requires explicit per-call approval, and the requested ASAR or directory must
+remain beneath that root after canonicalization:
+
+```bash
+export REA_INVESTIGATION_INPUT_ROOTS_JSON='["/absolute/path/to/apps"]'
+rea analyze-javascript-application /absolute/path/to/apps/app.asar \
+  --approved \
+  --json
+```
+
+The equivalent MCP input is:
+
+```json
+{
+  "input_path": "/absolute/path/to/apps/app.asar",
+  "format": "auto",
+  "approved": true,
+  "source_map_read_approved": false
+}
+```
+
+`input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
+The result retains the canonical local path, root artifact digest, artifact
+manifest and graph commitments, JavaScript Application Graph v1, static
+Electron summary, reconstruction statistics, and explicit limitations. It does
+not require a live Hopper, Ghidra, browser, or Electron process.
 
 ## What is reconstructed
 
@@ -26,7 +58,16 @@ Selected bounded text is then parsed as inert data to recover:
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and, when separately approved, bounded original
   source names and content digests;
-- native `.node` linkage without parsing or executing the add-on.
+- explicit BrowserWindow options and `webPreferences`, including statically
+  resolvable preload entrypoints;
+- `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys and
+  bounded literal member paths;
+- renderer and main-process IPC operations, literal or dynamic channels, exact
+  handler locations, and conservative pairing status;
+- sender, frame, URL, and origin validation candidates without claiming that a
+  visible check enforces a complete policy;
+- utility-process entrypoints and native `.node` binding requests without
+  parsing or executing the add-on.
 
 Each recovered bundle module retains the exact factory-source digest. A complete
 bounded AST also receives a `babel-ast-v1` structural fingerprint that ignores
@@ -49,6 +90,22 @@ approval, REA inventories the map, links a static declaration when present, and
 records partial non-truncated coverage plus an unavailable parse scope. With
 approval, the graph stores original source names and optional content digests,
 not the raw `sourcesContent` text.
+
+Only explicitly present BrowserWindow values are observations. REA does not
+substitute version-dependent Electron defaults for omitted `webPreferences`.
+Dynamic option objects, bridge keys, API objects, and IPC channel expressions
+remain unknown and make coverage partial.
+
+IPC pairing is an inference, not an observation. A renderer `invoke` pairs only
+with one unique `ipcMain.handle`/`handleOnce` candidate on the same exact literal
+channel; a renderer send pairs only with one unique `ipcMain.on`/`once`
+candidate. Dynamic channels are never paired, and multiple compatible handlers
+are reported as ambiguous without adding a caller-to-handler edge. A matching
+channel still does not prove registration order, reachability, or runtime use.
+
+For `.node` bindings, member names mean “requested by JavaScript syntax.” A
+resolved add-on path does not convert them into verified native exports. Native
+symbol verification remains a separate deep-analysis claim.
 
 Endpoint observations preserve useful local diagnostics while removing URL
 credentials, fragments, and query values. Artifact paths, digests, parse
@@ -94,5 +151,9 @@ unpacked native add-on, and an ASAR nested beneath a directory. Tests also cover
 deterministic reruns, parse-not-execute behavior, source-map approval, global
 source-map limits, malformed structured data, invalid containers, traversal,
 symlink escape, oversized text, cancellation, AST truncation, and repeated
-content identities. These fixtures establish parser and artifact-reader claims;
-they do not replace the later operator-supplied real-application benchmark.
+content identities. A separate synthetic Electron fixture covers explicit safe
+and unsafe preference values, preload and contextBridge surfaces, literal,
+dynamic, paired, ambiguous, and unpaired IPC, validation candidates, utility
+processes, and native binding requests. These fixtures establish parser and
+artifact-reader claims; they do not replace the later operator-supplied
+real-application benchmark.

@@ -1,7 +1,7 @@
 # Guided MCP prompts and completion
 
 REA exposes six provider-neutral investigation workflows through the MCP
-`prompts` capability. They complement the 78 tools; they do not add, remove, or
+`prompts` capability. They complement the 79 tools; they do not add, remove, or
 invoke tools by themselves.
 
 ## Prompt inventory

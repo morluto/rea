@@ -38,6 +38,7 @@ export const CLI_COMMANDS = Object.freeze({
   compareWebScreenshots: "compare-web-screenshots",
   listElectronTargets: "list-electron-targets",
   inspectElectronPage: "inspect-electron-page",
+  analyzeJavaScriptApplication: "analyze-javascript-application",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

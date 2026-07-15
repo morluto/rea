@@ -2,8 +2,8 @@
 name: rea-analysis
 description: Reverse engineer apps and websites with REA. Explore how features work, then build a version tailored to your project.
 metadata:
-  version: "14"
-  tool_count: 78
+  version: "15"
+  tool_count: 79
 ---
 
 # REA
@@ -34,6 +34,18 @@ Electron `file://` pages use `list_electron_targets` and
 `inspect_electron_page` with a separate loopback endpoint and canonical
 filesystem-root authority. Never claim that Electron inspection invoked IPC,
 evaluated renderer JavaScript, navigated, or escaped an approved root.
+
+For an operator-supplied ASAR or extracted JavaScript/Electron application, use
+`analyze_javascript_application` after the operator configures its canonical
+root in `REA_INVESTIGATION_INPUT_ROOTS_JSON`; every call still requires
+`approved: true`. Source-map contents require the independent
+`source_map_read_approved` flag. Treat BrowserWindow preferences, preload and
+contextBridge surfaces, IPC registrations, utility processes, and native
+binding requests as static syntax observations. Treat only a unique exact
+literal IPC channel match as an inferred pairing; keep dynamic and ambiguous
+channels unresolved. A requested `.node` member is not a verified binary export.
+Never claim that this workflow executed application code or observed runtime
+registration, reachability, defaults, or policy enforcement.
 
 ## Understand the request
 
