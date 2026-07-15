@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { getEventListeners } from "node:events";
+import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,25 +19,30 @@ const fixturePath = fileURLToPath(
 
 class FixtureLauncher implements BridgeLauncher {
   socketPaths: string[] = [];
+  directories: string[] = [];
+  processes: ChildProcess[] = [];
 
   constructor(readonly tokenOverride?: string) {}
 
   launch(session: BridgeSession) {
     this.socketPaths.push(session.socketPath);
+    this.directories.push(session.directory);
+    const child = spawn(
+      process.execPath,
+      [
+        fixturePath,
+        session.socketPath,
+        this.tokenOverride ?? session.token,
+        session.runId,
+      ],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    this.processes.push(child);
     return Promise.resolve(
       ok({
-        process: spawn(
-          process.execPath,
-          [
-            fixturePath,
-            session.socketPath,
-            this.tokenOverride ?? session.token,
-            session.runId,
-          ],
-          {
-            stdio: ["ignore", "ignore", "pipe"],
-          },
-        ),
+        process: child,
         ownsProcessLifetime: true,
       }),
     );
@@ -82,6 +89,19 @@ class ExitingLauncher implements BridgeLauncher {
         ownsProcessLifetime: true,
       }),
     );
+  }
+}
+
+class LateSilentLauncher implements BridgeLauncher {
+  readonly directories: string[] = [];
+  readonly processes: ChildProcess[] = [];
+
+  async launch(session: BridgeSession) {
+    this.directories.push(session.directory);
+    const launched = await new SilentLauncher().launch();
+    if (launched.ok) this.processes.push(launched.value.process);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return launched;
   }
 }
 
@@ -219,6 +239,28 @@ describe("HopperClient", () => {
     });
   });
 
+  it("applies one deadline to launcher, socket, and health startup phases", async () => {
+    const launcher = new LateSilentLauncher();
+    const client = new HopperClient({ launcher, startupTimeoutMs: 20 });
+    clients.push(client);
+
+    const result = await client.start();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperTimeoutError", timeoutMs: 20 },
+    });
+    expect(launcher.directories).toHaveLength(1);
+    await expect(access(launcher.directories[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const process = launcher.processes[0];
+    expect(
+      process !== undefined &&
+        (process.exitCode !== null || process.signalCode !== null),
+    ).toBe(true);
+  });
+
   it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
@@ -274,6 +316,30 @@ describe("HopperClient", () => {
     await client.close();
     expect(firstSettled).toBe(true);
     await first;
+  });
+
+  it("makes sequential double-close leave no runtime or process listeners", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    clients.push(client);
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+
+    await client.close();
+    await client.close();
+
+    const directory = launcher.directories[0] ?? "";
+    const child = launcher.processes[0];
+    await expect(access(directory)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(child).toBeDefined();
+    if (child === undefined)
+      throw new Error("Fixture process was not captured");
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    expect(getEventListeners(child, "exit")).toHaveLength(0);
+    expect(getEventListeners(child, "close")).toHaveLength(0);
+    expect(getEventListeners(child, "error")).toHaveLength(0);
+    expect(child.stderr).not.toBeNull();
+    if (child.stderr === null) throw new Error("Fixture stderr is unavailable");
+    expect(getEventListeners(child.stderr, "data")).toHaveLength(0);
   });
 
   it("does not finish startup after an immediate close", async () => {

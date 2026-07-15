@@ -24,6 +24,10 @@ graph TD
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
     end
 
+    subgraph "Provider Process Foundation"
+        PROCESS["src/process/<br/>owned process groups, private roots<br/>deadlines, bounded diagnostics, cleanup"]
+    end
+
     subgraph "Contracts Layer"
         CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>78 analysis, browser, Electron, and session tools"]
     end
@@ -56,11 +60,15 @@ graph TD
     SERVER --> APP
     APP --> BROWSER
     HOPPER --> BRIDGE
+    HOPPER --> PROCESS
+    APP --> PROCESS
     APP --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
     AUX --> DOMAIN
     BROWSER --> DOMAIN
+    PROCESS --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
+    TESTS -.-> PROCESS
     TESTS -.-> BROWSER

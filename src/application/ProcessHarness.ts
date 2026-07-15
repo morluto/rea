@@ -25,7 +25,7 @@ import {
   type CommandShimReplay,
 } from "./CommandShimReplay.js";
 import { normalizeProcessText } from "./ProcessNormalization.js";
-import { selectCapturedProcessGroupIds } from "./ProcessOwnership.js";
+import { selectCapturedProcessGroupIds } from "../process/ProcessOwnership.js";
 import {
   awaitTerminalExit,
   buildCaptureResult,

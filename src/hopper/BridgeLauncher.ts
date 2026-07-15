@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { execFile } from "node:child_process";
 import { chmod, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -6,10 +5,12 @@ import { promisify } from "node:util";
 
 import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
-  cleanupOwnedProcessGroup,
-  type ProcessCleanupResult,
-} from "../application/ProcessOwnership.js";
+  type ProviderProcessLaunch,
+  spawnOwnedProviderProcess,
+} from "../process/ProviderProcess.js";
+import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
 import writeFileAtomic from "write-file-atomic";
 
 const execFileAsync = promisify(execFile);
@@ -24,12 +25,9 @@ export interface BridgeSession {
 }
 
 /** Process handle returned by a bridge launcher. */
-export interface BridgeLaunch {
-  readonly process: ChildProcess;
-  readonly ownsProcessLifetime: boolean;
+export interface BridgeLaunch extends ProviderProcessLaunch {
   /** True when verified process cleanup completes bridge shutdown. */
   readonly shutdownByCleanup?: boolean;
-  readonly cleanup?: () => Promise<ProcessCleanupResult>;
 }
 
 /** Application-owned capability that starts the in-Hopper bridge. */
@@ -119,18 +117,14 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       const linuxDemo = linuxDemoLaunch(this.options, session, args);
       const ownershipCommand =
         linuxDemo?.ownershipCommand ?? this.options.launcherPath;
-      const started = await spawnLauncher(
-        linuxDemo?.command ?? this.options.launcherPath,
-        linuxDemo?.args ?? args,
-        session.runId,
-      );
-      if (!started.ok) return started;
-      const child = started.value;
-      const pid = child.pid;
-      if (pid === undefined)
-        return err(
-          new HopperStartError({ cause: new Error("missing launcher PID") }),
-        );
+      const started = await spawnOwnedProviderProcess({
+        command: linuxDemo?.command ?? this.options.launcherPath,
+        arguments: linuxDemo?.args ?? args,
+        runId: session.runId,
+        expectedCommand: ownershipCommand,
+      });
+      const child = started.process;
+      const pid = started.ownership.leaderPid;
       const ownership = {
         schema_version: 1,
         run_id: session.runId,
@@ -147,22 +141,17 @@ export class HopperApplicationLauncher implements BridgeLauncher {
           { encoding: "utf8", mode: 0o600 },
         );
       } catch (cause: unknown) {
-        await cleanupOwnedProcessGroup(
-          ownedProcessGroup(session, pid, ownershipCommand),
-        );
+        await cleanupOwnedProcessGroup(started.ownership);
         return err(new HopperStartError({ cause }));
       }
       return ok({
         process: child,
         ownsProcessLifetime: true,
         shutdownByCleanup: ownsProcessLifetime,
-        cleanup: () =>
-          cleanupOwnedProcessGroup(
-            ownedProcessGroup(session, pid, ownershipCommand),
-          ),
+        cleanup: () => cleanupOwnedProcessGroup(started.ownership),
       });
     } catch (cause: unknown) {
-      return err(new HopperStartError({ cause }));
+      return err(hopperLaunchFailure(cause, options.signal));
     }
   }
 }
@@ -196,6 +185,14 @@ const linuxDemoLaunch = (
   };
 };
 
+const hopperLaunchFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): HopperCancelledError | HopperStartError =>
+  signal?.aborted === true
+    ? new HopperCancelledError()
+    : new HopperStartError({ cause });
+
 /** Select the version-pinned adapter from the caller's explicit launch mode. */
 export const usesLinuxDemo = (
   options: HopperApplicationLauncherOptions,
@@ -203,42 +200,6 @@ export const usesLinuxDemo = (
   readonly launchMode: "verified_linux_demo";
   readonly demoHelperPath: string;
 } => options.launchMode === "verified_linux_demo";
-
-const spawnLauncher = async (
-  command: string,
-  args: readonly string[],
-  runId: string,
-): Promise<Result<ChildProcess, HopperStartError>> => {
-  const child = spawn(command, args, {
-    stdio: ["ignore", "ignore", "pipe"],
-    detached: process.platform !== "win32",
-    env: { ...process.env, REA_PROCESS_RUN_ID: runId },
-  });
-  return new Promise((resolve) => {
-    const onSpawn = (): void => {
-      child.off("error", onError);
-      resolve(ok(child));
-    };
-    const onError = (cause: Error): void => {
-      child.off("spawn", onSpawn);
-      resolve(err(new HopperStartError({ cause })));
-    };
-    child.once("spawn", onSpawn);
-    child.once("error", onError);
-  });
-};
-
-const ownedProcessGroup = (
-  session: BridgeSession,
-  pid: number,
-  launcherPath: string,
-) => ({
-  runId: session.runId,
-  leaderPid: pid,
-  processGroupId: pid,
-  expectedCommand: launcherPath,
-  expectedParentPid: process.pid,
-});
 
 const prepareHopperApplication = async (
   launcherPath: string,
@@ -256,25 +217,10 @@ const prepareHopperApplication = async (
     "-a",
     appBundle,
   ]);
-  return waitForDelay(HOPPER_BACKGROUND_STARTUP_MS, signal);
-};
-
-const waitForDelay = (
-  milliseconds: number,
-  signal?: AbortSignal,
-): Promise<boolean> => {
-  if (signal?.aborted === true) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve(true);
-    }, milliseconds);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+  return (
+    (await waitForAbortableDelay(HOPPER_BACKGROUND_STARTUP_MS, signal)) ===
+    "elapsed"
+  );
 };
 
 const hopperApplicationBundle = (launcherPath: string): string | undefined => {

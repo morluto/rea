@@ -28,7 +28,7 @@ import type { LoopbackReplay } from "./LoopbackReplay.js";
 import {
   cleanupOwnedProcessGroup,
   observeOwnedProcessGroup,
-} from "./ProcessOwnership.js";
+} from "../process/ProcessOwnership.js";
 import {
   classifyFilesystemEffects,
   ProcessCheckpoints,
