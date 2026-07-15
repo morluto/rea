@@ -7,6 +7,7 @@ import {
   type SetupHost,
   type SetupOptions,
   type SetupHopperInstallResult,
+  type SetupProviderEnvironment,
 } from "../src/application/Setup.js";
 import type { DoctorCheck } from "../src/application/Doctor.js";
 import type { LinuxDistribution } from "../src/application/LinuxHopper.js";
@@ -17,6 +18,8 @@ class FakeSetupHost implements SetupHost {
   version: string | undefined = "14.5";
   distribution: LinuxDistribution | undefined;
   hopper: string | undefined;
+  ghidra: string | undefined;
+  javaHome: string | undefined;
   hopperInstallSucceeds = true;
   skill: "installed" | "unchanged" | "failed" = "installed";
   clients: readonly SetupClient[] = [];
@@ -26,6 +29,7 @@ class FakeSetupHost implements SetupHost {
   configurations = 0;
   skillInstalls = 0;
   checkedHopperPaths: Array<string | undefined> = [];
+  configuredProviderEnvironments: SetupProviderEnvironment[] = [];
   doctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
   unsupportedHopperVersion = false;
@@ -39,6 +43,14 @@ class FakeSetupHost implements SetupHost {
   linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distribution);
   hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
+  providerEnvironment = (): Promise<SetupProviderEnvironment> =>
+    Promise.resolve({
+      ...(this.hopper === undefined
+        ? {}
+        : { HOPPER_LAUNCHER_PATH: this.hopper }),
+      ...(this.ghidra === undefined ? {} : { GHIDRA_INSTALL_DIR: this.ghidra }),
+      ...(this.javaHome === undefined ? {} : { JAVA_HOME: this.javaHome }),
+    });
   installHopper = (
     replaceExisting: boolean,
   ): Promise<SetupHopperInstallResult> => {
@@ -62,17 +74,19 @@ class FakeSetupHost implements SetupHost {
     Promise.resolve(this.clients);
   configureClient = (
     client: SetupClient,
+    providerEnvironment: SetupProviderEnvironment,
   ): Promise<ClientConfigurationResult> => {
     this.configurations += 1;
+    this.configuredProviderEnvironments.push(providerEnvironment);
     return Promise.resolve(
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
   };
   clientNeedsConfigure = (
     client: SetupClient,
-    hopperPath: string | undefined,
+    providerEnvironment: SetupProviderEnvironment,
   ): Promise<boolean> => {
-    this.checkedHopperPaths.push(hopperPath);
+    this.checkedHopperPaths.push(providerEnvironment.HOPPER_LAUNCHER_PATH);
     return Promise.resolve(
       this.clientResults.get(client.name)?.status !== "unchanged",
     );
@@ -235,6 +249,42 @@ describe("setup workflow", () => {
       "installed_skill",
     ]);
     expect(host.hopperInstalls).toBe(0);
+  });
+
+  it("plans and propagates BYO Ghidra without installing software", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "ubuntu",
+      versionId: "24.04",
+      packageFamily: "deb",
+      supported: true,
+    };
+    host.ghidra = "/opt/ghidra_12.1.2_PUBLIC";
+    host.javaHome = "/usr/lib/jvm/jdk-21";
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const plan = await runSetup(options(false), host);
+    expect(plan.plannedActions.map(({ kind }) => kind)).toEqual([
+      "configure_client",
+    ]);
+    expect(plan.plannedActions[0]?.detail).toContain(
+      "GHIDRA_INSTALL_DIR=/opt/ghidra_12.1.2_PUBLIC",
+    );
+    expect(plan.plannedActions[0]?.detail).toContain(
+      "JAVA_HOME=/usr/lib/jvm/jdk-21",
+    );
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configurations).toBe(0);
+
+    const applied = await runSetup(options(true), host);
+    expect(applied.status).toBe("ready");
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configuredProviderEnvironments).toContainEqual({
+      GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.2_PUBLIC",
+      JAVA_HOME: "/usr/lib/jvm/jdk-21",
+    });
   });
 
   it("reinstalls existing Hopper when explicitly requested", async () => {
@@ -428,7 +478,31 @@ describe("setup workflow", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.remediation).toBe(
-      "REA supports Hopper on Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.",
+      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux; configure an existing supported provider instead.",
     );
+  });
+
+  it("configures BYO Ghidra on Linux outside Hopper's installer matrix", async () => {
+    const host = new FakeSetupHost("linux");
+    host.distribution = {
+      id: "debian",
+      versionId: "13",
+      packageFamily: "deb",
+      supported: false,
+    };
+    host.ghidra = "/opt/ghidra_12.1.2_PUBLIC";
+    host.javaHome = "/usr/lib/jvm/jdk-21";
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("ready");
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configuredProviderEnvironments).toContainEqual({
+      GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.2_PUBLIC",
+      JAVA_HOME: "/usr/lib/jvm/jdk-21",
+    });
   });
 });

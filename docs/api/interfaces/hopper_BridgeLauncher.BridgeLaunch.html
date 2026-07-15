@@ -15,7 +15,7 @@
 <div class="tsd-comment tsd-typography"><p>Process handle returned by a bridge launcher.</p>
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">BridgeLaunch</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#cleanup">cleanup</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/process_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ownsprocesslifetime">ownsProcessLifetime</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#process">process</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">ChildProcess</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#shutdownbycleanup">shutdownByCleanup</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
-<section class="tsd-panel tsd-hierarchy" data-refl="24425">
+<section class="tsd-panel tsd-hierarchy" data-refl="24430">
 <h4>Hierarchy (<a href="../hierarchy.html#hopper/BridgeLauncher.BridgeLaunch">View Summary</a>)</h4>
 <ul class="tsd-hierarchy">
 <li class="tsd-hierarchy-item"><a href="process_ProviderProcess.ProviderProcessLaunch.html" class="tsd-signature-type tsd-kind-interface">ProviderProcessLaunch</a>
@@ -43,19 +43,19 @@
 <div class="tsd-signature"><span class="tsd-kind-property">cleanup</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/process_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="process_ProviderProcess.ProviderProcessLaunch.html">ProviderProcessLaunch</a>.<a href="process_ProviderProcess.ProviderProcessLaunch.html#cleanup">cleanup</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L33">src/process/ProviderProcess.ts:33</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L34">src/process/ProviderProcess.ts:34</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="ownsprocesslifetime"><code class="tsd-tag">Readonly</code><span>owns<wbr/>Process<wbr/>Lifetime</span><a href="#ownsprocesslifetime" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ownsProcessLifetime</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="process_ProviderProcess.ProviderProcessLaunch.html">ProviderProcessLaunch</a>.<a href="process_ProviderProcess.ProviderProcessLaunch.html#ownsprocesslifetime">ownsProcessLifetime</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L32">src/process/ProviderProcess.ts:32</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L33">src/process/ProviderProcess.ts:33</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="process"><code class="tsd-tag">Readonly</code><span>process</span><a href="#process" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">process</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">ChildProcess</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="process_ProviderProcess.ProviderProcessLaunch.html">ProviderProcessLaunch</a>.<a href="process_ProviderProcess.ProviderProcessLaunch.html#process">process</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L31">src/process/ProviderProcess.ts:31</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts#L32">src/process/ProviderProcess.ts:32</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="shutdownbycleanup"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>shutdown<wbr/>By<wbr/>Cleanup</span><a href="#shutdownbycleanup" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">shutdownByCleanup</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>

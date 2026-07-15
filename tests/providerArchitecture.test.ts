@@ -6,12 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../src/config.js";
 import { HopperProvider } from "../src/hopper/HopperProvider.js";
+import { GhidraProvider } from "../src/ghidra/GhidraProvider.js";
 import { silentLogger } from "../src/logger.js";
 
 const sourceRoot = new URL("../src/", import.meta.url);
 
 describe("provider-neutral architecture", () => {
-  it("keeps Hopper imports behind its adapter and composition root", async () => {
+  it("keeps deep-provider imports behind adapters and the composition root", async () => {
     const forbiddenRoots = ["domain", "contracts", "server", "application"];
     const inspected = await Promise.all(
       forbiddenRoots.map(async (root) => {
@@ -23,7 +24,7 @@ describe("provider-neutral architecture", () => {
             if (root === "application" && file.endsWith("/runtime.ts"))
               return undefined;
             const source = await readFile(file, "utf8");
-            return /from\s+["'][^"']*\/hopper\//u.test(source)
+            return /from\s+["'][^"']*\/(?:hopper|ghidra)\//u.test(source)
               ? relative(fileURLToPath(sourceRoot), file)
               : undefined;
           }),
@@ -34,6 +35,19 @@ describe("provider-neutral architecture", () => {
       .flat()
       .filter((violation) => violation !== undefined);
     expect(violations).toEqual([]);
+  });
+
+  it("publishes no speculative Ghidra binary capabilities", () => {
+    const config = parseConfig({});
+    expect(config.ok).toBe(true);
+    if (!config.ok) return;
+    const provider = new GhidraProvider(config.value, silentLogger, {
+      readText: () => undefined,
+      executable: () => false,
+      probeJava: () => undefined,
+    });
+    expect(provider.capabilities()).toEqual([]);
+    expect(Object.isFrozen(provider.capabilities())).toBe(true);
   });
 
   it("publishes deterministic immutable Hopper capability descriptors", () => {

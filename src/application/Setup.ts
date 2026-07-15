@@ -16,7 +16,12 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { supportsNodeVersion } from "../domain/runtimeVersion.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
-import { runDoctor, systemDoctorHost } from "./Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+  type DoctorHost,
+  type DoctorProviderInspection,
+} from "./Doctor.js";
 import {
   installLinuxHopper,
   readLinuxDistribution,
@@ -37,6 +42,9 @@ import {
   type SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
 export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
+
+/** Exact non-secret provider variables propagated into managed registrations. */
+export type SetupProviderEnvironment = Readonly<Record<string, string>>;
 
 export {
   canonicalSkillNeedsInstall,
@@ -70,15 +78,16 @@ export interface SetupHost {
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
+  providerEnvironment?(): Promise<SetupProviderEnvironment>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
-    hopperPath: string | undefined,
+    providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],
   ): Promise<ClientConfigurationResult>;
   clientNeedsConfigure(
     client: SetupClient,
-    hopperPath: string | undefined,
+    providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],
   ): Promise<boolean>;
   skillNeedsInstall(): Promise<boolean>;
@@ -141,12 +150,13 @@ export const runSetup = async (
     doctor: await host.doctor(),
     remediation,
   });
-  const unsupported = await hostRemediation(host);
+  const unsupported = await hostRemediation(host, options.installHopper);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
+  let providerEnvironment = await initialProviderEnvironment(host, hopperPath);
   const discovery = await discoverSetupActions(
     host,
-    hopperPath,
+    providerEnvironment,
     options.installHopper,
   );
   const { installHopper, installSkill } = discovery;
@@ -182,18 +192,22 @@ export const runSetup = async (
         remediation: installed.remediation,
       };
     hopperPath = installed.launcherPath;
+    providerEnvironment = {
+      ...providerEnvironment,
+      HOPPER_LAUNCHER_PATH: installed.launcherPath,
+    };
     appliedActions.push("installed_hopper");
     detectedClients = await filterClientsNeedingConfigure(
       host,
       detectedClients,
-      hopperPath,
+      providerEnvironment,
       registrationCommand(),
     );
   }
   const clientFailure = await configureDetectedClients({
     host,
     detectedClients,
-    hopperPath,
+    providerEnvironment,
     command: registrationCommand(),
     clients,
     appliedActions,
@@ -226,7 +240,7 @@ export const runSetup = async (
 
 const discoverSetupActions = async (
   host: SetupHost,
-  hopperPath: string | undefined,
+  providerEnvironment: SetupProviderEnvironment,
   forceHopperInstall: boolean,
 ) => {
   const initialDoctor = await host.doctor();
@@ -237,7 +251,9 @@ const discoverSetupActions = async (
         (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
   );
   const installHopper =
-    forceHopperInstall || hopperPath === undefined || linuxHopperRepairNeeded;
+    forceHopperInstall ||
+    Object.keys(providerEnvironment).length === 0 ||
+    linuxHopperRepairNeeded;
   const [detectedClients, installSkill] = await Promise.all([
     host.detectedClients(),
     host.skillNeedsInstall(),
@@ -248,7 +264,7 @@ const discoverSetupActions = async (
     : await filterClientsNeedingConfigure(
         host,
         detectedClients,
-        hopperPath,
+        providerEnvironment,
         command,
       );
   const plannedActions = setupPlan(
@@ -256,6 +272,7 @@ const discoverSetupActions = async (
     installHopper,
     installSkill,
     clients,
+    providerEnvironment,
   );
   return {
     installHopper,
@@ -268,16 +285,24 @@ const discoverSetupActions = async (
 const filterClientsNeedingConfigure = async (
   host: SetupHost,
   detectedClients: readonly SetupClient[],
-  hopperPath: string | undefined,
+  providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<readonly SetupClient[]> => {
   const needs = await Promise.all(
     detectedClients.map((client) =>
-      host.clientNeedsConfigure(client, hopperPath, command),
+      host.clientNeedsConfigure(client, providerEnvironment, command),
     ),
   );
   return detectedClients.filter((_, index) => needs[index]);
 };
+
+const initialProviderEnvironment = async (
+  host: SetupHost,
+  hopperPath: string | undefined,
+): Promise<SetupProviderEnvironment> => ({
+  ...(await host.providerEnvironment?.()),
+  ...(hopperPath === undefined ? {} : { HOPPER_LAUNCHER_PATH: hopperPath }),
+});
 
 const finalSetupRemediation = (
   platform: NodeJS.Platform,
@@ -295,6 +320,7 @@ const finalSetupRemediation = (
 
 const hostRemediation = async (
   host: SetupHost,
+  forceHopperInstall: boolean,
 ): Promise<string | undefined> => {
   if (host.platform !== "darwin" && host.platform !== "linux")
     return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
@@ -306,20 +332,36 @@ const hostRemediation = async (
       ? "Upgrade to macOS 12 or newer."
       : undefined;
   }
-  return (await host.linuxDistribution())?.supported === true
-    ? undefined
-    : "REA supports Hopper on Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.";
+  if ((await host.linuxDistribution())?.supported === true) return undefined;
+  const providerEnvironment = await host.providerEnvironment?.();
+  if (
+    !forceHopperInstall &&
+    providerEnvironment !== undefined &&
+    Object.keys(providerEnvironment).length > 0
+  )
+    return undefined;
+  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux; configure an existing supported provider instead.";
 };
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
-const systemSetupHost = (): SetupHost => {
-  const doctorHost = systemDoctorHost();
+export const systemSetupHost = (
+  doctorHost: DoctorHost = systemDoctorHost(),
+): SetupHost => {
   return {
     platform: process.platform,
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
+    providerEnvironment: async () => {
+      const diagnosis = await runDoctor(undefined, doctorHost);
+      return {
+        ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
+        ...(diagnosis.hopperPath === undefined
+          ? {}
+          : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+      };
+    },
     installHopper: async (replaceExisting) => {
       const result =
         process.platform === "linux"
@@ -329,14 +371,14 @@ const systemSetupHost = (): SetupHost => {
       return setupInstallFailure(result.reason);
     },
     detectedClients: () => detectClients(homedir()),
-    configureClient: (client, hopperPath, command) =>
+    configureClient: (client, providerEnvironment, command) =>
       client.format === "unsupported"
         ? Promise.resolve({ status: "skipped" })
         : client.format === "toml"
-          ? configureTomlClient(client, hopperPath, command)
-          : configureJsonClient(client, hopperPath, command),
-    clientNeedsConfigure: (client, hopperPath, command) =>
-      clientConfigurationAligned(client, hopperPath, command).then(
+          ? configureTomlClient(client, providerEnvironment, command)
+          : configureJsonClient(client, providerEnvironment, command),
+    clientNeedsConfigure: (client, providerEnvironment, command) =>
+      clientConfigurationAligned(client, providerEnvironment, command).then(
         (aligned) => !aligned,
       ),
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
@@ -359,7 +401,7 @@ export const detectClients = async (
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
   client: SetupClient,
-  hopperPath?: string,
+  environment: SetupProviderEnvironment | string = {},
   command: readonly string[] = [
     "npx",
     "-y",
@@ -386,13 +428,10 @@ export const configureJsonClient = async (
   } catch {
     return { status: "failed", reason: "readback" };
   }
-  const desired = {
-    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
-    args: command.slice(1),
-    ...(hopperPath === undefined
-      ? {}
-      : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
-  };
+  const desired = clientConfigurationDesired(
+    normalizeProviderEnvironment(environment),
+    command,
+  );
   if (
     JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
     JSON.stringify(desired)
@@ -440,7 +479,7 @@ export const configureJsonClient = async (
 /** Back up, atomically update, and semantically read back Codex TOML configuration. */
 export const configureTomlClient = async (
   client: SetupClient,
-  hopperPath?: string,
+  environment: SetupProviderEnvironment | string = {},
   command: readonly string[] = [
     "npx",
     "-y",
@@ -467,13 +506,10 @@ export const configureTomlClient = async (
   } catch {
     return { status: "failed", reason: "readback" };
   }
-  const desired = {
-    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
-    args: command.slice(1),
-    ...(hopperPath === undefined
-      ? {}
-      : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
-  };
+  const desired = clientConfigurationDesired(
+    normalizeProviderEnvironment(environment),
+    command,
+  );
   if (
     JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
     JSON.stringify(desired)
@@ -558,22 +594,27 @@ const restoreConfig = async (
 };
 
 const clientConfigurationDesired = (
-  hopperPath: string | undefined,
+  providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-) => ({
-  command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
-  args: command.slice(1),
-  ...(hopperPath === undefined
-    ? {}
-    : { env: { HOPPER_LAUNCHER_PATH: hopperPath } }),
-});
+) => {
+  const environment = Object.fromEntries(
+    Object.entries(providerEnvironment).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
+  );
+  return {
+    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
+    args: command.slice(1),
+    ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+  };
+};
 
 const clientConfigurationAligned = async (
   client: SetupClient,
-  hopperPath: string | undefined,
+  providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<boolean> => {
-  const desired = clientConfigurationDesired(hopperPath, command);
+  const desired = clientConfigurationDesired(providerEnvironment, command);
   try {
     const original = await readFile(client.configPath, "utf8");
     if (client.format === "toml") {
@@ -594,3 +635,22 @@ const clientConfigurationAligned = async (
     return false;
   }
 };
+
+const normalizeProviderEnvironment = (
+  environment: SetupProviderEnvironment | string,
+): SetupProviderEnvironment =>
+  typeof environment === "string"
+    ? { HOPPER_LAUNCHER_PATH: environment }
+    : environment;
+
+const providerRegistrationEnvironment = (
+  inspections: readonly DoctorProviderInspection[],
+): SetupProviderEnvironment =>
+  Object.fromEntries(
+    inspections
+      .filter(({ available }) => available)
+      .flatMap(({ registrationEnvironment }) =>
+        Object.entries(registrationEnvironment),
+      )
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );

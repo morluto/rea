@@ -14,14 +14,14 @@
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>A provider adapter failed outside its more precise typed variants.</p>
 </div></section>
-<section class="tsd-panel tsd-hierarchy" data-refl="4572">
+<section class="tsd-panel tsd-hierarchy" data-refl="4576">
 <h4>Hierarchy (<a href="../hierarchy.html#domain/errors.ProviderAdapterError">View Summary</a>)</h4>
 <ul class="tsd-hierarchy">
 <li class="tsd-hierarchy-item"><a href="domain_errors.AnalysisError.html" class="tsd-signature-type tsd-kind-class">AnalysisError</a>
 <ul class="tsd-hierarchy">
 <li class="tsd-hierarchy-item"><span class="tsd-hierarchy-target">ProviderAdapterError</span></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L216">src/domain/errors.ts:216</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L221">src/domain/errors.ts:221</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,6 +36,7 @@
 <div class="tsd-index-list"><a href="#_tag" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a>
 <a href="#cleanupincomplete" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a>
 <a href="#cleanupresources" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a>
+<a href="#diagnostics" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>diagnostics</span></a>
 <a href="#operation" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>operation</span></a>
 <a href="#providerid" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>provider<wbr/>Id</span></a>
 <a href="#usercategory" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a>
@@ -48,18 +49,18 @@
 <h3 class="tsd-anchor-link" id="constructor"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="constructorprovideradaptererror"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">ProviderAdapterError</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">providerId</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">operation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">ErrorOptions</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">ProviderAdapterError</a><a href="#constructorprovideradaptererror" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="constructorprovideradaptererror"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">ProviderAdapterError</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">providerId</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">operation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/domain_errors.ProviderAdapterErrorOptions.html" class="tsd-signature-type tsd-kind-interface">ProviderAdapterErrorOptions</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">ProviderAdapterError</a><a href="#constructorprovideradaptererror" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><span class="tsd-kind-parameter">providerId</span>: <span class="tsd-signature-type">string</span></span></li>
 <li><span><span class="tsd-kind-parameter">operation</span>: <span class="tsd-signature-type">string</span></span></li>
-<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">options</span>: <span class="tsd-signature-type">ErrorOptions</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/domain_errors.ProviderAdapterErrorOptions.html" class="tsd-signature-type tsd-kind-interface">ProviderAdapterErrorOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">ProviderAdapterError</a></h4><aside class="tsd-sources">
 <p>Overrides <a href="domain_errors.AnalysisError.html">AnalysisError</a>.<a href="domain_errors.AnalysisError.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L219">src/domain/errors.ts:219</a></li></ul></aside></div></li></ul></section></section></details>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L225">src/domain/errors.ts:225</a></li></ul></aside></div></li></ul></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="properties-1">Properties<a href="#properties-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -68,7 +69,7 @@
 <div class="tsd-signature"><span class="tsd-kind-property">_tag</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;ProviderAdapterError&quot;</span></div><aside class="tsd-sources">
 <p>Overrides <a href="domain_errors.AnalysisError.html">AnalysisError</a>.<a href="domain_errors.AnalysisError.html#_tag">_tag</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L217">src/domain/errors.ts:217</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L222">src/domain/errors.ts:222</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="cleanupincomplete"><code class="tsd-tag">Readonly</code><span>cleanup<wbr/>Incomplete</span><a href="#cleanupincomplete" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">cleanupIncomplete</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></div><aside class="tsd-sources">
@@ -82,15 +83,20 @@
 <ul>
 <li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L53">src/domain/errors.ts:53</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="diagnostics"><code class="tsd-tag">Readonly</code><span>diagnostics</span><a href="#diagnostics" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">diagnostics</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">JSONType</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L223">src/domain/errors.ts:223</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="operation"><code class="tsd-tag">Readonly</code><span>operation</span><a href="#operation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">operation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L221">src/domain/errors.ts:221</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L227">src/domain/errors.ts:227</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="providerid"><code class="tsd-tag">Readonly</code><span>provider<wbr/>Id</span><a href="#providerid" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">providerId</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L220">src/domain/errors.ts:220</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L226">src/domain/errors.ts:226</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="usercategory"><code class="tsd-tag">Readonly</code><span>user<wbr/>Category</span><a href="#usercategory" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">userCategory</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;permission_required&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;cancelled&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> = undefined</span></div><aside class="tsd-sources">
@@ -120,7 +126,7 @@
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Constructors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Constructors</summary>
 <div><a href="#constructor"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor"><use href="../assets/icons.svg#icon-512"></use></svg><span>constructor</span></a></div></details>
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
-<div><a href="#_tag"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a><a href="#cleanupincomplete" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a><a href="#cleanupresources" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a><a href="#operation"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>operation</span></a><a href="#providerid"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>provider<wbr/>Id</span></a><a href="#usercategory" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a><a href="#usermessage" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Message</span></a></div></details></div></details></div>
+<div><a href="#_tag"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a><a href="#cleanupincomplete" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a><a href="#cleanupresources" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a><a href="#diagnostics"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>diagnostics</span></a><a href="#operation"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>operation</span></a><a href="#providerid"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>provider<wbr/>Id</span></a><a href="#usercategory" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a><a href="#usermessage" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Message</span></a></div></details></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html">rea-agents - v1.6.0</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">

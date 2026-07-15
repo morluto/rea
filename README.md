@@ -30,7 +30,7 @@
 
 See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, complete function dossiers, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis through Hopper, a bring-your-own Ghidra headless-session foundation on Linux, complete function dossiers, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, and bounded JavaScript/source-map reconstruction. The Ghidra foundation deliberately exposes no binary operations yet; Hopper remains the operation-capable deep provider. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
 
 Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
@@ -153,7 +153,7 @@ Choose either the no-install commands or the global installation. You do not nee
 - Node.js 22.19+ or 24.11+ (including newer releases)
 - npm; REA does not require or install a particular npm version
 
-Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. REA discovers it through the provider registry and binds it explicitly to each deep-analysis target; Ghidra is planned but is not shipped yet. Setup reuses an existing Hopper installation. If Hopper is missing, interactive setup proposes the official package and includes it in the confirmation plan. Unattended installation requires `rea setup --yes --install-hopper`.
+Deep binary operations currently use [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. REA also ships the first Ghidra provider layer: Linux x64 discovery, exact Ghidra 12.1.2/JDK 21 validation, deterministic target/profile binding, and a private read-only `analyzeHeadless` session. That layer intentionally declares no binary operations until their semantic contracts and real-provider conformance land. Setup reuses an existing Hopper installation or an operator-supplied Ghidra installation. It never downloads Ghidra or installs Java. If neither provider is ready, interactive setup proposes Hopper; unattended Hopper installation requires `rea setup --yes --install-hopper`.
 
 If something is not working, run:
 
@@ -185,6 +185,22 @@ ldd /opt/hopper/bin/Hopper | grep 'not found'
 Install the missing distribution packages and rerun `rea setup`. Linux demo automation requires `Xvfb`, Python 3, `libX11.so.6`, and `libXtst.so.6`; approved setup installs those direct runtime dependencies and does not interact with the user's desktop display. Hopper's free demo supports analysis with vendor-defined limits, and a paid license is optional. The curl installer places the `rea` command in `~/.local/bin` on Linux; add that directory to future shell `PATH` values if it is not already present.
 
 REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
+
+### Ghidra headless-session foundation
+
+The current Ghidra adapter supports the exact official Ghidra 12.1.2 release on Linux x64 with a 64-bit full JDK 21. Download and extract those projects yourself, then configure absolute paths:
+
+```bash
+export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.2_PUBLIC
+export JAVA_HOME=/absolute/path/to/jdk-21 # optional when java and javac resolve from PATH
+rea doctor --json
+rea setup
+rea providers --json
+```
+
+Doctor distinguishes missing configuration, a bad installation root, the wrong Ghidra or Java version, a JRE without `javac`, a missing `support/analyzeHeadless`, and an unsupported platform or architecture. Approved setup only copies the verified non-secret paths into detected MCP registrations; it does not modify the Ghidra installation or install/download Ghidra or Java.
+
+REA loads its packaged Java `HeadlessScript` with `-scriptPath`, imports the target into a mode-0700 temporary project, enables `-readOnly` and `-deleteProject`, caps auto-analysis at 300 seconds with two CPUs and a 2 GiB Java heap, and authenticates `ping`/`shutdown` over a mode-0600 Unix socket. It isolates Ghidra home/cache/config/temp paths and removes the owned project, socket, process group, and runtime root on close, cancellation, timeout, or process exit. This proves the provider lifecycle and analysis-profile commitment; it does **not** make `decompile`, inventory, xref, or function operations available through Ghidra in this release.
 
 To remove only REA-owned MCP registrations and the managed skill:
 
@@ -362,7 +378,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **A second deep-analysis provider** — build the read-only Ghidra adapter on the shipped registry, target-binding, and bounded provider-process lifecycle foundations for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
+2. **Ghidra read-only operations** — extend the shipped discovery/profile/headless-session foundation with individually admitted inventory, decompilation, call, and xref capabilities, verified on real source-owned binaries without pretending Hopper and Ghidra results are textually identical.
 3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
 
 ### Next
@@ -379,7 +395,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the accepted Ghidra direction and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions that gate implementation.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra foundation, remaining admission gates, and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions.
 
 ## Using REA with other agents
 
@@ -413,9 +429,9 @@ flowchart LR
     REA --> Session["Target-bound session router"]
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
-    Registry -. planned, not shipped .-> Ghidra["Ghidra provider"]
+    Registry --> Ghidra["Ghidra provider<br/>headless foundation; no binary ops"]
     Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
-    Ghidra -. planned .-> Runtime
+    Ghidra --> Runtime
     Session --> Native["Native macOS provider"]
     Session --> Artifact["Artifact graph provider"]
     REA --> Browser["Browser CDP provider"]
@@ -491,6 +507,10 @@ diagnostics. `binary_session`, `rea providers`, and `rea capabilities` expose
 the authoritative `analysis_provider_candidates` and
 `analysis_provider_binding` fields. Reopening the same target without a selector
 keeps its binding; runtime failure never selects another provider silently.
+Ghidra can appear as an available, target-compatible candidate after doctor
+validates its exact installation, but its capability list is empty in this
+foundation release. Selecting it does not make Hopper-backed operations
+available and never triggers a silent fallback.
 
 ### CLI exit status
 
@@ -554,7 +574,7 @@ unpacked; REA does not silently accept the mismatched artifact.
 
 ## Security model
 
-REA does not provide a hosted analysis service. Hopper communication uses an authenticated private local socket. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. REA is not a security sandbox: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+REA does not provide a hosted analysis service. Hopper and Ghidra bridge communication uses authenticated private local sockets. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. REA is not a security sandbox: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 
@@ -576,6 +596,13 @@ Hopper's launcher internally activates the application. REA requests background 
 <summary><strong>Does REA include Hopper?</strong></summary>
 
 No. Setup can install Hopper for you, but Hopper remains separate software with its own license. REA supplies the CLI, MCP server, and workflows that make it usable by agents.
+
+</details>
+
+<details>
+<summary><strong>Does REA install or include Ghidra or Java?</strong></summary>
+
+No. Ghidra support is bring-your-own. REA packages only its Java bridge source, validates the exact supported Ghidra 12.1.2 and 64-bit JDK 21 installation, and loads that bridge through Ghidra's external script path after setup approval records the paths.
 
 </details>
 
@@ -606,7 +633,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, architecture, tests, and relea
 
 ## Project links
 
-[npm](https://www.npmjs.com/package/rea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/)
+[npm](https://www.npmjs.com/package/rea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/) · [Ghidra](https://github.com/NationalSecurityAgency/ghidra)
 
 ## License
 

@@ -62,6 +62,7 @@ interface FakeOptions {
   readonly webMcpChildLeavesScope?: boolean;
   readonly electronFileUrl?: string;
   readonly duplicateElectronInventory?: boolean;
+  readonly urlShapedAllowedTitle?: boolean;
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -225,7 +226,10 @@ const targets = (
   {
     id: "allowed-page",
     type: "page",
-    title: "Inspectable application",
+    title:
+      options.urlShapedAllowedTitle === true
+        ? `http://127.0.0.1:${String(port)}/app?startup=title-secret#fragment`
+        : "Inspectable application",
     url: `http://127.0.0.1:${String(port)}/app?token=page-secret#fragment`,
     attached: false,
     ...(options.omitTargetWebSocket === true

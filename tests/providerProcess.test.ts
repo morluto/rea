@@ -254,6 +254,24 @@ describe("provider process lifecycle primitives", () => {
     }
   });
 
+  it("allows interpreter launchers to rely on parent and run-token identity", async () => {
+    const spawned = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: [processFixturePath, "graceful"],
+      runId: "provider-process-interpreter-run",
+      expectedCommand: null,
+    });
+    try {
+      expect(spawned.ownership).toMatchObject({
+        expectedParentPid: process.pid,
+        runId: "provider-process-interpreter-run",
+      });
+      expect(spawned.ownership).not.toHaveProperty("expectedCommand");
+    } finally {
+      await stopProviderProcessFixture(spawned.process);
+    }
+  });
+
   it("rejects deterministic spawn failures without producing a process", async () => {
     await expect(
       spawnOwnedProviderProcess({

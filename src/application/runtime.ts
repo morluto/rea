@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config.js";
 import { BinarySession } from "./BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
+import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { NativeMacOSProvider } from "../native/NativeMacOSProvider.js";
 import { ArtifactProvider } from "../artifacts/ArtifactProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
@@ -17,9 +18,10 @@ export const createBinarySession = (
   logger: Logger = silentLogger,
 ): BinarySession => {
   const hopper = new HopperProvider(config, logger);
+  const ghidra = new GhidraProvider(config, logger);
   return new BinarySession(
     SessionProviderRouter.selectable(
-      new AnalysisProviderRegistry([hopper], config.analysisProvider),
+      new AnalysisProviderRegistry([hopper, ghidra], config.analysisProvider),
       [
         new ArtifactProvider(
           config.artifactNativeMountEnabled,

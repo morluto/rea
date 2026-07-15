@@ -9,7 +9,13 @@ const root = resolve(import.meta.dirname, "..");
 // Native globSync is available throughout the Node versions in package.engines.
 // Its exclusion option is `exclude`; `ignore` and `nodir` belong to npm glob.
 const sourceFiles = globSync(
-  ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "bridge/**/*.py"],
+  [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.mjs",
+    "bridge/**/*.py",
+    "bridge/**/*.java",
+  ],
   {
     cwd: root,
     exclude: (path) => path.split(/[\\/]/u).includes("node_modules"),

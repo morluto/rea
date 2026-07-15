@@ -146,6 +146,33 @@ describe("JSON client configuration transaction", () => {
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
   });
 
+  it("adds exact BYO Ghidra and Java paths without installing dependencies", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const configPath = join(directory, "mcp.json");
+    const client = { name: "cursor", configPath };
+    const environment = {
+      GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.2_PUBLIC",
+      JAVA_HOME: "/usr/lib/jvm/jdk-21",
+    };
+
+    expect(await configureJsonClient(client, environment)).toMatchObject({
+      status: "configured",
+    });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      mcpServers: {
+        rea: {
+          env: {
+            GHIDRA_INSTALL_DIR: environment.GHIDRA_INSTALL_DIR,
+            JAVA_HOME: environment.JAVA_HOME,
+          },
+        },
+      },
+    });
+    expect(await configureJsonClient(client, environment)).toEqual({
+      status: "unchanged",
+    });
+  });
+
   it("refuses malformed existing JSON without overwriting it", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
     const configPath = join(directory, "mcp.json");

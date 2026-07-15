@@ -80,6 +80,8 @@ npx skills add morluto/rea
 
 `rea setup` 会先显示完整变更计划并请求确认。它不会安装或更新 Homebrew、Node.js 或 npm。缺少 [Hopper](https://www.hopperapp.com/) 时，Setup 会提议安装官方软件包；Hopper 是需要单独许可证的独立软件。
 
+如果你已在 64 位 Linux 上安装 Ghidra 12.1.2 PUBLIC 和完整的 64 位 JDK 21，Setup 也可以在批准后登记 `GHIDRA_INSTALL_DIR` 和可选的 `JAVA_HOME`。REA 不会下载、安装或修改 Ghidra 或 Java。本版本交付的是隔离的私有 headless 会话基础，尚未开放 Ghidra 二进制分析操作，因此现有的深度分析工作流仍使用 Hopper。
+
 #### Linux 安装与故障排除
 
 在 Ubuntu 24.04+、Fedora 41+ 和 64 位 Arch Linux 上，REA 会下载 Hopper 官方的 DEB、RPM 或 Arch 软件包，验证发布方提供的大小和校验和，然后通过 `apt-get`、`dnf` 或 `pacman` 安装依赖。非 root 运行时，`pkexec` 会显示系统授权提示；REA 不调用 `sudo`。
@@ -178,8 +180,10 @@ Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Win
 flowchart LR
     Agent["编程智能体"] --> REA["REA<br/>CLI + MCP"]
     Terminal["终端"] --> REA
-    REA --> Hopper["分析引擎"]
+    REA --> Hopper["Hopper 分析操作"]
     Hopper --> App["你的应用"]
+    REA -.-> Ghidra["Ghidra headless 基础<br/>暂无二进制操作"]
+    Ghidra -.-> App
 ```
 
 CLI 与 MCP 服务器使用相同的分析引擎。终端命令完成后会关闭应用；智能体会话则会在调查期间保持应用打开。
@@ -212,9 +216,9 @@ REA 会推导明确的格式和架构参数，以避免常见的 FAT 与 ARM 选
 
 ## 安全模型
 
-每个桥会话都使用随机能力令牌和仅限当前用户的 Unix 套接字。协议消息有大小限制，面向调用者的错误不会暴露启动器 stderr 或内部异常原因。
+每个桥会话都使用随机能力令牌和仅限当前用户的 Unix 套接字。协议消息有大小限制，面向调用者的错误不会暴露启动器 stderr 或内部异常原因。Ghidra 会话还使用隔离的临时项目，不会打开或修改用户自己的 Ghidra 项目。
 
-这不是沙箱，也无法防御以同一 macOS 用户身份运行的恶意进程。打开不可信二进制文件会让 Hopper 以当前用户权限进行解析和分析。请按照 [SECURITY.md](SECURITY.md) 中的私密流程报告漏洞。
+这不是沙箱，也无法防御以同一操作系统用户身份运行的恶意进程。打开不可信二进制文件会让所选本地提供商以当前用户权限进行解析和分析。请按照 [SECURITY.md](SECURITY.md) 中的私密流程报告漏洞。
 
 ## 常见问题
 

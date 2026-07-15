@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
-const packedBridge = "package/bridge/hopper_bridge.py";
+const packedHopperBridge = "package/bridge/hopper_bridge.py";
+const packedGhidraBridge = "package/bridge/ghidra/ReaGhidraBridge.java";
 
 /** Verify that the packed production bridge rejects a catastrophic regex. */
 export async function verifyPackedBridge({
@@ -12,14 +14,29 @@ export async function verifyPackedBridge({
   tarball,
   packedFiles,
 }) {
-  if (!packedFiles.includes(packedBridge))
+  if (!packedFiles.includes(packedHopperBridge))
     throw new Error("package omitted the Hopper bridge");
+  if (!packedFiles.includes(packedGhidraBridge))
+    throw new Error("package omitted the Ghidra bridge");
   await exec("tar", ["-xf", join(root, tarball), "-C", workspace]);
+  const ghidraSource = await readFile(
+    join(workspace, packedGhidraBridge),
+    "utf8",
+  );
+  for (const commitment of [
+    "extends HeadlessScript",
+    'request.method.equals("ping")',
+    'request.method.equals("shutdown")',
+    'result.addProperty("read_only", true)',
+    "analysisTimeoutOccurred()",
+  ])
+    if (!ghidraSource.includes(commitment))
+      throw new Error(`packaged Ghidra bridge omitted ${commitment}`);
   const probe = JSON.parse(
     (
       await exec("python3", [
         join(root, "tests/fixtures/bridgeRegexProbe.py"),
-        join(workspace, packedBridge),
+        join(workspace, packedHopperBridge),
         JSON.stringify({
           action: "match",
           pattern: "(a|aa){1,35}b",

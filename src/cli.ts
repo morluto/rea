@@ -8,7 +8,11 @@ import {
   runProviderAnalysis,
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
-import { runSetup, type SetupAction } from "./application/Setup.js";
+import {
+  runSetup,
+  systemSetupHost,
+  type SetupAction,
+} from "./application/Setup.js";
 import { runUninstall } from "./application/Uninstall.js";
 import { runUpgrade, systemUpgradeHost } from "./application/Upgrade.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -35,6 +39,7 @@ import {
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
 } from "./contracts/providerSelection.js";
+import { createSystemDoctorHost } from "./doctorRuntime.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -180,7 +185,7 @@ const registerSetupCommands = (
             installHopper: options.installHopper,
             structured: formatExplicit,
           },
-          undefined,
+          systemSetupHost(createSystemDoctorHost()),
           options.yes || formatExplicit || process.stdin.isTTY !== true
             ? undefined
             : confirmSetup,
@@ -193,7 +198,9 @@ const registerSetupCommands = (
       target: z.string().optional().describe("Optional app path to check"),
     }),
     run: ({ options }) =>
-      logCliCommand(logger, "doctor", () => runDoctor(options.target)),
+      logCliCommand(logger, "doctor", () =>
+        runDoctor(options.target, createSystemDoctorHost()),
+      ),
   });
   cli.command(CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",

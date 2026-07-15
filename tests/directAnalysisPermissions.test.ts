@@ -54,7 +54,7 @@ describe("direct analysis snapshot permissions", () => {
       details: {
         selection_reason: "unknown_provider",
         requested_provider_id: "request-provider",
-        candidate_ids: ["hopper"],
+        candidate_ids: ["ghidra", "hopper"],
       },
     });
   });

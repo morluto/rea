@@ -4,7 +4,10 @@
 - Date: 2026-07-15
 - Implementation status: The provider registry, deterministic selection,
   target binding, analysis-profile commitment, and snapshot/Evidence migration
-  are implemented. Ghidra support is not yet shipped.
+  are implemented. Ghidra discovery, target/profile resolution, doctor checks,
+  and the private headless-session foundation are implemented; Ghidra analysis
+  capabilities remain intentionally undeclared pending operation-level
+  conformance work.
 
 ## Context
 
@@ -533,17 +536,20 @@ The missing engine version and analysis settings cannot be reconstructed from
 Hopper loader arguments. A fabricated profile would turn unknown provenance
 into false certainty.
 
-## Implementation sequence
+## Implementation progress
 
-1. Remove provider-specific target state and introduce the generic profile and
-   snapshot v2 commitments while preserving Hopper execution behavior.
-2. Add the registry, selectors, candidate status, binding lifecycle, and
-   overlapping-provider production seams.
-3. Extract only proven shared process-lifecycle primitives.
-4. Admit Ghidra availability and target/profile resolution before adding
-   analysis operations.
-5. Add Ghidra capabilities individually and verify real semantic claims across
-   the shared source-owned conformance corpus.
+The first four implementation stages are shipped:
 
-Until those implementation changes merge, the shipped runtime remains the
-single-route Hopper composition described by the current architecture diagram.
+1. Provider-specific target state was replaced by generic profile and snapshot
+   v2 commitments while preserving Hopper execution behavior.
+2. The registry, selectors, candidate status, binding lifecycle, and
+   overlapping-provider production seams were added.
+3. Proven process-lifecycle primitives were extracted for shared use.
+4. Ghidra availability, target/profile resolution, doctor checks, and a private
+   read-only headless session were admitted without declaring operations.
+
+The remaining stage is to add Ghidra capabilities individually and verify each
+real semantic claim across the shared source-owned conformance corpus. Until
+that happens, Hopper remains the only deep provider with callable analysis
+operations; Ghidra's empty capability set prevents accidental routing to an
+unverified implementation.

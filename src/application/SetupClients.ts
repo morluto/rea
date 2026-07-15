@@ -2,6 +2,7 @@ import type {
   ClientConfigurationResult,
   SetupClient,
   SetupHost,
+  SetupProviderEnvironment,
 } from "./Setup.js";
 
 const failedConfigurationMessage = (
@@ -20,7 +21,7 @@ const failedConfigurationMessage = (
 export const configureDetectedClients = async (options: {
   readonly host: SetupHost;
   readonly detectedClients: readonly SetupClient[];
-  readonly hopperPath: string | undefined;
+  readonly providerEnvironment: SetupProviderEnvironment;
   readonly command: readonly string[];
   readonly clients: Record<string, ClientConfigurationResult>;
   readonly appliedActions: string[];
@@ -29,7 +30,7 @@ export const configureDetectedClients = async (options: {
   for (const client of options.detectedClients) {
     const result = await options.host.configureClient(
       client,
-      options.hopperPath,
+      options.providerEnvironment,
       options.command,
     );
     options.clients[client.name] = result;

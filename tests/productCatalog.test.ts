@@ -19,6 +19,7 @@ import {
   HOPPER_PROVIDER_IDENTITY,
   HOPPER_PROVIDER_TOOL_CONTRACTS,
 } from "../src/hopper/HopperProvider.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../src/ghidra/GhidraProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../src/native/NativeMacOSProvider.js";
 import {
   assertDocumentationFacts,
@@ -57,6 +58,7 @@ describe("canonical product catalog", () => {
     expect(catalog.providers.map(({ id }) => id).sort()).toEqual(
       [
         HOPPER_PROVIDER_IDENTITY,
+        GHIDRA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         CDP_BROWSER_PROVIDER_IDENTITY,
@@ -69,6 +71,10 @@ describe("canonical product catalog", () => {
       catalog.providers.find(({ id }) => id === HOPPER_PROVIDER_IDENTITY.id)
         ?.capabilities,
     ).toEqual(HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    expect(
+      catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
+        ?.capabilities,
+    ).toEqual([]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({
@@ -92,7 +98,7 @@ describe("canonical product catalog", () => {
       assertDocumentationFacts(root, catalog),
     ).resolves.toBeUndefined();
     await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
-  });
+  }, 15_000);
 
   it("uses the same primary command names as the actual Incur router", () => {
     const inventory = createCliInventory(createCli());

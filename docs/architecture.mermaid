@@ -7,7 +7,8 @@ graph TD
 
     subgraph "Adapters"
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
-        BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
+        HOPPER_BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
+        GHIDRA_BRIDGE["bridge/ghidra/ReaGhidraBridge.java<br/>Packaged HeadlessScript<br/>private authenticated control channel"]
         INSTALL["Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
@@ -20,6 +21,7 @@ graph TD
 
     subgraph "Provider Layers"
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
+        GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & private headless session<br/>launcher, client, doctor, protocol"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
     end
@@ -53,22 +55,27 @@ graph TD
     APP --> SESSION
     SESSION --> REGISTRY
     REGISTRY --> HOPPER
+    REGISTRY --> GHIDRA
     SESSION --> AUX
     APP --> WORKSPACE
     APP --> INSTALL
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> BROWSER
-    HOPPER --> BRIDGE
+    HOPPER --> HOPPER_BRIDGE
+    GHIDRA --> GHIDRA_BRIDGE
     HOPPER --> PROCESS
+    GHIDRA --> PROCESS
     APP --> PROCESS
     APP --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
+    GHIDRA --> DOMAIN
     AUX --> DOMAIN
     BROWSER --> DOMAIN
     PROCESS --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
+    TESTS -.-> GHIDRA
     TESTS -.-> PROCESS
     TESTS -.-> BROWSER

@@ -3,20 +3,28 @@
 ## Shipped behavior
 
 REA setup currently configures the capabilities that exist today: its bundled
-skill, detected agent integrations, and optional Hopper provider. It detects
+skill, detected agent integrations, optional Hopper provider, and validated
+bring-your-own Ghidra paths. It detects
 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. The
 first six have documented local MCP configuration boundaries and can be updated
 additively; Devin is reported but left unchanged.
 
-## Next provider milestone
+The Ghidra foundation supports Linux x64 with exact Ghidra 12.1.2 and a 64-bit
+full JDK 21. Doctor validates those coordinates; approved setup propagates them
+to MCP registrations without installing or modifying either dependency. REA's
+packaged Java bridge then proves an isolated read-only headless import,
+post-analysis handshake, and complete cleanup. The provider intentionally
+declares no binary operation capabilities in this foundation release.
 
-Ghidra is the accepted direction for REA's second deep static-analysis provider,
-but it is not shipped yet. The first implementation is planned as a bring-your-
-own Ghidra and Java installation with read-only headless analysis, the shipped
-explicit provider selection and target binding, isolated temporary projects,
-and truthful unavailable capabilities. Setup must not install Java. Automatic
-Ghidra acquisition, if added later, must remain a separately planned and
-approved related-tool change.
+## Next Ghidra milestone
+
+Admit Ghidra read-only capabilities individually: start with program identity,
+procedures, strings, symbols, memory blocks, address/name resolution, and
+bounded search; then add function details, decompilation, assembly, calls, xrefs,
+and CFG. Every claim requires normalized provider-neutral semantics and real
+source-owned conformance. Hopper and Ghidra pseudocode text is not expected to
+match. Automatic Ghidra acquisition, if ever added, remains a separately
+planned and approved related-tool change; setup must never install Java.
 
 ## Capability-selective setup
 

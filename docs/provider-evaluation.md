@@ -1,13 +1,17 @@
 # Static-analysis provider evaluation
 
-Status: Ghidra is approved as the direction for REA's next full read-only
-analysis provider. This note does not claim that Ghidra support is implemented
-or shipped.
+Status: the Ghidra provider foundation is shipped. It validates an exact
+bring-your-own Ghidra 12.1.2/JDK 21 environment on Linux x64, resolves a
+provider/version/profile commitment, and runs one isolated read-only headless
+import with an authenticated post-analysis bridge. It intentionally publishes
+no binary operation capabilities yet.
 
 The provider-neutral target, provider registry, deterministic target binding,
 analysis-profile commitment, Evidence provenance, snapshot v2, and bounded
-provider-process lifecycle foundations are implemented. Ghidra support itself
-remains gated on its launcher, bridge, semantic adapter, and multi-fixture
+provider-process lifecycle foundations are implemented. The Ghidra launcher,
+packaged Java bridge, doctor/setup projection, bounded client lifecycle, and
+single-target real Linux verifier are also implemented. Binary inventory and
+function semantics remain gated on operation adapters and a multi-fixture
 conformance suite. A provider is not a drop-in replacement for Hopper: every
 capability must be mapped explicitly, with truthful `unavailable` or degraded
 results where the engine cannot provide equivalent semantics.
@@ -28,6 +32,9 @@ follow.
   bounded startup/analysis/request deadlines, cancellation, and cleanup.
 - Prefer a packaged Java bridge loaded through Ghidra's script path. PyGhidra
   remains useful for prototypes but is not a mandatory production dependency.
+- The foundation bridge exposes authenticated `ping` and `shutdown` only.
+  Successful auto-analysis is lifecycle proof, not an inventory, xref, CFG, or
+  decompilation claim.
 - Implement read-only inventories, assembly, decompilation, function metadata,
   calls, references, containment, and bounded search first.
 - Report GUI cursor/navigation and persistent mutation operations as unavailable
@@ -35,6 +42,31 @@ follow.
 - Verify real claims on Linux with at least two distinct source-owned binaries;
   compare normalized semantic facts rather than provider-specific pseudocode
   text.
+
+## Shipped foundation boundary
+
+`GHIDRA_INSTALL_DIR` must identify an extracted official 12.1.2 release;
+optional `JAVA_HOME` must identify a 64-bit full JDK 21, otherwise doctor probes
+`java` and `javac` from `PATH`. The adapter currently rejects non-Linux hosts,
+non-x64 hosts, other Ghidra/JDK versions, missing `analyzeHeadless`, non-
+executable targets, unknown architectures, and formats other than ELF, PE, and
+Mach-O before launch.
+
+The launcher creates one mode-0700 runtime root with private project,
+home/cache/config/data/temp, logs, descriptor, socket, and ownership manifest.
+It passes `-readOnly`, `-deleteProject`, a 300-second per-file analysis limit,
+two CPUs, and a 2 GiB heap; inherited Java option injection variables are
+cleared. The mode-0600 descriptor carries the random token without exposing it
+in argv or environment. The Java bridge deletes the descriptor after parsing,
+binds a mode-0600 Unix socket, reports actual Ghidra/language/compiler/analysis
+metadata, accepts only bounded authenticated `ping`/`shutdown`, and deletes the
+socket. Close, cancellation, timeout, malformed protocol, or process exit stops
+the token-verified owned process group and removes the entire runtime root.
+
+The provider catalog therefore lists `ghidra` with an empty capability array.
+This is deliberate: provider discovery and a real headless lifecycle are
+shipped, while binary operation semantics remain unavailable rather than being
+borrowed from Hopper or inferred from a successful import.
 
 ## Shared provider-process foundation
 
@@ -48,14 +80,15 @@ forced termination, double-close, spawn failure, and resource release.
 
 The foundation does not define a bridge schema, socket framing, health payload,
 analysis model, or shutdown acknowledgement. Hopper keeps its authenticated
-NDJSON-over-Unix-socket protocol in `src/hopper/`; Ghidra may use its own Java
-bridge and transport while reusing only these process mechanisms.
+NDJSON-over-Unix-socket protocol in `src/hopper/`; Ghidra has a separate strict
+NDJSON protocol implemented by the packaged Java `HeadlessScript` and reuses
+only the generic process mechanisms.
 
 ## Shortlist
 
 | Provider                                                                                    | License / automation surface                                                                                                                                           | What it brings                                                                                                                                          | REA fit and blockers                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Strong candidate for a full provider. Requires a Java/JDK runtime, isolated project/cache directories, process supervision, and a stable adapter for Ghidra's project-oriented model.                                                                                  |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Foundation shipped: exact BYO installation checks, isolated project/state, bounded owned process, packaged Java bridge, and real lifecycle verifier. Operation schemas and semantic conformance remain before it is a full Hopper alternative.                         |
 | [Rizin](https://github.com/rizinorg/rizin) / [rz-pipe](https://github.com/rizinorg/rz-pipe) | Rizin repository contains LGPL-3.0 and GPL-3.0 components; `rizin`, `rz-bin`, and language bridges through `rzpipe`                                                    | Portable CLI analysis, disassembly/debugging, many architectures and file formats, JSON command output                                                  | Good candidate for a process-backed Linux provider and fast metadata fallback. License/component inventory must be preserved; command output needs version-pinned parsers and semantic conformance before evidence is trusted.                                         |
 | [LIEF](https://github.com/lief-project/LIEF)                                                | Apache-2.0; C++, Python, and other bindings                                                                                                                            | Deterministic parsing and modification of ELF, PE, Mach-O, COFF, and related executable formats; headers, sections, symbols, relocations, and functions | Best near-term complement, not a decompiler replacement. It can cover format metadata and artifact evidence without a long-lived analysis process; function semantics, pseudocode, CFG, and cross-reference parity remain out of scope unless separately demonstrated. |
 | [Binary Ninja](https://docs.binary.ninja/dev/index.html)                                    | API/documentation components are MIT, while the analysis product is licensed by edition; commercial, Ultimate, or Headless license is required for headless automation | Python/Core/C++/Rust APIs, headless loading, IL layers, function analysis, plugins, and configurable analysis                                           | Strong technical fit for a native provider, especially function dossiers. Commercial licensing, license-secret handling, native runtime packaging, and multithreaded lifecycle rules are material deployment blockers.                                                 |
@@ -64,8 +97,8 @@ bridge and transport while reusing only these process mechanisms.
 
 1. Use the implemented explicit provider registry and target binding without
    changing Hopper behavior.
-2. Implement the bounded read-only Ghidra provider described above and admit
-   capabilities individually through the shared conformance corpus.
+2. Extend the bounded read-only Ghidra foundation with capabilities admitted
+   individually through the shared conformance corpus.
 3. Connect Electron/native-add-on application findings to the selected native
    analysis provider without introducing provider-prefixed tools.
 4. Evaluate LIEF or Rizin later as complementary metadata/disassembly providers,

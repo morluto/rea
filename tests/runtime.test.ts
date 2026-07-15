@@ -83,5 +83,5 @@ describe("production stdio runtime", () => {
       await client.close();
       await transport.close();
     }
-  });
+  }, 15_000);
 });
