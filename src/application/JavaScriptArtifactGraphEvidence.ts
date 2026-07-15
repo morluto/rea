@@ -1,0 +1,130 @@
+import type { ApplicationGraphEvidence } from "../domain/javascriptApplicationEvidenceSchemas.js";
+import type { JavaScriptSourceRange } from "../domain/javascriptStaticAnalysisTypes.js";
+
+const EXTRACTOR = {
+  name: "rea-javascript-artifact-reconstruction",
+  version: "1",
+  executable_sha256: null,
+} as const;
+
+/** Coverage shape accepted by reconstruction evidence helpers. */
+export type ReconstructionEvidenceCoverage =
+  ApplicationGraphEvidence["coverage"];
+
+/** Shared exact artifact location and bounded coverage for static evidence. */
+export interface EvidenceInput {
+  readonly sha256: string;
+  readonly path: string;
+  readonly operation: string;
+  readonly coverage: ReconstructionEvidenceCoverage;
+  readonly limitations?: readonly string[];
+  readonly range?: JavaScriptSourceRange;
+}
+
+/** Exact artifact-byte evidence for one safely inventoried local file. */
+export const artifactObservationEvidence = (
+  input: EvidenceInput,
+): ApplicationGraphEvidence => ({
+  authority: "artifact-bytes",
+  state: "observed",
+  confidence: "exact",
+  artifact: artifactReference(input.sha256),
+  location: {
+    available: true,
+    value: { kind: "artifact-path", path: input.path },
+  },
+  extractor: { ...EXTRACTOR, operation: input.operation },
+  coverage: input.coverage,
+  limitations: [...(input.limitations ?? [])],
+  evidence_ids: [],
+});
+
+/** Exact AST syntax evidence with an actionable source range. */
+export const astObservationEvidence = (
+  input: EvidenceInput & { readonly range: JavaScriptSourceRange },
+): ApplicationGraphEvidence => ({
+  authority: "ast-static-analysis",
+  state: "observed",
+  confidence: "exact",
+  artifact: artifactReference(input.sha256),
+  location: {
+    available: true,
+    value: { kind: "source-range", source: input.path, ...input.range },
+  },
+  extractor: { ...EXTRACTOR, operation: input.operation },
+  coverage: input.coverage,
+  limitations: [...(input.limitations ?? [])],
+  evidence_ids: [],
+});
+
+/** Explicit static relationship inference; never promoted to observation. */
+export const staticInferenceEvidence = (
+  input: EvidenceInput & {
+    readonly confidence?: "high" | "medium" | "low";
+  },
+): ApplicationGraphEvidence => ({
+  authority: "static-relationship-inference",
+  state: "inferred",
+  confidence: input.confidence ?? "high",
+  artifact: artifactReference(input.sha256),
+  location:
+    input.range === undefined
+      ? { available: true, value: { kind: "artifact-path", path: input.path } }
+      : {
+          available: true,
+          value: { kind: "source-range", source: input.path, ...input.range },
+        },
+  extractor: { ...EXTRACTOR, operation: input.operation },
+  coverage: input.coverage,
+  limitations: [
+    "Static syntax does not prove that this relationship executes at runtime.",
+    ...(input.limitations ?? []),
+  ],
+  evidence_ids: [],
+});
+
+/** Unavailable AST fact that preserves a parse, approval, or limit gap. */
+export const unavailableAstEvidence = (
+  input: EvidenceInput & { readonly limitation: string },
+): ApplicationGraphEvidence => ({
+  authority: "ast-static-analysis",
+  state: "unavailable",
+  confidence: "unknown",
+  artifact: artifactReference(input.sha256),
+  location: {
+    available: true,
+    value: { kind: "artifact-path", path: input.path },
+  },
+  extractor: { ...EXTRACTOR, operation: input.operation },
+  coverage: input.coverage,
+  limitations: [input.limitation, ...(input.limitations ?? [])],
+  evidence_ids: [],
+});
+
+/** Complete local projection coverage under named hard limits. */
+export const completeReconstructionCoverage = (
+  limits: ReconstructionEvidenceCoverage["limits"] = [],
+): ReconstructionEvidenceCoverage => ({
+  status: "complete",
+  truncated: false,
+  omitted_count: 0,
+  limits: [...limits],
+});
+
+/** Partial reconstruction coverage with either exact truncation or a policy gap. */
+export const partialReconstructionCoverage = (
+  limits: ReconstructionEvidenceCoverage["limits"],
+  omitted: number | null,
+  truncated: boolean,
+): ReconstructionEvidenceCoverage => ({
+  status: "partial",
+  truncated,
+  omitted_count: omitted,
+  limits: [...limits],
+});
+
+const artifactReference = (sha256: string) => ({
+  available: true as const,
+  artifact_id: `art_${sha256}`,
+  sha256,
+});

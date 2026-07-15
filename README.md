@@ -341,6 +341,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
 - Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
 - Validate and canonically serialize a provider-neutral [JavaScript Application Graph v1](docs/javascript-application-graph.md) spanning packages, ASAR entries, Electron roles, JavaScript/source-map entities, browser/runtime instances, IPC, endpoints, storage, and native add-ons. This shipped domain contract performs no extraction or I/O by itself.
+- Reconstruct bounded static package, entrypoint, Webpack/Rspack module, import, worker, endpoint, storage, source-map, and native-add-on structure from a local directory or ASAR through an AST-only [application service](docs/javascript-artifact-reconstruction.md). The service does not execute bootstrap code and does not add a standalone CLI/MCP tool yet.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -385,13 +386,13 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **JavaScript application graph extractors** — populate the shipped v1 domain graph from artifact inventories, bundle analysis, source maps, Electron boundaries, passive runtime observations, and native analysis without widening authority.
+2. **Electron boundary extraction and high-level surface** — extend the shipped static artifact projector with contextBridge, IPC, utility-process, and native-export boundaries, then expose one provider-neutral CLI/MCP workflow without widening authority.
 3. **Cross-provider conformance growth** — add source-owned architectures and difficult indirect/thunk cases while preserving semantic comparison and provider-specific text boundaries.
 
 ### Next
 
 1. **Cross-layer tracing and version comparison** — trace renderer behavior through preload, IPC, main-process, storage, network, and native boundaries, then compare those paths across application versions.
-2. **Deeper JavaScript and source recovery** — add bounded Webpack/Rspack module reconstruction, stable structural fingerprints, historical-source matching, and stronger static/runtime reconciliation.
+2. **Deeper JavaScript and source recovery** — add historical-source matching, rechunked/minified cross-version matching, and stronger static/runtime reconciliation on top of the shipped AST-only Webpack/Rspack reconstruction.
 3. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later

@@ -22,8 +22,11 @@ The graph complements existing REA models instead of replacing them:
 | Native analysis              | Provider-qualified binary functions, symbols, and references                           | Supplies native add-on/export observations                 |
 | JavaScript Application Graph | Cross-layer entity identity, evidence-bearing relationships, and canonical commitments | Preserves the combined application model                   |
 
-An application-layer extractor may project results from those models into this
-graph later. The domain module itself never reaches outward to obtain them.
+The shipped [JavaScript artifact reconstruction](javascript-artifact-reconstruction.md)
+service now projects bounded directory/ASAR, package, bundle, and source-map
+facts into this graph. Electron IPC/security boundaries, passive runtime
+reconciliation, and native-export projection remain separate later layers. The
+domain module itself never reaches outward to obtain any of those facts.
 
 ## Versioned record
 
