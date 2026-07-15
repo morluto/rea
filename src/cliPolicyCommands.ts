@@ -14,6 +14,7 @@ import {
 } from "./domain/errors.js";
 import type { PermissionCapability } from "./domain/permissionPolicy.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const capabilitySchema = z.enum([
   "process_capture",
@@ -54,7 +55,7 @@ export const registerPolicyCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("policy", {
+  cli.command(CLI_COMMANDS.policy, {
     description: "Inspect, explain, or revoke unified local permission grants",
     args: z.object({
       action: z.enum(["status", "list", "explain", "revoke"]),

@@ -12,6 +12,7 @@ import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
+import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
 
 const readmes = [
   "README.md",
@@ -31,21 +32,15 @@ const expectedToolCounts = [
   SESSION_TOOL_CONTRACTS.length,
 ] as const;
 
-const setupClientNames = [
-  "Claude Code",
-  "Claude Desktop",
-  "Codex",
-  "Cursor",
-  "Gemini CLI",
-  "Windsurf",
-  "Devin",
-] as const;
-
 const toolCountsFromReadme = (content: string, path: string): number[] => {
   const lines = content.split(/\r?\n/u);
-  const headingIndex = lines.findIndex((line) => /^## .*78/u.test(line));
+  const headingIndex = lines.findIndex((line) =>
+    new RegExp(`^## .*${String(TOOL_CONTRACTS.length)}`, "u").test(line),
+  );
   if (headingIndex === -1)
-    throw new Error(`Missing 78-tool heading in ${path}`);
+    throw new Error(
+      `Missing ${String(TOOL_CONTRACTS.length)}-tool heading in ${path}`,
+    );
 
   const counts: number[] = [];
   for (const line of lines.slice(headingIndex + 1)) {
@@ -83,7 +78,8 @@ describe("localized README product facts", () => {
       expect(content).toContain("Ubuntu 24.04");
       expect(content).toContain("Fedora 41");
       expect(content).toContain("Arch Linux");
-      for (const client of setupClientNames) expect(content).toContain(client);
+      for (const client of SUPPORTED_CLIENT_DEFINITIONS)
+        expect(content).toContain(client.displayName);
       if (path === "README_ar.md")
         expect(content).toContain("Windows غير مدعوم حاليًا");
       expect(content).toContain(`MCP_tools-${String(TOOL_CONTRACTS.length)}`);

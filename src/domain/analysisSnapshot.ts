@@ -76,7 +76,7 @@ const entrySchema = z.object({
 });
 
 /** Provider-neutral, deterministic cache of successful immutable analysis calls. */
-const analysisSnapshotSchema = z.object({
+export const analysisSnapshotSchema = z.object({
   snapshot_version: z.literal(1),
   target: targetSchema,
   entries: z.array(entrySchema).max(10_000),

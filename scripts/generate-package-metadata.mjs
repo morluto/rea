@@ -1,8 +1,14 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateBuildCache } from "./build-cache.mjs";
+import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+
+const arguments_ = new Set(process.argv.slice(2));
+for (const argument of arguments_)
+  if (argument !== "--check")
+    throw new Error(`Unknown package metadata option: ${argument}`);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(
@@ -35,17 +41,10 @@ export const PACKAGE_METADATA = {
 } as const;
 `;
 const outputPath = join(root, "src/generatedPackageMetadata.ts");
-let existingSource;
-try {
-  existingSource = await readFile(outputPath, "utf8");
-} catch (cause) {
-  if (
-    typeof cause !== "object" ||
-    cause === null ||
-    !("code" in cause) ||
-    cause.code !== "ENOENT"
-  )
-    throw cause;
-}
-if (existingSource !== source) await writeFile(outputPath, source, "utf8");
+await ensureGeneratedFile({
+  path: outputPath,
+  source,
+  check: arguments_.has("--check"),
+  generateCommand: "npm run build",
+});
 await validateBuildCache(root);

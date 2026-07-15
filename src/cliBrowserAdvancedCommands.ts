@@ -19,6 +19,7 @@ import {
 } from "./domain/webScreenshot.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const scopeOptions = {
   allowedOrigins: z.array(z.string().min(1)).optional(),
@@ -40,7 +41,7 @@ const registerWebMcp = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("discover-webmcp-tools", {
+  cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({ endpoint: z.string(), targetId: z.string() }),
     options: z.object({
@@ -87,7 +88,7 @@ const registerCaptureDiff = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("compare-web-captures", {
+  cli.command(CLI_COMMANDS.compareWebCaptures, {
     description: "Compare two normalized web capture JSON values",
     args: z.object({ beforeJson: z.string(), afterJson: z.string() }),
     options: z.object({
@@ -116,7 +117,7 @@ const registerScreenshot = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("capture-web-screenshot", {
+  cli.command(CLI_COMMANDS.captureWebScreenshot, {
     description: "Capture an explicitly approved visible page viewport",
     args: z.object({ endpoint: z.string(), targetId: z.string() }),
     options: z.object({
@@ -157,7 +158,7 @@ const registerScreenshotDiff = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("compare-web-screenshots", {
+  cli.command(CLI_COMMANDS.compareWebScreenshots, {
     description: "Compare two self-verifying PNG artifact JSON values",
     args: z.object({ beforeJson: z.string(), afterJson: z.string() }),
     options: z.object({

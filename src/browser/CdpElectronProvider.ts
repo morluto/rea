@@ -34,11 +34,13 @@ import {
   canonicalElectronRoots,
 } from "./ElectronFileScope.js";
 
-const IDENTITY: ProviderIdentity = {
+/** Public identity committed by passive Electron observations. */
+export const CDP_ELECTRON_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   id: "rea-cdp-electron",
   name: "REA Electron file-page CDP observation provider",
   version: "1",
-};
+});
+const IDENTITY = CDP_ELECTRON_PROVIDER_IDENTITY;
 
 /** Passive Electron provider with canonical file-root confinement. */
 export class CdpElectronProvider implements ElectronObservationPort {

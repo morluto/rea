@@ -15,6 +15,7 @@ import {
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const scopeOptions = {
   allowedFileRoots: z
@@ -29,7 +30,7 @@ export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("list-electron-targets", {
+  cli.command(CLI_COMMANDS.listElectronTargets, {
     description: "List root-confined file pages from Electron CDP",
     args: z.object({ endpoint: z.string() }),
     options: z.object({
@@ -58,7 +59,7 @@ export const registerElectronCommands = (
         return result.ok ? result.value : cliError(result.error);
       }),
   });
-  cli.command("inspect-electron-page", {
+  cli.command(CLI_COMMANDS.inspectElectronPage, {
     description: "Passively inspect one root-confined Electron file page",
     args: z.object({ endpoint: z.string(), targetId: z.string() }),
     options: z.object({

@@ -5,48 +5,9 @@ import { z } from "zod";
 
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
+import { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 
-/** Explicit CLI command inventory, kept separate from MCP tool counts. */
-export const CLI_COMMAND_NAMES = [
-  "analyze",
-  "inspect",
-  "decompile",
-  "setup",
-  "doctor",
-  "uninstall",
-  "upgrade",
-  "xrefs",
-  "trace",
-  "capabilities",
-  "providers",
-  "function",
-  "search",
-  "import-reference-source",
-  "inventory-artifact",
-  "extract-artifact",
-  "inspect-macho",
-  "inspect-signature",
-  "list-architectures",
-  "inspect-plist",
-  "demangle-swift",
-  "evidence-import",
-  "evidence-export",
-  "compare",
-  "investigate-versions",
-  "capture-process",
-  "compare-process-captures",
-  "policy",
-  "list-browser-targets",
-  "inspect-web-page",
-  "analyze-web-bundle",
-  "observe-web-session",
-  "discover-webmcp-tools",
-  "compare-web-captures",
-  "capture-web-screenshot",
-  "compare-web-screenshots",
-  "list-electron-targets",
-  "inspect-electron-page",
-] as const;
+export { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 
 const toolCatalog = TOOL_CONTRACTS.map((contract) => ({
   name: contract.name,

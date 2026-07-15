@@ -19,11 +19,13 @@ import {
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import { HopperClient } from "./HopperClient.js";
 
-const IDENTITY: ProviderIdentity = Object.freeze({
+/** Public identity committed by every Hopper-backed observation. */
+export const HOPPER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   id: "hopper",
   name: "Hopper Disassembler",
   version: null,
 });
+const IDENTITY = HOPPER_PROVIDER_IDENTITY;
 const MUTATING_OPERATIONS = new Set([
   "set_address_name",
   "set_addresses_names",
@@ -33,15 +35,16 @@ const MUTATING_OPERATIONS = new Set([
   "unset_bookmark",
 ]);
 
-const PROVIDER_TOOL_CONTRACTS = [
+/** Tool contracts implemented directly by the Hopper adapter. */
+export const HOPPER_PROVIDER_TOOL_CONTRACTS = Object.freeze([
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS.filter(
     (contract) => contract.name === "analyze_function",
   ),
-];
+]);
 
 const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
-  PROVIDER_TOOL_CONTRACTS.map((contract) =>
+  HOPPER_PROVIDER_TOOL_CONTRACTS.map((contract) =>
     Object.freeze({
       provider: IDENTITY,
       operation: contract.name,

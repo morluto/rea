@@ -19,6 +19,7 @@ import { observeWebSessionInputSchema } from "./domain/browserSession.js";
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const browserScopeOptions = {
   allowedOrigins: z
@@ -45,7 +46,7 @@ const registerTargetList = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("list-browser-targets", {
+  cli.command(CLI_COMMANDS.listBrowserTargets, {
     description: "List approved pages from a user-owned loopback CDP browser",
     args: z.object({
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
@@ -83,7 +84,7 @@ const registerPageInspection = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("inspect-web-page", {
+  cli.command(CLI_COMMANDS.inspectWebPage, {
     description: "Passively inspect one approved page through CDP",
     args: z.object({
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
@@ -236,7 +237,7 @@ const registerBundleAnalysis = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("analyze-web-bundle", {
+  cli.command(CLI_COMMANDS.analyzeWebBundle, {
     description: "Capture and statically analyze an approved page bundle",
     args: z.object({
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
@@ -312,7 +313,7 @@ const registerObservationSession = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("observe-web-session", {
+  cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a bounded window",
     args: z.object({
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
