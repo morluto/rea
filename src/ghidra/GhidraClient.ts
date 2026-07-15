@@ -16,6 +16,7 @@ import {
 } from "../process/ProviderProcess.js";
 import {
   GHIDRA_MAX_LINE_BYTES,
+  GHIDRA_MAX_QUEUED_REQUESTS,
   GHIDRA_REQUEST_TIMEOUT_MS,
   GHIDRA_STARTUP_TIMEOUT_MS,
 } from "./GhidraDefaults.js";
@@ -25,10 +26,12 @@ import type {
   GhidraStartResult,
 } from "./GhidraClientTypes.js";
 import type { GhidraInventoryOperation } from "./GhidraInventoryValues.js";
+import type { GhidraFunctionOperation } from "./GhidraFunctionValues.js";
 import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraResponseBuffer } from "./GhidraResponseBuffer.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
+import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
   bindGhidraSessionFailure,
   GhidraSessionError,
@@ -52,6 +55,11 @@ export type {
   GhidraRequestOptions,
   GhidraStartResult,
 } from "./GhidraClientTypes.js";
+
+/** Closed Java-bridge operation union callable after the exact handshake. */
+export type GhidraOperation =
+  | GhidraInventoryOperation
+  | GhidraFunctionOperation;
 
 /** Owns one authenticated, private, read-only Ghidra headless session. */
 export class GhidraClient {
@@ -79,6 +87,7 @@ export class GhidraClient {
   #startPromise: Promise<GhidraStartResult> | undefined;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(() => this.#diagnostics());
+  readonly #requestQueue: GhidraRequestQueue;
   readonly #responseRouter = new GhidraResponseRouter({
     pending: this.#pending,
     nextId: () => this.#nextId,
@@ -110,6 +119,18 @@ export class GhidraClient {
       requestTimeoutMs: options.requestTimeoutMs ?? GHIDRA_REQUEST_TIMEOUT_MS,
       startupTimeoutMs: options.startupTimeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
     };
+    this.#requestQueue = new GhidraRequestQueue(
+      GHIDRA_MAX_QUEUED_REQUESTS,
+      (method, parameters, requestOptions) =>
+        this.#request(method, parameters, requestOptions),
+      (kind, message, timeoutMs) =>
+        this.#failure(
+          kind,
+          message,
+          undefined,
+          timeoutMs === undefined ? {} : { timeoutMs },
+        ),
+    );
   }
 
   /** Launch Ghidra once and require its exact post-analysis handshake. */
@@ -150,15 +171,18 @@ export class GhidraClient {
     return this.#parseSessionInfo(result.value);
   }
 
-  /** Execute one admitted inventory operation after the exact session handshake. */
+  /** Execute one admitted operation through the bounded per-Program queue. */
   async callTool(
-    operation: GhidraInventoryOperation,
+    operation: GhidraOperation,
     parameters: Readonly<Record<string, JsonValue>>,
     options: GhidraRequestOptions = {},
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    return this.#request(operation, parameters, options);
+    return this.#requestQueue.run(operation, parameters, {
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      timeoutMs: options.timeoutMs ?? this.#options.requestTimeoutMs,
+    });
   }
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
@@ -406,6 +430,9 @@ export class GhidraClient {
   async #cleanup(): Promise<void> {
     this.#closing = true;
     try {
+      this.#requestQueue.failQueued(
+        this.#failure("process", "Ghidra session closed"),
+      );
       const socket = this.#socket;
       if (socket !== undefined && !socket.destroyed) {
         const shutdown = await this.#request(

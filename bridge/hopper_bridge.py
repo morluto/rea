@@ -106,7 +106,11 @@ def _procedure_name(procedure):
 
 
 def _procedure_identity(procedure):
-    return {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure)}
+    return {
+        "address": _hex(procedure.getEntryPoint()),
+        "name": _procedure_name(procedure),
+        "classification": None,
+    }
 
 
 def _procedure_locals(procedure):
@@ -609,7 +613,7 @@ def _analyze_function(document, params):
     def collection(name, items, scan_limited=False):
         return _bounded(items, _collection_offset(params, name), limit, None, scan_limited)
     return {
-        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)},
+        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "classification": None, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)},
         "pseudocode": {"text": pseudo_text, "total_chars": len(pseudo), "returned_chars": len(pseudo_text), "truncated": pseudo_next < len(pseudo), "next_offset": pseudo_next if pseudo_next < len(pseudo) else None},
         "assembly": _bounded(assembly_lines, assembly_offset, max_instructions),
         "comments": collection("comments", comments, instruction_scan_truncated),
@@ -620,6 +624,12 @@ def _analyze_function(document, params):
         "referenced_names": collection("referenced_names", referenced_names, instruction_scan_truncated),
         "basic_blocks": collection("basic_blocks", blocks),
         "instruction_scan": {"scanned": len(addresses), "truncated": instruction_scan_truncated},
+        "limitations": [
+            "Hopper's public Python API does not classify reference kinds.",
+            "Hopper's public Python API does not expose equivalent external or thunk classification in this dossier.",
+            "Unresolved indirect calls without reported target addresses are not represented as call edges.",
+            "Pseudocode and assembly are provider-specific representations, not original source.",
+        ],
     }
 
 
@@ -766,7 +776,7 @@ def _dispatch(method, params):
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
             length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
-            return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)}
+            return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure), "classification": None}
     if method == "set_address_name":
         address = _address(document, params.get("address"))
         result = document.setNameAtAddress(address, params["name"])

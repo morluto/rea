@@ -13,19 +13,19 @@ The Ghidra foundation supports Linux x64 with exact Ghidra 12.1.2 and a 64-bit
 full JDK 21. Doctor validates those coordinates; approved setup propagates them
 to MCP registrations without installing or modifying either dependency. REA's
 packaged Java bridge then proves an isolated read-only headless import,
-post-analysis handshake, complete cleanup, and ten admitted read-only inventory
-operations. Real source-owned debug and stripped ELF fixtures cover program,
-procedure, string, symbol, external/thunk, memory, resolution, and search
-semantics.
+post-analysis handshake, complete cleanup, ten admitted read-only inventory
+operations, and eight function-analysis operations. Real source-owned x86-64
+debug/stripped ELF, AArch64 ELF, PE, and Mach-O fixtures cover program,
+procedure, string, symbol, external/thunk, memory, resolution, search,
+decompilation, assembly, calls, typed references, xrefs, and CFG semantics.
 
-## Next Ghidra milestone
+## Ghidra maintenance boundary
 
-Extend the admitted inventory boundary with function details, decompilation,
-assembly, calls, xrefs, and CFG. Every claim requires normalized
-provider-neutral semantics and real source-owned conformance. Hopper and Ghidra
-pseudocode text is not expected to match. Automatic Ghidra acquisition, if ever
-added, remains a separately planned and approved related-tool change; setup
-must never install Java.
+Extend formats or semantics only with normalized provider-neutral contracts and
+real source-owned conformance. Hopper and Ghidra pseudocode or assembly text is
+not expected to match; unresolved targetless flow remains unknown. Automatic
+Ghidra acquisition, if ever added, remains a separately planned and approved
+related-tool change; setup must never install Java.
 
 ## Capability-selective setup
 

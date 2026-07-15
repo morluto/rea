@@ -8,6 +8,7 @@ import { parseConfig } from "../src/config.js";
 import { HopperProvider } from "../src/hopper/HopperProvider.js";
 import { GhidraProvider } from "../src/ghidra/GhidraProvider.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "../src/ghidra/GhidraInventoryValues.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "../src/ghidra/GhidraFunctionValues.js";
 import { silentLogger } from "../src/logger.js";
 
 const sourceRoot = new URL("../src/", import.meta.url);
@@ -38,7 +39,7 @@ describe("provider-neutral architecture", () => {
     expect(violations).toEqual([]);
   });
 
-  it("publishes only admitted immutable Ghidra inventory capabilities", () => {
+  it("publishes only admitted immutable Ghidra read-only capabilities", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);
     if (!config.ok) return;
@@ -49,7 +50,7 @@ describe("provider-neutral architecture", () => {
     });
     const capabilities = provider.capabilities();
     expect(capabilities.map(({ operation }) => operation).sort()).toEqual(
-      [...GHIDRA_INVENTORY_OPERATIONS].sort(),
+      [...GHIDRA_INVENTORY_OPERATIONS, ...GHIDRA_FUNCTION_OPERATIONS].sort(),
     );
     expect(Object.isFrozen(capabilities)).toBe(true);
     for (const descriptor of capabilities) {

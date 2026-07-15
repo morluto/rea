@@ -7,12 +7,12 @@ export const enhancedInputSchemas = {
   get_objc_protocols: z.object({}),
   batch_decompile: z.object({
     addresses: z
-      .array(z.string().describe("A Hopper address"))
+      .array(z.string().describe("A provider-normalized procedure address"))
       .max(20)
       .default([]),
   }),
   get_call_graph: z.object({
-    address: z.string().describe("A Hopper address"),
+    address: z.string().describe("A provider-normalized procedure address"),
     direction: z.enum(["forward", "backward"]).default("forward"),
     depth: z.number().int().min(1).max(5).default(2),
   }),

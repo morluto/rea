@@ -83,6 +83,49 @@ export const referenceProjection = (snapshot: FunctionSnapshot) =>
     })),
   ]);
 
+export const referenceKindProjection = (
+  snapshot: FunctionSnapshot,
+): readonly unknown[] | null => {
+  const edges = [
+    ...snapshot.collections.incoming_references.items.map((edge) => ({
+      direction: "in",
+      edge,
+    })),
+    ...snapshot.collections.outgoing_references.items.map((edge) => ({
+      direction: "out",
+      edge,
+    })),
+  ];
+  if (edges.some(({ edge }) => !edge.kind.available)) return null;
+  return sorted(
+    edges.map(({ direction, edge }) => {
+      if (!edge.kind.available)
+        throw new TypeError(
+          "Reference-kind availability changed during projection",
+        );
+      return {
+        direction,
+        source: edge.source_procedure?.name ?? null,
+        target: edge.target_procedure?.name ?? null,
+        type: edge.kind.type,
+        flow: edge.kind.flow,
+        call: edge.kind.call,
+        jump: edge.kind.jump,
+        data: edge.kind.data,
+        read: edge.kind.read,
+        write: edge.kind.write,
+        indirect: edge.kind.indirect,
+        computed: edge.kind.computed,
+        conditional: edge.kind.conditional,
+        terminal: edge.kind.terminal,
+        primary: edge.kind.primary,
+        operand_index: edge.kind.operand_index,
+        external: edge.kind.external,
+      };
+    }),
+  );
+};
+
 export const commentProjection = (
   snapshot: FunctionSnapshot,
 ): readonly unknown[] | null => {

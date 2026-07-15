@@ -2,7 +2,7 @@
 
 ## Product Direction
 
-REA exposes reverse-engineering tools through a CLI and MCP server. Hopper is the current operation-capable deep binary-analysis provider. The Linux x64 Ghidra provider currently supplies discovery, exact profile commitment, and a private read-only headless session but intentionally declares no binary operations. Keep provider-specific code out of the domain and application layers.
+REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the Linux x64 bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra supplies admitted read-only inventory and function-analysis operations but no GUI or mutation authority. Keep provider-specific code out of the domain and application layers.
 
 Prioritize:
 
@@ -25,20 +25,20 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/main.ts`: MCP adapter. Parses config, wires the shared session runtime, starts stdio transport, and owns process-lifetime shutdown.
 - `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
 - `src/config.ts`: Zod-validated parsing of environment configuration into `AppConfig`.
-- `src/domain/`: pure, side-effect-free modules. `errors.ts` (tagged error algebra), `result.ts` (`Result`/`ok`/`err`), `hopperValues.ts` (boundary parsers for Hopper JSON), `symbolAnalysis.ts` (Swift/ObjC name parsing).
+- `src/domain/`: pure, side-effect-free modules. `errors.ts` (tagged error algebra), `result.ts` (`Result`/`ok`/`err`), `hopperValues.ts` (shared function-dossier values plus Hopper boundary parsers), `symbolAnalysis.ts` (Swift/ObjC name parsing).
 - `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 2 Electron, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
 - `src/process/`: provider-neutral process ownership and lifecycle primitives. It owns private runtime roots, absolute startup deadlines, correlated request waits, bounded output capture, and TERM-to-KILL cleanup without defining any provider wire protocol.
 - `src/browser/`: loopback CDP discovery, bounded WebSocket transport, exact-origin target authorization, and passive browser observation normalization.
 - `src/hopper/`: Hopper launch and Unix-socket protocol mechanics. `BridgeLauncher.ts` spawns the Hopper app with the in-process bridge, `HopperClient.ts` correlates request/response over the socket with timeouts and cancellation, `protocol.ts` frames bridge messages.
 - `bridge/hopper_bridge.py`: runs inside Hopper and adapts declared operations to Hopper's public Python API. Hopper's bundled MCP server is not used.
-- `src/ghidra/`: exact Ghidra 12.1.2/JDK 21 installation inspection, analysis-profile commitment, isolated `analyzeHeadless` launch, authenticated Unix-socket client, and the intentionally capability-empty provider foundation.
-- `bridge/ghidra/ReaGhidraBridge.java`: packaged `HeadlessScript` loaded through Ghidra's `scriptPath`; it reports post-analysis identity and supports only authenticated `ping`/`shutdown` in the foundation release.
+- `src/ghidra/`: exact Ghidra 12.1.2/JDK 21 inspection, analysis-profile commitment, isolated `analyzeHeadless` launch, authenticated Unix-socket client, bounded serial request queue, and strict inventory/function boundaries.
+- `bridge/ghidra/ReaGhidraBridge.java`: packaged read-only `HeadlessScript` loaded through Ghidra's `scriptPath`; it owns the persistent decompiler and adapts admitted inventory, function, reference, and CFG operations to public Ghidra APIs.
 - `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows. `AnalysisProviderRegistry` discovers overlapping deep candidates without starting them; `SessionProviderRouter` binds one candidate per target and composes it with disjoint auxiliary providers.
 - `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
 - `docs/product-catalog.json`: generated package, tool-family, provider, setup-client, schema-version, and CLI facts. Regenerate it from source; do not edit it by hand.
 - `tests/`: Vitest suite. `tests/fixtures/` holds reusable provider-process fixtures plus the fake launcher, Hopper bridge, and CDP seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
-- `scripts/verify-real-ghidra.mjs`: real Linux Ghidra verifier for one isolated read-only import, handshake, and complete cleanup.
+- `scripts/verify-real-ghidra.mjs`: real Linux Ghidra verifier for x86-64 debug/stripped ELF, AArch64 ELF, PE, and Mach-O function semantics plus complete cleanup.
 - `scripts/verify-real-browser.mjs`: real Chrome end-to-end verifier for the passive CDP provider.
 - `scripts/print-mcp-config.mjs`: prints an MCP server config with absolute paths filled in (`npm run config:print -- /path/to/binary`).
 

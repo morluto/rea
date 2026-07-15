@@ -6,7 +6,13 @@ import {
 } from "../domain/processCapture.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import {
+  functionDossierSchema,
+  localVariableSchema,
+  procedureClassificationSchema,
+  procedureIdentitySchema,
+  referenceKindSchema,
+} from "../domain/hopperValues.js";
 import {
   demangleSwiftSchema,
   inspectMachoSchema,
@@ -232,11 +238,8 @@ const sessionProvider = z.object({
 const nullableText = z.string().nullable();
 const addressList = z.array(z.string());
 const addressedEntry = z.object({ address: z.string(), name: z.string() });
-const procedureIdentity = z.object({ address: z.string(), name: z.string() });
-const localVariable = z.object({
-  description: z.string(),
-  provenance: z.literal("hopper-public-python-api"),
-});
+const procedureIdentity = procedureIdentitySchema;
+const localVariable = localVariableSchema;
 const containingProcedureResolution = z.discriminatedUnion("found", [
   z.object({
     query_address: z.string(),
@@ -336,6 +339,7 @@ const procedureInfoOutput = resultOf(
     length: z.number().min(0),
     signature: nullableText,
     locals: z.array(localVariable),
+    classification: procedureClassificationSchema.nullable().default(null),
   }),
 );
 const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
@@ -391,7 +395,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
           target_address: z.string(),
           source_procedure: procedureIdentity.nullable(),
           target_procedure: procedureIdentity.nullable(),
-          kind: unavailable,
+          kind: referenceKindSchema,
         }),
       ),
       instructions_scanned: z.number().int().min(0),

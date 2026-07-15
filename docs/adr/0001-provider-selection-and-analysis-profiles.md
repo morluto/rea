@@ -5,9 +5,9 @@
 - Implementation status: The provider registry, deterministic selection,
   target binding, analysis-profile commitment, and snapshot/Evidence migration
   are implemented. Ghidra discovery, target/profile resolution, doctor checks,
-  the private headless-session foundation, and ten read-only inventory
-  capabilities are implemented. Function-analysis capabilities remain gated on
-  operation-level conformance work.
+  the private headless-session foundation, ten read-only inventory capabilities,
+  and eight function-analysis capabilities are implemented with real
+  cross-format conformance.
 
 ## Context
 
@@ -538,7 +538,7 @@ into false certainty.
 
 ## Implementation progress
 
-The first five implementation stages are shipped:
+The first six implementation stages are shipped:
 
 1. Provider-specific target state was replaced by generic profile and snapshot
    v2 commitments while preserving Hopper execution behavior.
@@ -551,9 +551,13 @@ The first five implementation stages are shipped:
    address/name resolution, containing-procedure resolution, and bounded search
    were admitted with exact wire schemas and real debug/stripped ELF
    conformance.
+6. Function metadata, persistent bounded decompilation, assembly, resolved
+   callers/callees, typed references, xrefs, CFG, and complete function dossiers
+   were admitted. A bounded per-Program queue serializes API access, and real
+   conformance covers x86-64 and AArch64 ELF, PE, Mach-O, stripped symbols,
+   targetless indirect calls, cancellation, deadlines, and cleanup.
 
-The remaining stages add function details, decompilation, assembly, calls,
-xrefs, and CFG individually and verify each real semantic claim across the
-shared source-owned conformance corpus. Ghidra continues to omit GUI and
-mutation operations, so unsupported requests cannot route to an unverified
-implementation.
+Future stages may deepen format and indirect-flow coverage, but must continue
+to compare normalized semantics rather than provider-specific pseudocode or
+assembly text. Ghidra continues to omit GUI and mutation operations, so
+unsupported requests cannot route to an unverified implementation.

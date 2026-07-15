@@ -24,15 +24,26 @@ import {
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
-import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import {
+  ENHANCED_TOOL_CONTRACTS,
+  OFFICIAL_TOOL_CONTRACTS,
+} from "../contracts/toolContracts.js";
 import { GhidraClient } from "./GhidraClient.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import {
   GHIDRA_ANALYSIS_TIMEOUT_SECONDS,
+  GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,
+  GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   GHIDRA_MAX_LINE_BYTES,
   GHIDRA_REQUEST_TIMEOUT_MS,
   GHIDRA_STARTUP_TIMEOUT_MS,
 } from "./GhidraDefaults.js";
+import {
+  GHIDRA_FUNCTION_OPERATIONS,
+  isGhidraFunctionOperation,
+  parseGhidraFunctionInput,
+  parseGhidraFunctionResult,
+} from "./GhidraFunctionValues.js";
 import {
   GHIDRA_INVENTORY_OPERATIONS,
   isGhidraInventoryOperation,
@@ -56,18 +67,25 @@ export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   version: null,
 });
 
-const officialContractByName = new Map(
-  OFFICIAL_TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
+const providerContractByName = new Map(
+  [...OFFICIAL_TOOL_CONTRACTS, ...ENHANCED_TOOL_CONTRACTS].map((contract) => [
+    contract.name,
+    contract,
+  ]),
 );
 
-/** Direct read-only contracts implemented by the Ghidra adapter. */
+/** Provider-neutral read-only contracts implemented by the Ghidra adapter. */
 export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
-  GHIDRA_INVENTORY_OPERATIONS.map((operation) => {
-    const contract = officialContractByName.get(operation);
-    if (contract === undefined)
-      throw new TypeError(`Missing official contract for ${operation}`);
-    return contract;
-  }),
+  [...GHIDRA_INVENTORY_OPERATIONS, ...GHIDRA_FUNCTION_OPERATIONS].map(
+    (operation) => {
+      const contract = providerContractByName.get(operation);
+      if (contract === undefined)
+        throw new TypeError(
+          `Missing provider-neutral contract for ${operation}`,
+        );
+      return contract;
+    },
+  ),
 );
 
 const PAGINATED_OPERATIONS: ReadonlySet<string> = new Set([
@@ -76,10 +94,16 @@ const PAGINATED_OPERATIONS: ReadonlySet<string> = new Set([
   "list_strings",
   "search_procedures",
   "search_strings",
+  "procedure_references",
+  "analyze_function",
 ]);
 const SEARCH_OPERATIONS: ReadonlySet<string> = new Set([
   "search_procedures",
   "search_strings",
+]);
+const DECOMPILE_OPERATIONS: ReadonlySet<string> = new Set([
+  "procedure_pseudo_code",
+  "analyze_function",
 ]);
 const healthLimitations = Object.freeze([
   "The session serves operations only after default Ghidra auto-analysis completes; an analysis timeout fails the open instead of exposing partial results.",
@@ -125,6 +149,44 @@ const limitationsFor = (operation: string): readonly string[] => {
         ...common,
         "Literal search enforces 1,000,000 cumulative work units; regex mode also accepts only a conservative finite Java-regex subset with 10,000 static paths and 4,096 UTF-16 code units per candidate.",
       ];
+    case "procedure_pseudo_code":
+      return [
+        ...common,
+        "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output; each decompile has a 30-second native deadline.",
+        "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
+      ];
+    case "procedure_assembly":
+      return [
+        ...common,
+        "Assembly is Ghidra Listing text and fails rather than silently truncating when the 100,000-instruction or 1 MiB wire bound is exceeded.",
+      ];
+    case "procedure_callers":
+    case "procedure_callees":
+      return [
+        ...common,
+        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
+      ];
+    case "xrefs":
+      return [
+        ...common,
+        "The direct address list projects exact Ghidra references to one address but does not expose their kinds; procedure_references and analyze_function preserve available kind metadata.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+      ];
+    case "procedure_references":
+      return [
+        ...common,
+        "Reference kinds are direct Ghidra ReferenceManager observations; unresolved computed flows without a target are absent and remain unknown.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+        "Instruction scans stop at max_instructions; a truncated scan reports an unknown total and no false continuation.",
+      ];
+    case "analyze_function":
+      return [
+        ...common,
+        "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
+        "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
+        "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
+        "The Java bridge serializes one function request per Program through a bounded 32-request queue and applies a 30-second native decompilation deadline.",
+      ];
     default:
       return common;
   }
@@ -158,7 +220,9 @@ const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
             : 500
           : null,
         maxPayloadBytes: GHIDRA_MAX_LINE_BYTES,
-        timeoutMs: GHIDRA_REQUEST_TIMEOUT_MS,
+        timeoutMs: DECOMPILE_OPERATIONS.has(contract.name)
+          ? GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS
+          : GHIDRA_REQUEST_TIMEOUT_MS,
       }),
       limitations: Object.freeze(limitationsFor(contract.name)),
     }),
@@ -292,7 +356,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     });
     return {
       execute: async (operation, parameters, options) => {
-        if (operation !== "health" && !isGhidraInventoryOperation(operation))
+        if (
+          operation !== "health" &&
+          !isGhidraInventoryOperation(operation) &&
+          !isGhidraFunctionOperation(operation)
+        )
           return err(
             new AnalysisCapabilityUnavailableError(
               GHIDRA_PROVIDER_IDENTITY.id,
@@ -311,16 +379,21 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             }),
           );
         }
-        const input = parseGhidraInventoryInput(operation, parameters);
+        const input = isGhidraFunctionOperation(operation)
+          ? parseGhidraFunctionInput(operation, parameters)
+          : parseGhidraInventoryInput(operation, parameters);
         if (!input.ok) return input;
-        const called = await client.callTool(
-          operation,
-          input.value,
-          options?.signal === undefined ? {} : { signal: options.signal },
-        );
+        const called = await client.callTool(operation, input.value, {
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+          ...(DECOMPILE_OPERATIONS.has(operation)
+            ? { timeoutMs: GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS }
+            : {}),
+        });
         if (!called.ok)
           return err(projectSessionError(operation, called.error));
-        const result = parseGhidraInventoryResult(operation, called.value);
+        const result = isGhidraFunctionOperation(operation)
+          ? parseGhidraFunctionResult(operation, called.value)
+          : parseGhidraInventoryResult(operation, called.value);
         if (!result.ok) return result;
         return ok(
           createAnalysisExecution(result.value, committedProfile.provider, {
@@ -408,6 +481,13 @@ const projectSessionError = (
           ? GHIDRA_ANALYSIS_TIMEOUT_SECONDS * 1_000
           : GHIDRA_STARTUP_TIMEOUT_MS),
     );
+  if (failure.kind === "remote" && failure.remoteCode === "decompile_timeout")
+    return new AnalysisTimeoutError(
+      operation,
+      GHIDRA_DECOMPILE_TIMEOUT_SECONDS * 1_000,
+    );
+  if (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
+    return new AnalysisCancelledError(operation);
   if (
     failure.kind === "remote" &&
     ["invalid_request", "not_found", "ambiguous"].includes(

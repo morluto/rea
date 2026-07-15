@@ -80,7 +80,7 @@ npx skills add morluto/rea
 
 `rea setup` 会先显示完整变更计划并请求确认。它不会安装或更新 Homebrew、Node.js 或 npm。缺少 [Hopper](https://www.hopperapp.com/) 时，Setup 会提议安装官方软件包；Hopper 是需要单独许可证的独立软件。
 
-如果你已在 64 位 Linux 上安装 Ghidra 12.1.2 PUBLIC 和完整的 64 位 JDK 21，Setup 也可以在批准后登记 `GHIDRA_INSTALL_DIR` 和可选的 `JAVA_HOME`。REA 不会下载、安装或修改 Ghidra 或 Java。本版本交付的是隔离的私有 headless 会话基础，尚未开放 Ghidra 二进制分析操作，因此现有的深度分析工作流仍使用 Hopper。
+如果你已在 64 位 Linux 上安装 Ghidra 12.1.2 PUBLIC 和完整的 64 位 JDK 21，Setup 也可以在批准后登记 `GHIDRA_INSTALL_DIR` 和可选的 `JAVA_HOME`。REA 不会下载、安装或修改 Ghidra 或 Java。Ghidra provider 在隔离的只读 headless 会话中提供清单、反编译、汇编、调用关系、带类型的引用、xref、CFG 与函数 dossier；GUI 状态和修改操作仍不可用。
 
 #### Linux 安装与故障排除
 
@@ -182,8 +182,8 @@ flowchart LR
     Terminal["终端"] --> REA
     REA --> Hopper["Hopper 分析操作"]
     Hopper --> App["你的应用"]
-    REA -.-> Ghidra["Ghidra headless 基础<br/>暂无二进制操作"]
-    Ghidra -.-> App
+    REA --> Ghidra["Ghidra 只读分析<br/>清单 + 函数分析"]
+    Ghidra --> App
 ```
 
 CLI 与 MCP 服务器使用相同的分析引擎。终端命令完成后会关闭应用；智能体会话则会在调查期间保持应用打开。

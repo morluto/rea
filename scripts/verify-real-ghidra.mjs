@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,11 @@ import { promisify } from "node:util";
 
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
+import { GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS } from "../dist/ghidra/GhidraDefaults.js";
+import {
+  parseGhidraFunctionInput,
+  parseGhidraFunctionResult,
+} from "../dist/ghidra/GhidraFunctionValues.js";
 import { parseGhidraInventoryResult } from "../dist/ghidra/GhidraInventoryValues.js";
 import {
   inspectGhidraInstallation,
@@ -42,18 +47,93 @@ const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-fixtures-"));
 const sourcePath = fileURLToPath(
   new URL("../tests/conformance/ghidra/inventory.c", import.meta.url),
 );
+const crossFormatSourcePath = fileURLToPath(
+  new URL("../tests/conformance/ghidra/cross-format.c", import.meta.url),
+);
 const debugPath = join(fixtureRoot, "rea-ghidra-inventory-debug");
 const strippedPath = join(fixtureRoot, "rea-ghidra-inventory-stripped");
+const arm64ElfPath = join(fixtureRoot, "rea-ghidra-cross-arm64");
+const peObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.obj");
+const pePath = join(fixtureRoot, "rea-ghidra-cross-x86_64.exe");
+const peImportLibraryPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.lib");
+const machObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.o");
+const malformedPath = join(fixtureRoot, "rea-ghidra-malformed");
 const compiler = process.env.REA_CC ?? "cc";
+const clang = process.env.REA_CLANG ?? "clang";
+const lldLink = process.env.REA_LLD_LINK ?? "lld-link";
 try {
   const common = ["-O0", "-g", "-fno-inline", "-fno-pie", "-no-pie"];
   await exec(compiler, [...common, sourcePath, "-o", debugPath]);
   await exec(compiler, [...common, "-s", sourcePath, "-o", strippedPath]);
+  await exec(clang, [
+    "--target=aarch64-linux-gnu",
+    "-O0",
+    "-g",
+    "-fno-inline",
+    "-fno-pie",
+    "-nostdlib",
+    "-static",
+    "-fuse-ld=lld",
+    crossFormatSourcePath,
+    "-Wl,-e,rea_cross_start",
+    "-o",
+    arm64ElfPath,
+  ]);
+  await exec(clang, [
+    "--target=x86_64-pc-windows-msvc",
+    "-O0",
+    "-gcodeview",
+    "-fno-inline",
+    "-c",
+    crossFormatSourcePath,
+    "-o",
+    peObjectPath,
+  ]);
+  await exec(lldLink, [
+    "/entry:rea_cross_start",
+    "/subsystem:console",
+    "/nodefaultlib",
+    "/export:rea_cross_entry",
+    `/implib:${peImportLibraryPath}`,
+    `/out:${pePath}`,
+    peObjectPath,
+  ]);
+  await exec(clang, [
+    "--target=x86_64-apple-darwin",
+    "-O0",
+    "-g",
+    "-fno-inline",
+    "-c",
+    crossFormatSourcePath,
+    "-o",
+    machObjectPath,
+  ]);
+  await writeFile(malformedPath, Buffer.from("not-a-binary\n", "utf8"));
 
-  const debug = await verifyTarget(debugPath, "debug");
-  const stripped = await verifyTarget(strippedPath, "stripped");
+  const debug = await verifyTarget(debugPath, "debug", {
+    format: "elf",
+    architecture: "x86_64",
+  });
+  const stripped = await verifyTarget(strippedPath, "stripped", {
+    format: "elf",
+    architecture: "x86_64",
+  });
+  const arm64Elf = await verifyTarget(arm64ElfPath, "cross-arm64-elf", {
+    format: "elf",
+    architecture: "arm64",
+  });
+  const pe = await verifyTarget(pePath, "cross-x86_64-pe", {
+    format: "pe",
+    architecture: "x86_64",
+  });
+  const machObject = await verifyTarget(machObjectPath, "cross-x86_64-mach-o", {
+    format: "mach-o",
+    architecture: "x86_64",
+  });
   assertDebugFixture(debug);
   assertStrippedFixture(stripped);
+  for (const fixture of [arm64Elf, pe, machObject]) assertCrossFixture(fixture);
+  await assertMalformedFixture(malformedPath);
 
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
@@ -62,8 +142,15 @@ try {
     `${JSON.stringify({
       ok: true,
       provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
-      fixture_source: sourcePath,
-      fixtures: [summary(debug), summary(stripped)],
+      fixture_sources: [sourcePath, crossFormatSourcePath],
+      fixtures: [
+        summary(debug),
+        summary(stripped),
+        summary(arm64Elf),
+        summary(pe),
+        summary(machObject),
+      ],
+      malformed_target: "rejected-before-provider-start",
       custom_target: custom === null ? null : summary(custom),
       cleanup: "complete",
     })}\n`,
@@ -72,9 +159,17 @@ try {
   await rm(fixtureRoot, { recursive: true, force: true });
 }
 
-async function verifyTarget(targetPath, variant) {
+async function verifyTarget(targetPath, variant, expectedTarget = null) {
   const parsedTarget = await parseBinaryTarget(targetPath);
   if (!parsedTarget.ok) throw parsedTarget.error;
+  if (
+    expectedTarget !== null &&
+    (parsedTarget.value.format !== expectedTarget.format ||
+      parsedTarget.value.architecture !== expectedTarget.architecture)
+  )
+    throw new Error(
+      `Fixture header classification drifted for ${variant}: ${JSON.stringify(parsedTarget.value)}`,
+    );
   const profile = await resolveGhidraAnalysisProfile(
     parsedTarget.value,
     GHIDRA_PROVIDER_IDENTITY,
@@ -96,6 +191,7 @@ async function verifyTarget(targetPath, variant) {
     targetPath: parsedTarget.value.path,
     providerVersion: SUPPORTED_GHIDRA_VERSION,
     profileDigest: profile.value.profile.digest,
+    requestTimeoutMs: GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,
   });
 
   let runtimeCoordinates;
@@ -158,7 +254,16 @@ async function verifyInventoryOperations({
   names,
   strings,
 }) {
-  const rejections = await verifyBridgeRejections(client);
+  if (variant.startsWith("cross-"))
+    return verifyCrossFormatOperations({
+      client,
+      variant,
+      procedures,
+      names,
+      strings,
+    });
+  const rejections =
+    variant === "debug" ? await verifyBridgeRejections(client) : null;
   const stringSearch = await call(client, "search_strings", {
     pattern: String.raw`^REA_GHIDRA_(?:INVENTORY_ENTRY|LEAF_VALUE)$`,
     mode: "regex",
@@ -185,8 +290,13 @@ async function verifyInventoryOperations({
     filteredStrings.items[0]?.address !== stringItem.address
   )
     throw new Error("Ghidra exact-address string filter drifted");
-  if (variant === "stripped")
-    return { rejections, stringSearch, filteredStrings };
+  if (variant === "stripped") {
+    const functionAnalysis = await verifyStrippedFunctionOperations(
+      client,
+      stringItem,
+    );
+    return { rejections, stringSearch, filteredStrings, functionAnalysis };
+  }
 
   const entry = findValue(procedures, "rea_ghidra_inventory_entry");
   if (entry === undefined)
@@ -239,6 +349,11 @@ async function verifyInventoryOperations({
     !filteredNames.items.some((item) => item.value === name.value)
   )
     throw new Error("Ghidra exact-address name filter drifted");
+  const functionAnalysis = await verifyDebugFunctionOperations(client, {
+    procedures,
+    strings,
+    entry,
+  });
   return {
     rejections,
     addressName,
@@ -248,6 +363,322 @@ async function verifyInventoryOperations({
     stringSearch,
     filteredNames,
     filteredStrings,
+    functionAnalysis,
+  };
+}
+
+async function verifyDebugFunctionOperations(
+  client,
+  { procedures, strings, entry },
+) {
+  const leaf = requireProcedure(procedures, "rea_ghidra_inventory_leaf");
+  const branch = requireProcedure(procedures, "rea_ghidra_inventory_branch");
+  const indirect = requireProcedure(
+    procedures,
+    "rea_ghidra_inventory_indirect",
+  );
+  const main = requireProcedure(procedures, "main");
+  const entryString = strings.find(
+    (item) => item.value === "REA_GHIDRA_INVENTORY_ENTRY",
+  );
+  if (entryString === undefined)
+    throw new Error("Ghidra debug string function probe is unavailable");
+
+  const [info, assembly, pseudocode, callees, callers, outgoing, entryXrefs] =
+    await Promise.all([
+      functionCall(client, "procedure_info", {
+        document: null,
+        procedure: entry.value,
+      }),
+      functionCall(client, "procedure_assembly", {
+        document: null,
+        procedure: entry.value,
+      }),
+      functionCall(client, "procedure_pseudo_code", {
+        document: null,
+        procedure: entry.value,
+      }),
+      functionCall(client, "procedure_callees", {
+        document: null,
+        procedure: entry.value,
+      }),
+      functionCall(client, "procedure_callers", {
+        document: null,
+        procedure: entry.value,
+      }),
+      functionCall(client, "procedure_references", {
+        document: null,
+        procedure: entry.value,
+        direction: "outgoing",
+      }),
+      functionCall(client, "xrefs", {
+        document: null,
+        address: entry.address,
+      }),
+    ]);
+  assertLocalProcedureInfo(info, entry.address);
+  assertProviderText(assembly, pseudocode, entry.address);
+  for (const expected of [branch.address, indirect.address])
+    if (!callees.includes(expected))
+      throw new Error(`Ghidra call graph missed ${expected}`);
+  if (!callers.includes(main.address) || entryXrefs.length === 0)
+    throw new Error("Ghidra caller or xref relation missed main");
+  const xrefOwners = [];
+  const xrefOwnerFailures = [];
+  for (const address of entryXrefs) {
+    try {
+      xrefOwners.push(
+        await call(client, "resolve_containing_procedure", {
+          document: null,
+          address,
+        }),
+      );
+    } catch (cause) {
+      xrefOwnerFailures.push({
+        address,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+  if (
+    !xrefOwners.some(
+      (owner) => owner.found && owner.procedure.address === main.address,
+    )
+  )
+    throw new Error(
+      `Ghidra entry xrefs were not attributable to main: ${JSON.stringify({ entryXrefs, callers, xrefOwners, xrefOwnerFailures })}`,
+    );
+  assertReferenceMetadata(outgoing);
+  const stringXrefs = await functionCall(client, "xrefs", {
+    document: null,
+    address: entryString.address,
+  });
+  if (stringXrefs.length === 0)
+    throw new Error("Ghidra xrefs missed the entry string");
+
+  const entryDossier = await functionCall(client, "analyze_function", {
+    procedure: entry.address,
+    include_assembly: true,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(entryDossier, {
+    address: entry.address,
+    expectedCallees: [branch.address, indirect.address],
+    expectedString: "REA_GHIDRA_INVENTORY_ENTRY",
+    requireAssembly: true,
+  });
+
+  const branchDossier = await functionCall(client, "analyze_function", {
+    procedure: branch.address,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(branchDossier, {
+    address: branch.address,
+    expectedCallees: [leaf.address],
+    requireMultiBlock: true,
+  });
+
+  const indirectDossier = await functionCall(client, "analyze_function", {
+    procedure: indirect.address,
+    include_assembly: true,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(indirectDossier, {
+    address: indirect.address,
+    requireAssembly: true,
+  });
+  if (
+    indirectDossier.callees.items.some(
+      ({ address }) => address === leaf.address,
+    )
+  )
+    throw new Error(
+      "Ghidra dossier falsely resolved a targetless callback as the fixture leaf",
+    );
+  if (!/\bcall\b/iu.test(indirectDossier.assembly.items.join("\n")))
+    throw new Error("Ghidra indirect-call fixture lost its computed call site");
+
+  const aborted = new AbortController();
+  aborted.abort();
+  const cancelled = await client.callTool(
+    "procedure_info",
+    { document: null, procedure: entry.address },
+    { signal: aborted.signal },
+  );
+  if (cancelled.ok || cancelled.error.kind !== "cancelled")
+    throw new Error("Ghidra established-request cancellation drifted");
+  const timedOut = await client.callTool(
+    "procedure_info",
+    { document: null, procedure: entry.address },
+    { timeoutMs: 0 },
+  );
+  if (timedOut.ok || timedOut.error.kind !== "timeout")
+    throw new Error("Ghidra established-request deadline drifted");
+  const concurrent = await Promise.all([
+    functionCall(client, "procedure_info", {
+      document: null,
+      procedure: entry.address,
+    }),
+    functionCall(client, "xrefs", {
+      document: null,
+      address: leaf.address,
+    }),
+  ]);
+  if (concurrent.length !== 2)
+    throw new Error("Ghidra serial request queue lost a concurrent result");
+
+  return {
+    entry: dossierSummary(entryDossier),
+    branch: dossierSummary(branchDossier),
+    indirect: dossierSummary(indirectDossier),
+    cancellation: "cancelled-before-wire",
+    timeout: "expired-before-wire",
+    concurrency: "serialized-two-results",
+  };
+}
+
+async function verifyStrippedFunctionOperations(client, entryString) {
+  const stringXrefs = await functionCall(client, "xrefs", {
+    document: null,
+    address: entryString.address,
+  });
+  if (stringXrefs.length === 0)
+    throw new Error("Ghidra stripped string xref probe is unavailable");
+  const containing = await call(client, "resolve_containing_procedure", {
+    document: null,
+    address: stringXrefs[0],
+  });
+  if (!containing.found)
+    throw new Error("Ghidra could not recover a stripped containing function");
+  const procedure = containing.procedure;
+  const pseudocode = await functionCall(client, "procedure_pseudo_code", {
+    document: null,
+    procedure: procedure.address,
+  });
+  if (typeof pseudocode !== "string" || pseudocode.trim().length === 0)
+    throw new Error("Ghidra did not decompile the stripped function");
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: procedure.address,
+    include_assembly: true,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(dossier, {
+    address: procedure.address,
+    expectedString: "REA_GHIDRA_INVENTORY_ENTRY",
+    requireAssembly: true,
+  });
+  if (symbolTail(dossier.procedure.name) === "rea_ghidra_inventory_entry")
+    throw new Error("Ghidra stripped dossier invented a source symbol");
+  return dossierSummary(dossier);
+}
+
+async function verifyCrossFormatOperations({
+  client,
+  variant,
+  procedures,
+  names,
+  strings,
+}) {
+  const message = strings.find(
+    (item) => item.value === "REA_GHIDRA_CROSS_FORMAT",
+  );
+  if (message === undefined)
+    throw new Error(`${variant} string inventory missed the source oracle`);
+  const entry =
+    procedures.find((item) => matchesSymbol(item.value, "rea_cross_entry")) ??
+    names.find((item) => matchesSymbol(item.value, "rea_cross_entry"));
+  if (entry === undefined)
+    throw new Error(`${variant} did not retain the exported entry symbol`);
+  const entryAddress = entry.address;
+  const info = await functionCall(client, "procedure_info", {
+    document: null,
+    procedure: entryAddress,
+  });
+  assertLocalProcedureInfo(info, entryAddress);
+  const [pseudocode, assembly, callees, messageXrefs] = await Promise.all([
+    functionCall(client, "procedure_pseudo_code", {
+      document: null,
+      procedure: entryAddress,
+    }),
+    functionCall(client, "procedure_assembly", {
+      document: null,
+      procedure: entryAddress,
+    }),
+    functionCall(client, "procedure_callees", {
+      document: null,
+      procedure: entryAddress,
+    }),
+    functionCall(client, "xrefs", {
+      document: null,
+      address: message.address,
+    }),
+  ]);
+  assertProviderText(assembly, pseudocode, entryAddress);
+  if (callees.length < 2)
+    throw new Error(`${variant} call graph missed direct fixture calls`);
+  if (messageXrefs.length === 0)
+    throw new Error(`${variant} xrefs missed the fixture string`);
+
+  let messageOwner = null;
+  for (const address of messageXrefs) {
+    const candidate = await call(client, "resolve_containing_procedure", {
+      document: null,
+      address,
+    });
+    if (candidate.found) {
+      messageOwner = candidate;
+      break;
+    }
+  }
+  if (messageOwner === null)
+    throw new Error(`${variant} did not resolve the string-owning function`);
+  const stringDossier = await functionCall(client, "analyze_function", {
+    procedure: messageOwner.procedure.address,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(stringDossier, {
+    address: messageOwner.procedure.address,
+    expectedString: "REA_GHIDRA_CROSS_FORMAT",
+  });
+
+  let branchAddress = null;
+  for (const address of callees) {
+    const candidate = await functionCall(client, "procedure_info", {
+      document: null,
+      procedure: address,
+    });
+    if (candidate.basicblock_count > 1) {
+      branchAddress = address;
+      break;
+    }
+  }
+  if (branchAddress === null)
+    throw new Error(`${variant} did not recover the multi-block callee`);
+  const branchDossier = await functionCall(client, "analyze_function", {
+    procedure: branchAddress,
+    limit: 500,
+    max_pseudocode_chars: 100_000,
+    max_instructions: 5_000,
+  });
+  assertDossier(branchDossier, {
+    address: branchAddress,
+    requireMultiBlock: true,
+  });
+  return {
+    entry: entryAddress,
+    exported_symbol: entry.value,
+    string_owner: dossierSummary(stringDossier),
+    branch: dossierSummary(branchDossier),
   };
 }
 
@@ -303,10 +734,147 @@ async function expectRemoteFailure(client, operation, parameters, code) {
 
 async function call(client, operation, parameters) {
   const called = await client.callTool(operation, parameters);
-  if (!called.ok) throw called.error;
+  if (!called.ok)
+    throw new Error(
+      `Ghidra ${operation} failed for ${JSON.stringify(parameters)}: ${called.error.message}`,
+      { cause: called.error },
+    );
   const parsed = parseGhidraInventoryResult(operation, called.value);
   if (!parsed.ok) throw parsed.error;
   return parsed.value;
+}
+
+async function functionCall(client, operation, parameters) {
+  const input = parseGhidraFunctionInput(operation, parameters);
+  if (!input.ok) throw input.error;
+  const called = await client.callTool(operation, input.value);
+  if (!called.ok)
+    throw new Error(
+      `Ghidra ${operation} failed for ${JSON.stringify(input.value)}: ${called.error.message}`,
+      { cause: called.error },
+    );
+  const parsed = parseGhidraFunctionResult(operation, called.value);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+}
+
+function assertLocalProcedureInfo(info, expectedAddress) {
+  if (
+    info.entrypoint !== expectedAddress ||
+    info.basicblock_count < 1 ||
+    info.length < 1 ||
+    typeof info.signature !== "string" ||
+    info.signature.length === 0 ||
+    info.classification.external ||
+    info.classification.provenance !== "ghidra-function-manager"
+  )
+    throw new Error(
+      `Ghidra procedure metadata drifted: ${JSON.stringify(info)}`,
+    );
+}
+
+function assertProviderText(assembly, pseudocode, expectedAddress) {
+  if (
+    typeof assembly !== "string" ||
+    !assembly.includes(`${expectedAddress}:`) ||
+    assembly.trim().length === 0
+  )
+    throw new Error("Ghidra assembly rendering lost its address-bearing lines");
+  if (typeof pseudocode !== "string" || pseudocode.trim().length === 0)
+    throw new Error("Ghidra local function pseudocode is unavailable");
+}
+
+function assertReferenceMetadata(observed) {
+  if (
+    observed.instructions_scanned < 1 ||
+    observed.instruction_scan_truncated ||
+    observed.references.items.length === 0 ||
+    !observed.references.items.every(
+      ({ kind }) =>
+        kind.available && kind.provenance === "ghidra-reference-manager",
+    ) ||
+    !observed.references.items.some(({ kind }) => kind.call) ||
+    !observed.references.items.some(({ kind }) => kind.data)
+  )
+    throw new Error(
+      `Ghidra typed reference metadata drifted: ${JSON.stringify(observed)}`,
+    );
+}
+
+function assertDossier(
+  dossier,
+  {
+    address,
+    expectedCallees = [],
+    expectedString = null,
+    requireAssembly = false,
+    requireMultiBlock = false,
+  },
+) {
+  if (
+    dossier.procedure.address !== address ||
+    dossier.procedure.classification === null ||
+    dossier.procedure.classification.provenance !== "ghidra-function-manager" ||
+    dossier.procedure.classification.external ||
+    dossier.pseudocode.text.trim().length === 0 ||
+    dossier.pseudocode.returned_chars !== [...dossier.pseudocode.text].length ||
+    dossier.instruction_scan.scanned < 1 ||
+    dossier.instruction_scan.truncated ||
+    !dossier.limitations.some((value) => /indirect|computed/u.test(value)) ||
+    !dossier.limitations.some((value) => /Ghidra|Hopper|provider/u.test(value))
+  )
+    throw new Error(
+      `Ghidra dossier truthfulness drifted: ${JSON.stringify(dossier)}`,
+    );
+  if (
+    ![
+      ...dossier.incoming_references.items,
+      ...dossier.outgoing_references.items,
+    ].every(
+      ({ kind }) =>
+        kind.available && kind.provenance === "ghidra-reference-manager",
+    )
+  )
+    throw new Error("Ghidra dossier lost typed reference provenance");
+  for (const expected of expectedCallees)
+    if (!dossier.callees.items.some(({ address: value }) => value === expected))
+      throw new Error(`Ghidra dossier missed callee ${expected}`);
+  if (
+    expectedString !== null &&
+    !dossier.referenced_strings.items.some(
+      ({ value }) => value === expectedString,
+    )
+  )
+    throw new Error(
+      `Ghidra dossier missed referenced string ${expectedString}`,
+    );
+  if (
+    requireAssembly &&
+    (dossier.assembly.items.length === 0 || dossier.assembly.truncated)
+  )
+    throw new Error("Ghidra dossier assembly was unavailable or truncated");
+  if (
+    requireMultiBlock &&
+    (dossier.basic_blocks.items.length < 2 ||
+      !dossier.basic_blocks.items.some(
+        ({ successors }) => successors.length > 0,
+      ))
+  )
+    throw new Error(
+      "Ghidra dossier CFG missed the multi-block branch structure",
+    );
+}
+
+function dossierSummary(dossier) {
+  return {
+    address: dossier.procedure.address,
+    pseudocode_chars: dossier.pseudocode.total_chars,
+    instructions: dossier.instruction_scan.scanned,
+    callees: dossier.callees.returned,
+    outgoing_references: dossier.outgoing_references.returned,
+    referenced_strings: dossier.referenced_strings.returned,
+    basic_blocks: dossier.basic_blocks.returned,
+  };
 }
 
 async function allItems(client, operation, parameters) {
@@ -381,6 +949,29 @@ function assertStrippedFixture(observed) {
   assertSegments(observed.segments, observed.session.target.image_base);
 }
 
+function assertCrossFixture(observed) {
+  if (
+    observed.procedures.length === 0 ||
+    observed.names.length === 0 ||
+    observed.probes === null ||
+    typeof observed.probes.entry !== "string" ||
+    observed.probes.string_owner.referenced_strings < 1 ||
+    observed.probes.branch.basic_blocks < 2
+  )
+    throw new Error(
+      `Cross-format Ghidra semantics drifted: ${JSON.stringify(summary(observed))}`,
+    );
+  assertSegments(observed.segments, observed.session.target.image_base);
+}
+
+async function assertMalformedFixture(path) {
+  const parsed = await parseBinaryTarget(path);
+  if (parsed.ok || parsed.error._tag !== "BinaryTargetError")
+    throw new Error(
+      "Malformed executable was not rejected before provider start",
+    );
+}
+
 function assertStrings(strings) {
   for (const expected of [
     "REA_GHIDRA_INVENTORY_ENTRY",
@@ -415,6 +1006,18 @@ function assertSegments(segments, imageBase) {
 
 function findValue(items, expected) {
   return items.find((item) => symbolTail(item.value) === expected);
+}
+
+function requireProcedure(items, expected) {
+  const observed = findValue(items, expected);
+  if (observed === undefined)
+    throw new Error(`Ghidra procedure probe is unavailable: ${expected}`);
+  return observed;
+}
+
+function matchesSymbol(value, expected) {
+  const tail = symbolTail(value);
+  return tail === expected || tail === `_${expected}`;
 }
 
 function symbolTail(value) {
