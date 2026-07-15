@@ -7,6 +7,12 @@ import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
 
+/** Cancellation and deadline controls shared by authenticated requests. */
+export interface GhidraRequestOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+}
+
 /** Safe lifecycle telemetry for one isolated Ghidra headless process. */
 export type GhidraDiagnostic =
   | {

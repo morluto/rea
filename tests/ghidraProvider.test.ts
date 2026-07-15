@@ -6,8 +6,12 @@ import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
   GhidraProvider,
+  type GhidraProviderClientFactory,
 } from "../src/ghidra/GhidraProvider.js";
 import type { GhidraInstallationHost } from "../src/ghidra/GhidraInstallation.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "../src/ghidra/GhidraSessionValues.js";
+import { err, ok } from "../src/domain/result.js";
+import { GhidraSessionError } from "../src/ghidra/GhidraSessionError.js";
 import { silentLogger } from "../src/logger.js";
 
 const INSTALL = "/opt/ghidra_12.1.2_PUBLIC";
@@ -23,10 +27,13 @@ const installationHost = (): GhidraInstallationHost => ({
   }),
 });
 
-const provider = (host = installationHost()): GhidraProvider => {
+const provider = (
+  host = installationHost(),
+  clientFactory?: GhidraProviderClientFactory,
+): GhidraProvider => {
   const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
   if (!config.ok) throw config.error;
-  return new GhidraProvider(config.value, silentLogger, host);
+  return new GhidraProvider(config.value, silentLogger, host, clientFactory);
 };
 
 describe("Ghidra provider", () => {
@@ -36,9 +43,29 @@ describe("Ghidra provider", () => {
     const ghidra = provider(host);
 
     expect(ghidra.identity()).toEqual(GHIDRA_PROVIDER_IDENTITY);
-    expect(ghidra.capabilities()).toBe(GHIDRA_PROVIDER_TOOL_CONTRACTS);
-    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toEqual([]);
+    expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
+      GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
+    );
+    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(10);
     expect(Object.isFrozen(ghidra.capabilities())).toBe(true);
+    expect(ghidra.capabilities()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "list_procedures",
+          pagination: "offset",
+          effects: expect.objectContaining({
+            mutatesArtifact: false,
+            mayShowUi: false,
+            mayWriteFilesystem: true,
+          }),
+          limits: {
+            maxResults: 500,
+            maxPayloadBytes: 1024 * 1024,
+            timeoutMs: 10_000,
+          },
+        }),
+      ]),
+    );
     expect(ghidra.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: {
@@ -86,7 +113,33 @@ describe("Ghidra provider", () => {
   });
 
   it("commits exact provider, isolation, and resource semantics", async () => {
-    const ghidra = provider();
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        items: [
+          {
+            address: "0x1000",
+            value: "fixture_main",
+            value_truncated: false,
+            procedure: {
+              external: false,
+              thunk: false,
+              thunk_target: null,
+            },
+          },
+        ],
+        offset: 0,
+        limit: 100,
+        total: 1,
+        next_offset: null,
+        has_more: false,
+      }),
+    );
+    const start = vi.fn().mockResolvedValue(ok(sessionInfo()));
+    const ghidra = provider(installationHost(), () => ({
+      start,
+      callTool,
+      close: () => Promise.resolve(),
+    }));
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
     );
@@ -112,14 +165,91 @@ describe("Ghidra provider", () => {
     const result = await ghidra
       .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
       .execute("list_procedures", {});
+    expect(callTool).toHaveBeenCalledWith(
+      "list_procedures",
+      { document: null, offset: 0, limit: 100 },
+      {},
+    );
     expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCapabilityUnavailableError",
-        providerId: "ghidra",
+      ok: true,
+      value: {
+        provider: {
+          id: "ghidra",
+          name: "Ghidra",
+          version: "12.1.2",
+        },
+        analysisProfile: resolved.value.profile,
+        result: {
+          items: [{ address: "0x1000", value: "fixture_main" }],
+          total: 1,
+        },
+        rawResult: {
+          items: [{ procedure: { external: false, thunk: false } }],
+        },
       },
     });
+    expect(start).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed inventory output before Evidence creation", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok({ items: "not-a-page" })),
+      close: () => Promise.resolve(),
+    }));
+    const resolved = await ghidra.resolveAnalysisProfile(
+      executableTarget("elf", "x86_64"),
+    );
+    if (!resolved.ok || resolved.value.profile === null) return;
+
+    await expect(
+      ghidra
+        .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
+        .execute("list_procedures", {}),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+  });
+
+  it.each([
+    ["invalid_request", "AnalysisInputError"],
+    ["not_found", "AnalysisInputError"],
+    ["ambiguous", "AnalysisInputError"],
+    ["method_unavailable", "AnalysisCapabilityUnavailableError"],
+  ] as const)(
+    "projects remote %s without losing its typed meaning",
+    async (code, tag) => {
+      const ghidra = provider(installationHost(), () => ({
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () =>
+          Promise.resolve(
+            err(
+              new GhidraSessionError(
+                "remote",
+                "Fixture remote failure",
+                { remote_code: code },
+                { remoteCode: code },
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(),
+      }));
+      const resolved = await ghidra.resolveAnalysisProfile(
+        executableTarget("elf", "x86_64"),
+      );
+      if (!resolved.ok || resolved.value.profile === null) return;
+
+      await expect(
+        ghidra
+          .createClient(
+            executableTarget("elf", "x86_64"),
+            resolved.value.profile,
+          )
+          .execute("list_procedures", {}),
+      ).resolves.toMatchObject({ ok: false, error: { _tag: tag } });
+    },
+  );
 
   it("returns cancellation before profile work", async () => {
     const controller = new AbortController();
@@ -133,6 +263,25 @@ describe("Ghidra provider", () => {
       error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
     });
   });
+});
+
+const sessionInfo = () => ({
+  name: "REA Ghidra bridge" as const,
+  bridge_version: 2 as const,
+  run_id: "11111111-1111-4111-8111-111111111111",
+  profile_digest: "a".repeat(64),
+  provider: { id: "ghidra" as const, version: "12.1.2" },
+  read_only: true as const,
+  analysis_complete: true,
+  analysis_timed_out: false,
+  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  target: {
+    name: "fixture",
+    language_id: "x86:LE:64:default",
+    compiler_spec_id: "gcc",
+    image_base: "0x1000",
+    default_address_space: "ram",
+  },
 });
 
 const executableTarget = (

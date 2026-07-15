@@ -47,6 +47,17 @@ const responseSchema = z
 /** Validated response emitted by REA's packaged Ghidra script. */
 export type GhidraBridgeResponse = z.infer<typeof responseSchema>;
 
+/** Expected operation failure returned by the authenticated Java bridge. */
+export class GhidraRemoteError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GhidraRemoteError";
+  }
+}
+
 /** Parse one complete Java-bridge response without accepting extra fields. */
 export const parseGhidraResponseLine = (
   line: string,
@@ -67,11 +78,12 @@ export const parseGhidraResponseLine = (
 /** Project one validated response into its result or remote failure. */
 export const ghidraResponseResult = (
   response: GhidraBridgeResponse,
-): Result<JsonValue, Error> =>
+): Result<JsonValue, GhidraRemoteError> =>
   response.ok
     ? ok(response.result ?? null)
     : err(
-        new Error(
-          `${response.error?.code ?? "bridge_error"}: ${response.error?.message ?? "Ghidra bridge request failed"}`,
+        new GhidraRemoteError(
+          response.error?.code ?? "bridge_error",
+          response.error?.message ?? "Ghidra bridge request failed",
         ),
       );

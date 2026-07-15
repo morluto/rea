@@ -21,13 +21,18 @@ import {
 } from "./GhidraDefaults.js";
 import type {
   GhidraClientOptions,
+  GhidraRequestOptions,
   GhidraStartResult,
 } from "./GhidraClientTypes.js";
+import type { GhidraInventoryOperation } from "./GhidraInventoryValues.js";
 import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraResponseBuffer } from "./GhidraResponseBuffer.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
-import { GhidraSessionError } from "./GhidraSessionError.js";
+import {
+  bindGhidraSessionFailure,
+  GhidraSessionError,
+} from "./GhidraSessionError.js";
 import {
   isGhidraShutdownAcknowledgement,
   parseGhidraSessionInfo,
@@ -44,6 +49,7 @@ const SESSION_ROOT = "/tmp";
 export type {
   GhidraClientOptions,
   GhidraDiagnostic,
+  GhidraRequestOptions,
   GhidraStartResult,
 } from "./GhidraClientTypes.js";
 
@@ -72,10 +78,14 @@ export class GhidraClient {
   #startupController: AbortController | undefined;
   #startPromise: Promise<GhidraStartResult> | undefined;
   #closePromise: Promise<void> | undefined;
+  readonly #failure = bindGhidraSessionFailure(() => this.#diagnostics());
   readonly #responseRouter = new GhidraResponseRouter({
     pending: this.#pending,
     nextId: () => this.#nextId,
-    remoteFailure: (message, cause) => this.#failure("remote", message, cause),
+    remoteFailure: (failure) =>
+      this.#failure("remote", failure.message, failure, {
+        remoteCode: failure.code,
+      }),
     protocolFailure: (message, cause) => this.#abortProtocol(message, cause),
   });
   readonly #responseBuffer = new GhidraResponseBuffer({
@@ -131,16 +141,24 @@ export class GhidraClient {
 
   /** Revalidate live bridge, provider, run, and profile metadata. */
   async ping(
-    options: {
-      readonly signal?: AbortSignal;
-      readonly timeoutMs?: number;
-    } = {},
+    options: GhidraRequestOptions = {},
   ): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
     const result = await this.#request("ping", {}, options);
     if (!result.ok) return result;
     return this.#parseSessionInfo(result.value);
+  }
+
+  /** Execute one admitted inventory operation after the exact session handshake. */
+  async callTool(
+    operation: GhidraInventoryOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options: GhidraRequestOptions = {},
+  ): Promise<Result<JsonValue, GhidraSessionError>> {
+    const started = await this.start(options.signal);
+    if (!started.ok) return started;
+    return this.#request(operation, parameters, options);
   }
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
@@ -302,7 +320,7 @@ export class GhidraClient {
   async #request(
     method: string,
     params: JsonValue,
-    options: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+    options: GhidraRequestOptions,
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const socket = this.#socket;
     const token = this.#token;
@@ -351,9 +369,7 @@ export class GhidraClient {
     return result;
   }
 
-  #parseSessionInfo(
-    value: JsonValue,
-  ): Result<GhidraSessionInfo, GhidraSessionError> {
+  #parseSessionInfo(value: JsonValue) {
     const runId = this.#runId;
     if (runId === undefined)
       return err(this.#failure("protocol", "Ghidra run identity is missing"));
@@ -362,15 +378,14 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
     });
-    return parsed.ok
-      ? parsed
-      : err(
-          this.#failure(
-            "protocol",
-            "Ghidra bridge handshake is invalid",
-            parsed.error,
-          ),
-        );
+    if (parsed.ok) return parsed;
+    return err(
+      this.#failure(
+        "protocol",
+        "Ghidra bridge handshake is invalid",
+        parsed.error,
+      ),
+    );
   }
 
   async #close(
@@ -494,20 +509,6 @@ export class GhidraClient {
       : this.#failure("timeout", "Ghidra startup deadline elapsed", undefined, {
           timeoutMs: deadline.timeoutMs,
         });
-  }
-
-  #failure(
-    kind: GhidraSessionError["kind"],
-    message: string,
-    cause?: unknown,
-    options: { readonly timeoutMs?: number } = {},
-  ): GhidraSessionError {
-    return new GhidraSessionError(kind, message, this.#diagnostics(), {
-      ...(cause === undefined ? {} : { cause }),
-      ...(options.timeoutMs === undefined
-        ? {}
-        : { timeoutMs: options.timeoutMs }),
-    });
   }
 
   #diagnostics(): Readonly<Record<string, JsonValue>> {

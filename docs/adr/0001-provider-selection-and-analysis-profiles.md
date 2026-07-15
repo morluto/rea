@@ -5,9 +5,9 @@
 - Implementation status: The provider registry, deterministic selection,
   target binding, analysis-profile commitment, and snapshot/Evidence migration
   are implemented. Ghidra discovery, target/profile resolution, doctor checks,
-  and the private headless-session foundation are implemented; Ghidra analysis
-  capabilities remain intentionally undeclared pending operation-level
-  conformance work.
+  the private headless-session foundation, and ten read-only inventory
+  capabilities are implemented. Function-analysis capabilities remain gated on
+  operation-level conformance work.
 
 ## Context
 
@@ -538,7 +538,7 @@ into false certainty.
 
 ## Implementation progress
 
-The first four implementation stages are shipped:
+The first five implementation stages are shipped:
 
 1. Provider-specific target state was replaced by generic profile and snapshot
    v2 commitments while preserving Hopper execution behavior.
@@ -547,9 +547,13 @@ The first four implementation stages are shipped:
 3. Proven process-lifecycle primitives were extracted for shared use.
 4. Ghidra availability, target/profile resolution, doctor checks, and a private
    read-only headless session were admitted without declaring operations.
+5. Program identity, procedures, strings, symbols, memory blocks,
+   address/name resolution, containing-procedure resolution, and bounded search
+   were admitted with exact wire schemas and real debug/stripped ELF
+   conformance.
 
-The remaining stage is to add Ghidra capabilities individually and verify each
-real semantic claim across the shared source-owned conformance corpus. Until
-that happens, Hopper remains the only deep provider with callable analysis
-operations; Ghidra's empty capability set prevents accidental routing to an
-unverified implementation.
+The remaining stages add function details, decompilation, assembly, calls,
+xrefs, and CFG individually and verify each real semantic claim across the
+shared source-owned conformance corpus. Ghidra continues to omit GUI and
+mutation operations, so unsupported requests cannot route to an unverified
+implementation.

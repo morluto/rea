@@ -15,6 +15,7 @@ import type {
   GhidraLaunchSession,
   GhidraLauncher,
 } from "../src/ghidra/GhidraLauncher.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "../src/ghidra/GhidraSessionValues.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/fakeGhidra.mjs", import.meta.url),
@@ -31,6 +32,7 @@ type FixtureMode =
   | "oversized_whitespace"
   | "future_id"
   | "analysis_timeout"
+  | "remote_error"
   | "hang_after_start"
   | "silent"
   | "exit";
@@ -114,10 +116,61 @@ describe("GhidraClient", () => {
         read_only: true,
         analysis_complete: true,
         analysis_timed_out: false,
-        capabilities: ["ping", "shutdown"],
+        capabilities: GHIDRA_SESSION_CAPABILITIES,
+        target: {
+          image_base: "0x1000",
+          default_address_space: "ram",
+        },
       },
     });
     expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(108);
+  });
+
+  it("correlates an admitted inventory request after startup", async () => {
+    const client = clientFor(new FixtureLauncher());
+
+    await expect(
+      client.callTool("list_procedures", {
+        document: null,
+        offset: 0,
+        limit: 500,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        items: [
+          {
+            address: "0x1000",
+            value: "fixture_main",
+            procedure: { external: false, thunk: false },
+          },
+        ],
+        total: 1,
+        has_more: false,
+      },
+    });
+  });
+
+  it("preserves an authenticated operation failure code and diagnostics", async () => {
+    const client = clientFor(new FixtureLauncher("remote_error"));
+
+    const result = await client.callTool("list_procedures", {
+      document: null,
+      offset: 0,
+      limit: 500,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "remote",
+        remoteCode: "not_found",
+        diagnostics: {
+          remote_code: "not_found",
+          remote_message: "Unknown Ghidra procedure name",
+        },
+      },
+    });
   });
 
   it.each([

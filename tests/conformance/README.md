@@ -8,6 +8,11 @@ their Mach-O symbols and strings with native command-line tools.
 Only source files are versioned. Generated binaries, generated large-fixture
 source, debug information, and manifests must remain under `build/`.
 
+`ghidra/inventory.c` is also compiled into temporary Linux ELF debug and
+stripped variants by `npm run verify:ghidra`. It fixes local functions, external
+`puts` linkage, defined strings, and writable/executable memory needed to prove
+the read-only Ghidra inventory contracts without committing a binary.
+
 The C fixture fixes a known call chain and strings. The version pair fixes an
 added symbol, changed string, and changed call relationship. The generated
 large fixture contains 1,205 uniquely named functions and strings so provider

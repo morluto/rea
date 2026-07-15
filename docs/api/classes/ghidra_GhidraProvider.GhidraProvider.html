@@ -19,7 +19,7 @@
 <ul class="tsd-hierarchy">
 <li><a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html" class="tsd-signature-type tsd-kind-interface">AnalysisProviderCandidate</a></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L56">src/ghidra/GhidraProvider.ts:56</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L177">src/ghidra/GhidraProvider.ts:177</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -45,17 +45,18 @@
 <h3 class="tsd-anchor-link" id="constructor"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="constructorghidraprovider"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">GhidraProvider</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">config</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/config.AppConfig.html" class="tsd-signature-type tsd-kind-interface">AppConfig</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">logger</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Logger</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">installationHost</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ghidra_GhidraInstallation.GhidraInstallationHost.html" class="tsd-signature-type tsd-kind-interface">GhidraInstallationHost</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">GhidraProvider</a><a href="#constructorghidraprovider" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="constructorghidraprovider"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">GhidraProvider</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">config</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/config.AppConfig.html" class="tsd-signature-type tsd-kind-interface">AppConfig</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">logger</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Logger</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">installationHost</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ghidra_GhidraInstallation.GhidraInstallationHost.html" class="tsd-signature-type tsd-kind-interface">GhidraInstallationHost</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">clientFactory</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ghidra_GhidraProvider.GhidraProviderClientFactory.html" class="tsd-signature-type tsd-kind-type-alias">GhidraProviderClientFactory</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">GhidraProvider</a><a href="#constructorghidraprovider" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><span class="tsd-kind-parameter">config</span>: <a href="../interfaces/config.AppConfig.html" class="tsd-signature-type tsd-kind-interface">AppConfig</a></span></li>
 <li><span><span class="tsd-kind-parameter">logger</span>: <span class="tsd-signature-type">Logger</span></span></li>
-<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">installationHost</span>: <a href="../interfaces/ghidra_GhidraInstallation.GhidraInstallationHost.html" class="tsd-signature-type tsd-kind-interface">GhidraInstallationHost</a></span></li></ul></div>
+<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">installationHost</span>: <a href="../interfaces/ghidra_GhidraInstallation.GhidraInstallationHost.html" class="tsd-signature-type tsd-kind-interface">GhidraInstallationHost</a></span></li>
+<li><span><span class="tsd-kind-parameter">clientFactory</span>: <a href="../types/ghidra_GhidraProvider.GhidraProviderClientFactory.html" class="tsd-signature-type tsd-kind-type-alias">GhidraProviderClientFactory</a><span class="tsd-signature-symbol"> = ...</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">GhidraProvider</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L59">src/ghidra/GhidraProvider.ts:59</a></li></ul></aside></div></li></ul></section></section></details>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L180">src/ghidra/GhidraProvider.ts:180</a></li></ul></aside></div></li></ul></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -68,7 +69,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-keyword">readonly</span> <a href="../types/application_AnalysisProvider.CapabilityDescriptor.html" class="tsd-signature-type tsd-kind-type-alias">CapabilityDescriptor</a><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#capabilities">capabilities</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L69">src/ghidra/GhidraProvider.ts:69</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L192">src/ghidra/GhidraProvider.ts:192</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="createclient"><span>create<wbr/>Client</span><a href="#createclient" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -83,7 +84,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/application_AnalysisProvider.AnalysisClient.html" class="tsd-signature-type tsd-kind-interface">AnalysisClient</a></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#createclient">createClient</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L143">src/ghidra/GhidraProvider.ts:143</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L266">src/ghidra/GhidraProvider.ts:266</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="identity"><span>identity</span><a href="#identity" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -93,7 +94,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/application_AnalysisProvider.ProviderIdentity.html" class="tsd-signature-type tsd-kind-interface">ProviderIdentity</a></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#identity">identity</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L65">src/ghidra/GhidraProvider.ts:65</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L188">src/ghidra/GhidraProvider.ts:188</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="inspectavailability"><span>inspect<wbr/>Availability</span><a href="#inspectavailability" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -103,7 +104,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../types/application_AnalysisProvider.ProviderAvailability.html" class="tsd-signature-type tsd-kind-type-alias">ProviderAvailability</a></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#inspectavailability">inspectAvailability</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L73">src/ghidra/GhidraProvider.ts:73</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L196">src/ghidra/GhidraProvider.ts:196</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="inspecttargetsupport"><span>inspect<wbr/>Target<wbr/>Support</span><a href="#inspecttargetsupport" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -117,7 +118,7 @@
 <h4 class="tsd-returns-title">Returns <a href="../types/application_AnalysisProvider.ProviderTargetSupport.html" class="tsd-signature-type tsd-kind-type-alias">ProviderTargetSupport</a></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#inspecttargetsupport">inspectTargetSupport</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L92">src/ghidra/GhidraProvider.ts:92</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L215">src/ghidra/GhidraProvider.ts:215</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="resolveanalysisprofile"><span>resolve<wbr/>Analysis<wbr/>Profile</span><a href="#resolveanalysisprofile" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -132,7 +133,7 @@
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/application_AnalysisProvider.AnalysisProfileResolution.html" class="tsd-signature-type tsd-kind-interface">AnalysisProfileResolution</a><span class="tsd-signature-symbol">,</span> <a href="domain_errors.AnalysisError.html" class="tsd-signature-type tsd-kind-class">AnalysisError</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <p>Implementation of <a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html">AnalysisProviderCandidate</a>.<a href="../interfaces/application_AnalysisProvider.AnalysisProviderCandidate.html#resolveanalysisprofile">resolveAnalysisProfile</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L131">src/ghidra/GhidraProvider.ts:131</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraProvider.ts#L254">src/ghidra/GhidraProvider.ts:254</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

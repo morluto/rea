@@ -3,6 +3,7 @@ import { err, type Result } from "../domain/result.js";
 import type { PendingOperations } from "../process/PendingOperations.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import { ghidraResponseResult, parseGhidraResponseLine } from "./protocol.js";
+import type { GhidraRemoteError } from "./protocol.js";
 
 /** Dependencies for correlating validated bridge responses. */
 export interface GhidraResponseRouterOptions {
@@ -11,7 +12,7 @@ export interface GhidraResponseRouterOptions {
     Result<JsonValue, GhidraSessionError>
   >;
   readonly nextId: () => number;
-  readonly remoteFailure: (message: string, cause: Error) => GhidraSessionError;
+  readonly remoteFailure: (failure: GhidraRemoteError) => GhidraSessionError;
   readonly protocolFailure: (message: string, cause?: Error) => void;
 }
 
@@ -38,9 +39,7 @@ export class GhidraResponseRouter {
     const result = ghidraResponseResult(parsed.value);
     this.#options.pending.settle(
       parsed.value.id,
-      result.ok
-        ? result
-        : err(this.#options.remoteFailure(result.error.message, result.error)),
+      result.ok ? result : err(this.#options.remoteFailure(result.error)),
     );
   }
 }

@@ -1,20 +1,22 @@
 # Static-analysis provider evaluation
 
-Status: the Ghidra provider foundation is shipped. It validates an exact
-bring-your-own Ghidra 12.1.2/JDK 21 environment on Linux x64, resolves a
-provider/version/profile commitment, and runs one isolated read-only headless
-import with an authenticated post-analysis bridge. It intentionally publishes
-no binary operation capabilities yet.
+Status: the Ghidra read-only inventory provider is shipped. It validates an
+exact bring-your-own Ghidra 12.1.2/JDK 21 environment on Linux x64, resolves a
+provider/version/profile commitment, runs one isolated read-only headless
+import, and publishes ten operation-level capabilities after the authenticated
+post-analysis handshake.
 
 The provider-neutral target, provider registry, deterministic target binding,
 analysis-profile commitment, Evidence provenance, snapshot v2, and bounded
 provider-process lifecycle foundations are implemented. The Ghidra launcher,
 packaged Java bridge, doctor/setup projection, bounded client lifecycle, and
-single-target real Linux verifier are also implemented. Binary inventory and
-function semantics remain gated on operation adapters and a multi-fixture
-conformance suite. A provider is not a drop-in replacement for Hopper: every
-capability must be mapped explicitly, with truthful `unavailable` or degraded
-results where the engine cannot provide equivalent semantics.
+multi-target real Linux verifier are also implemented. Program identity,
+procedure/string/symbol inventory, memory blocks, address/name and
+containing-procedure resolution, and bounded search are admitted. Function
+details, decompilation, calls, xrefs, and CFG remain gated on later operation
+adapters. A provider is not a drop-in replacement for Hopper: every capability
+is mapped explicitly, with truthful `unavailable` or degraded results where the
+engine cannot provide equivalent semantics.
 
 [ADR-0001](adr/0001-provider-selection-and-analysis-profiles.md) fixes the
 provider registry, deterministic selection, target binding, analysis profile,
@@ -32,9 +34,9 @@ follow.
   bounded startup/analysis/request deadlines, cancellation, and cleanup.
 - Prefer a packaged Java bridge loaded through Ghidra's script path. PyGhidra
   remains useful for prototypes but is not a mandatory production dependency.
-- The foundation bridge exposes authenticated `ping` and `shutdown` only.
-  Successful auto-analysis is lifecycle proof, not an inventory, xref, CFG, or
-  decompilation claim.
+- Treat authenticated `ping` and `shutdown` as lifecycle proof only. Inventory,
+  xref, CFG, and decompilation claims require separately admitted operation
+  contracts and real-provider conformance.
 - Implement read-only inventories, assembly, decompilation, function metadata,
   calls, references, containment, and bounded search first.
 - Report GUI cursor/navigation and persistent mutation operations as unavailable
@@ -59,14 +61,35 @@ two CPUs, and a 2 GiB heap; inherited Java option injection variables are
 cleared. The mode-0600 descriptor carries the random token without exposing it
 in argv or environment. The Java bridge deletes the descriptor after parsing,
 binds a mode-0600 Unix socket, reports actual Ghidra/language/compiler/analysis
-metadata, accepts only bounded authenticated `ping`/`shutdown`, and deletes the
-socket. Close, cancellation, timeout, malformed protocol, or process exit stops
-the token-verified owned process group and removes the entire runtime root.
+metadata, accepts only the exact authenticated `ping`, `shutdown`, and ten
+inventory methods, and deletes the socket. Close, cancellation, timeout,
+malformed protocol, or process exit stops the token-verified owned process
+group and removes the entire runtime root.
 
-The provider catalog therefore lists `ghidra` with an empty capability array.
-This is deliberate: provider discovery and a real headless lifecycle are
-shipped, while binary operation semantics remain unavailable rather than being
-borrowed from Hopper or inferred from a successful import.
+The provider catalog lists only the ten proved Ghidra operations. GUI cursor,
+mutation, decompilation, assembly, call, xref, and CFG operations are absent;
+the router therefore reports them unavailable instead of borrowing Hopper
+semantics or inferring capability from a successful import.
+
+## Admitted inventory semantics
+
+| Concern          | Ghidra contract                                                                                                                                                                                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Program identity | One `analyzeHeadless` import produces exactly one Program; `list_documents` therefore returns exactly one name.                                                                                                                                                                                                          |
+| Addresses        | Default memory uses lowercase `0x` hexadecimal. Non-default and external spaces use `<percent-encoded-space>:0x<hex>` and remain round-trippable. The handshake commits image base and default address-space name.                                                                                                       |
+| Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts.                                                                                    |
+| Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                                                   |
+| Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`.                          |
+| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                                                     |
+| Pagination       | List limits are 500 and search limits are 100. Pages commit exact totals and advancing offsets; an inventory above one million items fails rather than returning a partial result labeled exhaustive.                                                                                                                    |
+| Search           | Literal search scans the immutable inventory with a 1,000,000-unit cumulative work budget. Regex uses a conservative finite Java-regex subset with 10,000 static paths, 4,096 UTF-16 code units per candidate, and the same cumulative budget. Exceeding a budget fails explicitly; returned values identify truncation. |
+| Analysis state   | The socket is exposed only after default auto-analysis. A 300-second analysis timeout fails target opening; established requests have a 10-second client deadline and a 1 MiB response ceiling.                                                                                                                          |
+
+`npm run verify:ghidra` compiles the versioned C oracle into separate debug and
+stripped ELF binaries. It proves all ten operations, external functions,
+resolved thunks, primary symbols, stripped-name behavior, strings, permissions,
+bounded search, exact pagination, profile identity, and process/project cleanup
+against real Ghidra 12.1.2. Unit fixtures separately reject malformed output.
 
 ## Shared provider-process foundation
 
@@ -88,7 +111,7 @@ only the generic process mechanisms.
 
 | Provider                                                                                    | License / automation surface                                                                                                                                           | What it brings                                                                                                                                          | REA fit and blockers                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Foundation shipped: exact BYO installation checks, isolated project/state, bounded owned process, packaged Java bridge, and real lifecycle verifier. Operation schemas and semantic conformance remain before it is a full Hopper alternative.                         |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Read-only inventory shipped: exact BYO checks, isolated state, bounded process, packaged bridge, ten admitted operations, and real debug/stripped conformance. Function analysis remains before it is a broader Hopper alternative.                                    |
 | [Rizin](https://github.com/rizinorg/rizin) / [rz-pipe](https://github.com/rizinorg/rz-pipe) | Rizin repository contains LGPL-3.0 and GPL-3.0 components; `rizin`, `rz-bin`, and language bridges through `rzpipe`                                                    | Portable CLI analysis, disassembly/debugging, many architectures and file formats, JSON command output                                                  | Good candidate for a process-backed Linux provider and fast metadata fallback. License/component inventory must be preserved; command output needs version-pinned parsers and semantic conformance before evidence is trusted.                                         |
 | [LIEF](https://github.com/lief-project/LIEF)                                                | Apache-2.0; C++, Python, and other bindings                                                                                                                            | Deterministic parsing and modification of ELF, PE, Mach-O, COFF, and related executable formats; headers, sections, symbols, relocations, and functions | Best near-term complement, not a decompiler replacement. It can cover format metadata and artifact evidence without a long-lived analysis process; function semantics, pseudocode, CFG, and cross-reference parity remain out of scope unless separately demonstrated. |
 | [Binary Ninja](https://docs.binary.ninja/dev/index.html)                                    | API/documentation components are MIT, while the analysis product is licensed by edition; commercial, Ultimate, or Headless license is required for headless automation | Python/Core/C++/Rust APIs, headless loading, IL layers, function analysis, plugins, and configurable analysis                                           | Strong technical fit for a native provider, especially function dossiers. Commercial licensing, license-secret handling, native runtime packaging, and multithreaded lifecycle rules are material deployment blockers.                                                 |
@@ -97,8 +120,8 @@ only the generic process mechanisms.
 
 1. Use the implemented explicit provider registry and target binding without
    changing Hopper behavior.
-2. Extend the bounded read-only Ghidra foundation with capabilities admitted
-   individually through the shared conformance corpus.
+2. Extend the admitted Ghidra inventory boundary with function capabilities
+   admitted individually through the shared conformance corpus.
 3. Connect Electron/native-add-on application findings to the selected native
    analysis provider without introducing provider-prefixed tools.
 4. Evaluate LIEF or Rizin later as complementary metadata/disassembly providers,

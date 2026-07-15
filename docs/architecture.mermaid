@@ -8,7 +8,7 @@ graph TD
     subgraph "Adapters"
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
         HOPPER_BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
-        GHIDRA_BRIDGE["bridge/ghidra/ReaGhidraBridge.java<br/>Packaged HeadlessScript<br/>private authenticated control channel"]
+        GHIDRA_BRIDGE["bridge/ghidra/ReaGhidraBridge.java<br/>Packaged HeadlessScript<br/>authenticated read-only inventory"]
         INSTALL["Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
@@ -21,7 +21,7 @@ graph TD
 
     subgraph "Provider Layers"
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
-        GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & private headless session<br/>launcher, client, doctor, protocol"]
+        GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & inventory operations<br/>launcher, client, doctor, protocol"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
     end

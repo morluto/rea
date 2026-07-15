@@ -68,10 +68,11 @@ desktop display. Unattended package-manager access requires
 
 ## Ghidra
 
-REA's initial Ghidra provider layer is bring-your-own and currently supports
-Linux x64 with the exact official Ghidra 12.1.2 release and a 64-bit full JDK 21. It supplies discovery, analysis-profile commitment, and an isolated
-read-only headless session; it intentionally declares no binary-analysis
-operations yet.
+REA's Ghidra provider is bring-your-own and currently supports Linux x64 with
+the exact official Ghidra 12.1.2 release and a 64-bit full JDK 21. It supplies
+discovery, analysis-profile commitment, an isolated read-only headless session,
+and ten bounded inventory/name/search operations. Decompilation, calls, xrefs,
+GUI state, and analysis mutations remain unavailable through Ghidra.
 
 Extract Ghidra and install the JDK outside REA, then export absolute paths:
 
@@ -95,6 +96,13 @@ per-file analysis timeout, CPU and heap bounds, and its packaged Java bridge via
 `-scriptPath`; it never opens an existing user project. The local bridge socket
 and descriptor are current-user-only, and all owned runtime paths and processes
 are removed on every terminal lifecycle path.
+
+Operations begin only after default auto-analysis completes. A timeout fails
+the open rather than exposing partial analysis. One session contains exactly
+one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
+`REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
+Run `GHIDRA_INSTALL_DIR=... npm run verify:ghidra` from a source checkout to
+compile and analyze the source-owned debug and stripped conformance fixtures.
 
 ## Diagnose, update, and remove
 

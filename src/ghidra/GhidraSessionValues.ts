@@ -3,6 +3,16 @@ import { z } from "zod";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { GHIDRA_BRIDGE_VERSION } from "./GhidraDefaults.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+
+/** Exact methods proved by the bridge handshake after auto-analysis. */
+export const GHIDRA_SESSION_CAPABILITIES = [
+  "ping",
+  "shutdown",
+  ...GHIDRA_INVENTORY_OPERATIONS,
+] as const;
+
+const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);
 
 const sessionInfoSchema = z
   .object({
@@ -19,12 +29,16 @@ const sessionInfoSchema = z
     read_only: z.literal(true),
     analysis_complete: z.boolean(),
     analysis_timed_out: z.boolean(),
-    capabilities: z.array(z.enum(["ping", "shutdown"])).max(2),
+    capabilities: z
+      .array(capabilitySchema)
+      .length(GHIDRA_SESSION_CAPABILITIES.length),
     target: z
       .object({
         name: z.string().min(1),
         language_id: z.string().min(1),
         compiler_spec_id: z.string().min(1),
+        image_base: z.string().regex(/^0x[0-9a-f]+$/u),
+        default_address_space: z.string().min(1),
       })
       .strict(),
   })
@@ -48,9 +62,11 @@ export const parseGhidraSessionInfo = (
     parsed.data.run_id !== expected.runId ||
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
-    new Set(parsed.data.capabilities).size !== 2 ||
-    !parsed.data.capabilities.includes("ping") ||
-    !parsed.data.capabilities.includes("shutdown") ||
+    new Set(parsed.data.capabilities).size !==
+      GHIDRA_SESSION_CAPABILITIES.length ||
+    GHIDRA_SESSION_CAPABILITIES.some(
+      (capability) => !parsed.data.capabilities.includes(capability),
+    ) ||
     parsed.data.analysis_complete === parsed.data.analysis_timed_out
   )
     return err(new Error("Ghidra bridge handshake identity is invalid"));
