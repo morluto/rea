@@ -61,7 +61,7 @@
     "lint:dead": "knip",
     "jscpd": "jscpd src/ tests/",
     "scan:todos": "node scripts/scan-todos.mjs",
-    "start": "node dist/main.js",
+    "start": "node scripts/rea.mjs mcp",
     "pretest": "npm run build",
     "postinstall": "node scripts/prepare-node-pty.mjs",
     "test": "vitest run",
@@ -82,8 +82,7 @@
     "docs:generate": "npm run build && node scripts/generate-product-catalog.mjs && typedoc && node scripts/generate-error-schema.mjs",
     "docs:check": "node scripts/generate-package-metadata.mjs --check && npm run build && node scripts/generate-product-catalog.mjs --check && node scripts/check-doc-facts.mjs && node scripts/check-typedoc.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "npm run build && node scripts/generate-error-schema.mjs",
-    "prepack": "npm run build",
-    "prepare": "husky",
+    "prepare": "npm run build && husky",
     "rebuild:native": "node scripts/rebuild-native.mjs"
   },
   "lint-staged": {

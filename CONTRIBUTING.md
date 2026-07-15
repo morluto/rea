@@ -9,9 +9,13 @@ REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verificati
 ```bash
 npm ci
 npm run rebuild:native # only when the packaged PTY binary is incompatible
-npm run build
 npm test
 ```
+
+`npm ci` installs the exact dependencies, builds the compiled runtime through
+the package `prepare` lifecycle, and prepares the Husky hook. Run
+`npm run build` again after source changes when you need the standalone CLI or
+MCP server without running the test prebuild.
 
 Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 2 Electron, and 18 session tools (78 total) unless a deliberate contract change updates every verifier and snapshot.
 
@@ -23,10 +27,11 @@ npm run verify:package
 npm pack --dry-run
 ```
 
-`npm install` prepares the Husky pre-commit hook. Commits format and lint staged
-files with lint-staged, then typecheck the complete project. The normal test and
-CI coverage runs enforce the thresholds in `vitest.config.ts`; `npm run
-lint:dead` rejects unused files, exports, and dependencies.
+`npm install` builds the compiled runtime and prepares the Husky pre-commit
+hook. Commits format and lint staged files with lint-staged, then typecheck the
+complete project. The normal test and CI coverage runs enforce the thresholds
+in `vitest.config.ts`; `npm run lint:dead` rejects unused files, exports, and
+dependencies.
 
 Set `REA_LOG_LEVEL` to `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
 `silent` to control structured JSON diagnostics. MCP mode defaults to `info` and
