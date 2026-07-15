@@ -17,17 +17,28 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   type AnalysisError,
   AnalysisTimeoutError,
   ProviderAdapterError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { GhidraClient } from "./GhidraClient.js";
+import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import {
   GHIDRA_ANALYSIS_TIMEOUT_SECONDS,
+  GHIDRA_MAX_LINE_BYTES,
+  GHIDRA_REQUEST_TIMEOUT_MS,
   GHIDRA_STARTUP_TIMEOUT_MS,
 } from "./GhidraDefaults.js";
+import {
+  GHIDRA_INVENTORY_OPERATIONS,
+  isGhidraInventoryOperation,
+  parseGhidraInventoryInput,
+  parseGhidraInventoryResult,
+} from "./GhidraInventoryValues.js";
 import {
   ghidraInstallationDiagnostics,
   inspectGhidraInstallation,
@@ -45,12 +56,122 @@ export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   version: null,
 });
 
-/** PR07 intentionally exposes session health but no binary operation contract. */
-export const GHIDRA_PROVIDER_TOOL_CONTRACTS: readonly CapabilityDescriptor[] =
-  Object.freeze([]);
+const officialContractByName = new Map(
+  OFFICIAL_TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
+);
+
+/** Direct read-only contracts implemented by the Ghidra adapter. */
+export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
+  GHIDRA_INVENTORY_OPERATIONS.map((operation) => {
+    const contract = officialContractByName.get(operation);
+    if (contract === undefined)
+      throw new TypeError(`Missing official contract for ${operation}`);
+    return contract;
+  }),
+);
+
+const PAGINATED_OPERATIONS: ReadonlySet<string> = new Set([
+  "list_names",
+  "list_procedures",
+  "list_strings",
+  "search_procedures",
+  "search_strings",
+]);
+const SEARCH_OPERATIONS: ReadonlySet<string> = new Set([
+  "search_procedures",
+  "search_strings",
+]);
+const healthLimitations = Object.freeze([
+  "The session serves operations only after default Ghidra auto-analysis completes; an analysis timeout fails the open instead of exposing partial results.",
+  "The imported Program and temporary project are ephemeral, read-only to REA, and deleted on close.",
+]);
+
+const limitationsFor = (operation: string): readonly string[] => {
+  const common = [
+    ...healthLimitations,
+    "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
+  ];
+  switch (operation) {
+    case "list_documents":
+      return [
+        ...common,
+        "A headless Ghidra session contains exactly one imported Program, unlike Hopper's multi-document GUI session.",
+      ];
+    case "list_names":
+      return [
+        ...common,
+        "The symbol inventory includes memory and external symbols, including dynamic symbols, but excludes variable and no-address namespace records.",
+      ];
+    case "list_procedures":
+    case "procedure_address":
+      return [
+        ...common,
+        "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
+      ];
+    case "list_strings":
+      return [
+        ...common,
+        "Only Ghidra-defined string Data is observed; charset is reported, while a non-missing terminator cannot distinguish a present terminator from a fixed or Pascal layout.",
+        "Returned values are bounded to 1,024 Unicode code points and mark value_truncated instead of silently crossing the wire budget.",
+      ];
+    case "list_segments":
+      return [
+        ...common,
+        "Memory-block end addresses are exclusive; permissions come from Ghidra MemoryBlock flags rather than inference from section names.",
+      ];
+    case "search_procedures":
+    case "search_strings":
+      return [
+        ...common,
+        "Literal search enforces 1,000,000 cumulative work units; regex mode also accepts only a conservative finite Java-regex subset with 10,000 static paths and 4,096 UTF-16 code units per candidate.",
+      ];
+    default:
+      return common;
+  }
+};
+const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
+  GHIDRA_PROVIDER_TOOL_CONTRACTS.map((contract) =>
+    Object.freeze({
+      provider: GHIDRA_PROVIDER_IDENTITY,
+      operation: contract.name,
+      inputContractVersion: 1,
+      outputContractVersion: 1,
+      available: true,
+      reason: null,
+      pagination: PAGINATED_OPERATIONS.has(contract.name)
+        ? ("offset" as const)
+        : ("none" as const),
+      exhaustive: !PAGINATED_OPERATIONS.has(contract.name),
+      effects: Object.freeze({
+        mutatesArtifact: false,
+        launchesProcess: true,
+        mayShowUi: false,
+        mayAccessNetwork: false,
+        mayWriteFilesystem: true,
+        changesPermissions: false,
+        requiresRoot: false,
+      }),
+      limits: Object.freeze({
+        maxResults: PAGINATED_OPERATIONS.has(contract.name)
+          ? SEARCH_OPERATIONS.has(contract.name)
+            ? 100
+            : 500
+          : null,
+        maxPayloadBytes: GHIDRA_MAX_LINE_BYTES,
+        timeoutMs: GHIDRA_REQUEST_TIMEOUT_MS,
+      }),
+      limitations: Object.freeze(limitationsFor(contract.name)),
+    }),
+  ),
+);
 
 const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);
 const SUPPORTED_FORMATS = new Set(["elf", "pe", "mach-o"]);
+
+/** Production seam for exercising provider projection without a real process. */
+export type GhidraProviderClientFactory = (
+  options: GhidraClientOptions,
+) => Pick<GhidraClient, "start" | "callTool" | "close">;
 
 /** Linux Ghidra candidate backed by an isolated read-only headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -60,6 +181,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     private readonly installationHost?: GhidraInstallationHost,
+    private readonly clientFactory: GhidraProviderClientFactory = (options) =>
+      new GhidraClient(options),
   ) {}
 
   identity(): ProviderIdentity {
@@ -67,7 +190,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return GHIDRA_PROVIDER_TOOL_CONTRACTS;
+    return CAPABILITIES;
   }
 
   inspectAvailability(): ProviderAvailability {
@@ -152,7 +275,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!prerequisites.ok) return unavailableClient(prerequisites.error);
     const committedProfile = prerequisites.value.profile;
-    const client = new GhidraClient({
+    const client = this.clientFactory({
       launcher: new GhidraHeadlessLauncher({
         analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
         ...(this.config.ghidraJavaHome === undefined
@@ -168,25 +291,42 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       logger: this.logger.child({ layer: "ghidra-bridge" }),
     });
     return {
-      execute: async (operation, _parameters, options) => {
-        if (operation !== "health")
+      execute: async (operation, parameters, options) => {
+        if (operation !== "health" && !isGhidraInventoryOperation(operation))
           return err(
             new AnalysisCapabilityUnavailableError(
               GHIDRA_PROVIDER_IDENTITY.id,
               operation,
-              "Ghidra binary operations are not declared by this adapter release.",
+              "The Ghidra adapter does not declare this operation.",
             ),
           );
-        const started = await client.start(options?.signal);
-        if (!started.ok)
-          return err(projectSessionError(operation, started.error));
+        if (operation === "health") {
+          const started = await client.start(options?.signal);
+          if (!started.ok)
+            return err(projectSessionError(operation, started.error));
+          return ok(
+            createAnalysisExecution(started.value, committedProfile.provider, {
+              analysisProfile: committedProfile,
+              limitations: healthLimitations,
+            }),
+          );
+        }
+        const input = parseGhidraInventoryInput(operation, parameters);
+        if (!input.ok) return input;
+        const called = await client.callTool(
+          operation,
+          input.value,
+          options?.signal === undefined ? {} : { signal: options.signal },
+        );
+        if (!called.ok)
+          return err(projectSessionError(operation, called.error));
+        const result = parseGhidraInventoryResult(operation, called.value);
+        if (!result.ok) return result;
         return ok(
-          createAnalysisExecution(started.value, committedProfile.provider, {
+          createAnalysisExecution(result.value, committedProfile.provider, {
+            rawResult: called.value,
             analysisProfile: committedProfile,
-            limitations: [
-              "The session proves completed default Ghidra auto-analysis but exposes no binary operations in this release.",
-              "The imported program and project are ephemeral and externally read-only.",
-            ],
+            limitations: limitationsFor(operation),
           }),
         );
       },
@@ -267,6 +407,19 @@ const projectSessionError = (
         (failure.kind === "analysis_timeout"
           ? GHIDRA_ANALYSIS_TIMEOUT_SECONDS * 1_000
           : GHIDRA_STARTUP_TIMEOUT_MS),
+    );
+  if (
+    failure.kind === "remote" &&
+    ["invalid_request", "not_found", "ambiguous"].includes(
+      failure.remoteCode ?? "",
+    )
+  )
+    return new AnalysisInputError(operation, { cause: failure });
+  if (failure.kind === "remote" && failure.remoteCode === "method_unavailable")
+    return new AnalysisCapabilityUnavailableError(
+      "ghidra",
+      operation,
+      failure.message,
     );
   return new ProviderAdapterError("ghidra", operation, {
     cause: failure,

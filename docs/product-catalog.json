@@ -141,7 +141,18 @@
       "id": "ghidra",
       "name": "Ghidra",
       "version": null,
-      "capabilities": []
+      "capabilities": [
+        "address_name",
+        "list_documents",
+        "list_names",
+        "list_procedures",
+        "list_segments",
+        "list_strings",
+        "procedure_address",
+        "resolve_containing_procedure",
+        "search_procedures",
+        "search_strings"
+      ]
     },
     {
       "id": "hopper",
@@ -412,10 +423,10 @@
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "4babed9cb04300aa302d45de352c0401f7d9f5cb59e7bcb7e16c305172f4b7e7",
+      "tools_sha256": "8ca80bad31cd3f843b020fbef3c4b7da589e74345a2c7eec5edf18bd7f5f3bda",
       "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "33c6be9777325d74209679f624e94a042092b275a10018d42c6d9a231ef8a473"
+      "combined_sha256": "8a3d3b22fdecc75a773dc2f6aba201ac9c61d4fdd69d341933a211410f72ccb3"
     }
   }
 }

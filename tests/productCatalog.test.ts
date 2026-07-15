@@ -19,7 +19,10 @@ import {
   HOPPER_PROVIDER_IDENTITY,
   HOPPER_PROVIDER_TOOL_CONTRACTS,
 } from "../src/hopper/HopperProvider.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../src/ghidra/GhidraProvider.js";
+import {
+  GHIDRA_PROVIDER_IDENTITY,
+  GHIDRA_PROVIDER_TOOL_CONTRACTS,
+} from "../src/ghidra/GhidraProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../src/native/NativeMacOSProvider.js";
 import {
   assertDocumentationFacts,
@@ -74,7 +77,7 @@ describe("canonical product catalog", () => {
     expect(
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
-    ).toEqual([]);
+    ).toEqual(GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({

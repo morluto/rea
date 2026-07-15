@@ -254,6 +254,10 @@ const unavailable = z.object({
   available: z.literal(false),
   reason: z.string(),
 });
+const availableMemoryPermissions = z.object({
+  available: z.literal(true),
+  source: z.literal("ghidra-memory-block"),
+});
 const bounded = (item: z.ZodType) =>
   z.object({
     items: z.array(item),
@@ -262,8 +266,36 @@ const bounded = (item: z.ZodType) =>
     truncated: z.boolean(),
     next_offset: z.number().int().min(0).nullable(),
   });
+const addressedValue = z.object({
+  address: z.string(),
+  value: z.string(),
+  value_truncated: z.boolean().optional(),
+  symbol: z
+    .object({
+      primary: z.boolean(),
+      dynamic: z.boolean(),
+      external: z.boolean(),
+      type: z.string(),
+      source: z.enum(["default", "analysis", "ai", "imported", "user_defined"]),
+    })
+    .optional(),
+  procedure: z
+    .object({
+      external: z.boolean(),
+      thunk: z.boolean(),
+      thunk_target: z.string().nullable(),
+    })
+    .optional(),
+  string: z
+    .object({
+      encoding: z.string(),
+      termination: z.enum(["missing", "present_or_not_required"]),
+      byte_length: z.number().int().min(0),
+    })
+    .optional(),
+});
 const pageOutput = z.object({
-  items: z.array(z.object({ address: z.string(), value: z.string() })),
+  items: z.array(addressedValue),
   offset: z.number().int().min(0),
   limit: z.number().int().min(1),
   total: z.number().int().min(0),
@@ -286,8 +318,12 @@ const memoryRegionOutput = z.object({
   readable: z.boolean().nullable(),
   writable: z.boolean().nullable(),
   executable: z.boolean().nullable(),
-  permissions: unavailable,
-  provenance: z.literal("hopper-public-python-api"),
+  permissions: z.union([unavailable, availableMemoryPermissions]),
+  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
+  address_space: z.string().optional(),
+  image_base: z.string().optional(),
+  initialized: z.boolean().optional(),
+  overlay: z.boolean().optional(),
 });
 const segmentOutput = resultOf(
   z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
@@ -323,7 +359,7 @@ const graphNode = z.discriminatedUnion("status", [
 ]);
 const functionDossierOutput = resultOf(functionDossierSchema);
 
-/** Exact structured-content schemas for the direct Hopper operations. */
+/** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   address_name: resultOf(nullableText),
   comment: resultOf(nullableText),

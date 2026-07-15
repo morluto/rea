@@ -89,6 +89,26 @@ else {
           } else socket.write(response);
           continue;
         }
+        if (mode === "remote_error" && request.method === "list_procedures") {
+          socket.write(
+            `${JSON.stringify({
+              id: request.id,
+              ok: false,
+              error: {
+                code: "not_found",
+                message: "Unknown Ghidra procedure name",
+              },
+            })}\n`,
+          );
+          continue;
+        }
+        const inventory = inventoryResult(request.method);
+        if (inventory !== undefined) {
+          socket.write(
+            `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`,
+          );
+          continue;
+        }
         if (request.method === "shutdown") {
           socket.end(
             `${JSON.stringify({
@@ -112,17 +132,130 @@ const sessionInfo = ({
   timedOut,
 }) => ({
   name: "REA Ghidra bridge",
-  bridge_version: 1,
+  bridge_version: 2,
   run_id: sessionRunId,
   profile_digest: digest,
   provider: { id: "ghidra", version },
   read_only: true,
   analysis_complete: !timedOut,
   analysis_timed_out: timedOut,
-  capabilities: ["ping", "shutdown"],
+  capabilities: [
+    "ping",
+    "shutdown",
+    "address_name",
+    "list_documents",
+    "list_names",
+    "list_procedures",
+    "list_segments",
+    "list_strings",
+    "procedure_address",
+    "resolve_containing_procedure",
+    "search_procedures",
+    "search_strings",
+  ],
   target: {
     name: "fixture",
     language_id: "x86:LE:64:default",
     compiler_spec_id: "gcc",
+    image_base: "0x1000",
+    default_address_space: "ram",
   },
 });
+
+const inventoryResult = (method) => {
+  const page = (items) => ({
+    items,
+    offset: 0,
+    limit: method.startsWith("search_") ? 100 : 500,
+    total: items.length,
+    next_offset: null,
+    has_more: false,
+  });
+  switch (method) {
+    case "address_name":
+      return "fixture_main";
+    case "list_documents":
+      return ["fixture"];
+    case "list_names":
+      return page([
+        {
+          address: "0x1000",
+          value: "fixture_main",
+          value_truncated: false,
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "analysis",
+          },
+        },
+      ]);
+    case "list_procedures":
+      return page([
+        {
+          address: "0x1000",
+          value: "fixture_main",
+          value_truncated: false,
+          procedure: { external: false, thunk: false, thunk_target: null },
+        },
+      ]);
+    case "list_segments":
+      return [
+        {
+          name: ".text",
+          start: "0x1000",
+          end: "0x1100",
+          readable: true,
+          writable: false,
+          executable: true,
+          permissions: { available: true, source: "ghidra-memory-block" },
+          provenance: "ghidra-memory-block",
+          address_space: "ram",
+          image_base: "0x1000",
+          initialized: true,
+          overlay: false,
+          sections: [],
+        },
+      ];
+    case "list_strings":
+      return page([
+        {
+          address: "0x2000",
+          value: "fixture value",
+          value_truncated: false,
+          string: {
+            encoding: "UTF-8",
+            termination: "present_or_not_required",
+            byte_length: 14,
+          },
+        },
+      ]);
+    case "procedure_address":
+      return "0x1000";
+    case "resolve_containing_procedure":
+      return {
+        query_address: "0x1001",
+        found: true,
+        procedure: { address: "0x1000", name: "fixture_main" },
+      };
+    case "search_procedures":
+      return page([
+        {
+          address: "0x1000",
+          value: "fixture_main",
+          value_truncated: false,
+        },
+      ]);
+    case "search_strings":
+      return page([
+        {
+          address: "0x2000",
+          value: "fixture value",
+          value_truncated: false,
+        },
+      ]);
+    default:
+      return undefined;
+  }
+};

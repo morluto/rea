@@ -46,7 +46,11 @@ export type {
 } from "./toolContractTypes.js";
 
 const document = z.string().optional().describe("The document name");
-const address = z.string().describe("A Hopper address");
+const address = z
+  .string()
+  .describe(
+    "A provider-normalized address; default memory uses 0x-prefixed hexadecimal",
+  );
 const optionalAddress = address.optional();
 const procedure = z.string().describe("The procedure name or address");
 const searchPattern = z
@@ -162,7 +166,7 @@ const session = <Name extends string>(
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "address_name",
-    "Resolve the analyzed name at a code or data address, defaulting to Hopper's current cursor. Use before following a symbol into xrefs; null means Hopper has no name at that address.",
+    "Resolve the primary analyzed name at a code or data address. Headless providers require an explicit address; GUI providers may default to their current cursor. Null means the provider has no primary name at that address.",
     z.object({ document, address: optionalAddress }),
   ),
   official(
@@ -202,27 +206,27 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_documents",
-    "List all Hopper documents visible to the bridge. Use before set_current_document when a provider session contains multiple documents.",
+    "List provider program or document identities. Hopper may expose several documents; a Ghidra headless session contains exactly its one imported Program.",
     z.object({}),
   ),
   official(
     "list_names",
-    "Page through analyzed names as address/value pairs. Results are bounded by offset and limit; follow next_offset until has_more is false before claiming exhaustive symbol coverage.",
+    "Page through analyzed memory and external symbols as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available; follow next_offset before claiming exhaustive coverage.",
     z.object({ document, address: optionalAddress, ...pagination }),
   ),
   official(
     "list_procedures",
-    "Page through analyzed procedures as address/value pairs. Wait for Hopper analysis first, then follow next_offset for exhaustive coverage; use returned addresses with analyze_function or procedure_pseudo_code.",
+    "Page through analyzed procedures as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; follow next_offset for exhaustive coverage and use returned addresses in later function operations.",
     z.object({ document, ...pagination }),
   ),
   official(
     "list_segments",
-    "List all segments and sections in the selected document. Hopper's public API does not expose permissions, so writable and executable are null with explicit capability metadata.",
+    "List segments or memory blocks using exclusive end addresses. Ghidra reports block permissions, address space, image base, initialization, and overlay facts; Hopper marks unavailable permissions explicitly.",
     z.object({ document }),
   ),
   official(
     "list_strings",
-    "Page through analyzed strings, or filter to one address, as address/value pairs. Follow next_offset for exhaustive results and use xrefs on interesting string addresses.",
+    "Page through provider-defined strings, or filter to one address, as address/value pairs. Ghidra reports charset, missing-terminator status, byte length, and explicit value truncation; follow next_offset for exhaustive results.",
     z.object({ document, address: optionalAddress, ...pagination }),
   ),
   official(
@@ -237,7 +241,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_address",
-    "Resolve a procedure symbol name or hexadecimal address to its entry address. Use this to canonicalize user-supplied identifiers before xrefs, assembly, or decompilation.",
+    "Resolve an unambiguous procedure symbol name or provider-normalized address to its canonical entry address. External address spaces remain explicit; use the result before xrefs, assembly, or decompilation.",
     z.object({ procedure, document }),
   ),
   official(
@@ -279,17 +283,17 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "resolve_containing_procedure",
-    "Resolve an arbitrary address, including an xref source or interior instruction, to its Hopper-analyzed containing procedure. A negative result includes an explicit reason and is not guessed from nearby symbols.",
+    "Resolve an arbitrary address, including an interior instruction or exact external entry, to its provider-analyzed containing procedure. A negative result distinguishes outside segments from not in a procedure and is never guessed from nearby symbols.",
     z.object({ address, document }),
   ),
   official(
     "search_procedures",
-    "Search analyzed procedure names using literal matching by default or regex opt-in. Regex rejects unsupported constructs, more than 10,000 static backtracking paths, candidates over 4,096 characters, and searches over 1,000,000 work units. Results are deterministic and offset-paginated.",
+    "Search analyzed procedure names using literal matching by default or regex opt-in. Ghidra bounds literal work and rejects regex constructs, paths, candidates, or cumulative work outside its finite budgets. Results are deterministic and offset-paginated.",
     z.object(searchInput),
   ),
   official(
     "search_strings",
-    "Search analyzed strings using literal matching by default or regex opt-in. Regex rejects unsupported constructs, more than 10,000 static backtracking paths, candidates over 4,096 characters, and searches over 1,000,000 work units. Results are deterministic, offset-paginated, and explicitly truncated.",
+    "Search analyzed strings using literal matching by default or regex opt-in. Ghidra bounds literal work and rejects regex constructs, paths, candidates, or cumulative work outside its finite budgets. Results are deterministic, offset-paginated, and explicitly truncated.",
     z.object(searchInput),
   ),
   official(

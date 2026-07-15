@@ -24,9 +24,29 @@ export interface AddressedPage {
   readonly hasMore: boolean;
 }
 
-/** Return the non-negative byte distance between hexadecimal addresses. */
-export const addressDistance = (start: string, end: string): number =>
-  Math.max(0, Number.parseInt(end, 16) - Number.parseInt(start, 16));
+/** Return a bounded byte distance between canonical addresses in one space. */
+export const addressDistance = (start: string, end: string): number => {
+  const left = addressCoordinate(start);
+  const right = addressCoordinate(end);
+  if (left === null || right === null || left.space !== right.space) return 0;
+  const distance = right.offset - left.offset;
+  if (distance <= 0n) return 0;
+  return Number(
+    distance > BigInt(Number.MAX_SAFE_INTEGER)
+      ? BigInt(Number.MAX_SAFE_INTEGER)
+      : distance,
+  );
+};
+
+const addressCoordinate = (
+  value: string,
+): { readonly space: string; readonly offset: bigint } | null => {
+  const separator = value.lastIndexOf(":0x");
+  const space = separator < 0 ? "default" : value.slice(0, separator);
+  const offset = separator < 0 ? value : value.slice(separator + 1);
+  if (!/^0x[0-9a-f]+$/u.test(offset)) return null;
+  return { space, offset: BigInt(offset) };
+};
 
 const procedureMapSchema = z.record(z.string(), z.string());
 const addressedNamesSchema = z.array(

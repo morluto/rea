@@ -14,8 +14,8 @@
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>Additional structured context for a Ghidra session failure.</p>
 </div></section>
-<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">GhidraSessionErrorOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#timeoutms">timeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
-<section class="tsd-panel tsd-hierarchy" data-refl="25059">
+<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">GhidraSessionErrorOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#remotecode">remoteCode</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#timeoutms">timeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
+<section class="tsd-panel tsd-hierarchy" data-refl="25089">
 <h4>Hierarchy</h4>
 <ul class="tsd-hierarchy">
 <li class="tsd-hierarchy-item"><span class="tsd-signature-type">ErrorOptions</span>
@@ -30,11 +30,17 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading tsd-anchor-link" id="properties">Properties<a href="#properties" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-index-list"><a href="#timeoutms" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>timeout<wbr/>Ms?</span></a>
+<div class="tsd-index-list"><a href="#remotecode" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>remote<wbr/>Code?</span></a>
+<a href="#timeoutms" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>timeout<wbr/>Ms?</span></a>
 </div></section></div></details></section></section>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="properties-1">Properties<a href="#properties-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="remotecode"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>remote<wbr/>Code</span><a href="#remotecode" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">remoteCode</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/ghidra/GhidraSessionError.ts#L16">src/ghidra/GhidraSessionError.ts:16</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="timeoutms"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>timeout<wbr/>Ms</span><a href="#timeoutms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">timeoutMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
@@ -55,7 +61,7 @@
 <h3>On This Page</h3></summary>
 <div class="tsd-accordion-details">
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
-<div><a href="#timeoutms"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>timeout<wbr/>Ms</span></a></div></details></div></details></div>
+<div><a href="#remotecode"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>remote<wbr/>Code</span></a><a href="#timeoutms"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>timeout<wbr/>Ms</span></a></div></details></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html">rea-agents - v1.6.0</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">

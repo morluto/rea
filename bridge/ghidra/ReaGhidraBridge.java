@@ -3,8 +3,10 @@
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Reader;
+import java.math.BigInteger;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
@@ -16,23 +18,50 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.framework.Application;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.model.listing.Data;
+import ghidra.program.model.listing.DataIterator;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
+import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolIterator;
 
 public final class ReaGhidraBridge extends HeadlessScript {
-    private static final int BRIDGE_VERSION = 1;
+    private static final int BRIDGE_VERSION = 2;
     private static final int MAX_DESCRIPTOR_BYTES = 16 * 1024;
-    // A Java character occupies at most three UTF-8 bytes in this Reader, so
-    // this also keeps the decoded request below the 1 MiB wire budget.
     private static final int MAX_REQUEST_CHARACTERS = 256 * 1024;
-    private static final Gson GSON = new Gson();
+    private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    private static final int MAX_INVENTORY_ITEMS = 1_000_000;
+    private static final int MAX_LIST_VALUE_CODE_POINTS = 1_024;
+    private static final int MAX_SEARCH_VALUE_CODE_POINTS = 4_096;
+    private static final int MAX_REGEX_CANDIDATE_CHARACTERS = 4_096;
+    private static final long MAX_REGEX_BACKTRACKING_PATHS = 10_000;
+    private static final long MAX_LITERAL_SEARCH_WORK_UNITS = 1_000_000;
+    private static final long MAX_REGEX_SEARCH_WORK_UNITS = 1_000_000;
+    private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "schema_version",
         "socket_path",
@@ -47,6 +76,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "method",
         "params"
     );
+    private static final String[] CAPABILITIES = {
+        "ping",
+        "shutdown",
+        "address_name",
+        "list_documents",
+        "list_names",
+        "list_procedures",
+        "list_segments",
+        "list_strings",
+        "procedure_address",
+        "resolve_containing_procedure",
+        "search_procedures",
+        "search_strings"
+    };
+
+    private List<InventoryItem> nameInventory;
+    private List<FunctionEntry> procedureInventory;
+    private List<InventoryItem> stringInventory;
+    private static AddressSpace sessionDefaultAddressSpace;
 
     @Override
     public void run() throws Exception {
@@ -60,6 +108,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (currentProgram == null) {
             throw new IllegalStateException("REA bridge requires an imported program");
         }
+        sessionDefaultAddressSpace =
+            currentProgram.getAddressFactory().getDefaultAddressSpace();
         if (!Application.getApplicationVersion().equals(descriptor.providerVersion)) {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
@@ -100,19 +150,59 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
                 return;
             }
-            if (request.method.equals("ping")) {
-                writeSuccess(writer, request.id, sessionInfo(descriptor));
-                continue;
+            try {
+                if (request.method.equals("shutdown")) {
+                    requireKeys(request.params, Set.of());
+                    JsonObject result = new JsonObject();
+                    result.addProperty("shutdown", true);
+                    result.addProperty("project_ephemeral", true);
+                    writeSuccess(writer, request.id, result);
+                    return;
+                }
+                writeSuccess(writer, request.id, handleRequest(request, descriptor));
             }
-            if (request.method.equals("shutdown")) {
-                JsonObject result = new JsonObject();
-                result.addProperty("shutdown", true);
-                result.addProperty("project_ephemeral", true);
-                writeSuccess(writer, request.id, result);
-                return;
+            catch (RequestFailure failure) {
+                writeFailure(writer, request.id, failure.code, failure.getMessage());
             }
-            writeFailure(writer, request.id, "method_unavailable", "Bridge method is unavailable");
+            catch (Exception exception) {
+                writeFailure(
+                    writer,
+                    request.id,
+                    "bridge_exception",
+                    exception.getClass().getSimpleName() + ": " + safeMessage(exception)
+                );
+            }
         }
+    }
+
+    private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
+            throws Exception {
+        if (request.method.equals("ping")) {
+            requireKeys(request.params, Set.of());
+            return sessionInfo(descriptor);
+        }
+        if (analysisTimeoutOccurred()) {
+            throw new RequestFailure(
+                "analysis_incomplete",
+                "Ghidra auto-analysis did not complete for this Program"
+            );
+        }
+        return switch (request.method) {
+            case "address_name" -> addressName(request.params);
+            case "list_documents" -> listDocuments(request.params);
+            case "list_names" -> listNames(request.params);
+            case "list_procedures" -> listProcedures(request.params);
+            case "list_segments" -> listSegments(request.params);
+            case "list_strings" -> listStrings(request.params);
+            case "procedure_address" -> procedureAddress(request.params);
+            case "resolve_containing_procedure" -> containingProcedure(request.params);
+            case "search_procedures" -> search(request.params, true);
+            case "search_strings" -> search(request.params, false);
+            default -> throw new RequestFailure(
+                "method_unavailable",
+                "Bridge method is unavailable"
+            );
+        };
     }
 
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
@@ -128,6 +218,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "compiler_spec_id",
             currentProgram.getCompilerSpec().getCompilerSpecID().getIdAsString()
         );
+        target.addProperty("image_base", canonicalAddress(currentProgram.getImageBase()));
+        target.addProperty(
+            "default_address_space",
+            currentProgram.getAddressFactory().getDefaultAddressSpace().getName()
+        );
 
         JsonObject result = new JsonObject();
         result.addProperty("name", "REA Ghidra bridge");
@@ -138,9 +233,586 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("read_only", true);
         result.addProperty("analysis_complete", !timedOut);
         result.addProperty("analysis_timed_out", timedOut);
-        result.add("capabilities", GSON.toJsonTree(new String[] { "ping", "shutdown" }));
+        result.add("capabilities", GSON.toJsonTree(CAPABILITIES));
         result.add("target", target);
         return result;
+    }
+
+    private JsonElement addressName(JsonObject params) {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(address);
+        return symbol == null ? JsonNull.INSTANCE : GSON.toJsonTree(symbol.getName(true));
+    }
+
+    private JsonArray listDocuments(JsonObject params) {
+        requireKeys(params, Set.of());
+        JsonArray result = new JsonArray();
+        result.add(currentProgram.getName());
+        return result;
+    }
+
+    private JsonObject listNames(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address", "offset", "limit"));
+        requireDocument(params);
+        List<InventoryItem> inventory = names();
+        String requested = optionalString(params, "address");
+        if (requested != null) {
+            Address address = parseReaAddress(requested);
+            inventory = inventory.stream()
+                .filter(item -> item.address.equals(address))
+                .toList();
+        }
+        return page(
+            inventory,
+            requireBoundedInteger(params, "offset", 0, Integer.MAX_VALUE),
+            requireBoundedInteger(params, "limit", 1, 500),
+            "symbol"
+        );
+    }
+
+    private JsonObject listProcedures(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "offset", "limit"));
+        requireDocument(params);
+        List<InventoryItem> inventory = procedures().stream()
+            .map(FunctionEntry::item)
+            .toList();
+        return page(
+            inventory,
+            requireBoundedInteger(params, "offset", 0, Integer.MAX_VALUE),
+            requireBoundedInteger(params, "limit", 1, 500),
+            "procedure"
+        );
+    }
+
+    private JsonArray listSegments(JsonObject params) {
+        requireKeys(params, Set.of("document"));
+        requireDocument(params);
+        JsonArray result = new JsonArray();
+        String imageBase = canonicalAddress(currentProgram.getImageBase());
+        MemoryBlock[] blocks = currentProgram.getMemory().getBlocks();
+        if (blocks.length > MAX_INVENTORY_ITEMS) {
+            throw inventoryLimit();
+        }
+        List<MemoryBlock> ordered = new ArrayList<>(List.of(blocks));
+        ordered.sort(Comparator.comparing(MemoryBlock::getStart));
+        for (MemoryBlock block : ordered) {
+            JsonObject item = memoryRegion(block, imageBase);
+            item.add("sections", new JsonArray());
+            result.add(item);
+        }
+        return result;
+    }
+
+    private JsonObject listStrings(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address", "offset", "limit"));
+        requireDocument(params);
+        List<InventoryItem> inventory = strings();
+        String requested = optionalString(params, "address");
+        if (requested != null) {
+            Address address = parseReaAddress(requested);
+            inventory = inventory.stream()
+                .filter(item -> item.address.equals(address))
+                .toList();
+        }
+        return page(
+            inventory,
+            requireBoundedInteger(params, "offset", 0, Integer.MAX_VALUE),
+            requireBoundedInteger(params, "limit", 1, 500),
+            "string"
+        );
+    }
+
+    private JsonElement procedureAddress(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "procedure"));
+        requireDocument(params);
+        return GSON.toJsonTree(canonicalAddress(resolveProcedure(requireString(params, "procedure")).getEntryPoint()));
+    }
+
+    private JsonObject containingProcedure(JsonObject params) {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address query = requireAddress(params, "address");
+        Function function = currentProgram.getFunctionManager().getFunctionAt(query);
+        if (function == null && query.isMemoryAddress()) {
+            function = currentProgram.getFunctionManager().getFunctionContaining(query);
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("query_address", canonicalAddress(query));
+        if (function != null) {
+            result.addProperty("found", true);
+            result.add("procedure", procedureIdentity(function));
+            return result;
+        }
+        result.addProperty("found", false);
+        result.add("procedure", JsonNull.INSTANCE);
+        boolean inside = query.isMemoryAddress() && currentProgram.getMemory().contains(query);
+        result.addProperty("reason", inside ? "not_in_procedure" : "outside_segments");
+        return result;
+    }
+
+    private JsonObject search(JsonObject params, boolean procedureSearch) throws Exception {
+        requireKeys(
+            params,
+            Set.of("pattern", "mode", "case_sensitive", "offset", "limit", "document")
+        );
+        requireDocument(params);
+        String expression = requireString(params, "pattern");
+        if (expression.codePointCount(0, expression.length()) > 256) {
+            throw new RequestFailure(
+                "invalid_request",
+                "pattern must contain between 1 and 256 characters"
+            );
+        }
+        String mode = requireString(params, "mode");
+        if (!mode.equals("literal") && !mode.equals("regex")) {
+            throw new RequestFailure("invalid_request", "mode must be literal or regex");
+        }
+        boolean caseSensitive = requireBoolean(params, "case_sensitive");
+        int offset = requireBoundedInteger(params, "offset", 0, Integer.MAX_VALUE);
+        int limit = requireBoundedInteger(params, "limit", 1, 100);
+        List<InventoryItem> inventory = procedureSearch
+            ? procedures().stream().map(FunctionEntry::item).toList()
+            : strings();
+        ValueMatcher matcher = mode.equals("literal")
+            ? literalMatcher(expression, caseSensitive)
+            : regexMatcher(expression, caseSensitive);
+        JsonArray items = new JsonArray();
+        int total = 0;
+        long pageEnd = (long) offset + limit;
+        for (InventoryItem item : inventory) {
+            if (!matcher.matches(item.value)) {
+                continue;
+            }
+            if (total >= offset && total < pageEnd) {
+                items.add(resultItem(item, null, MAX_SEARCH_VALUE_CODE_POINTS));
+            }
+            total += 1;
+        }
+        return pageResult(items, offset, limit, total);
+    }
+
+    private List<InventoryItem> names() throws Exception {
+        if (nameInventory != null) {
+            return nameInventory;
+        }
+        List<InventoryItem> result = new ArrayList<>();
+        SymbolIterator symbols = currentProgram.getSymbolTable().getAllSymbols(true);
+        while (symbols.hasNext()) {
+            monitor.checkCancelled();
+            Symbol symbol = symbols.next();
+            Address address = symbol.getAddress();
+            if (!address.isMemoryAddress() && !address.isExternalAddress()) {
+                continue;
+            }
+            JsonObject facts = new JsonObject();
+            facts.addProperty("primary", symbol.isPrimary());
+            facts.addProperty("dynamic", symbol.isDynamic());
+            facts.addProperty("external", symbol.isExternal());
+            facts.addProperty("type", normalizedSymbolType(symbol));
+            facts.addProperty("source", normalizedSource(symbol.getSource()));
+            addBounded(
+                result,
+                new InventoryItem(address, symbol.getName(true), facts)
+            );
+        }
+        result.sort(INVENTORY_ORDER);
+        nameInventory = List.copyOf(result);
+        return nameInventory;
+    }
+
+    private List<FunctionEntry> procedures() throws Exception {
+        if (procedureInventory != null) {
+            return procedureInventory;
+        }
+        List<FunctionEntry> result = new ArrayList<>();
+        Set<Address> seen = new HashSet<>();
+        appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
+        appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
+        result.sort((left, right) -> INVENTORY_ORDER.compare(left.item, right.item));
+        procedureInventory = List.copyOf(result);
+        return procedureInventory;
+    }
+
+    private void appendFunctions(
+            List<FunctionEntry> destination,
+            Set<Address> seen,
+            FunctionIterator functions) throws Exception {
+        while (functions.hasNext()) {
+            monitor.checkCancelled();
+            Function function = functions.next();
+            if (!seen.add(function.getEntryPoint())) {
+                continue;
+            }
+            JsonObject facts = new JsonObject();
+            facts.addProperty("external", function.isExternal());
+            facts.addProperty("thunk", function.isThunk());
+            Function target = function.isThunk() ? function.getThunkedFunction(false) : null;
+            if (target == null) {
+                facts.add("thunk_target", JsonNull.INSTANCE);
+            }
+            else {
+                facts.addProperty("thunk_target", canonicalAddress(target.getEntryPoint()));
+            }
+            Symbol symbol = function.getSymbol();
+            InventoryItem item = new InventoryItem(
+                function.getEntryPoint(),
+                symbol == null ? function.getName() : symbol.getName(true),
+                facts
+            );
+            if (destination.size() >= MAX_INVENTORY_ITEMS) {
+                throw inventoryLimit();
+            }
+            destination.add(new FunctionEntry(function, item));
+        }
+    }
+
+    private List<InventoryItem> strings() throws Exception {
+        if (stringInventory != null) {
+            return stringInventory;
+        }
+        List<InventoryItem> result = new ArrayList<>();
+        DataIterator dataItems = currentProgram.getListing().getDefinedData(true);
+        while (dataItems.hasNext()) {
+            monitor.checkCancelled();
+            Data data = dataItems.next();
+            if (!data.hasStringValue()) {
+                continue;
+            }
+            StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
+            String value = instance.getStringValue();
+            if (value == null) {
+                continue;
+            }
+            JsonObject facts = new JsonObject();
+            String charset = instance.getCharsetName();
+            facts.addProperty("encoding", charset == null || charset.isEmpty() ? "unknown" : charset);
+            facts.addProperty(
+                "termination",
+                instance.isMissingNullTerminator() ? "missing" : "present_or_not_required"
+            );
+            facts.addProperty("byte_length", Math.max(0, data.getLength()));
+            addBounded(result, new InventoryItem(data.getAddress(), value, facts));
+        }
+        result.sort(INVENTORY_ORDER);
+        stringInventory = List.copyOf(result);
+        return stringInventory;
+    }
+
+    private Function resolveProcedure(String value) throws Exception {
+        Address address = tryParseAddress(value);
+        if (address != null) {
+            Function function = currentProgram.getFunctionManager().getFunctionAt(address);
+            if (function == null && address.isMemoryAddress()) {
+                function = currentProgram.getFunctionManager().getFunctionContaining(address);
+            }
+            if (function == null) {
+                throw new RequestFailure("not_found", "No procedure exists at the requested address");
+            }
+            return function;
+        }
+        List<Function> matches = new ArrayList<>();
+        for (FunctionEntry entry : procedures()) {
+            Function function = entry.function;
+            Symbol symbol = function.getSymbol();
+            String qualified = symbol == null ? function.getName() : symbol.getName(true);
+            if (function.getName().equals(value) || qualified.equals(value)) {
+                matches.add(function);
+            }
+        }
+        if (matches.isEmpty()) {
+            throw new RequestFailure("not_found", "Unknown Ghidra procedure name");
+        }
+        if (matches.size() != 1) {
+            throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous");
+        }
+        return matches.get(0);
+    }
+
+    private JsonObject page(
+            List<InventoryItem> inventory,
+            int offset,
+            int limit,
+            String factsName) {
+        int start = Math.min(offset, inventory.size());
+        int end = Math.min(inventory.size(), start + limit);
+        JsonArray items = new JsonArray();
+        for (int index = start; index < end; index += 1) {
+            items.add(resultItem(inventory.get(index), factsName, MAX_LIST_VALUE_CODE_POINTS));
+        }
+        return pageResult(items, offset, limit, inventory.size());
+    }
+
+    private static JsonObject pageResult(JsonArray items, int offset, int limit, int total) {
+        int next = offset + items.size();
+        boolean hasMore = next < total;
+        JsonObject result = new JsonObject();
+        result.add("items", items);
+        result.addProperty("offset", offset);
+        result.addProperty("limit", limit);
+        result.addProperty("total", total);
+        if (hasMore) {
+            result.addProperty("next_offset", next);
+        }
+        else {
+            result.add("next_offset", JsonNull.INSTANCE);
+        }
+        result.addProperty("has_more", hasMore);
+        return result;
+    }
+
+    private static JsonObject resultItem(
+            InventoryItem item,
+            String factsName,
+            int maximumCodePoints) {
+        TruncatedValue truncated = truncate(item.value, maximumCodePoints);
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(item.address));
+        result.addProperty("value", truncated.value);
+        result.addProperty("value_truncated", truncated.truncated);
+        if (factsName != null) {
+            result.add(factsName, item.facts.deepCopy());
+        }
+        return result;
+    }
+
+    private static JsonObject memoryRegion(MemoryBlock block, String imageBase) {
+        JsonObject permissions = new JsonObject();
+        permissions.addProperty("available", true);
+        permissions.addProperty("source", "ghidra-memory-block");
+        JsonObject result = new JsonObject();
+        result.addProperty("name", block.getName());
+        result.addProperty("start", canonicalAddress(block.getStart()));
+        result.addProperty("end", exclusiveEnd(block));
+        result.addProperty("readable", block.isRead());
+        result.addProperty("writable", block.isWrite());
+        result.addProperty("executable", block.isExecute());
+        result.add("permissions", permissions);
+        result.addProperty("provenance", "ghidra-memory-block");
+        result.addProperty("address_space", block.getStart().getAddressSpace().getName());
+        result.addProperty("image_base", imageBase);
+        result.addProperty("initialized", block.isInitialized());
+        result.addProperty("overlay", block.isOverlay());
+        return result;
+    }
+
+    private static JsonObject procedureIdentity(Function function) {
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(function.getEntryPoint()));
+        Symbol symbol = function.getSymbol();
+        result.addProperty(
+            "name",
+            symbol == null ? function.getName() : symbol.getName(true)
+        );
+        return result;
+    }
+
+    private static String exclusiveEnd(MemoryBlock block) {
+        Address next = block.getEnd().next();
+        if (next != null && next.getAddressSpace().equals(block.getStart().getAddressSpace())) {
+            return canonicalAddress(next);
+        }
+        BigInteger start = new BigInteger(Long.toUnsignedString(block.getStart().getOffset()));
+        return canonicalOffset(
+            block.getStart().getAddressSpace(),
+            start.add(BigInteger.valueOf(block.getSize()))
+        );
+    }
+
+    private static String canonicalAddress(Address address) {
+        return canonicalOffset(
+            address.getAddressSpace(),
+            new BigInteger(Long.toUnsignedString(address.getOffset()))
+        );
+    }
+
+    private static String canonicalOffset(AddressSpace space, BigInteger offset) {
+        String value = "0x" + offset.toString(16);
+        if (space.equals(sessionDefaultAddressSpace)) {
+            return value;
+        }
+        return encodeAddressSpace(space.getName()) + ":" + value;
+    }
+
+    private Address requireAddress(JsonObject params, String name) {
+        return parseReaAddress(requireString(params, name));
+    }
+
+    private Address parseReaAddress(String value) {
+        Address address = tryParseAddress(value);
+        if (address == null) {
+            throw new RequestFailure("invalid_request", "Unknown or invalid Ghidra address");
+        }
+        return address;
+    }
+
+    private Address tryParseAddress(String value) {
+        try {
+            String spaceName = null;
+            String offset = value;
+            int separator = value.lastIndexOf(":0x");
+            if (separator >= 0) {
+                spaceName = decodeAddressSpace(value.substring(0, separator));
+                offset = value.substring(separator + 3);
+            }
+            else if (value.startsWith("0x")) {
+                offset = value.substring(2);
+            }
+            if (!offset.matches("[0-9A-Fa-f]+")) {
+                return null;
+            }
+            AddressSpace space = spaceName == null
+                ? currentProgram.getAddressFactory().getDefaultAddressSpace()
+                : currentProgram.getAddressFactory().getAddressSpace(spaceName);
+            return space == null ? null : space.getAddress(offset);
+        }
+        catch (Exception exception) {
+            return null;
+        }
+    }
+
+    private static String encodeAddressSpace(String value) {
+        StringBuilder result = new StringBuilder();
+        for (byte item : value.getBytes(StandardCharsets.UTF_8)) {
+            int unsigned = Byte.toUnsignedInt(item);
+            if ((unsigned >= 'A' && unsigned <= 'Z') ||
+                (unsigned >= 'a' && unsigned <= 'z') ||
+                (unsigned >= '0' && unsigned <= '9') ||
+                unsigned == '.' || unsigned == '_' || unsigned == '~' || unsigned == '-') {
+                result.append((char) unsigned);
+            }
+            else {
+                result.append('%');
+                result.append(Character.toUpperCase(Character.forDigit(unsigned >>> 4, 16)));
+                result.append(Character.toUpperCase(Character.forDigit(unsigned & 0xf, 16)));
+            }
+        }
+        return result.toString();
+    }
+
+    private static String decodeAddressSpace(String value) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        for (int index = 0; index < value.length();) {
+            char item = value.charAt(index);
+            if (item == '%') {
+                if (index + 2 >= value.length()) {
+                    throw new RequestFailure("invalid_request", "Address space encoding is invalid");
+                }
+                int high = Character.digit(value.charAt(index + 1), 16);
+                int low = Character.digit(value.charAt(index + 2), 16);
+                if (high < 0 || low < 0) {
+                    throw new RequestFailure("invalid_request", "Address space encoding is invalid");
+                }
+                bytes.write((high << 4) | low);
+                index += 3;
+            }
+            else if ((item >= 'A' && item <= 'Z') ||
+                     (item >= 'a' && item <= 'z') ||
+                     (item >= '0' && item <= '9') ||
+                     item == '.' || item == '_' || item == '~' || item == '-') {
+                bytes.write((byte) item);
+                index += 1;
+            }
+            else {
+                throw new RequestFailure("invalid_request", "Address space encoding is invalid");
+            }
+        }
+        return bytes.toString(StandardCharsets.UTF_8);
+    }
+
+    private static String normalizedSymbolType(Symbol symbol) {
+        String value = symbol.getSymbolType().toString()
+            .toLowerCase(Locale.ROOT)
+            .replaceAll("[^a-z0-9]+", "_")
+            .replaceAll("^_+|_+$", "");
+        return value.isEmpty() ? "unknown" : value;
+    }
+
+    private static String normalizedSource(SourceType source) {
+        return source.name().toLowerCase(Locale.ROOT);
+    }
+
+    private static void addBounded(List<InventoryItem> destination, InventoryItem item) {
+        if (destination.size() >= MAX_INVENTORY_ITEMS) {
+            throw inventoryLimit();
+        }
+        destination.add(item);
+    }
+
+    private static RequestFailure inventoryLimit() {
+        return new RequestFailure(
+            "limit_exceeded",
+            "Ghidra inventory exceeds the 1000000-item safety limit"
+        );
+    }
+
+    private static TruncatedValue truncate(String value, int maximumCodePoints) {
+        int codePoints = value.codePointCount(0, value.length());
+        if (codePoints <= maximumCodePoints) {
+            return new TruncatedValue(value, false);
+        }
+        int end = value.offsetByCodePoints(0, maximumCodePoints);
+        return new TruncatedValue(value.substring(0, end), true);
+    }
+
+    private static ValueMatcher literalMatcher(String pattern, boolean caseSensitive) {
+        String needle = caseSensitive ? pattern : pattern.toLowerCase(Locale.ROOT);
+        return new ValueMatcher() {
+            private long remaining = MAX_LITERAL_SEARCH_WORK_UNITS;
+
+            @Override
+            public boolean matches(String value) {
+                long required = (long) Math.max(value.length(), 1) + needle.length();
+                if (required > remaining) {
+                    throw new RequestFailure(
+                        "limit_exceeded",
+                        "Literal search exceeds the 1000000-unit work budget"
+                    );
+                }
+                remaining -= required;
+                String candidate = caseSensitive ? value : value.toLowerCase(Locale.ROOT);
+                return candidate.contains(needle);
+            }
+        };
+    }
+
+    private static ValueMatcher regexMatcher(String expression, boolean caseSensitive) {
+        RegexMetrics metrics;
+        Pattern pattern;
+        try {
+            metrics = new BoundedRegexParser(expression).parse();
+            pattern = Pattern.compile(
+                expression,
+                caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+            );
+        }
+        catch (PatternSyntaxException exception) {
+            throw new RequestFailure("invalid_request", "Invalid regex pattern");
+        }
+        long workPerCharacter = metrics.paths * Math.max(metrics.steps, 1);
+        return new ValueMatcher() {
+            private long remaining = MAX_REGEX_SEARCH_WORK_UNITS;
+
+            @Override
+            public boolean matches(String value) {
+                if (value.length() > MAX_REGEX_CANDIDATE_CHARACTERS) {
+                    throw new RequestFailure(
+                        "limit_exceeded",
+                        "Regex candidate exceeds the 4096-character safety limit"
+                    );
+                }
+                long required = workPerCharacter * Math.max(value.length(), 1);
+                if (required > remaining) {
+                    throw new RequestFailure(
+                        "limit_exceeded",
+                        "Regex search exceeds the 1000000-unit work budget"
+                    );
+                }
+                remaining -= required;
+                return pattern.matcher(value).find();
+            }
+        };
     }
 
     private static SessionDescriptor readDescriptor(Path path) throws IOException {
@@ -171,12 +843,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException("Bridge request authentication failed");
         }
         JsonElement params = object.get("params");
-        if (params == null ||
-            !params.isJsonObject() ||
-            params.getAsJsonObject().size() != 0) {
+        if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"));
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject());
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -190,14 +860,42 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return object;
     }
 
-    private static String requireString(JsonObject object, String name) {
+    private static void requireKeys(JsonObject object, Set<String> keys) {
+        if (!object.keySet().equals(keys)) {
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        }
+    }
+
+    private void requireDocument(JsonObject params) {
+        String document = optionalString(params, "document");
+        if (document != null && !document.equals(currentProgram.getName())) {
+            throw new RequestFailure("not_found", "Unknown Ghidra Program identity");
+        }
+    }
+
+    private static String optionalString(JsonObject object, String name) {
         JsonElement value = object.get(name);
-        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
-            throw new IllegalArgumentException("JSON string required");
+        if (value == null || value.isJsonNull()) {
+            return null;
+        }
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            throw new RequestFailure("invalid_request", name + " must be a string or null");
         }
         String result = value.getAsString();
         if (result.isEmpty()) {
-            throw new IllegalArgumentException("JSON string cannot be empty");
+            throw new RequestFailure("invalid_request", name + " cannot be empty");
+        }
+        return result;
+    }
+
+    private static String requireString(JsonObject object, String name) {
+        JsonElement value = object.get(name);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            throw new RequestFailure("invalid_request", name + " must be a string");
+        }
+        String result = value.getAsString();
+        if (result.isEmpty()) {
+            throw new RequestFailure("invalid_request", name + " cannot be empty");
         }
         return result;
     }
@@ -212,6 +910,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException("JSON integer required");
         }
         return result;
+    }
+
+    private static int requireBoundedInteger(
+            JsonObject object,
+            String name,
+            int minimum,
+            int maximum) {
+        try {
+            int value = requireInteger(object, name);
+            if (value < minimum || value > maximum) {
+                throw new RequestFailure(
+                    "invalid_request",
+                    name + " is outside its supported range"
+                );
+            }
+            return value;
+        }
+        catch (IllegalArgumentException exception) {
+            throw new RequestFailure("invalid_request", name + " must be an integer");
+        }
+    }
+
+    private static boolean requireBoolean(JsonObject object, String name) {
+        JsonElement value = object.get(name);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) {
+            throw new RequestFailure("invalid_request", name + " must be a boolean");
+        }
+        return value.getAsBoolean();
     }
 
     private static boolean constantTimeEquals(String provided, String expected) {
@@ -265,11 +991,40 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static void writeResponse(BufferedWriter writer, JsonObject response) throws IOException {
-        writer.write(GSON.toJson(response));
+        String encoded = GSON.toJson(response);
+        if (encoded.getBytes(StandardCharsets.UTF_8).length > MAX_RESPONSE_BYTES) {
+            int id = response.get("id").getAsInt();
+            JsonObject error = new JsonObject();
+            error.addProperty("code", "output_limit");
+            error.addProperty("message", "Ghidra response exceeds the 1 MiB wire limit");
+            JsonObject bounded = new JsonObject();
+            bounded.addProperty("id", id);
+            bounded.addProperty("ok", false);
+            bounded.add("error", error);
+            encoded = GSON.toJson(bounded);
+        }
+        writer.write(encoded);
         writer.newLine();
         writer.flush();
     }
 
+    private static String safeMessage(Exception exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? "operation failed" : message;
+    }
+
+    private interface ValueMatcher {
+        boolean matches(String value);
+    }
+
+    private static final Comparator<InventoryItem> INVENTORY_ORDER =
+        Comparator.comparing(InventoryItem::address)
+            .thenComparing(InventoryItem::value)
+            .thenComparing(item -> GSON.toJson(item.facts));
+
+    private record InventoryItem(Address address, String value, JsonObject facts) {}
+    private record FunctionEntry(Function function, InventoryItem item) {}
+    private record TruncatedValue(String value, boolean truncated) {}
     private record SessionDescriptor(
         String socketPath,
         String token,
@@ -277,6 +1032,275 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String providerVersion,
         String profileDigest
     ) {}
+    private record Request(int id, String method, JsonObject params) {}
+    private record RegexMetrics(long paths, long steps, boolean containsRepeat) {}
 
-    private record Request(int id, String method) {}
+    private static final class RequestFailure extends RuntimeException {
+        private final String code;
+
+        RequestFailure(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+    }
+
+    private static final class BoundedRegexParser {
+        private final String expression;
+        private int index;
+
+        BoundedRegexParser(String expression) {
+            this.expression = expression;
+        }
+
+        RegexMetrics parse() {
+            RegexMetrics result = parseExpression(false);
+            if (index != expression.length()) {
+                throw invalidRegex();
+            }
+            return result;
+        }
+
+        private RegexMetrics parseExpression(boolean grouped) {
+            RegexMetrics result = parseSequence(grouped);
+            while (peek('|')) {
+                index += 1;
+                RegexMetrics branch = parseSequence(grouped);
+                result = new RegexMetrics(
+                    checkedPaths(result.paths, branch.paths, false),
+                    Math.max(result.steps, branch.steps),
+                    result.containsRepeat || branch.containsRepeat
+                );
+            }
+            return result;
+        }
+
+        private RegexMetrics parseSequence(boolean grouped) {
+            RegexMetrics result = new RegexMetrics(1, 0, false);
+            while (index < expression.length() && !peek('|') && !(grouped && peek(')'))) {
+                RegexMetrics item = parseAtom();
+                result = new RegexMetrics(
+                    checkedPaths(result.paths, item.paths, true),
+                    result.steps + item.steps,
+                    result.containsRepeat || item.containsRepeat
+                );
+            }
+            return result;
+        }
+
+        private RegexMetrics parseAtom() {
+            if (index >= expression.length()) {
+                throw invalidRegex();
+            }
+            char item = expression.charAt(index++);
+            RegexMetrics atom;
+            if (item == '(') {
+                if (peek('?')) {
+                    if (index + 1 >= expression.length() || expression.charAt(index + 1) != ':') {
+                        throw new RequestFailure(
+                            "invalid_request",
+                            "Regex lookarounds and backreferences are not supported"
+                        );
+                    }
+                    index += 2;
+                }
+                atom = parseExpression(true);
+                if (!peek(')')) {
+                    throw invalidRegex();
+                }
+                index += 1;
+            }
+            else if (item == '[') {
+                consumeCharacterClass();
+                atom = leaf();
+            }
+            else if (item == '\\') {
+                consumeEscape();
+                atom = leaf();
+            }
+            else if (item == '*' || item == '+') {
+                throw unboundedRepeat();
+            }
+            else if (item == '?' || item == '{' || item == '}' || item == ')') {
+                throw invalidRegex();
+            }
+            else {
+                atom = leaf();
+            }
+            if (index >= expression.length()) {
+                return atom;
+            }
+            if (peek('*') || peek('+')) {
+                throw unboundedRepeat();
+            }
+            int minimum;
+            int maximum;
+            if (peek('?')) {
+                index += 1;
+                minimum = 0;
+                maximum = 1;
+            }
+            else if (peek('{')) {
+                int[] bounds = consumeBounds();
+                minimum = bounds[0];
+                maximum = bounds[1];
+            }
+            else {
+                return atom;
+            }
+            if (atom.containsRepeat) {
+                throw new RequestFailure(
+                    "invalid_request",
+                    "Nested regex repetitions are not supported"
+                );
+            }
+            if (maximum > 1_000) {
+                throw unboundedRepeat();
+            }
+            return new RegexMetrics(
+                repeatPaths(atom.paths, minimum, maximum),
+                maximum * atom.steps,
+                true
+            );
+        }
+
+        private void consumeCharacterClass() {
+            boolean escaped = false;
+            boolean hasContent = false;
+            while (index < expression.length()) {
+                char item = expression.charAt(index++);
+                if (escaped) {
+                    escaped = false;
+                    hasContent = true;
+                }
+                else if (item == '\\') {
+                    escaped = true;
+                }
+                else if (item == ']' && hasContent) {
+                    return;
+                }
+                else {
+                    hasContent = true;
+                }
+            }
+            throw invalidRegex();
+        }
+
+        private void consumeEscape() {
+            if (index >= expression.length()) {
+                throw invalidRegex();
+            }
+            char escaped = expression.charAt(index++);
+            if (Character.isDigit(escaped) || escaped == 'k') {
+                throw new RequestFailure(
+                    "invalid_request",
+                    "Regex lookarounds and backreferences are not supported"
+                );
+            }
+            if (escaped == 'Q' || escaped == 'E' || escaped == 'p' || escaped == 'P') {
+                throw new RequestFailure(
+                    "invalid_request",
+                    "Regex operation is not supported by the bounded matcher"
+                );
+            }
+            if (escaped == 'x') {
+                consumeHexDigits(2);
+            }
+            else if (escaped == 'u') {
+                consumeHexDigits(4);
+            }
+        }
+
+        private void consumeHexDigits(int count) {
+            if (index + count > expression.length()) {
+                throw invalidRegex();
+            }
+            for (int current = 0; current < count; current += 1) {
+                if (Character.digit(expression.charAt(index + current), 16) < 0) {
+                    throw invalidRegex();
+                }
+            }
+            index += count;
+        }
+
+        private int[] consumeBounds() {
+            index += 1;
+            int minimum = consumeDecimal();
+            int maximum = minimum;
+            if (peek(',')) {
+                index += 1;
+                if (peek('}')) {
+                    throw unboundedRepeat();
+                }
+                maximum = consumeDecimal();
+            }
+            if (!peek('}') || minimum > maximum) {
+                throw invalidRegex();
+            }
+            index += 1;
+            return new int[] { minimum, maximum };
+        }
+
+        private int consumeDecimal() {
+            int start = index;
+            long value = 0;
+            while (index < expression.length() && Character.isDigit(expression.charAt(index))) {
+                value = value * 10 + Character.digit(expression.charAt(index), 10);
+                if (value > Integer.MAX_VALUE) {
+                    throw unboundedRepeat();
+                }
+                index += 1;
+            }
+            if (index == start) {
+                throw invalidRegex();
+            }
+            return (int) value;
+        }
+
+        private boolean peek(char expected) {
+            return index < expression.length() && expression.charAt(index) == expected;
+        }
+
+        private static RegexMetrics leaf() {
+            return new RegexMetrics(1, 1, false);
+        }
+
+        private static long repeatPaths(long childPaths, int minimum, int maximum) {
+            long result = 0;
+            long repeated = 1;
+            for (int count = 0; count <= maximum; count += 1) {
+                if (count >= minimum) {
+                    result = checkedPaths(result, repeated, false);
+                }
+                if (count < maximum) {
+                    repeated = checkedPaths(repeated, childPaths, true);
+                }
+            }
+            return result;
+        }
+
+        private static long checkedPaths(long left, long right, boolean multiply) {
+            boolean exceeded = multiply
+                ? right != 0 && left > MAX_REGEX_BACKTRACKING_PATHS / right
+                : left > MAX_REGEX_BACKTRACKING_PATHS - right;
+            long result = multiply ? left * right : left + right;
+            if (exceeded || result > MAX_REGEX_BACKTRACKING_PATHS) {
+                throw new RequestFailure(
+                    "invalid_request",
+                    "Regex exceeds the 10000-path backtracking budget"
+                );
+            }
+            return result;
+        }
+
+        private static RequestFailure unboundedRepeat() {
+            return new RequestFailure(
+                "invalid_request",
+                "Unbounded or excessive regex repetitions are not supported"
+            );
+        }
+
+        private static RequestFailure invalidRegex() {
+            return new RequestFailure("invalid_request", "Invalid regex pattern");
+        }
+    }
 }

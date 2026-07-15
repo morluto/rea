@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
 import { HopperProvider } from "../src/hopper/HopperProvider.js";
 import { GhidraProvider } from "../src/ghidra/GhidraProvider.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "../src/ghidra/GhidraInventoryValues.js";
 import { silentLogger } from "../src/logger.js";
 
 const sourceRoot = new URL("../src/", import.meta.url);
@@ -37,7 +38,7 @@ describe("provider-neutral architecture", () => {
     expect(violations).toEqual([]);
   });
 
-  it("publishes no speculative Ghidra binary capabilities", () => {
+  it("publishes only admitted immutable Ghidra inventory capabilities", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);
     if (!config.ok) return;
@@ -46,8 +47,28 @@ describe("provider-neutral architecture", () => {
       executable: () => false,
       probeJava: () => undefined,
     });
-    expect(provider.capabilities()).toEqual([]);
-    expect(Object.isFrozen(provider.capabilities())).toBe(true);
+    const capabilities = provider.capabilities();
+    expect(capabilities.map(({ operation }) => operation).sort()).toEqual(
+      [...GHIDRA_INVENTORY_OPERATIONS].sort(),
+    );
+    expect(Object.isFrozen(capabilities)).toBe(true);
+    for (const descriptor of capabilities) {
+      expect(descriptor).toMatchObject({
+        available: true,
+        reason: null,
+        effects: {
+          mutatesArtifact: false,
+          mayShowUi: false,
+          mayAccessNetwork: false,
+          changesPermissions: false,
+          requiresRoot: false,
+        },
+      });
+      expect(Object.isFrozen(descriptor)).toBe(true);
+      expect(Object.isFrozen(descriptor.effects)).toBe(true);
+      expect(Object.isFrozen(descriptor.limits)).toBe(true);
+      expect(Object.isFrozen(descriptor.limitations)).toBe(true);
+    }
   });
 
   it("publishes deterministic immutable Hopper capability descriptors", () => {
