@@ -119,6 +119,7 @@ const SOURCE_PATHS = {
   webCaptureDiff: "dist/domain/webCaptureDiff.js",
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
+  javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
   reconstructionVerification:
     "dist/domain/reconstructionVerificationSchemas.js",
   residualUnknown: "dist/domain/residualUnknown.js",
@@ -260,6 +261,11 @@ const durableSchemaDefinitions = (sources) => [
     "investigation_workspace",
     sources.investigationWorkspace.investigationWorkspaceSchema,
     ["workspace_version"],
+  ],
+  [
+    "javascript_application_graph",
+    sources.javascriptApplicationGraph.javascriptApplicationGraphSchema,
+    ["schema_version"],
   ],
   [
     "process_capture",

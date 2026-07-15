@@ -333,6 +333,10 @@
       "version": 1
     },
     {
+      "id": "javascript_application_graph",
+      "version": 1
+    },
+    {
       "id": "process_capture",
       "version": 4
     },
