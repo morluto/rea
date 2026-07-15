@@ -4,12 +4,13 @@ Status: Ghidra is approved as the direction for REA's next full read-only
 analysis provider. This note does not claim that Ghidra support is implemented
 or shipped.
 
-The provider-neutral target, analysis-profile commitment, Evidence provenance,
-and snapshot v2 foundation are implemented. Ghidra runtime work remains gated
-on explicit target-to-provider binding, bounded provider ownership, and a
-multi-fixture conformance suite. A provider is not a drop-in replacement for
-Hopper: every capability must be mapped explicitly, with truthful `unavailable`
-or degraded results where the engine cannot provide equivalent semantics.
+The provider-neutral target, provider registry, deterministic target binding,
+analysis-profile commitment, Evidence provenance, and snapshot v2 foundation
+are implemented. Ghidra runtime work remains gated on bounded provider process
+ownership and a multi-fixture conformance suite. A provider is not a drop-in
+replacement for Hopper: every capability must be mapped explicitly, with
+truthful `unavailable` or degraded results where the engine cannot provide
+equivalent semantics.
 
 [ADR-0001](adr/0001-provider-selection-and-analysis-profiles.md) fixes the
 provider registry, deterministic selection, target binding, analysis profile,
@@ -46,8 +47,8 @@ follow.
 
 ## Recommended order
 
-1. Add explicit provider selection and target binding on top of the
-   analysis-profile-aware snapshot identity without changing Hopper behavior.
+1. Use the implemented explicit provider registry and target binding without
+   changing Hopper behavior.
 2. Implement the bounded read-only Ghidra provider described above and admit
    capabilities individually through the shared conformance corpus.
 3. Connect Electron/native-add-on application findings to the selected native

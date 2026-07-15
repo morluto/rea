@@ -17,6 +17,9 @@ const MAX_COMPLETION_VALUE_LENGTH = 4_096;
 const documentListSchema = z.array(z.string().min(1));
 const providerStatusSchema = z.object({
   providers: z.array(z.object({ id: z.string().min(1) })),
+  analysis_provider_candidates: z
+    .array(z.object({ provider: z.object({ id: z.string().min(1) }) }))
+    .optional(),
 });
 
 interface CompletionContext {
@@ -133,9 +136,14 @@ const providerCandidates = (
 ): readonly string[] => {
   if (session === undefined) return [];
   const parsed = providerStatusSchema.safeParse(session.status());
-  return parsed.success
-    ? parsed.data.providers.map(({ id }) => id).slice(0, COMPLETION_SCAN_LIMIT)
-    : [];
+  if (!parsed.success) return [];
+  const candidates =
+    (parsed.data.analysis_provider_candidates?.length ?? 0) > 0
+      ? (parsed.data.analysis_provider_candidates?.map(
+          ({ provider }) => provider.id,
+        ) ?? [])
+      : parsed.data.providers.map(({ id }) => id);
+  return ["auto", ...candidates].slice(0, COMPLETION_SCAN_LIMIT);
 };
 
 const evidenceCandidates = (

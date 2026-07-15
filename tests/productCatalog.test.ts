@@ -27,6 +27,7 @@ import {
 import { ensureGeneratedFile } from "../scripts/lib/generated-file.mjs";
 import {
   createCliInventory,
+  cliCommandOptionNames,
   createProductCatalog,
   serializeProductCatalog,
 } from "../scripts/lib/product-catalog.mjs";
@@ -99,6 +100,21 @@ describe("canonical product catalog", () => {
     expect(inventory.aliases).toEqual([
       { name: "compare-bundles", target: "compare" },
     ]);
+  });
+
+  it("exposes the shared provider selector on every deep-analysis command", () => {
+    const cli = createCli();
+    for (const name of [
+      "analyze",
+      "inspect",
+      "decompile",
+      "xrefs",
+      "trace",
+      "function",
+      "search",
+    ]) {
+      expect(cliCommandOptionNames(cli, name)).toContain("provider");
+    }
   });
 
   it("reports tool, setup-client, and schema fact drift", async () => {

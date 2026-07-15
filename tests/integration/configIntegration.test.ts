@@ -15,6 +15,7 @@ describe("configuration parsing integration", () => {
     expect(result.value.hopperTargetPath).toBeUndefined();
     expect(result.value.hopperTargetKind).toBe("executable");
     expect(result.value.hopperLoaderArgs).toEqual([]);
+    expect(result.value.analysisProvider).toBe("auto");
   });
 
   it("parses a complete target-bound configuration", () => {
@@ -22,6 +23,7 @@ describe("configuration parsing integration", () => {
       HOPPER_TARGET_PATH: "/usr/bin/true",
       HOPPER_TARGET_KIND: "executable",
       HOPPER_LOADER_ARGS_JSON: '["-l","Mach-O","--aarch64"]',
+      REA_ANALYSIS_PROVIDER: "hopper",
       REA_EVIDENCE_ROOTS_JSON: '["/tmp/evidence"]',
       REA_INVESTIGATION_INPUT_ROOTS_JSON: '["/tmp/releases"]',
       REA_ANALYSIS_SNAPSHOT_ROOTS_JSON: '["/tmp/analysis"]',
@@ -30,6 +32,7 @@ describe("configuration parsing integration", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.value.hopperTargetPath).toBe("/usr/bin/true");
     expect(result.value.hopperTargetKind).toBe("executable");
+    expect(result.value.analysisProvider).toBe("hopper");
     expect(result.value.hopperLoaderArgs).toEqual([
       "-l",
       "Mach-O",
@@ -48,7 +51,7 @@ describe("configuration parsing integration", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
-    expect(result.error.message).toContain("Invalid Hopper environment");
+    expect(result.error.message).toContain("Invalid REA environment");
   });
 
   it("rejects invalid JSON in loader arguments", () => {

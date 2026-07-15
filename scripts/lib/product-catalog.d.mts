@@ -53,6 +53,10 @@ export function createCliInventory(cli: unknown): {
     readonly target: string;
   }[];
 };
+export function cliCommandOptionNames(
+  cli: unknown,
+  name: string,
+): readonly string[];
 export function serializeProductCatalog(
   catalog: ProductCatalog,
 ): Promise<string>;

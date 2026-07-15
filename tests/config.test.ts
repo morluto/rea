@@ -6,7 +6,10 @@ describe("runtime configuration", () => {
   it("allows target-free startup and defaults to Hopper's documented launcher", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);
-    if (empty.ok) expect(empty.value.hopperTargetPath).toBeUndefined();
+    if (empty.ok) {
+      expect(empty.value.hopperTargetPath).toBeUndefined();
+      expect(empty.value.analysisProvider).toBe("auto");
+    }
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -33,6 +36,19 @@ describe("runtime configuration", () => {
       expect(result.value.electronCdpEndpoints).toEqual([]);
       expect(result.value.electronFileRoots).toEqual([]);
     }
+  });
+
+  it("parses one shared provider selector and rejects unstable IDs", () => {
+    expect(parseConfig({ REA_ANALYSIS_PROVIDER: "ghidra" })).toMatchObject({
+      ok: true,
+      value: { analysisProvider: "ghidra" },
+    });
+    expect(parseConfig({ REA_ANALYSIS_PROVIDER: "auto" })).toMatchObject({
+      ok: true,
+      value: { analysisProvider: "auto" },
+    });
+    for (const invalid of ["", "Auto", "ghidra_1", "ghidra "])
+      expect(parseConfig({ REA_ANALYSIS_PROVIDER: invalid }).ok).toBe(false);
   });
 
   it("builds a separate Electron endpoint and file-root ceiling", () => {

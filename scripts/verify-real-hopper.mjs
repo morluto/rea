@@ -15,6 +15,8 @@ import {
   requireFunctionDossier,
   requirePseudocode,
 } from "../dist/application/RealHopperAssertions.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProvider.js";
+import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
 
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
@@ -54,6 +56,65 @@ const requireSuccessfulTool = (result, operation) => {
     throw new Error(`${operation} omitted its evidence result`);
   }
   return value.normalized_result;
+};
+
+const requireHopperEvidence = (result, operation) => {
+  const envelope = jsonValue(result);
+  if (
+    envelope?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
+    envelope?.analysis_profile?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
+    typeof envelope.analysis_profile.provider.version !== "string"
+  )
+    throw new Error(`${operation} omitted its concrete Hopper provenance`);
+};
+
+const requireHopperWorkflowEvidence = (result, operation) => {
+  const envelope = jsonValue(result);
+  const profile = envelope?.analysis_profile;
+  const upstream = profile?.parameters?.upstream_analysis_profile;
+  if (
+    envelope?.provider?.id !== REA_WORKFLOW_PROVIDER.id ||
+    profile?.provider?.id !== REA_WORKFLOW_PROVIDER.id ||
+    upstream?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
+    typeof upstream.provider.version !== "string"
+  ) {
+    throw new Error(
+      `${operation} omitted its composed workflow or upstream Hopper provenance`,
+    );
+  }
+};
+
+const requireHopperSelection = (status, expected) => {
+  const candidates = status.analysis_provider_candidates;
+  const hopper = Array.isArray(candidates)
+    ? candidates.find(
+        (candidate) => candidate?.provider?.id === HOPPER_PROVIDER_IDENTITY.id,
+      )
+    : undefined;
+  if (
+    hopper === undefined ||
+    hopper.availability?.status !== "available" ||
+    hopper.target_support?.status !== expected.targetSupport ||
+    hopper.selected !== expected.selected
+  ) {
+    throw new Error("binary_session omitted truthful Hopper candidate status");
+  }
+  if (!expected.selected) {
+    if (status.analysis_provider_binding !== null)
+      throw new Error("Target-free status unexpectedly selected a provider");
+    return null;
+  }
+  const binding = status.analysis_provider_binding;
+  if (
+    binding?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
+    typeof binding.provider.version !== "string" ||
+    binding.selection_source !== "auto-single-candidate" ||
+    binding.analysis_profile?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
+    binding.analysis_profile.provider.version !== binding.provider.version
+  ) {
+    throw new Error("binary_session omitted its concrete Hopper binding");
+  }
+  return binding;
 };
 
 const requireOverview = (value, operation) => {
@@ -268,6 +329,7 @@ const [targetHashA, targetHashB] = await Promise.all([
 ]);
 requireDistinctTargetHashes(targetHashA, targetHashB);
 const serverEnvironment = { ...process.env };
+serverEnvironment.REA_ANALYSIS_PROVIDER = "auto";
 delete serverEnvironment.HOPPER_TARGET_PATH;
 delete serverEnvironment.HOPPER_SECOND_TARGET_PATH;
 delete serverEnvironment.REA_VERIFY_SERVER_COMMAND;
@@ -308,13 +370,25 @@ try {
     { name: "binary_session", arguments: {} },
     options,
   );
-  if (jsonValue(initialSession).open !== false)
+  const initialStatus = jsonValue(initialSession);
+  if (initialStatus.open !== false)
     throw new Error("The verifier did not start without a target");
+  requireHopperSelection(initialStatus, {
+    targetSupport: "unknown",
+    selected: false,
+  });
   const opened = await client.callTool(
     { name: "open_binary", arguments: { path: targetA } },
     options,
   );
   if (opened.isError === true) throw new Error(textValue(opened));
+  const firstStatus = jsonValue(
+    await client.callTool({ name: "binary_session", arguments: {} }, options),
+  );
+  const providerBinding = requireHopperSelection(firstStatus, {
+    targetSupport: "supported",
+    selected: true,
+  });
   const documents = await client.callTool(
     { name: "list_documents", arguments: {} },
     options,
@@ -323,6 +397,8 @@ try {
     { name: "binary_overview", arguments: {} },
     options,
   );
+  requireHopperEvidence(documents, "list_documents");
+  requireHopperWorkflowEvidence(overview, "binary_overview");
   const segments = await client.callTool(
     { name: "list_segments", arguments: {} },
     options,
@@ -348,6 +424,10 @@ try {
   );
   if (secondSession.path !== targetB)
     throw new Error("The real session did not switch to target B");
+  requireHopperSelection(secondSession, {
+    targetSupport: "supported",
+    selected: true,
+  });
   const secondOverview = await client.callTool(
     { name: "binary_overview", arguments: {} },
     options,
@@ -390,6 +470,7 @@ try {
     stderrBytes,
     diagnosticCount,
     dynamicSession: true,
+    providerBinding,
     targets: [targetA, targetB],
     targetHashes: [targetHashA, targetHashB],
     switched: true,

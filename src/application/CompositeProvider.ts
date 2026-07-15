@@ -1,19 +1,21 @@
-import { ProviderSelectionError } from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/errors.js";
 import { err, ok } from "../domain/result.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type {
   AnalysisClient,
+  AnalysisProfileResolutionOptions,
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
 
-const compositeIdentity = (
-  providers: readonly AnalysisProvider[],
+/** Synthetic compatibility identity for a deterministic provider set. */
+export const compositeProviderIdentity = (
+  identities: readonly ProviderIdentity[],
 ): ProviderIdentity => ({
-  id: `composite:${providers
-    .map((provider) => provider.identity().id)
+  id: `composite:${identities
+    .map(({ id }) => id)
     .sort()
     .join("+")}`,
   name: "REA composite analysis provider",
@@ -38,7 +40,11 @@ export class CompositeProvider implements AnalysisProvider {
         "CompositeProvider supports at most one target-bound analysis profile",
       );
     this.#profileProvider = profileProviders[0];
-    this.#identity = Object.freeze(compositeIdentity(providers));
+    this.#identity = Object.freeze(
+      compositeProviderIdentity(
+        providers.map((provider) => provider.identity()),
+      ),
+    );
     const routes = new Map<string, AnalysisProvider>();
     const capabilities: CapabilityDescriptor[] = [];
     for (const provider of providers) {
@@ -69,11 +75,14 @@ export class CompositeProvider implements AnalysisProvider {
     return this.#capabilities;
   }
 
-  resolveAnalysisProfile(target: BinaryTarget) {
+  resolveAnalysisProfile(
+    target: BinaryTarget,
+    options?: AnalysisProfileResolutionOptions,
+  ) {
     const resolve = this.#profileProvider?.resolveAnalysisProfile;
     return resolve === undefined
       ? Promise.resolve(ok({ profile: null, compatibility: {} }))
-      : resolve.call(this.#profileProvider, target);
+      : resolve.call(this.#profileProvider, target, options);
   }
 
   createClient(
@@ -106,7 +115,15 @@ export class CompositeProvider implements AnalysisProvider {
           );
         const provider = this.#providerByOperation.get(operation);
         return provider === undefined
-          ? Promise.resolve(err(new ProviderSelectionError(operation)))
+          ? Promise.resolve(
+              err(
+                new AnalysisCapabilityUnavailableError(
+                  this.#identity.id,
+                  operation,
+                  "operation is not declared by this provider set",
+                ),
+              ),
+            )
           : clientFor(provider).execute(operation, parameters, options);
       },
       close: async () => {

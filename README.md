@@ -153,7 +153,7 @@ Choose either the no-install commands or the global installation. You do not nee
 - Node.js 22.19+ or 24.11+ (including newer releases)
 - npm; REA does not require or install a particular npm version
 
-Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. Setup reuses an existing installation. If Hopper is missing, interactive setup proposes the official package and includes it in the confirmation plan. Unattended installation requires `rea setup --yes --install-hopper`.
+Deep binary analysis currently uses [Hopper](https://www.hopperapp.com/), a separate desktop application with its own license. REA discovers it through the provider registry and binds it explicitly to each deep-analysis target; Ghidra is planned but is not shipped yet. Setup reuses an existing Hopper installation. If Hopper is missing, interactive setup proposes the official package and includes it in the confirmation plan. Unattended installation requires `rea setup --yes --install-hopper`.
 
 If something is not working, run:
 
@@ -315,6 +315,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 REA is already useful for native application, browser, and Electron investigation on supported macOS and Linux hosts:
 
 - Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and generic analysis-database targets; Hopper remains the only adapter that accepts legacy `.hop` databases.
+- Discover deep-analysis candidates without starting them, choose deterministically, and retain one immutable provider/profile binding until an explicit switch or close; provider failures never trigger transparent fallback.
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
 - Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
@@ -361,7 +362,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **A second deep-analysis provider** — add explicit target-to-provider binding and a read-only Ghidra provider for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
+2. **A second deep-analysis provider** — build the read-only Ghidra runtime on the shipped explicit registry and target-binding foundation for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
 3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
 
 ### Next
@@ -409,13 +410,14 @@ flowchart LR
     Agent["Agent"] --> REA["REA<br/>CLI + MCP"]
     Terminal --> REA
     REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
-    Workspace --> Router["Capability router"]
-    Router --> Hopper["Hopper provider"]
-    Router --> Native["Native macOS provider"]
-    Router --> Artifact["Artifact graph provider"]
-    Router --> Browser["Browser CDP provider"]
-    Router --> Process["Process capture provider"]
-    Router -. roadmap .-> More["Dynamic and additional<br/>static providers"]
+    REA --> Session["Target-bound session router"]
+    Session --> Registry["Deep-provider registry<br/>deterministic selection"]
+    Registry --> Hopper["Hopper provider"]
+    Registry -. planned, not shipped .-> Ghidra["Ghidra provider"]
+    Session --> Native["Native macOS provider"]
+    Session --> Artifact["Artifact graph provider"]
+    REA --> Browser["Browser CDP provider"]
+    REA --> Process["Process capture provider"]
     Hopper --> Target["Target software"]
     Process --> Target
     Native --> Target
@@ -456,6 +458,37 @@ rea mcp
 ```
 
 REA accepts a Mac `.app` folder directly. If an agent cannot find an app by name, tell it where the app is installed.
+
+### Choosing a deep-analysis provider
+
+Every deep-analysis open resolves a provider before creating its client. The
+same selector and precedence apply to the CLI, MCP, and startup configuration:
+
+```bash
+rea providers --json
+rea analyze /absolute/path/to/program --provider hopper
+REA_ANALYSIS_PROVIDER=hopper rea decompile /absolute/path/to/program 0x1000
+```
+
+For MCP, pass the optional selector on `open_binary`:
+
+```json
+{
+  "path": "/absolute/path/to/program",
+  "provider_id": "hopper"
+}
+```
+
+The request-level `provider_id` or `--provider` wins over
+`REA_ANALYSIS_PROVIDER`; all accept a provider ID or `auto`. Automatic selection
+binds the sole usable deep candidate, reports `ambiguous` when several are
+usable, and can leave an artifact-only target unbound so its disjoint artifact
+operations still work. An explicit unknown, unavailable, or unsupported
+provider fails with candidate IDs, stable rejection codes, and actionable local
+diagnostics. `binary_session`, `rea providers`, and `rea capabilities` expose
+the authoritative `analysis_provider_candidates` and
+`analysis_provider_binding` fields. Reopening the same target without a selector
+keeps its binding; runtime failure never selects another provider silently.
 
 ### CLI exit status
 

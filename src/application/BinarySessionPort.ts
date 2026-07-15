@@ -4,6 +4,7 @@ import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import type {
   AnalysisError,
   EvidenceIntegrityError,
@@ -32,6 +33,7 @@ export interface BinarySessionPort extends AnalysisOperationPort {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
       readonly snapshot?: AnalysisSnapshot;
+      readonly providerId?: AnalysisProviderSelector;
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
   close(): Promise<Result<null, AnalysisError>>;

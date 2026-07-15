@@ -115,6 +115,26 @@ describe("Hopper analysis profiles", () => {
       },
     });
   });
+
+  it("stops launcher hashing when profile resolution is cancelled", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-hopper-profile-cancel-"));
+    const launcher = join(directory, "hopper");
+    await writeFile(launcher, "Hopper build");
+    const controller = new AbortController();
+    const resolving = resolveHopperAnalysisProfile(target("elf", "x86_64"), {
+      launcherPath: launcher,
+      loaderArgsOverride: [],
+      provider: HOPPER_PROVIDER_IDENTITY,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(resolving).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+    });
+  });
 });
 
 const target = (

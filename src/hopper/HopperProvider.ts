@@ -1,11 +1,15 @@
 import { fileURLToPath } from "node:url";
+import { accessSync, constants } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type {
   AnalysisClient,
-  AnalysisProvider,
+  AnalysisProfileResolutionOptions,
+  AnalysisProviderCandidate,
   CapabilityDescriptor,
+  ProviderAvailability,
   ProviderIdentity,
+  ProviderTargetSupport,
 } from "../application/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config.js";
@@ -81,7 +85,7 @@ const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
 );
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
-export class HopperProvider implements AnalysisProvider {
+export class HopperProvider implements AnalysisProviderCandidate {
   constructor(
     private readonly config: AppConfig,
     private readonly logger: Logger,
@@ -95,11 +99,87 @@ export class HopperProvider implements AnalysisProvider {
     return CAPABILITIES;
   }
 
-  resolveAnalysisProfile(target: BinaryTarget) {
+  inspectAvailability(): ProviderAvailability {
+    const diagnostics = {
+      launcher_path: this.config.hopperLauncherPath,
+      platform: process.platform,
+    };
+    if (process.platform !== "darwin" && process.platform !== "linux")
+      return {
+        status: "unavailable",
+        code: "unsupported_host",
+        reason: `Hopper integration is not supported on ${process.platform}.`,
+        diagnostics,
+      };
+    try {
+      accessSync(this.config.hopperLauncherPath, constants.X_OK);
+      return {
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics,
+      };
+    } catch {
+      return {
+        status: "unavailable",
+        code: "executable_missing",
+        reason: `Hopper launcher is missing or not executable: ${this.config.hopperLauncherPath}`,
+        diagnostics,
+      };
+    }
+  }
+
+  inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport {
+    const diagnostics = {
+      target_kind: target.kind,
+      target_format: target.format,
+      architecture: target.architecture ?? null,
+    };
+    if (target.kind !== "executable" && target.kind !== "database")
+      return {
+        status: "unsupported",
+        code: "target_kind_unsupported",
+        reason: `Hopper cannot directly analyze ${target.kind} targets.`,
+        diagnostics,
+      };
+    if (target.kind === "database")
+      return {
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics,
+      };
+    if (!["mach-o", "elf", "pe"].includes(target.format))
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason: `Hopper cannot open ${target.format} through this adapter.`,
+        diagnostics,
+      };
+    if (target.architecture === undefined)
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: "Hopper requires a supported concrete target architecture.",
+        diagnostics,
+      };
+    return {
+      status: "supported",
+      code: null,
+      reason: null,
+      diagnostics,
+    };
+  }
+
+  resolveAnalysisProfile(
+    target: BinaryTarget,
+    options?: AnalysisProfileResolutionOptions,
+  ) {
     return resolveHopperAnalysisProfile(target, {
       launcherPath: this.config.hopperLauncherPath,
       loaderArgsOverride: this.config.hopperLoaderArgs,
       provider: IDENTITY,
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
   }
 

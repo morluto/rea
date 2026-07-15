@@ -12,10 +12,11 @@ additively; Devin is reported but left unchanged.
 
 Ghidra is the accepted direction for REA's second deep static-analysis provider,
 but it is not shipped yet. The first implementation is planned as a bring-your-
-own Ghidra and Java installation with read-only headless analysis, explicit
-provider selection, isolated temporary projects, and truthful unavailable
-capabilities. Setup must not install Java. Automatic Ghidra acquisition, if
-added later, must remain a separately planned and approved related-tool change.
+own Ghidra and Java installation with read-only headless analysis, the shipped
+explicit provider selection and target binding, isolated temporary projects,
+and truthful unavailable capabilities. Setup must not install Java. Automatic
+Ghidra acquisition, if added later, must remain a separately planned and
+approved related-tool change.
 
 ## Capability-selective setup
 

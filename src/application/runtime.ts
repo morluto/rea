@@ -3,8 +3,9 @@ import { BinarySession } from "./BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { NativeMacOSProvider } from "../native/NativeMacOSProvider.js";
 import { ArtifactProvider } from "../artifacts/ArtifactProvider.js";
-import { CompositeProvider } from "./CompositeProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
+import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -15,14 +16,17 @@ export const createBinarySession = (
   config: AppConfig,
   logger: Logger = silentLogger,
 ): BinarySession => {
+  const hopper = new HopperProvider(config, logger);
   return new BinarySession(
-    new CompositeProvider([
-      new ArtifactProvider(
-        config.artifactNativeMountEnabled,
-        config.artifactIntegrityContinueEnabled,
-      ),
-      new NativeMacOSProvider(),
-      new HopperProvider(config, logger),
-    ]),
+    SessionProviderRouter.selectable(
+      new AnalysisProviderRegistry([hopper], config.analysisProvider),
+      [
+        new ArtifactProvider(
+          config.artifactNativeMountEnabled,
+          config.artifactIntegrityContinueEnabled,
+        ),
+        new NativeMacOSProvider(),
+      ],
+    ),
   );
 };

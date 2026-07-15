@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,11 +32,39 @@ afterEach(async () => {
 });
 
 describe("direct analysis snapshot permissions", () => {
+  it("forwards the CLI provider selector ahead of the environment preference", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-direct-provider-"));
+    const targetPath = join(directory, "fixture.hop");
+    await writeFile(targetPath, "fixture");
+    vi.stubEnv("HOPPER_LAUNCHER_PATH", process.execPath);
+    vi.stubEnv("REA_ANALYSIS_PROVIDER", "environment-provider");
+
+    await expect(
+      runDirectAnalysis(
+        targetPath,
+        "binary_overview",
+        {},
+        {
+          providerId: "request-provider",
+        },
+      ),
+    ).resolves.toMatchObject({
+      error: "Analysis failed",
+      code: "capability_unavailable",
+      details: {
+        selection_reason: "unknown_provider",
+        requested_provider_id: "request-provider",
+        candidate_ids: ["hopper"],
+      },
+    });
+  });
+
   it("replays a cache hit with snapshot read authority only", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-direct-snapshot-"));
     const snapshotPath = join(directory, "analysis.json");
     const launcherPath = join(directory, "hopper-launcher");
     await writeFile(launcherPath, "fixture Hopper launcher");
+    await chmod(launcherPath, 0o755);
     const target = await parseBinaryTarget(process.execPath);
     if (!target.ok) throw target.error;
     const resolved = await resolveHopperAnalysisProfile(target.value, {

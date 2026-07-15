@@ -39,6 +39,7 @@ import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
 } from "./InvestigationProviders.js";
+import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 
 type DirectAnalysisTool =
   | "binary_overview"
@@ -63,6 +64,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly permissionAuthority?: PermissionAuthority;
+    readonly providerId?: AnalysisProviderSelector;
   } = {},
 ): Promise<JsonValue> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -70,6 +72,9 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
+      ...(options.providerId === undefined
+        ? {}
+        : { providerId: options.providerId }),
       ...(options.permissionAuthority === undefined
         ? {}
         : { permissionAuthority: options.permissionAuthority }),
@@ -238,6 +243,7 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly permissionAuthority?: PermissionAuthority;
+    readonly providerId?: AnalysisProviderSelector;
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
@@ -260,10 +266,13 @@ const runAnalysis = async (
     });
     if (!prepared.ok) return cliError(prepared.error);
     const { snapshot } = prepared.value;
-    const opened = await session.open(
-      path,
-      snapshot === undefined ? { signal } : { signal, snapshot },
-    );
+    const opened = await session.open(path, {
+      signal,
+      ...(snapshot === undefined ? {} : { snapshot }),
+      ...(options.providerId === undefined
+        ? {}
+        : { providerId: options.providerId }),
+    });
     if (!opened.ok) return cliError(opened.error);
     const evidenceProfile = analysisProfileForEvidence(session, tool);
     const bindingProfile = session.analysisProfile();

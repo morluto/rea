@@ -16,6 +16,10 @@ import {
   isLiteralLoopbackHostname,
 } from "./domain/browserObservation.js";
 import { electronFileRootsSchema } from "./domain/electronObservation.js";
+import {
+  analysisProviderSelectorSchema,
+  type AnalysisProviderSelector,
+} from "./contracts/providerSelection.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -25,6 +29,7 @@ const defaultHopperLauncherPath = (): string =>
     : DEFAULT_HOPPER_LAUNCHER_PATH;
 
 export interface AppConfig {
+  readonly analysisProvider: AnalysisProviderSelector;
   readonly hopperLauncherPath: string;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
@@ -51,6 +56,7 @@ export interface AppConfig {
 
 const environmentSchema = z
   .object({
+    REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
     HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
     HOPPER_TARGET_PATH: z.string().min(1).optional(),
     HOPPER_TARGET_KIND: z
@@ -239,7 +245,7 @@ export const parseConfig = (
   const parsedEnvironment = environmentSchema.safeParse(environment);
   if (!parsedEnvironment.success) {
     return err(
-      new ConfigurationError("Invalid Hopper environment configuration", {
+      new ConfigurationError("Invalid REA environment configuration", {
         cause: parsedEnvironment.error,
       }),
     );
@@ -357,6 +363,7 @@ export const parseConfig = (
       : []),
   ] satisfies readonly PermissionCeiling[];
   return ok({
+    analysisProvider: parsedEnvironment.data.REA_ANALYSIS_PROVIDER,
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
       defaultHopperLauncherPath(),

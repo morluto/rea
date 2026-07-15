@@ -558,6 +558,35 @@ describe("binary session", () => {
     expect(created).toBe(1);
   });
 
+  it("cancels legacy profile resolution even when the provider ignores its signal", async () => {
+    const [first] = await targets();
+    const provider = cacheProvider([]);
+    let observedSignal: AbortSignal | undefined;
+    let created = 0;
+    provider.resolveAnalysisProfile = (_target, options) => {
+      observedSignal = options?.signal;
+      return new Promise<never>(() => undefined);
+    };
+    provider.createClient = () => {
+      created += 1;
+      return new TestClient();
+    };
+    const session = new BinarySession(provider);
+    const controller = new AbortController();
+    const opening = session.open(first, { signal: controller.signal });
+    while (observedSignal === undefined)
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observedSignal).toBe(controller.signal);
+
+    controller.abort();
+
+    await expect(opening).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+    });
+    expect(created).toBe(0);
+  });
+
   it("cancels a call while it waits for a transition", async () => {
     const [first] = await targets();
     const health = deferred<ReturnType<typeof ok>>();

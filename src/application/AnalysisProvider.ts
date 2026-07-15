@@ -11,6 +11,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import type { EvidenceSubjectTarget } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
+import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 
 export interface ExecutionOptions {
   readonly signal?: AbortSignal;
@@ -93,6 +94,11 @@ export interface AnalysisProfileResolution {
   readonly compatibility: Readonly<Record<string, JsonValue>>;
 }
 
+/** Cancellation context for side-effect-free provider profile resolution. */
+export interface AnalysisProfileResolutionOptions {
+  readonly signal?: AbortSignal;
+}
+
 interface CapabilityEffects {
   readonly mutatesArtifact: boolean;
   readonly launchesProcess: boolean;
@@ -131,9 +137,53 @@ export interface AnalysisProvider {
   capabilities(): readonly CapabilityDescriptor[];
   resolveAnalysisProfile?(
     target: BinaryTarget,
+    options?: AnalysisProfileResolutionOptions,
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>>;
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
   ): AnalysisClient;
+}
+
+/** Bounded host observation made without starting an analysis process. */
+export type ProviderAvailability =
+  | {
+      readonly status: "available";
+      readonly code: null;
+      readonly reason: null;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly code: ProviderRejectionCode;
+      readonly reason: string;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    };
+
+/** Provider-owned target support observation before profile resolution. */
+export type ProviderTargetSupport =
+  | {
+      readonly status: "supported";
+      readonly code: null;
+      readonly reason: null;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly status: "unsupported";
+      readonly code:
+        | "target_kind_unsupported"
+        | "target_format_unsupported"
+        | "architecture_unsupported";
+      readonly reason: string;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    };
+
+/** Deep provider candidate discoverable before one target-bound route is chosen. */
+export interface AnalysisProviderCandidate extends AnalysisProvider {
+  resolveAnalysisProfile(
+    target: BinaryTarget,
+    options?: AnalysisProfileResolutionOptions,
+  ): Promise<Result<AnalysisProfileResolution, AnalysisError>>;
+  inspectAvailability(): ProviderAvailability;
+  inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport;
 }

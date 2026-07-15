@@ -106,6 +106,7 @@ try {
     HOME: home,
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    REA_ANALYSIS_PROVIDER: "auto",
     HOPPER_LAUNCHER_PATH: process.execPath,
     HOPPER_LOADER_ARGS_JSON: JSON.stringify([
       join(root, "tests/fixtures/fakeLauncher.mjs"),
@@ -180,6 +181,20 @@ try {
     throw new Error("packaged artifact inventory CLI failed");
   // prettier-ignore
   const investigationReplay = await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
+  const unknownProviderExecution = await runWithStatus(
+    cli,
+    ["analyze", process.execPath, "--provider", "missing-provider", "--json"],
+    environment,
+  );
+  const unknownProvider = json(unknownProviderExecution.stdout);
+  if (
+    unknownProviderExecution.status !== 1 ||
+    unknownProvider.details?.selection_reason !== "unknown_provider" ||
+    unknownProvider.details?.requested_provider_id !== "missing-provider"
+  )
+    throw new Error(
+      `packaged CLI provider selection failed: ${JSON.stringify(unknownProvider)}`,
+    );
   if (process.platform === "linux") {
     const unsupportedExecution = await runWithStatus(
       cli,
@@ -270,7 +285,11 @@ try {
   const providers = json(await run(cli, ["providers", "--json"], environment));
   if (
     !Array.isArray(providers.providers) ||
-    providers.providers.some(({ id }) => typeof id !== "string")
+    providers.providers.some(({ id }) => typeof id !== "string") ||
+    providers.analysis_provider_binding !== null ||
+    providers.analysis_provider_candidates?.find(
+      ({ provider }) => provider?.id === "hopper",
+    )?.target_support?.status !== "unknown"
   )
     throw new Error("packaged providers CLI failed");
   if (process.platform !== "linux") {
@@ -613,12 +632,41 @@ try {
     );
     if (result.isError !== true)
       throw new Error("packaged target-free MCP omitted no-target error");
+    const unknownProvider = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: process.execPath, provider_id: "missing-provider" },
+      },
+      mcpOptions,
+    );
+    if (
+      unknownProvider.isError !== true ||
+      unknownProvider.structuredContent?.error?.details?.selection_reason !==
+        "unknown_provider"
+    )
+      throw new Error("packaged MCP accepted an unknown analysis provider");
     const opened = await client.callTool(
-      { name: "open_binary", arguments: { path: process.execPath } },
+      {
+        name: "open_binary",
+        arguments: { path: process.execPath, provider_id: "hopper" },
+      },
       mcpOptions,
     );
     if (opened.isError === true)
       throw new Error("packaged MCP could not open a binary");
+    const providerStatus = json(
+      prompts.mcpText(
+        await client.callTool(
+          { name: "binary_session", arguments: {} },
+          mcpOptions,
+        ),
+      ),
+    );
+    if (
+      providerStatus.analysis_provider_binding?.provider?.id !== "hopper" ||
+      providerStatus.analysis_provider_binding?.selection_source !== "request"
+    )
+      throw new Error("packaged MCP omitted its explicit Hopper binding");
     await prompts.verifyPromptCompletion(
       client,
       mcpOptions,
