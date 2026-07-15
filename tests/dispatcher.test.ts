@@ -61,4 +61,33 @@ describe("executable dispatcher", () => {
       args: ["--mcp", "extra"],
     });
   });
+
+  it("explains how to restore a missing compiled runtime", async () => {
+    fixtureRoot = await mkdtemp(join(tmpdir(), "rea-dispatcher-"));
+    const scripts = join(fixtureRoot, "scripts");
+    await mkdir(scripts);
+    await Promise.all([
+      copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
+      writeFile(
+        join(fixtureRoot, "package.json"),
+        JSON.stringify({ type: "module", version: "1.0.0" }),
+      ),
+    ]);
+
+    for (const args of [["mcp"], ["--help"]]) {
+      const execution = execFileAsync(process.execPath, [
+        join(scripts, "rea.mjs"),
+        ...args,
+      ]);
+      await expect(execution).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "REA's compiled runtime is missing. Run `npm ci` in",
+        ),
+      });
+      await expect(execution).rejects.toMatchObject({
+        stderr: expect.not.stringContaining("ERR_MODULE_NOT_FOUND"),
+      });
+    }
+  });
 });
