@@ -101,6 +101,7 @@ const SOURCE_PATHS = {
   electronContracts: "dist/contracts/electronToolContracts.js",
   supportedClients: "dist/application/SupportedClients.js",
   hopperProvider: "dist/hopper/HopperProvider.js",
+  ghidraProvider: "dist/ghidra/GhidraProvider.js",
   nativeProvider: "dist/native/NativeMacOSProvider.js",
   artifactProviders: "dist/application/InvestigationProviders.js",
   browserProvider: "dist/browser/CdpBrowserProvider.js",
@@ -193,6 +194,10 @@ const providerCatalog = (sources) =>
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
       contracts: sources.hopperProvider.HOPPER_PROVIDER_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.ghidraProvider.GHIDRA_PROVIDER_IDENTITY,
+      contracts: sources.ghidraProvider.GHIDRA_PROVIDER_TOOL_CONTRACTS,
     },
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,

@@ -78,6 +78,8 @@ npx skills add morluto/rea
 
 يعرض `rea setup` خطة التغييرات كاملة ويطلب التأكيد قبل تطبيقها. لا يثبت أو يحدّث Homebrew أو Node.js أو npm. إذا كان [Hopper](https://www.hopperapp.com/) مفقودًا، يقترح Setup الحزمة الرسمية. Hopper برنامج منفصل يحتاج إلى ترخيص خاص به.
 
+إذا كان Ghidra 12.1.2 PUBLIC وJDK 21 الكامل بنواة 64 بت مثبتين مسبقًا على Linux ‏64 بت، فيمكن لـ Setup أيضًا تسجيل `GHIDRA_INSTALL_DIR` و`JAVA_HOME` الاختياري بعد الموافقة. لا ينزّل REA أو يثبت أو يعدّل Ghidra أو Java. يقدّم هذا الإصدار أساس جلسة headless خاصة ومعزولة فقط، ولا يعرض بعد عمليات تحليل الملفات الثنائية عبر Ghidra؛ لذلك تستمر مسارات التحليل العميق الحالية باستخدام Hopper.
+
 #### التثبيت على Linux واستكشاف الأخطاء
 
 على Ubuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت، ينزّل REA حزمة DEB أو RPM أو Arch الرسمية، ويتحقق من الحجم وقيمة التحقق المنشورين، ثم يستخدم `apt-get` أو `dnf` أو `pacman` لحل الاعتماديات. عند التشغيل دون root يعرض `pkexec` طلب تفويض النظام. لا يستدعي REA الأمر `sudo`.
@@ -189,8 +191,10 @@ flowchart LR
     Human[المستخدم] --> Agent[وكيل البرمجة]
     Agent --> REA[REA]
     Human -->|CLI| REA
-    REA --> Hopper[محرك التحليل]
+    REA --> Hopper[عمليات تحليل Hopper]
     Hopper --> App[تطبيقك]
+    REA -.-> Ghidra[أساس Ghidra headless<br/>دون عمليات ثنائية]
+    Ghidra -.-> App
 ```
 
 يستخدم CLI وخادم MCP محرك التحليل نفسه. تغلق أوامر الطرفية التطبيق عند انتهائها، بينما تبقيه جلسة الوكيل مفتوحًا أثناء الاستقصاء.
@@ -215,15 +219,16 @@ npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to
 لتجنب مربع اختيار معمارية ملف شامل، حدد معطيات المحمل مسبقًا:
 
 ```bash
-export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch68"]'
+export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch64"]'
 ```
 
 يدير REA دورة حياة Hopper ويحاول إغلاق العمليات التي بدأها عند انتهاء الأمر أو جلسة MCP.
 
 ## الأمان والخصوصية
 
-- يبقى تحليل الملف التنفيذي محليًا بين REA وHopper.
+- يبقى تحليل الملف التنفيذي محليًا بين REA ومزوّد التحليل المختار.
 - لا يرفع REA الأهداف إلى خدمة مستضافة.
+- تستخدم جلسات Ghidra مشروعًا مؤقتًا معزولًا ولا تفتح مشاريع Ghidra التي يملكها المستخدم أو تعدّلها.
 - راجع الملفات التنفيذية غير الموثوقة واعزلها كما تفعل مع أي مدخل أصلي قد يكون ضارًا.
 - أبلغ عن الثغرات وفق [سياسة الأمان](SECURITY.md)، وليس عبر قضية عامة.
 
@@ -246,7 +251,7 @@ export HOPPER_LOADER_ARGS_JSON='["-l", "Mach-O", "--aarch68"]'
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-نعم، يعمل REA على macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت؛ Windows غير مدعوم حاليًا. يعتمد التحليل العميق على تطبيق Hopper وواجهة Python الخاصة به.
+نعم، يعمل REA على macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux ‏64 بت؛ Windows غير مدعوم حاليًا. تعتمد عمليات التحليل العميق الحالية على تطبيق Hopper وواجهة Python الخاصة به، بينما لا يقدّم أساس Ghidra الجديد عمليات تحليل ثنائية بعد.
 
 </details>
 

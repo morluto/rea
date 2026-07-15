@@ -1,4 +1,8 @@
-import type { SetupAction, SetupClient } from "./Setup.js";
+import type {
+  SetupAction,
+  SetupClient,
+  SetupProviderEnvironment,
+} from "./Setup.js";
 
 /** Build the complete setup mutation plan before approval. */
 export const setupPlan = (
@@ -6,6 +10,7 @@ export const setupPlan = (
   installHopper: boolean,
   installSkill: boolean,
   clients: readonly SetupClient[],
+  providerEnvironment: SetupProviderEnvironment,
 ): readonly SetupAction[] => [
   ...(installHopper
     ? [
@@ -29,7 +34,7 @@ export const setupPlan = (
       (client): SetupAction => ({
         kind: "configure_client",
         target: client.configPath,
-        detail: `Add the REA MCP registration for ${client.name}; preserve unrelated configuration.`,
+        detail: clientConfigurationDetail(client.name, providerEnvironment),
         external: false,
       }),
     ),
@@ -44,3 +49,15 @@ export const setupPlan = (
       ]
     : []),
 ];
+
+const clientConfigurationDetail = (
+  client: string,
+  environment: SetupProviderEnvironment,
+): string => {
+  const entries = Object.entries(environment)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}`);
+  const suffix =
+    entries.length === 0 ? "" : ` Environment: ${entries.join(", ")}.`;
+  return `Add the REA MCP registration for ${client}; preserve unrelated configuration.${suffix}`;
+};

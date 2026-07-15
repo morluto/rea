@@ -40,6 +40,27 @@ export interface DoctorCheck {
   readonly detail?: string;
   readonly remediation?: string;
 }
+
+/** One provider-owned check projected without importing its adapter types. */
+export interface DoctorProviderCheck {
+  readonly name: string;
+  readonly ok: boolean;
+  readonly code: string | null;
+  readonly detail: string;
+  readonly remediation: string | null;
+  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
+}
+
+/** Read-only provider inspection supplied by an outer composition adapter. */
+export interface DoctorProviderInspection {
+  readonly id: string;
+  readonly configured: boolean;
+  readonly available: boolean;
+  readonly providerVersion: string | null;
+  /** Exact non-secret variables safe to persist in an approved registration. */
+  readonly registrationEnvironment: Readonly<Record<string, string>>;
+  readonly checks: readonly DoctorProviderCheck[];
+}
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly platform: NodeJS.Platform;
@@ -53,6 +74,7 @@ export interface DoctorHost {
   linuxDemoRuntimeReady(): Promise<boolean>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
+  providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
   installationPaths?(): Promise<readonly string[]>;
   installedSkillVersion?(): Promise<string | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
@@ -69,6 +91,7 @@ export const runDoctor = async (
 ): Promise<{
   readonly healthy: boolean;
   readonly hopperPath?: string;
+  readonly providerInspections?: readonly DoctorProviderInspection[];
   readonly checks: readonly DoctorCheck[];
   readonly identity?: {
     readonly cli_package_version: string;
@@ -168,6 +191,7 @@ export const runDoctor = async (
         },
       ),
     );
+  const providerInspections = await inspectDoctorProviders(host, checks);
   if (host.platform === "linux" && hopperPath !== undefined)
     checks.push(
       check(
@@ -203,8 +227,17 @@ export const runDoctor = async (
           "Run rea setup, then restart the affected client.",
       });
   return {
-    healthy: checks.every(({ ok }) => ok),
+    healthy: doctorHealthy(checks, {
+      hopperAvailable:
+        hopperPath !== undefined &&
+        checks
+          .filter(({ name }) => name.startsWith("hopper"))
+          .every(({ ok }) => ok),
+      hopperConfigured: host.configuredHopperPath !== undefined,
+      providerInspections,
+    }),
     ...(hopperPath === undefined ? {} : { hopperPath }),
+    ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,
     identity: {
       cli_package_version: PRODUCT_IDENTITY.packageVersion,
@@ -249,8 +282,17 @@ const unsupportedHopperRemediation = (configured: boolean): string =>
     ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
     : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
 
+/** Optional outer-adapter diagnostics composed without reversing dependencies. */
+export interface SystemDoctorHostOptions {
+  readonly providerInspections?: () => Promise<
+    readonly DoctorProviderInspection[]
+  >;
+}
+
 /** Create diagnostics backed by the current process and host commands. */
-export const systemDoctorHost = (): DoctorHost => ({
+export const systemDoctorHost = (
+  options: SystemDoctorHostOptions = {},
+): DoctorHost => ({
   platform: process.platform,
   nodeVersion: process.versions.node,
   ...(process.env.HOPPER_LAUNCHER_PATH === undefined
@@ -330,6 +372,9 @@ export const systemDoctorHost = (): DoctorHost => ({
     }
     return paths;
   },
+  ...(options.providerInspections === undefined
+    ? {}
+    : { providerInspections: options.providerInspections }),
   async installationPaths() {
     try {
       const command = process.platform === "win32" ? "where" : "which";
@@ -383,3 +428,72 @@ const check = (
   ...(detail === undefined ? {} : { detail }),
   ...(ok ? {} : { remediation: failure.remediation }),
 });
+
+const providerDoctorChecks = (
+  inspection: DoctorProviderInspection,
+): readonly DoctorCheck[] =>
+  inspection.checks.map((candidate) => ({
+    name:
+      candidate.name === "configuration"
+        ? inspection.id
+        : `${inspection.id}-${candidate.name}`,
+    ok: candidate.ok,
+    classification: candidate.ok ? "healthy" : candidate.classification,
+    detail: candidate.detail,
+    ...(candidate.remediation === null
+      ? {}
+      : { remediation: candidate.remediation }),
+  }));
+
+const inspectDoctorProviders = async (
+  host: DoctorHost,
+  checks: DoctorCheck[],
+): Promise<readonly DoctorProviderInspection[] | undefined> => {
+  const inspections = await host.providerInspections?.();
+  if (inspections === undefined) return undefined;
+  for (const inspection of inspections)
+    checks.push(...providerDoctorChecks(inspection));
+  return inspections;
+};
+
+const doctorHealthy = (
+  checks: readonly DoctorCheck[],
+  providers: {
+    readonly hopperAvailable: boolean;
+    readonly hopperConfigured: boolean;
+    readonly providerInspections:
+      | readonly DoctorProviderInspection[]
+      | undefined;
+  },
+): boolean => {
+  if (providers.providerInspections === undefined)
+    return checks.every(({ ok }) => ok);
+  const providerChecks = checks.filter(
+    ({ name }) =>
+      name.startsWith("hopper") ||
+      providers.providerInspections?.some((inspection) =>
+        providerCheckName(inspection.id, name),
+      ) === true,
+  );
+  const coreHealthy = checks
+    .filter((candidate) => !providerChecks.includes(candidate))
+    .every(({ ok }) => ok);
+  const configuredProvidersHealthy = providerChecks
+    .filter(({ name }) => {
+      if (name.startsWith("hopper")) return providers.hopperConfigured;
+      return providers.providerInspections?.some(
+        (inspection) =>
+          inspection.configured && providerCheckName(inspection.id, name),
+      );
+    })
+    .every(({ ok }) => ok);
+  return (
+    coreHealthy &&
+    configuredProvidersHealthy &&
+    (providers.hopperAvailable ||
+      providers.providerInspections.some(({ available }) => available))
+  );
+};
+
+const providerCheckName = (providerId: string, name: string): boolean =>
+  name === providerId || name.startsWith(`${providerId}-`);

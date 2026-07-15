@@ -77,7 +77,11 @@ describe("agent lifecycle", () => {
     expect(
       await configureTomlClient(
         { name: "codex", configPath, format: "toml" },
-        "/Hopper Path",
+        {
+          HOPPER_LAUNCHER_PATH: "/Hopper Path",
+          GHIDRA_INSTALL_DIR: "/opt/ghidra",
+          JAVA_HOME: "/opt/jdk-21",
+        },
         ["rea", "mcp"],
       ),
     ).toMatchObject({ status: "configured" });
@@ -85,10 +89,16 @@ describe("agent lifecycle", () => {
     expect(configured).toContain('model = "gpt-5"');
     expect(configured).toContain("[mcp_servers.rea]");
     expect(configured).toContain('command = "rea"');
+    expect(configured).toContain('GHIDRA_INSTALL_DIR = "/opt/ghidra"');
+    expect(configured).toContain('JAVA_HOME = "/opt/jdk-21"');
     expect(
       await configureTomlClient(
         { name: "codex", configPath, format: "toml" },
-        "/Hopper Path",
+        {
+          HOPPER_LAUNCHER_PATH: "/Hopper Path",
+          GHIDRA_INSTALL_DIR: "/opt/ghidra",
+          JAVA_HOME: "/opt/jdk-21",
+        },
         ["rea", "mcp"],
       ),
     ).toEqual({ status: "unchanged" });

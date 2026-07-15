@@ -80,6 +80,8 @@ npx skills add morluto/rea
 
 `rea setup`은 전체 변경 계획을 표시하고 확인 후 적용합니다. Homebrew, Node.js 또는 npm을 설치하거나 업데이트하지 않습니다. [Hopper](https://www.hopperapp.com/)가 없으면 공식 패키지 설치를 제안합니다. Hopper는 별도 라이선스가 필요한 독립 소프트웨어입니다.
 
+64비트 Linux에 Ghidra 12.1.2 PUBLIC과 완전한 64비트 JDK 21이 이미 설치되어 있다면 Setup은 승인 후 `GHIDRA_INSTALL_DIR`과 선택 사항인 `JAVA_HOME`도 등록할 수 있습니다. REA는 Ghidra나 Java를 다운로드, 설치 또는 수정하지 않습니다. 이 릴리스는 격리된 비공개 headless 세션 기반만 제공하며 Ghidra 바이너리 분석 작업은 아직 노출하지 않으므로, 기존 심층 분석 워크플로는 계속 Hopper를 사용합니다.
+
 #### Linux 설치 및 문제 해결
 
 Ubuntu 24.04+, Fedora 41+, 64비트 Arch Linux에서 REA는 공식 DEB, RPM 또는 Arch 패키지를 내려받아 게시된 크기와 체크섬을 검증한 뒤 `apt-get`, `dnf` 또는 `pacman`으로 의존성을 설치합니다. root가 아니면 `pkexec`가 시스템 승인 창을 표시합니다. REA는 `sudo`를 호출하지 않습니다.
@@ -178,8 +180,10 @@ Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin
 flowchart LR
     Agent["코딩 에이전트"] --> REA["REA<br/>CLI + MCP"]
     Terminal["터미널"] --> REA
-    REA --> Hopper["분석 엔진"]
+    REA --> Hopper["Hopper 분석 작업"]
     Hopper --> App["사용자의 앱"]
+    REA -.-> Ghidra["Ghidra headless 기반<br/>바이너리 작업 미제공"]
+    Ghidra -.-> App
 ```
 
 CLI와 MCP 서버는 같은 분석 엔진을 사용합니다. 터미널 명령은 끝날 때 앱을 닫고, 에이전트 세션은 조사하는 동안 앱을 열어 둡니다.
@@ -212,7 +216,7 @@ REA는 필요할 때 Hopper를 시작합니다. Hopper 런처는 내부적으로
 
 ## 보안 모델
 
-각 세션은 무작위 capability token과 현재 사용자 전용 Unix 소켓을 사용합니다. 이는 샌드박스가 아니며 같은 사용자로 실행되는 악성 프로세스를 방어하지 않습니다. 신뢰할 수 없는 바이너리를 열면 현재 macOS 사용자 권한으로 Hopper가 분석합니다. 취약점은 [SECURITY.md](SECURITY.md)의 비공개 절차로 신고하세요.
+각 세션은 무작위 capability token과 현재 사용자 전용 Unix 소켓을 사용합니다. Ghidra 세션은 격리된 임시 프로젝트도 사용하며 사용자 소유 Ghidra 프로젝트를 열거나 수정하지 않습니다. 이는 샌드박스가 아니며 같은 운영 체제 사용자로 실행되는 악성 프로세스를 방어하지 않습니다. 신뢰할 수 없는 바이너리를 열면 선택한 로컬 공급자가 현재 사용자 권한으로 분석합니다. 취약점은 [SECURITY.md](SECURITY.md)의 비공개 절차로 신고하세요.
 
 ## FAQ
 

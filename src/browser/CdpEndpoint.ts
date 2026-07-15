@@ -9,6 +9,7 @@ import {
   BrowserObservationError,
   type BrowserObservationOperation,
 } from "../domain/errors.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 
 const HTTP_TIMEOUT_MS = 5_000;
 const MAX_VERSION_BYTES = 64 * 1_024;
@@ -111,12 +112,24 @@ export const discoverCdpEndpoint = async (
     targets: targets.map((target) => ({
       id: target.id,
       type: target.type,
-      title: target.title,
+      title: sanitizeTargetTitle(target.title),
       url: target.url,
       attached: target.attached,
       ...targetWebSocket(endpoint, target, operation),
     })),
   };
+};
+
+const sanitizeTargetTitle = (value: string): string => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+  return url.protocol === "http:" || url.protocol === "https:"
+    ? sanitizeBrowserUrl(value).url.slice(0, 16_384)
+    : value;
 };
 
 /** Select a browser attachment socket or a direct socket for one page target. */

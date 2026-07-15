@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "./domain/errors.js";
 import { err, ok, type Result } from "./domain/result.js";
@@ -30,6 +31,8 @@ const defaultHopperLauncherPath = (): string =>
 
 export interface AppConfig {
   readonly analysisProvider: AnalysisProviderSelector;
+  readonly ghidraInstallDir: string | undefined;
+  readonly ghidraJavaHome: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
@@ -57,6 +60,16 @@ export interface AppConfig {
 const environmentSchema = z
   .object({
     REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+    GHIDRA_INSTALL_DIR: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "GHIDRA_INSTALL_DIR must be absolute")
+      .optional(),
+    JAVA_HOME: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "JAVA_HOME must be absolute")
+      .optional(),
     HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
     HOPPER_TARGET_PATH: z.string().min(1).optional(),
     HOPPER_TARGET_KIND: z
@@ -234,7 +247,7 @@ const parseLoaderArgs = (
 };
 
 /**
- * Parse Hopper launcher configuration once at the composition root.
+ * Parse provider and authority configuration once at the composition root.
  * Explicit loader arguments override REA's header-derived defaults for a
  * supported target, allowing callers to refine Hopper's loader behavior without
  * bypassing REA's path and executable-header checks.
@@ -364,6 +377,8 @@ export const parseConfig = (
   ] satisfies readonly PermissionCeiling[];
   return ok({
     analysisProvider: parsedEnvironment.data.REA_ANALYSIS_PROVIDER,
+    ghidraInstallDir: parsedEnvironment.data.GHIDRA_INSTALL_DIR,
+    ghidraJavaHome: parsedEnvironment.data.JAVA_HOME,
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
       defaultHopperLauncherPath(),

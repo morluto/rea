@@ -51,6 +51,25 @@ describe("runtime configuration", () => {
       expect(parseConfig({ REA_ANALYSIS_PROVIDER: invalid }).ok).toBe(false);
   });
 
+  it("parses absolute BYO Ghidra and optional Java paths", () => {
+    expect(
+      parseConfig({
+        GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.2_PUBLIC",
+        JAVA_HOME: "/usr/lib/jvm/jdk-21",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        ghidraInstallDir: "/opt/ghidra_12.1.2_PUBLIC",
+        ghidraJavaHome: "/usr/lib/jvm/jdk-21",
+      },
+    });
+    expect(parseConfig({ GHIDRA_INSTALL_DIR: "relative/ghidra" }).ok).toBe(
+      false,
+    );
+    expect(parseConfig({ JAVA_HOME: "relative/jdk" }).ok).toBe(false);
+  });
+
   it("builds a separate Electron endpoint and file-root ceiling", () => {
     const result = parseConfig({
       REA_ELECTRON_OBSERVE_ENABLED: "true",

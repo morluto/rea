@@ -34,7 +34,7 @@ Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-pro
 
 `rea setup` discovers the current state, prints one plan, and asks `Continue? [Y/n]`. The plan identifies:
 
-- an existing Hopper installation or the official package it proposes to install;
+- an existing Hopper installation, a validated bring-your-own Ghidra environment, or the official Hopper package it proposes to install;
 - each detected agent configuration path;
 - the REA skill destination;
 - external software and package-manager effects.
@@ -65,6 +65,36 @@ REA runs the supported demo build on a private Xvfb display and selects Hopper's
 offered demo mode for each analysis session; it does not require the user's
 desktop display. Unattended package-manager access requires
 `--yes --install-hopper`.
+
+## Ghidra
+
+REA's initial Ghidra provider layer is bring-your-own and currently supports
+Linux x64 with the exact official Ghidra 12.1.2 release and a 64-bit full JDK 21. It supplies discovery, analysis-profile commitment, and an isolated
+read-only headless session; it intentionally declares no binary-analysis
+operations yet.
+
+Extract Ghidra and install the JDK outside REA, then export absolute paths:
+
+```bash
+export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.2_PUBLIC
+export JAVA_HOME=/absolute/path/to/jdk-21 # optional if java/javac are on PATH
+rea doctor --json
+rea setup
+```
+
+Doctor validates the platform, architecture, application version,
+`support/analyzeHeadless`, Java version/bitness, and the presence of `javac`.
+When Java is found through `PATH`, setup records its observed JDK home so GUI
+MCP clients do not depend on an incidental shell path. Setup shows every exact
+environment entry in its plan, writes only after approval, and never downloads,
+installs, upgrades, or modifies Ghidra or Java.
+
+Each verified session uses a private temporary project and isolated
+home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, a
+per-file analysis timeout, CPU and heap bounds, and its packaged Java bridge via
+`-scriptPath`; it never opens an existing user project. The local bridge socket
+and descriptor are current-user-only, and all owned runtime paths and processes
+are removed on every terminal lifecycle path.
 
 ## Diagnose, update, and remove
 

@@ -43,6 +43,26 @@ describe("analysis error projection", () => {
     );
   });
 
+  it("projects bounded provider diagnostics without dropping local coordinates", () => {
+    const diagnostics = {
+      runtime_root: "/tmp/rea-ghidra-fixture",
+      profile_digest: "a".repeat(64),
+      exit_code: 1,
+    };
+    const error = new ProviderAdapterError("ghidra", "health", {
+      diagnostics,
+    });
+
+    expect(error.diagnostics).not.toBe(diagnostics);
+    expect(projectAnalysisError(error)).toMatchObject({
+      details: {
+        provider_id: "ghidra",
+        operation: "health",
+        diagnostics,
+      },
+    });
+  });
+
   it("projects stable, safe Linux startup failure codes", () => {
     const expected = [
       [70, "private_display_unavailable"],

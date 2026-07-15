@@ -15,7 +15,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly command: string;
   readonly arguments: readonly string[];
   readonly runId: string;
-  readonly expectedCommand?: string;
+  /** Null disables argv-prefix matching for interpreter-driven launch scripts. */
+  readonly expectedCommand?: string | null;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -120,8 +121,10 @@ export const spawnOwnedProviderProcess = async (
     runId: options.runId,
     leaderPid: pid,
     processGroupId: pid,
-    expectedCommand: options.expectedCommand ?? options.command,
     expectedParentPid: process.pid,
+    ...(options.expectedCommand === null
+      ? {}
+      : { expectedCommand: options.expectedCommand ?? options.command }),
   };
   return { process: child, ownership };
 };

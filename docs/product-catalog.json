@@ -138,6 +138,12 @@
   },
   "providers": [
     {
+      "id": "ghidra",
+      "name": "Ghidra",
+      "version": null,
+      "capabilities": []
+    },
+    {
       "id": "hopper",
       "name": "Hopper Disassembler",
       "version": null,
