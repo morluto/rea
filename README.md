@@ -350,13 +350,15 @@ rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --approved --json
 
 All eight browser tools expose the same Evidence v2 contracts over CLI and MCP. Inspection is passive: REA does not evaluate page JavaScript, navigate, click, close the page, or close the browser. Query values, credentials, cookies, authorization headers, storage values, and raw JSON or WebSocket values are never retained. Separately approved captures can retain bounded redacted console primitives, value-free JSON/WebSocket shapes, script sources, accessibility text, or screenshot pixels. Existing activity before attach is explicitly unavailable. See [Website observation with CDP](docs/browser-observation.md) for browser startup, schemas, limits, and the threat model.
 
+Exact package, tool-family, provider, setup-client, public schema-version, and CLI facts are generated from source in [`docs/product-catalog.json`](docs/product-catalog.json). `npm run docs:check` verifies that this catalog, the narrative documentation, TypeDoc, and generated schemas have not drifted.
+
 ## Roadmap
 
 REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The [current status](#current-status) above is the shipped baseline; the items below are planned work.
 
 ### Now
 
-1. **Truthful product metadata** — derive versions, tool inventories, schemas, setup clients, and capability documentation from canonical sources and fail CI on drift.
+1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
 2. **A second deep-analysis provider** — add explicit target-to-provider binding and a read-only Ghidra provider for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
 3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
 

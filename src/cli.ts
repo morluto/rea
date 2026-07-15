@@ -30,6 +30,7 @@ import { registerPolicyCommands } from "./cliPolicyCommands.js";
 import { registerBrowserCommands } from "./cliBrowserCommands.js";
 import { registerAdvancedBrowserCommands } from "./cliBrowserAdvancedCommands.js";
 import { registerElectronCommands } from "./cliElectronCommands.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -95,7 +96,7 @@ const registerCoreCommands = (
       .optional()
       .describe("Load and update a local analysis snapshot"),
   });
-  cli.command("analyze", {
+  cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
       path: z.string().describe("App, program, or Hopper database path"),
@@ -111,7 +112,7 @@ const registerCoreCommands = (
         ),
       ),
   });
-  cli.command("inspect", {
+  cli.command(CLI_COMMANDS.inspect, {
     description: "Inspect an app overview with evidence",
     args: z.object({
       path: z.string().describe("App, program, or Hopper database path"),
@@ -127,7 +128,7 @@ const registerCoreCommands = (
         ),
       ),
   });
-  cli.command("decompile", {
+  cli.command(CLI_COMMANDS.decompile, {
     description: "Read one part of an app as code",
     args: z.object({
       path: z.string().describe("App or program path"),
@@ -150,7 +151,7 @@ const registerSetupCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("setup", {
+  cli.command(CLI_COMMANDS.setup, {
     description: "Install requirements and configure agents",
     options: z.object({
       yes: z
@@ -178,7 +179,7 @@ const registerSetupCommands = (
         ),
       ),
   });
-  cli.command("doctor", {
+  cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
       target: z.string().optional().describe("Optional app path to check"),
@@ -186,7 +187,7 @@ const registerSetupCommands = (
     run: ({ options }) =>
       logCliCommand(logger, "doctor", () => runDoctor(options.target)),
   });
-  cli.command("uninstall", {
+  cli.command(CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
       purgeData: z
@@ -198,7 +199,7 @@ const registerSetupCommands = (
     run: ({ options }) =>
       logCliCommand(logger, "uninstall", () => runUninstall(options.purgeData)),
   });
-  cli.command("upgrade", {
+  cli.command(CLI_COMMANDS.upgrade, {
     description: "Upgrade a global npm installation to the latest REA release",
     run: ({ formatExplicit }) =>
       logCliCommand(logger, "upgrade", () =>
@@ -237,7 +238,7 @@ const registerXrefsCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("xrefs", {
+  cli.command(CLI_COMMANDS.xrefs, {
     description: "List bounded references to an analyzed address",
     args: z.object({
       path: z.string().describe("App or program path"),
@@ -260,7 +261,7 @@ const registerTraceCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("trace", {
+  cli.command(CLI_COMMANDS.trace, {
     description: "Trace a bounded literal feature through analyzed references",
     args: z.object({
       path: z.string().describe("App or program path"),
@@ -297,7 +298,10 @@ const registerCapabilityCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  for (const command of ["capabilities", "providers"] as const) {
+  for (const command of [
+    CLI_COMMANDS.capabilities,
+    CLI_COMMANDS.providers,
+  ] as const) {
     cli.command(command, {
       description:
         command === "capabilities"
@@ -312,7 +316,7 @@ const registerFunctionCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("function", {
+  cli.command(CLI_COMMANDS.function, {
     description: "Analyze one bounded function with evidence",
     args: z.object({
       path: z.string().describe("App or program path"),
@@ -352,7 +356,7 @@ const registerSearchCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("search", {
+  cli.command(CLI_COMMANDS.search, {
     description: "Search bounded analyzed strings or procedure names",
     args: z.object({
       path: z.string().describe("App or program path"),
@@ -389,7 +393,7 @@ const registerReferenceSourceCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("import-reference-source", {
+  cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a bounded source tree as historical reference only",
     args: z.object({
       root: z
@@ -455,7 +459,7 @@ const registerArtifactCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("inventory-artifact", {
+  cli.command(CLI_COMMANDS.inventoryArtifact, {
     description: "Build a bounded deterministic artifact graph",
     args: z.object({
       path: z.string().describe("Application or package path"),
@@ -495,7 +499,7 @@ const registerArtifactCommands = (
         ),
       ),
   });
-  cli.command("extract-artifact", {
+  cli.command(CLI_COMMANDS.extractArtifact, {
     description: "Extract explicitly selected artifact occurrences safely",
     args: z.object({
       path: z.string().describe("Application or package path"),
@@ -527,9 +531,9 @@ const registerNativeCommands = (
   logger: Logger,
 ): void => {
   for (const [command, tool] of [
-    ["inspect-macho", "inspect_macho"],
-    ["inspect-signature", "inspect_signature"],
-    ["list-architectures", "list_architectures"],
+    [CLI_COMMANDS.inspectMacho, "inspect_macho"],
+    [CLI_COMMANDS.inspectSignature, "inspect_signature"],
+    [CLI_COMMANDS.listArchitectures, "list_architectures"],
   ] as const) {
     cli.command(command, {
       description: `Run ${tool} without launching Hopper`,
@@ -540,7 +544,7 @@ const registerNativeCommands = (
         ),
     });
   }
-  cli.command("inspect-plist", {
+  cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
     args: z.object({ path: z.string().describe("App or Mach-O path") }),
     options: z.object({
@@ -557,7 +561,7 @@ const registerNativeCommands = (
         ),
       ),
   });
-  cli.command("demangle-swift", {
+  cli.command(CLI_COMMANDS.demangleSwift, {
     description: "Demangle a bounded Swift symbol batch without Hopper",
     args: z.object({
       path: z.string().describe("Artifact path used for evidence identity"),

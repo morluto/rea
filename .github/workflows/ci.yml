@@ -141,4 +141,4 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run docs:generate
+      - run: npm run docs:check

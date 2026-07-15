@@ -161,7 +161,8 @@ export const investigationRunSummarySchema = z.object({
   limitations: z.array(z.string().max(4_096)).max(100),
 });
 
-const investigationWorkspaceSchema = z.object({
+/** Durable schema for one revisioned cross-version investigation workspace. */
+export const investigationWorkspaceSchema = z.object({
   workspace_version: z.literal(1),
   workspace_id: z.string().regex(/^ws_[a-f0-9]{64}$/u),
   name: z.string().trim().min(1).max(200),

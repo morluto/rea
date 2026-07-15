@@ -50,11 +50,13 @@ import {
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
 
-const IDENTITY: ProviderIdentity = Object.freeze({
+/** Public identity committed by macOS-native inspection observations. */
+export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   id: "native-macos",
   name: "macOS native inspection utilities",
   version: null,
 });
+const IDENTITY = NATIVE_MACOS_PROVIDER_IDENTITY;
 const TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
 

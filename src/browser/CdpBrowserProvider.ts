@@ -65,11 +65,13 @@ import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
-const IDENTITY: ProviderIdentity = {
+/** Public identity committed by passive browser observations. */
+export const CDP_BROWSER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   id: "rea-cdp-browser",
   name: "REA Chrome DevTools Protocol observation provider",
   version: "2",
-};
+});
+const IDENTITY = CDP_BROWSER_PROVIDER_IDENTITY;
 const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
 
 /** Passive, origin-scoped browser observation through a user-owned CDP endpoint. */

@@ -6,13 +6,14 @@ import {
 } from "./application/ProcessCli.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 /** Register Process Capture v4 one-shot commands through shared application services. */
 export const registerProcessCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("capture-process", {
+  cli.command(CLI_COMMANDS.captureProcess, {
     description: "Capture one approved Process Capture v4 JSON scenario",
     args: z.object({ scenario: z.string().describe("Scenario JSON path") }),
     run: ({ args }) =>
@@ -20,7 +21,7 @@ export const registerProcessCommands = (
         captureProcessScenarioFile(args.scenario),
       ),
   });
-  cli.command("compare-process-captures", {
+  cli.command(CLI_COMMANDS.compareProcessCaptures, {
     description: "Compare two Process Capture v4 Evidence JSON files",
     args: z.object({
       left: z.string().describe("Left capture Evidence JSON path"),

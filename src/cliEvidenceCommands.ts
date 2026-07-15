@@ -8,6 +8,7 @@ import {
 import { parseConfig } from "./config.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "./logger.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import {
   AnalysisProtocolError,
@@ -23,7 +24,7 @@ export const registerEvidenceCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("evidence-import", {
+  cli.command(CLI_COMMANDS.evidenceImport, {
     description: "Validate and import a bounded local Evidence v2 bundle",
     args: z.object({
       path: z.string().describe("Evidence bundle JSON path"),
@@ -43,7 +44,7 @@ export const registerEvidenceCommands = (
         return imported.ok ? imported.value : cliError(imported.error);
       }),
   });
-  cli.command("evidence-export", {
+  cli.command(CLI_COMMANDS.evidenceExport, {
     description: "Validate and atomically export canonical Evidence v2 JSON",
     args: z.object({
       source: z.string().describe("Existing evidence bundle JSON path"),
@@ -70,7 +71,7 @@ export const registerEvidenceCommands = (
         return exported.ok ? exported.value : cliError(exported.error);
       }),
   });
-  cli.command("compare", {
+  cli.command(CLI_COMMANDS.compare, {
     aliases: ["compare-bundles"],
     description: "Compare two canonical Evidence v2 bundles",
     args: z.object({

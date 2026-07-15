@@ -1,0 +1,415 @@
+{
+  "catalog_schema_version": 1,
+  "package": {
+    "name": "rea-agents",
+    "version": "1.6.0",
+    "sdk": {
+      "server": "2.0.0-beta.4",
+      "client": "2.0.0-beta.4",
+      "core": "2.0.0-beta.4"
+    },
+    "skill_version": "14"
+  },
+  "tools": {
+    "total": 78,
+    "families": [
+      {
+        "id": "direct",
+        "surface": "official-proxy",
+        "count": 33,
+        "tools": [
+          "address_name",
+          "comment",
+          "current_address",
+          "current_document",
+          "current_procedure",
+          "goto_address",
+          "inline_comment",
+          "list_bookmarks",
+          "list_documents",
+          "list_names",
+          "list_procedures",
+          "list_segments",
+          "list_strings",
+          "next_address",
+          "prev_address",
+          "procedure_address",
+          "procedure_assembly",
+          "procedure_callees",
+          "procedure_callers",
+          "procedure_info",
+          "procedure_pseudo_code",
+          "procedure_references",
+          "resolve_containing_procedure",
+          "search_procedures",
+          "search_strings",
+          "set_address_name",
+          "set_addresses_names",
+          "set_bookmark",
+          "set_comment",
+          "set_current_document",
+          "set_inline_comment",
+          "unset_bookmark",
+          "xrefs"
+        ]
+      },
+      {
+        "id": "enhanced",
+        "surface": "enhanced",
+        "count": 10,
+        "tools": [
+          "analyze_function",
+          "analyze_swift_types",
+          "batch_decompile",
+          "binary_overview",
+          "find_xrefs_to_name",
+          "get_call_graph",
+          "get_objc_classes",
+          "get_objc_protocols",
+          "swift_classes",
+          "trace_feature"
+        ]
+      },
+      {
+        "id": "native",
+        "surface": "native-provider",
+        "count": 5,
+        "tools": [
+          "demangle_swift",
+          "inspect_macho",
+          "inspect_plist",
+          "inspect_signature",
+          "list_architectures"
+        ]
+      },
+      {
+        "id": "artifact",
+        "surface": "artifact-provider",
+        "count": 2,
+        "tools": ["extract_artifact", "inventory_artifact"]
+      },
+      {
+        "id": "browser",
+        "surface": "browser-provider",
+        "count": 8,
+        "tools": [
+          "analyze_web_bundle",
+          "capture_web_screenshot",
+          "compare_web_captures",
+          "compare_web_screenshots",
+          "discover_webmcp_tools",
+          "inspect_web_page",
+          "list_browser_targets",
+          "observe_web_session"
+        ]
+      },
+      {
+        "id": "electron",
+        "surface": "electron-provider",
+        "count": 2,
+        "tools": ["inspect_electron_page", "list_electron_targets"]
+      },
+      {
+        "id": "session",
+        "surface": "session",
+        "count": 18,
+        "tools": [
+          "binary_session",
+          "build_call_path",
+          "capture_process_scenario",
+          "close_binary",
+          "compare_artifacts",
+          "compare_bundles",
+          "compare_functions",
+          "compare_process_captures",
+          "correlate_static_and_runtime",
+          "export_evidence_bundle",
+          "find_changed_behavior",
+          "import_evidence_bundle",
+          "list_unknowns",
+          "open_binary",
+          "record_unknown",
+          "update_unknown",
+          "verify_reconstruction",
+          "verify_unknown_resolution"
+        ]
+      }
+    ]
+  },
+  "providers": [
+    {
+      "id": "hopper",
+      "name": "Hopper Disassembler",
+      "version": null,
+      "capabilities": [
+        "address_name",
+        "analyze_function",
+        "comment",
+        "current_address",
+        "current_document",
+        "current_procedure",
+        "goto_address",
+        "inline_comment",
+        "list_bookmarks",
+        "list_documents",
+        "list_names",
+        "list_procedures",
+        "list_segments",
+        "list_strings",
+        "next_address",
+        "prev_address",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_info",
+        "procedure_pseudo_code",
+        "procedure_references",
+        "resolve_containing_procedure",
+        "search_procedures",
+        "search_strings",
+        "set_address_name",
+        "set_addresses_names",
+        "set_bookmark",
+        "set_comment",
+        "set_current_document",
+        "set_inline_comment",
+        "unset_bookmark",
+        "xrefs"
+      ]
+    },
+    {
+      "id": "native-macos",
+      "name": "macOS native inspection utilities",
+      "version": null,
+      "capabilities": [
+        "demangle_swift",
+        "inspect_macho",
+        "inspect_plist",
+        "inspect_signature",
+        "list_architectures"
+      ]
+    },
+    {
+      "id": "rea-artifact-graph",
+      "name": "REA safe artifact graph provider",
+      "version": "1",
+      "capabilities": ["extract_artifact", "inventory_artifact"]
+    },
+    {
+      "id": "rea-cdp-browser",
+      "name": "REA Chrome DevTools Protocol observation provider",
+      "version": "2",
+      "capabilities": [
+        "analyze_web_bundle",
+        "capture_web_screenshot",
+        "compare_web_captures",
+        "compare_web_screenshots",
+        "discover_webmcp_tools",
+        "inspect_web_page",
+        "list_browser_targets",
+        "observe_web_session"
+      ]
+    },
+    {
+      "id": "rea-cdp-electron",
+      "name": "REA Electron file-page CDP observation provider",
+      "version": "1",
+      "capabilities": ["inspect_electron_page", "list_electron_targets"]
+    }
+  ],
+  "setup_clients": [
+    {
+      "id": "claude_code",
+      "display_name": "Claude Code",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "claude_desktop",
+      "display_name": "Claude Desktop",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "format": "toml",
+      "configuration": "managed"
+    },
+    {
+      "id": "cursor",
+      "display_name": "Cursor",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "gemini_cli",
+      "display_name": "Gemini CLI",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "windsurf",
+      "display_name": "Windsurf",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "devin",
+      "display_name": "Devin",
+      "format": "unsupported",
+      "configuration": "detect-only"
+    }
+  ],
+  "schemas": [
+    {
+      "id": "analysis_snapshot",
+      "version": 1
+    },
+    {
+      "id": "artifact_extraction",
+      "version": 1
+    },
+    {
+      "id": "artifact_graph",
+      "version": 1
+    },
+    {
+      "id": "browser_target_list",
+      "version": 1
+    },
+    {
+      "id": "electron_page_inspection",
+      "version": 1
+    },
+    {
+      "id": "electron_target_list",
+      "version": 1
+    },
+    {
+      "id": "evidence",
+      "version": 2
+    },
+    {
+      "id": "evidence_bundle",
+      "version": 2
+    },
+    {
+      "id": "investigation_run",
+      "version": 1
+    },
+    {
+      "id": "investigation_run_summary",
+      "version": 1
+    },
+    {
+      "id": "investigation_workspace",
+      "version": 1
+    },
+    {
+      "id": "process_capture",
+      "version": 4
+    },
+    {
+      "id": "reconstruction_verification",
+      "version": 1
+    },
+    {
+      "id": "residual_unknown",
+      "version": 1
+    },
+    {
+      "id": "web_bundle_analysis",
+      "version": 1
+    },
+    {
+      "id": "web_capture_diff",
+      "version": 1
+    },
+    {
+      "id": "web_mcp_discovery",
+      "version": 1
+    },
+    {
+      "id": "web_observation_session",
+      "version": 1
+    },
+    {
+      "id": "web_page_inspection",
+      "version": 2
+    },
+    {
+      "id": "web_screenshot",
+      "version": 1
+    },
+    {
+      "id": "web_screenshot_diff",
+      "version": 1
+    }
+  ],
+  "cli": {
+    "primary_count": 38,
+    "commands": [
+      "analyze",
+      "analyze-web-bundle",
+      "capabilities",
+      "capture-process",
+      "capture-web-screenshot",
+      "compare",
+      "compare-process-captures",
+      "compare-web-captures",
+      "compare-web-screenshots",
+      "decompile",
+      "demangle-swift",
+      "discover-webmcp-tools",
+      "doctor",
+      "evidence-export",
+      "evidence-import",
+      "extract-artifact",
+      "function",
+      "import-reference-source",
+      "inspect",
+      "inspect-electron-page",
+      "inspect-macho",
+      "inspect-plist",
+      "inspect-signature",
+      "inspect-web-page",
+      "inventory-artifact",
+      "investigate-versions",
+      "list-architectures",
+      "list-browser-targets",
+      "list-electron-targets",
+      "observe-web-session",
+      "policy",
+      "providers",
+      "search",
+      "setup",
+      "trace",
+      "uninstall",
+      "upgrade",
+      "xrefs"
+    ],
+    "aliases": [
+      {
+        "name": "compare-bundles",
+        "target": "compare"
+      }
+    ]
+  },
+  "runtime_catalog": {
+    "counts": {
+      "cli_commands": 38,
+      "mcp_tools": 78,
+      "mcp_prompts": 6,
+      "mcp_resources": 2,
+      "mcp_resource_templates": 7
+    },
+    "digests": {
+      "tools_sha256": "881033cf0352b32a37124556fbbced145e2e879d11462a2b447f0c7d25f70965",
+      "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
+      "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
+      "combined_sha256": "f6bc43b72d2c5ba79af09e849e2be41df846c24423661a460d805fd07d30931e"
+    }
+  }
+}

@@ -10,6 +10,7 @@ import {
   authorizeFileReadWithDeferredWrite,
   authorizeRootPermission,
 } from "./application/DeferredFileAuthorization.js";
+import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const investigationOptionsSchema = z.object({
   yes: z
@@ -48,7 +49,7 @@ export const registerInvestigationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  cli.command("investigate-versions", {
+  cli.command(CLI_COMMANDS.investigateVersions, {
     description:
       "Run or resume a persistent cross-version artifact investigation",
     args: z.object({

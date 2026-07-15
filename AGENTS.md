@@ -32,6 +32,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `bridge/hopper_bridge.py`: runs inside Hopper and adapts declared operations to Hopper's public Python API. Hopper's bundled MCP server is not used.
 - `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows.
 - `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
+- `docs/product-catalog.json`: generated package, tool-family, provider, setup-client, schema-version, and CLI facts. Regenerate it from source; do not edit it by hand.
 - `tests/`: Vitest suite. `tests/fixtures/` holds the fake launcher and fake Hopper bridge used as production seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
 - `scripts/verify-real-browser.mjs`: real Chrome end-to-end verifier for the passive CDP provider.
@@ -54,6 +55,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 78-tool target-free MCP server in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
+- `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc output, and the error JSON schema without rewriting them.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
 
