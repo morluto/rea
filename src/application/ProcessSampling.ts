@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProcessSample } from "../domain/processCapture.js";
-import { readProcessRunId } from "./ProcessOwnership.js";
+import { readProcessRunId } from "../process/ProcessOwnership.js";
 
 const execFileAsync = promisify(execFile);
 const PROC_READ_CONCURRENCY = 64;

@@ -5,7 +5,7 @@ import {
   parseProcessEnvironment,
   selectCapturedProcessGroupIds,
   type ProcessOwnershipHost,
-} from "../src/application/ProcessOwnership.js";
+} from "../src/process/ProcessOwnership.js";
 
 const ownership = {
   runId: "run-token",

@@ -1,11 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ProcessSample } from "../domain/processCapture.js";
 
 const execFileAsync = promisify(execFile);
 
-/** Identity proof required before REA may signal a captured process group. */
+/** Identity proof required before REA may signal an owned process group. */
 export interface OwnedProcessGroup {
   readonly runId: string;
   readonly leaderPid: number;
@@ -16,6 +15,7 @@ export interface OwnedProcessGroup {
   readonly expectedParentPid?: number;
 }
 
+/** One operating-system observation of a process-group member. */
 interface ProcessGroupMember {
   readonly pid: number;
   readonly parentPid: number;
@@ -26,12 +26,20 @@ interface ProcessGroupMember {
 
 /** Narrow operating-system seam used to inspect and signal process groups. */
 export interface ProcessOwnershipHost {
-  listMembers(processGroupId: number): Promise<readonly ProcessGroupMember[]>;
+  listMembers(processGroupId: number): Promise<
+    readonly {
+      readonly pid: number;
+      readonly parentPid: number;
+      readonly processGroupId: number;
+      readonly state: string;
+      readonly command: string;
+    }[]
+  >;
   environment(pid: number): Promise<Readonly<Record<string, string>>>;
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
 }
 
-/** Cleanup succeeds only when the group is absent or every member is owned. */
+/** Per-member reason that token-verified cleanup failed closed. */
 interface ProcessOwnershipValidationFailure {
   readonly pid: number;
   readonly reason: "environment-unreadable" | "run-token-mismatch";
@@ -43,7 +51,10 @@ export type ProcessCleanupResult =
   | {
       readonly cleaned: false;
       readonly reason: string;
-      readonly failures?: readonly ProcessOwnershipValidationFailure[];
+      readonly failures?: readonly {
+        readonly pid: number;
+        readonly reason: "environment-unreadable" | "run-token-mismatch";
+      }[];
     };
 
 /** Token-verified liveness result used by post-root-exit settlement. */
@@ -55,7 +66,10 @@ export type ProcessGroupObservation =
 /** Select the PTY root group and groups led by an observed captured process. */
 export const selectCapturedProcessGroupIds = (
   rootPid: number,
-  samples: readonly Pick<ProcessSample, "pid" | "process_group_id">[],
+  samples: readonly {
+    readonly pid: number;
+    readonly process_group_id: number | null;
+  }[],
 ): readonly number[] => {
   const processGroupIds = new Set<number>([rootPid]);
   for (const sample of samples) {

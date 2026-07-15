@@ -5,12 +5,12 @@ analysis provider. This note does not claim that Ghidra support is implemented
 or shipped.
 
 The provider-neutral target, provider registry, deterministic target binding,
-analysis-profile commitment, Evidence provenance, and snapshot v2 foundation
-are implemented. Ghidra runtime work remains gated on bounded provider process
-ownership and a multi-fixture conformance suite. A provider is not a drop-in
-replacement for Hopper: every capability must be mapped explicitly, with
-truthful `unavailable` or degraded results where the engine cannot provide
-equivalent semantics.
+analysis-profile commitment, Evidence provenance, snapshot v2, and bounded
+provider-process lifecycle foundations are implemented. Ghidra support itself
+remains gated on its launcher, bridge, semantic adapter, and multi-fixture
+conformance suite. A provider is not a drop-in replacement for Hopper: every
+capability must be mapped explicitly, with truthful `unavailable` or degraded
+results where the engine cannot provide equivalent semantics.
 
 [ADR-0001](adr/0001-provider-selection-and-analysis-profiles.md) fixes the
 provider registry, deterministic selection, target binding, analysis profile,
@@ -35,6 +35,21 @@ follow.
 - Verify real claims on Linux with at least two distinct source-owned binaries;
   compare normalized semantic facts rather than provider-specific pseudocode
   text.
+
+## Shared provider-process foundation
+
+`src/process/` now provides the mechanisms that a long-lived Hopper or Ghidra
+adapter genuinely shares: run-token-authenticated process-group ownership,
+mode-0700 temporary runtime roots, one absolute startup deadline, correlated
+request timeout/cancellation cleanup, bounded stdout and stderr retention with
+exact byte counts, process-exit diagnostics, and bounded TERM-to-KILL shutdown.
+Reusable fixtures exercise exit, timeout, cancellation, graceful termination,
+forced termination, double-close, spawn failure, and resource release.
+
+The foundation does not define a bridge schema, socket framing, health payload,
+analysis model, or shutdown acknowledgement. Hopper keeps its authenticated
+NDJSON-over-Unix-socket protocol in `src/hopper/`; Ghidra may use its own Java
+bridge and transport while reusing only these process mechanisms.
 
 ## Shortlist
 

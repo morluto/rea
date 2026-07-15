@@ -362,7 +362,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **A second deep-analysis provider** — build the read-only Ghidra runtime on the shipped explicit registry and target-binding foundation for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
+2. **A second deep-analysis provider** — build the read-only Ghidra adapter on the shipped registry, target-binding, and bounded provider-process lifecycle foundations for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
 3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
 
 ### Next
@@ -414,11 +414,13 @@ flowchart LR
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
     Registry -. planned, not shipped .-> Ghidra["Ghidra provider"]
+    Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
+    Ghidra -. planned .-> Runtime
     Session --> Native["Native macOS provider"]
     Session --> Artifact["Artifact graph provider"]
     REA --> Browser["Browser CDP provider"]
     REA --> Process["Process capture provider"]
-    Hopper --> Target["Target software"]
+    Runtime --> Target["Target software"]
     Process --> Target
     Native --> Target
     Artifact --> Target

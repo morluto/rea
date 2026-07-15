@@ -8,13 +8,13 @@
 <div class="col-content">
 <div class="tsd-page-title">
 <ul class="tsd-breadcrumb" aria-label="Breadcrumb">
-<li><a href="../modules/application_ProcessOwnership.html">application/ProcessOwnership</a></li>
+<li><a href="../modules/process_ProcessOwnership.html">process/ProcessOwnership</a></li>
 <li><a href="" aria-current="page">cleanupOwnedProcessGroup</a></li></ul>
 <h1>Function cleanupOwnedProcessGroup</h1></div>
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="cleanupownedprocessgroup"><span class="tsd-kind-call-signature">cleanupOwnedProcessGroup</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">ownership</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/application_ProcessOwnership.OwnedProcessGroup.html" class="tsd-signature-type tsd-kind-interface">OwnedProcessGroup</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/application_ProcessOwnership.ProcessOwnershipHost.html" class="tsd-signature-type tsd-kind-interface">ProcessOwnershipHost</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span><a href="#cleanupownedprocessgroup" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="cleanupownedprocessgroup"><span class="tsd-kind-call-signature">cleanupOwnedProcessGroup</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">ownership</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/process_ProcessOwnership.OwnedProcessGroup.html" class="tsd-signature-type tsd-kind-interface">OwnedProcessGroup</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/process_ProcessOwnership.ProcessOwnershipHost.html" class="tsd-signature-type tsd-kind-interface">ProcessOwnershipHost</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/process_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span><a href="#cleanupownedprocessgroup" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Verify run-token ownership before signaling a POSIX process group.</p>
 <p>Process IDs and group IDs can be reused. REA therefore re-reads every live
@@ -24,11 +24,11 @@ member cannot be inspected or lacks the per-capture run token.</p>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">ownership</span>: <a href="../interfaces/application_ProcessOwnership.OwnedProcessGroup.html" class="tsd-signature-type tsd-kind-interface">OwnedProcessGroup</a></span></li>
-<li><span><span class="tsd-kind-parameter">host</span>: <a href="../interfaces/application_ProcessOwnership.ProcessOwnershipHost.html" class="tsd-signature-type tsd-kind-interface">ProcessOwnershipHost</a><span class="tsd-signature-symbol"> = systemHost</span></span></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
+<li><span><span class="tsd-kind-parameter">ownership</span>: <a href="../interfaces/process_ProcessOwnership.OwnedProcessGroup.html" class="tsd-signature-type tsd-kind-interface">OwnedProcessGroup</a></span></li>
+<li><span><span class="tsd-kind-parameter">host</span>: <a href="../interfaces/process_ProcessOwnership.ProcessOwnershipHost.html" class="tsd-signature-type tsd-kind-interface">ProcessOwnershipHost</a><span class="tsd-signature-symbol"> = systemHost</span></span></li></ul></div>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/process_ProcessOwnership.ProcessCleanupResult.html" class="tsd-signature-type tsd-kind-type-alias">ProcessCleanupResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/ProcessOwnership.ts#L138">src/application/ProcessOwnership.ts:138</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/ProcessOwnership.ts#L152">src/process/ProcessOwnership.ts:152</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
