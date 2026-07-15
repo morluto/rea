@@ -11,6 +11,11 @@ replacement for Hopper: every capability must be mapped explicitly, with
 truthful `unavailable` or degraded results where the engine cannot provide
 equivalent semantics.
 
+[ADR-0001](adr/0001-provider-selection-and-analysis-profiles.md) fixes the
+provider registry, deterministic selection, target binding, analysis profile,
+snapshot migration, and compatibility semantics that implementation must
+follow.
+
 ## Approved Ghidra v1 boundary
 
 - Keep the existing provider-neutral CLI and MCP tool names.

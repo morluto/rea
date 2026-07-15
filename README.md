@@ -376,7 +376,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the accepted Ghidra direction, remaining architecture gates, and provider comparison matrix.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the accepted Ghidra direction and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions that gate implementation.
 
 ## Using REA with other agents
 
