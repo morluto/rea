@@ -208,8 +208,7 @@ const runCommand = (
 ): Promise<boolean> =>
   new Promise((resolveResult) => {
     const child = spawn(command, [...arguments_], {
-      stdio:
-        output === "human" ? "inherit" : ["inherit", process.stderr, "inherit"],
+      stdio: output === "human" ? "inherit" : ["inherit", "ignore", "inherit"],
     });
     child.once("error", () => resolveResult(false));
     child.once("exit", (code) => resolveResult(code === 0));

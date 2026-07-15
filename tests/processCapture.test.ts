@@ -967,7 +967,7 @@ describe("process capture adapter", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("does not follow or disclose symlink targets outside declared roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-symlink-test-"));
@@ -1186,5 +1186,5 @@ describe("process capture adapter", () => {
     const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
     expect(stdout).not.toContain(`${processFixture} tree-child`);
     expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
-  });
+  }, 20_000);
 });

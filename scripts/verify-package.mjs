@@ -421,10 +421,11 @@ try {
       alignedExecution.status !== (status === "ready" ? 0 : 1) ||
       aligned.plannedActions.length !== 0 ||
       aligned.appliedActions.length !== 0 ||
-      second.appliedActions.length !== 0
+      !second.plannedActions.some(({ kind }) => kind === "install_hopper") ||
+      !second.appliedActions.includes("installed_hopper")
     )
       throw new Error(
-        `packaged setup was not ready and idempotent without confirmation: ${JSON.stringify({ first, aligned, second })}`,
+        `packaged setup did not preserve idempotent defaults and explicit Hopper reinstall behavior: ${JSON.stringify({ first, aligned, second })}`,
       );
     for (const configPath of [claudeConfig, cursorConfig]) {
       const config = json(await readFile(configPath, "utf8"));
