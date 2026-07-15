@@ -55,6 +55,7 @@ export interface MacHopperInstallHost {
     source: string,
     destination: string,
     stage: string,
+    replaceExisting: boolean,
   ): Promise<boolean>;
   launcherReady(path: string): Promise<boolean>;
   openApplication(path: string): Promise<void>;
@@ -64,6 +65,7 @@ export interface MacHopperInstallHost {
 
 /** Download, verify, and install Hopper into the current user's Applications directory. */
 export const installMacHopper = async (
+  options: { readonly replaceExisting?: boolean } = {},
   host: MacHopperInstallHost = systemMacHopperInstallHost(),
 ): Promise<MacHopperInstallResult> => {
   let temporary: string | undefined;
@@ -83,7 +85,8 @@ export const installMacHopper = async (
       return { status: "failed", reason: "integrity" };
 
     const destination = host.destination();
-    if (await host.destinationExists(destination))
+    const destinationExists = await host.destinationExists(destination);
+    if (destinationExists && options.replaceExisting !== true)
       return { status: "failed", reason: "destination_exists" };
     temporary = await host.createTemporaryDirectory();
     const packagePath = join(temporary, "hopper.dmg");
@@ -97,7 +100,9 @@ export const installMacHopper = async (
     if (source === undefined || !(await host.validBundle(source)))
       return { status: "failed", reason: "bundle" };
     const stage = `${destination}.rea-stage`;
-    if (!(await host.installBundle(source, destination, stage)))
+    if (
+      !(await host.installBundle(source, destination, stage, destinationExists))
+    )
       return { status: "failed", reason: "copy" };
     const launcherPath = join(destination, "Contents/MacOS/hopper");
     if (!(await host.launcherReady(launcherPath)))
@@ -181,15 +186,27 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
       return false;
     }
   },
-  async installBundle(source, destination, stage) {
+  async installBundle(source, destination, stage, replaceExisting) {
+    const previous = `${stage}-previous`;
     try {
       await mkdir(join(homedir(), "Applications"), { recursive: true });
       await rm(stage, { recursive: true, force: true });
+      await rm(previous, { recursive: true, force: true });
       await execFileAsync("ditto", [source, stage]);
+      await access(join(stage, "Contents/MacOS/hopper"));
+      if (replaceExisting) await rename(destination, previous);
       await rename(stage, destination);
+      if (replaceExisting) await rm(previous, { recursive: true, force: true });
       return true;
     } catch {
       await rm(stage, { recursive: true, force: true });
+      if (replaceExisting) {
+        try {
+          await rename(previous, destination);
+        } catch {
+          // The original destination was not moved, or rollback is impossible.
+        }
+      }
       return false;
     }
   },

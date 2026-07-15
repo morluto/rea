@@ -6,6 +6,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
@@ -68,7 +69,7 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
-  installHopper(): Promise<SetupHopperInstallResult>;
+  installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
   detectedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
@@ -143,8 +144,13 @@ export const runSetup = async (
   const unsupported = await hostRemediation(host);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
-  const discovery = await discoverSetupActions(host, hopperPath);
-  const { detectedClients, installHopper, installSkill } = discovery;
+  const discovery = await discoverSetupActions(
+    host,
+    hopperPath,
+    options.installHopper,
+  );
+  const { installHopper, installSkill } = discovery;
+  let { detectedClients } = discovery;
   plannedActions = discovery.plannedActions;
   let approved = options.approved || plannedActions.length === 0;
   let interactiveApproval = false;
@@ -164,7 +170,7 @@ export const runSetup = async (
     };
 
   if (installHopper && (interactiveApproval || options.installHopper)) {
-    const installed = await host.installHopper();
+    const installed = await host.installHopper(options.installHopper);
     if (installed.status === "failed")
       return {
         status: "needs_human",
@@ -177,6 +183,12 @@ export const runSetup = async (
       };
     hopperPath = installed.launcherPath;
     appliedActions.push("installed_hopper");
+    detectedClients = await filterClientsNeedingConfigure(
+      host,
+      detectedClients,
+      hopperPath,
+      registrationCommand(),
+    );
   }
   const clientFailure = await configureDetectedClients({
     host,
@@ -215,6 +227,7 @@ export const runSetup = async (
 const discoverSetupActions = async (
   host: SetupHost,
   hopperPath: string | undefined,
+  forceHopperInstall: boolean,
 ) => {
   const initialDoctor = await host.doctor();
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
@@ -223,7 +236,8 @@ const discoverSetupActions = async (
       (name === "hopper-demo-runtime" ||
         (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
   );
-  const installHopper = hopperPath === undefined || linuxHopperRepairNeeded;
+  const installHopper =
+    forceHopperInstall || hopperPath === undefined || linuxHopperRepairNeeded;
   const [detectedClients, installSkill] = await Promise.all([
     host.detectedClients(),
     host.skillNeedsInstall(),
@@ -306,11 +320,11 @@ const systemSetupHost = (): SetupHost => {
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
-    installHopper: async () => {
+    installHopper: async (replaceExisting) => {
       const result =
         process.platform === "linux"
           ? await installLinuxHopper()
-          : await installMacHopper();
+          : await installMacHopper({ replaceExisting });
       if (result.status === "installed") return result;
       return setupInstallFailure(result.reason);
     },
@@ -387,11 +401,8 @@ export const configureJsonClient = async (
   let backupPath: string | undefined;
   if (original !== undefined) {
     backupPath = `${client.configPath}.rea.backup`;
-    try {
-      await copyFile(transactionPath, backupPath);
-    } catch {
+    if (!(await preserveConfigBackup(transactionPath, backupPath)))
       return { status: "failed", reason: "backup" };
-    }
   }
   document.mcpServers = {
     ...servers,
@@ -470,11 +481,11 @@ export const configureTomlClient = async (
     return { status: "unchanged" };
   const backupPath =
     original === undefined ? undefined : `${client.configPath}.rea.backup`;
-  try {
-    if (backupPath !== undefined) await copyFile(transactionPath, backupPath);
-  } catch {
+  if (
+    backupPath !== undefined &&
+    !(await preserveConfigBackup(transactionPath, backupPath))
+  )
     return { status: "failed", reason: "backup" };
-  }
   document.mcp_servers = {
     ...servers,
     [PRODUCT_IDENTITY.mcpServerKey]: desired,
@@ -514,6 +525,17 @@ const exists = async (path: string): Promise<boolean> => {
     return true;
   } catch {
     return false;
+  }
+};
+const preserveConfigBackup = async (
+  source: string,
+  destination: string,
+): Promise<boolean> => {
+  try {
+    await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
+    return true;
+  } catch (cause: unknown) {
+    return cause instanceof Error && "code" in cause && cause.code === "EEXIST";
   }
 };
 const objectSchema = z.record(z.string(), z.unknown());

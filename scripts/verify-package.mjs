@@ -406,7 +406,7 @@ try {
   const aligned = json(alignedExecution.stdout);
   const secondExecution = await runWithStatus(
     cli,
-    ["setup", "--yes", "--install-hopper", "--json"],
+    ["setup", "--install-hopper", "--json"],
     environment,
   );
   const second = json(secondExecution.stdout);
@@ -414,17 +414,18 @@ try {
     const status = process.platform === "linux" ? "needs_human" : "ready";
     if (
       first.status !== status ||
-      second.status !== status ||
+      second.status !== "needs_confirmation" ||
       firstExecution.status !== (status === "ready" ? 0 : 1) ||
-      secondExecution.status !== (status === "ready" ? 0 : 1) ||
+      secondExecution.status !== 1 ||
       aligned.status !== status ||
       alignedExecution.status !== (status === "ready" ? 0 : 1) ||
       aligned.plannedActions.length !== 0 ||
       aligned.appliedActions.length !== 0 ||
+      !second.plannedActions.some(({ kind }) => kind === "install_hopper") ||
       second.appliedActions.length !== 0
     )
       throw new Error(
-        `packaged setup was not ready and idempotent without confirmation: ${JSON.stringify({ first, aligned, second })}`,
+        `packaged setup did not preserve idempotent defaults and explicit Hopper reinstall behavior: ${JSON.stringify({ first, aligned, second })}`,
       );
     for (const configPath of [claudeConfig, cursorConfig]) {
       const config = json(await readFile(configPath, "utf8"));

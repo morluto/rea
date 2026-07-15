@@ -123,6 +123,8 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
     const client = { name: "cursor", configPath };
+    const original = "{}\n";
+    await writeFile(configPath, original);
     expect(await configureJsonClient(client, hopperPath)).toMatchObject({
       status: "configured",
     });
@@ -138,6 +140,10 @@ describe("JSON client configuration transaction", () => {
     expect(await configureJsonClient(client, hopperPath)).toEqual({
       status: "unchanged",
     });
+    expect(
+      await configureJsonClient(client, "/opt/hopper/bin/Hopper"),
+    ).toMatchObject({ status: "configured" });
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
   });
 
   it("refuses malformed existing JSON without overwriting it", async () => {

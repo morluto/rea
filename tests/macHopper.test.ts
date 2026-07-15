@@ -19,6 +19,7 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   unmounts = 0;
   cleanups = 0;
   opens = 0;
+  replaces = false;
 
   download = (url: string) =>
     Promise.resolve(
@@ -51,7 +52,15 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   appBundle = () => Promise.resolve("/mounted/Hopper Disassembler.app");
   validBundle = () => Promise.resolve(this.valid);
   destinationExists = () => Promise.resolve(this.existing);
-  installBundle = () => Promise.resolve(this.copySucceeds);
+  installBundle = (
+    _source: string,
+    _destination: string,
+    _stage: string,
+    replaceExisting: boolean,
+  ) => {
+    this.replaces = replaceExisting;
+    return Promise.resolve(this.copySucceeds);
+  };
   launcherReady = () => Promise.resolve(this.launcherSucceeds);
   openApplication = () => {
     this.opens += 1;
@@ -67,7 +76,7 @@ class FakeMacHopperHost implements MacHopperInstallHost {
 describe("macOS Hopper installation", () => {
   it("installs, verifies, opens, and cleans the official package", async () => {
     const host = new FakeMacHopperHost();
-    await expect(installMacHopper(host)).resolves.toEqual({
+    await expect(installMacHopper({}, host)).resolves.toEqual({
       status: "installed",
       launcherPath:
         "/home/user/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
@@ -80,7 +89,7 @@ describe("macOS Hopper installation", () => {
   it("rejects an integrity mismatch before mounting", async () => {
     const host = new FakeMacHopperHost();
     host.badHash = true;
-    await expect(installMacHopper(host)).resolves.toEqual({
+    await expect(installMacHopper({}, host)).resolves.toEqual({
       status: "failed",
       reason: "integrity",
     });
@@ -91,16 +100,26 @@ describe("macOS Hopper installation", () => {
   it("refuses to overwrite an existing application", async () => {
     const host = new FakeMacHopperHost();
     host.existing = true;
-    await expect(installMacHopper(host)).resolves.toEqual({
+    await expect(installMacHopper({}, host)).resolves.toEqual({
       status: "failed",
       reason: "destination_exists",
     });
   });
 
+  it("replaces the managed application when explicitly requested", async () => {
+    const host = new FakeMacHopperHost();
+    host.existing = true;
+
+    await expect(
+      installMacHopper({ replaceExisting: true }, host),
+    ).resolves.toMatchObject({ status: "installed" });
+    expect(host.replaces).toBe(true);
+  });
+
   it("cleans and detaches after bundle validation fails", async () => {
     const host = new FakeMacHopperHost();
     host.valid = false;
-    await expect(installMacHopper(host)).resolves.toEqual({
+    await expect(installMacHopper({}, host)).resolves.toEqual({
       status: "failed",
       reason: "bundle",
     });
