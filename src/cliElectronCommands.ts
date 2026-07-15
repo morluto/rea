@@ -4,6 +4,7 @@ import {
   inspectElectronPage,
   listElectronTargets,
 } from "./application/ElectronObservationService.js";
+import { analyzeJavaScriptApplication } from "./application/JavaScriptApplicationService.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -12,6 +13,7 @@ import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "./domain/electronObservation.js";
+import { analyzeJavaScriptApplicationInputSchema } from "./domain/javascriptApplicationAnalysis.js";
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
@@ -27,6 +29,14 @@ const scopeOptions = {
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  registerElectronObservationCommands(cli, logger);
+  registerJavaScriptApplicationCommand(cli, logger);
+};
+
+const registerElectronObservationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
@@ -117,6 +127,92 @@ export const registerElectronCommands = (
   });
 };
 
+const registerJavaScriptApplicationCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
+    description:
+      "Statically reconstruct an approved JavaScript/Electron application",
+    args: z.object({
+      path: z.string().describe("Absolute ASAR or extracted application path"),
+    }),
+    options: z.object({
+      approved: z.boolean().default(false),
+      format: z.enum(["auto", "asar", "directory"]).default("auto"),
+      sourceMapReadApproved: z.boolean().default(false),
+      maxEntries: z.number().int().min(1).default(8_000),
+      maxTotalArtifactBytes: z
+        .number()
+        .int()
+        .min(1)
+        .default(512 * 1_024 * 1_024),
+      maxArtifactEntryBytes: z
+        .number()
+        .int()
+        .min(1)
+        .default(128 * 1_024 * 1_024),
+      maxCompressionRatio: z.number().min(1).default(1_000),
+      maxDepth: z.number().int().min(1).default(64),
+      maxPathBytes: z.number().int().min(1).default(4_096),
+      maxTextFiles: z.number().int().min(1).default(5_000),
+      maxTotalTextBytes: z
+        .number()
+        .int()
+        .min(1)
+        .default(128 * 1_024 * 1_024),
+      maxTextFileBytes: z
+        .number()
+        .int()
+        .min(1)
+        .default(8 * 1_024 * 1_024),
+      maxAstNodes: z.number().int().min(1).default(2_000_000),
+      maxFindings: z.number().int().min(1).default(8_000),
+      maxModules: z.number().int().min(1).default(20_000),
+      maxSourceMapSources: z.number().int().min(1).default(5_000),
+      maxParseMilliseconds: z.number().int().min(1).default(30_000),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.analyzeJavaScriptApplication,
+        async () => {
+          const context = await electronContext();
+          if (!context.ok) return context.error;
+          const parsed = analyzeJavaScriptApplicationInputSchema.safeParse({
+            input_path: args.path,
+            approved: options.approved,
+            format: options.format,
+            source_map_read_approved: options.sourceMapReadApproved,
+            limits: {
+              max_entries: options.maxEntries,
+              max_total_artifact_bytes: options.maxTotalArtifactBytes,
+              max_artifact_entry_bytes: options.maxArtifactEntryBytes,
+              max_compression_ratio: options.maxCompressionRatio,
+              max_depth: options.maxDepth,
+              max_path_bytes: options.maxPathBytes,
+              max_text_files: options.maxTextFiles,
+              max_total_text_bytes: options.maxTotalTextBytes,
+              max_text_file_bytes: options.maxTextFileBytes,
+              max_ast_nodes: options.maxAstNodes,
+              max_findings: options.maxFindings,
+              max_modules: options.maxModules,
+              max_source_map_sources: options.maxSourceMapSources,
+              max_parse_milliseconds: options.maxParseMilliseconds,
+            },
+          });
+          if (!parsed.success)
+            return inputError("analyze_javascript_application");
+          const result = await analyzeJavaScriptApplication(
+            context.authority,
+            parsed.data,
+          );
+          return result.ok ? result.value : cliError(result.error);
+        },
+      ),
+  });
+};
+
 const electronContext = async () => {
   const config = parseConfig(process.env);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
@@ -137,6 +233,6 @@ const inputError = (operation: string): JsonValue =>
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],
 ): JsonValue => ({
-  error: "Electron observation failed",
+  error: "Electron analysis failed",
   ...projectAnalysisError(error),
 });

@@ -8,6 +8,14 @@ import type {
   JavaScriptStaticReference,
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
+import type {
+  ElectronBrowserWindowFinding,
+  ElectronContextBridgeFinding,
+  ElectronIpcFinding,
+  ElectronNativeAddonBindingFinding,
+  ElectronSenderValidationFinding,
+  ElectronUtilityProcessFinding,
+} from "./electronStaticAnalysisTypes.js";
 
 /** Source offsets for one recovered bundle module factory. */
 export interface JavaScriptModuleRange {
@@ -31,6 +39,12 @@ export interface JavaScriptAnalysisAccumulator {
   readonly roles: LocatedJavaScriptFinding<JavaScriptRolePath>[];
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
+  readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
+  readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
+  readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
+  readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
+  readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
+  readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
   readonly modules: JavaScriptModuleRange[];
   readonly seen: Set<string>;
   visitedNodes: number;
@@ -82,6 +96,12 @@ export const createJavaScriptAnalysisAccumulator =
     roles: [],
     sourceMaps: [],
     registrations: [],
+    browserWindows: [],
+    contextBridgeApis: [],
+    ipc: [],
+    senderValidations: [],
+    utilityProcesses: [],
+    nativeAddonBindings: [],
     modules: [],
     seen: new Set(),
     visitedNodes: 0,

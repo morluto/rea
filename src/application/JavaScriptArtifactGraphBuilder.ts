@@ -27,6 +27,11 @@ import {
   createJavaScriptArtifactRootNode,
 } from "./JavaScriptArtifactGraphStructure.js";
 import type { JavaScriptArtifactReconstructionInput } from "./JavaScriptArtifactReconstructionInput.js";
+import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
+import {
+  classifyElectronIpcPairings,
+  collectElectronIpcRecords,
+} from "./ElectronBoundaryAnalysis.js";
 
 /** Project bounded artifact and AST facts into JavaScript Application Graph v1. */
 export const buildJavaScriptArtifactGraph = (
@@ -55,6 +60,7 @@ export const buildJavaScriptArtifactGraph = (
   const packageRoots = addJavaScriptPackageNodes(context);
   addJavaScriptBundlerNodes(context);
   addJavaScriptStaticFindings(context);
+  addElectronBoundaries(context);
   addJavaScriptHtmlRoles(context);
   addJavaScriptSourceMapOriginals(context);
   const coverage = graphCoverage(context);
@@ -82,11 +88,16 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   const malformedStructuredData =
     context.analysis.packages.some(({ status }) => status !== "included") ||
     context.analysis.source_maps.some(({ status }) => status === "invalid");
+  const partialJavaScript = context.analysis.files.some(
+    ({ javascript }) =>
+      javascript !== null && javascript.parse_status === "partial",
+  );
   const unknownGap =
     context.analysis.parse_failures > 0 ||
     context.fileSet.invalid_utf8_files > 0 ||
     sourceMapPolicyGap ||
-    malformedStructuredData;
+    malformedStructuredData ||
+    partialJavaScript;
   if (context.analysis.truncated_scopes > 0)
     return partialReconstructionCoverage(
       reconstructionLimits(context.input),
@@ -111,21 +122,69 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
-): string[] => [
-  ...context.analysis.limitations,
-  "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
-  "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
-  ...(context.accumulator.omittedObservations() === 0
-    ? []
-    : [
-        "Repeated content identities exceeded the per-node observation bound; containment edges still preserve inventoried paths.",
-      ]),
-  ...(coverage === "complete"
-    ? []
-    : [
-        "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
-      ]),
-];
+): string[] => {
+  const ipc = collectElectronIpcRecords(context.analysis);
+  const pairings = classifyElectronIpcPairings(ipc);
+  const electronFindings = context.analysis.files.reduce(
+    (count, { javascript }) =>
+      count +
+      (javascript === null
+        ? 0
+        : javascript.electron.browser_windows.length +
+          javascript.electron.context_bridge_apis.length +
+          javascript.electron.ipc.length +
+          javascript.electron.sender_validations.length +
+          javascript.electron.utility_processes.length +
+          javascript.electron.native_addon_bindings.length),
+    0,
+  );
+  return [
+    ...context.analysis.limitations,
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    ...(electronFindings === 0
+      ? []
+      : [
+          "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+        ]),
+    ...(ipc.some(({ finding }) => finding.channel === null)
+      ? [
+          "Dynamic IPC channel expressions remain unresolved and are never paired by textual similarity.",
+        ]
+      : []),
+    ...(pairings.some(({ status }) => status === "ambiguous")
+      ? [
+          "Some literal IPC channels have multiple compatible main handlers; ambiguous calls are not paired to any handler.",
+        ]
+      : []),
+    ...(context.analysis.files.some(
+      ({ javascript }) =>
+        (javascript?.electron.sender_validations.length ?? 0) > 0,
+    )
+      ? [
+          "Sender, frame, URL, and origin checks are observations only; REA does not claim that they enforce a complete authorization policy.",
+        ]
+      : []),
+    ...(context.analysis.files.some(
+      ({ javascript }) =>
+        (javascript?.electron.native_addon_bindings.length ?? 0) > 0,
+    )
+      ? [
+          "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
+        ]
+      : []),
+    ...(context.accumulator.omittedObservations() === 0
+      ? []
+      : [
+          "Repeated content identities exceeded the per-node observation bound; containment edges still preserve inventoried paths.",
+        ]),
+    ...(coverage === "complete"
+      ? []
+      : [
+          "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+        ]),
+  ];
+};
 
 const reconstructionLimits = (input: JavaScriptArtifactReconstructionInput) => [
   {

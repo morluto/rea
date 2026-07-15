@@ -11,6 +11,7 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "./fixtures/fakeCdpBrowser.js";
+import { writeElectronBoundaryFixture } from "./fixtures/electronBoundaryApplication.js";
 
 const execute = promisify(execFile);
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
@@ -77,6 +78,38 @@ describe("Electron CLI parity", () => {
         provider: { id: "rea-cdp-electron" },
         normalized_result: {
           target: { file_path: join(root, "index.html") },
+        },
+      });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "returns the static JavaScript application Evidence contract",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "rea-electron-static-cli-"));
+      temporary.push(root);
+      await writeElectronBoundaryFixture(root);
+      const environment = {
+        ...process.env,
+        REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
+      };
+
+      const analyzed = await runCli(
+        ["analyze-javascript-application", root, "--approved", "--json"],
+        environment,
+      );
+
+      expect(analyzed).toMatchObject({
+        operation: "analyze_javascript_application",
+        provider: { id: "rea-javascript-application" },
+        normalized_result: {
+          input_path: root,
+          summary: {
+            browser_windows: 3,
+            context_bridge_apis: 2,
+            ipc: { paired_renderer_transmissions: 4 },
+          },
         },
       });
     },

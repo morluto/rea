@@ -2,6 +2,12 @@
 
 REA can attach to a user-owned Electron/Chromium CDP endpoint and inspect existing `file://` renderer pages without evaluating JavaScript or invoking Electron APIs. Electron observation is separate from website observation because filesystem roots, not HTTP origins, define its authority.
 
+This passive runtime surface is distinct from the target-free static
+[`analyze_javascript_application`](javascript-artifact-reconstruction.md)
+workflow. Static analysis reads an approved ASAR or extracted directory under
+`REA_INVESTIGATION_INPUT_ROOTS_JSON`; it does not attach to CDP. Runtime
+observations and static inferences are never silently treated as the same fact.
+
 ## Configure authority
 
 The capability is disabled by default:

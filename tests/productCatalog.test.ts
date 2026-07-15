@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../src/application/InvestigationProviders.js";
+import {
+  ARTIFACT_GRAPH_PROVIDER,
+  JAVASCRIPT_APPLICATION_PROVIDER,
+} from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../src/browser/CdpElectronProvider.js";
 import { CLI_COMMAND_NAMES } from "../src/cliCommandNames.js";
@@ -66,6 +69,7 @@ describe("canonical product catalog", () => {
         ARTIFACT_GRAPH_PROVIDER,
         CDP_BROWSER_PROVIDER_IDENTITY,
         CDP_ELECTRON_PROVIDER_IDENTITY,
+        JAVASCRIPT_APPLICATION_PROVIDER,
       ]
         .map(({ id }) => id)
         .sort(),
@@ -78,6 +82,16 @@ describe("canonical product catalog", () => {
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
     ).toEqual(GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === CDP_ELECTRON_PROVIDER_IDENTITY.id,
+      )?.capabilities,
+    ).toEqual(["inspect_electron_page", "list_electron_targets"]);
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === JAVASCRIPT_APPLICATION_PROVIDER.id,
+      )?.capabilities,
+    ).toEqual(["analyze_javascript_application"]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({
@@ -147,7 +161,7 @@ describe("canonical product catalog", () => {
       ),
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues.some((issue) => issue.includes("79-tool"))).toBe(true);
+    expect(issues.some((issue) => issue.includes("80-tool"))).toBe(true);
     expect(issues.some((issue) => issue.includes("Future Client"))).toBe(true);
     expect(issues.some((issue) => issue.includes("Process Capture v5"))).toBe(
       true,

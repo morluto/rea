@@ -22,7 +22,7 @@ transport.stderr?.on("data", (chunk) => {
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  if (tools.tools.length !== 78)
+  if (tools.tools.length !== 79)
     throw new Error(
       `Published MCP exposed ${String(tools.tools.length)} tools`,
     );
@@ -40,5 +40,5 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ package: "rea-agents", version, mcpTools: 78 })}\n`,
+  `${JSON.stringify({ package: "rea-agents", version, mcpTools: 79 })}\n`,
 );

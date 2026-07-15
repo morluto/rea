@@ -6,6 +6,10 @@ import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
+import {
+  analyzeJavaScriptApplicationInputSchema,
+  javascriptApplicationAnalysisResultSchema,
+} from "../domain/javascriptApplicationAnalysis.js";
 
 const listOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
@@ -13,6 +17,9 @@ const listOutputSchema = evidenceEnvelopeSchema
 const inspectionOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: electronPageInspectionSchema });
+const applicationOutputSchema = evidenceEnvelopeSchema
+  .omit({ normalized_result: true })
+  .extend({ normalized_result: javascriptApplicationAnalysisResultSchema });
 
 const endpoint = "http://127.0.0.1:9223";
 const root = "/Applications/Example.app/Contents/Resources";
@@ -77,6 +84,31 @@ export const ELECTRON_TOOL_CONTRACTS = [
             max_script_source_bytes: 1_048_576,
             max_total_script_source_bytes: 4_194_304,
           },
+        },
+      },
+    ],
+  },
+  {
+    name: "analyze_javascript_application",
+    description:
+      "Statically reconstruct one approved local ASAR or extracted JavaScript application as Evidence v2 and JavaScript Application Graph v1. Maps BrowserWindow preferences, preload and contextBridge APIs, literal and dynamic IPC, handler locations, sender-validation observations, utility processes, and requested native addon bindings without executing JavaScript; source-map contents require separate approval.",
+    kind: "electron-provider",
+    inputSchema: analyzeJavaScriptApplicationInputSchema,
+    outputSchema: applicationOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    examples: [
+      {
+        title: "Analyze one approved local Electron application",
+        input: {
+          input_path: "/Applications/Example.app/Contents/Resources/app.asar",
+          format: "auto",
+          approved: true,
+          source_map_read_approved: false,
         },
       },
     ],

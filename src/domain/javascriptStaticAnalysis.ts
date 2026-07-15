@@ -36,11 +36,15 @@ import {
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   type JavaScriptEndpointInput as EndpointInput,
   type JavaScriptFindingContext as FindingContext,
-  type JavaScriptModuleRange as ModuleRange,
   type JavaScriptReferenceInput as ReferenceInput,
-  type LocatedJavaScriptFinding as Located,
-  type LocatedJavaScriptFindingInput as LocatedInput,
 } from "./javascriptStaticAnalysisState.js";
+import {
+  addBoundedFinding,
+  addLocatedFinding,
+  finalizeLocatedFindings,
+  moduleAtOffset,
+} from "./javascriptStaticAnalysisFindings.js";
+import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import type {
   JavaScriptBundlerModule,
   JavaScriptStaticAnalysis,
@@ -63,6 +67,17 @@ export const analyzeJavaScriptStaticSource = (
     return failedJavaScriptStaticAnalysis();
   }
   const accumulator = createJavaScriptAnalysisAccumulator();
+  traverseStaticSource(source, file, accumulator, limits);
+  addSourceMapDirectives(source, accumulator, limits.maxFindings);
+  return finalizeStaticAnalysis(source, file, accumulator, limits);
+};
+
+const traverseStaticSource = (
+  source: string,
+  file: ReturnType<typeof parse>,
+  accumulator: AnalysisAccumulator,
+  limits: JavaScriptStaticAnalysisLimits,
+): void => {
   if (limits.now() > limits.deadline) accumulator.truncated = true;
   if (!accumulator.truncated)
     t.traverseFast(file, (node) => {
@@ -78,7 +93,14 @@ export const analyzeJavaScriptStaticSource = (
       inspectNode(source, node, accumulator, limits);
       return undefined;
     });
-  addSourceMapDirectives(source, accumulator, limits.maxFindings);
+};
+
+const finalizeStaticAnalysis = (
+  source: string,
+  file: ReturnType<typeof parse>,
+  accumulator: AnalysisAccumulator,
+  limits: JavaScriptStaticAnalysisLimits,
+): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
     ...(parserErrors === 0
@@ -98,7 +120,7 @@ export const analyzeJavaScriptStaticSource = (
     ...(accumulator.unknownFindings === 0
       ? []
       : [
-          "One or more bundler registration keys were dynamic and remain unknown.",
+          "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
@@ -112,16 +134,45 @@ export const analyzeJavaScriptStaticSource = (
     parse_error_count: parserErrors,
     visited_ast_nodes: Math.min(accumulator.visitedNodes, limits.maxAstNodes),
     dropped_findings: accumulator.droppedFindings,
-    references: finalizeLocated(accumulator.references, accumulator.modules),
-    endpoints: finalizeLocated(accumulator.endpoints, accumulator.modules),
-    storage: finalizeLocated(accumulator.storage, accumulator.modules),
+    references: finalizeLocatedFindings(
+      accumulator.references,
+      accumulator.modules,
+    ),
+    endpoints: finalizeLocatedFindings(
+      accumulator.endpoints,
+      accumulator.modules,
+    ),
+    storage: finalizeLocatedFindings(accumulator.storage, accumulator.modules),
     bundler_registrations: sortedUnique(
       accumulator.registrations,
       registrationKey,
     ),
-    role_paths: finalizeLocated(accumulator.roles, accumulator.modules),
+    role_paths: finalizeLocatedFindings(accumulator.roles, accumulator.modules),
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
+    electron: {
+      browser_windows: finalizeLocatedFindings(
+        accumulator.browserWindows,
+        accumulator.modules,
+      ),
+      context_bridge_apis: finalizeLocatedFindings(
+        accumulator.contextBridgeApis,
+        accumulator.modules,
+      ),
+      ipc: finalizeLocatedFindings(accumulator.ipc, accumulator.modules),
+      sender_validations: finalizeLocatedFindings(
+        accumulator.senderValidations,
+        accumulator.modules,
+      ),
+      utility_processes: finalizeLocatedFindings(
+        accumulator.utilityProcesses,
+        accumulator.modules,
+      ),
+      native_addon_bindings: finalizeLocatedFindings(
+        accumulator.nativeAddonBindings,
+        accumulator.modules,
+      ),
+    },
     limitations,
   };
 };
@@ -137,6 +188,7 @@ const inspectNode = (
     accumulator,
     maximum: limits.maxFindings,
   };
+  inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerRegistration(source, node, accumulator, limits);
     inspectCall(node, findings);
@@ -175,7 +227,7 @@ const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const module = moduleAt(node.start, accumulator.modules);
+  const module = moduleAtOffset(node.start, accumulator.modules);
   const moduleRequire =
     module?.requireName !== null && name === module?.requireName;
   if (
@@ -202,7 +254,7 @@ const inspectCall = (
   inspectEndpointCall(node, name, first, context);
   inspectStorageCall(node, name, first, context);
   if (name.endsWith("loadFile") && first !== undefined)
-    addLocated(context, {
+    addLocatedFinding(context, {
       collection: accumulator.roles,
       key: `role\0renderer\0${first}`,
       node,
@@ -296,7 +348,7 @@ const inspectBundlerRegistration = (
     ),
     location: range(call),
   };
-  addBounded(
+  addBoundedFinding(
     accumulator,
     `registration\0${registrationKey(registration)}`,
     limits.maxFindings,
@@ -351,7 +403,7 @@ const inspectRoleProperty = (
   if (propertyName(node.key) !== "preload") return;
   const path = staticPath(node.value);
   if (path === undefined) return;
-  addLocated(context, {
+  addLocatedFinding(context, {
     collection: context.accumulator.roles,
     key: `role\0preload\0${path}`,
     node,
@@ -373,7 +425,7 @@ const inspectStorageCall = (
 ): void => {
   const storage = storageKind(name);
   if (storage === undefined) return;
-  addLocated(context, {
+  addLocatedFinding(context, {
     collection: context.accumulator.storage,
     key: `storage\0${storage}\0${first ?? ""}`,
     node,
@@ -393,7 +445,7 @@ const addReference = (context: FindingContext, input: ReferenceInput): void => {
     boundedSpecifier === null
       ? sourceSlice(context.source, input.node).slice(0, 4_096)
       : null;
-  addLocated(context, {
+  addLocatedFinding(context, {
     collection: context.accumulator.references,
     key: `reference\0${input.kind}\0${boundedSpecifier ?? expression}`,
     node: input.node,
@@ -408,7 +460,7 @@ const addReference = (context: FindingContext, input: ReferenceInput): void => {
 };
 
 const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
-  addLocated(context, {
+  addLocatedFinding(context, {
     collection: context.accumulator.endpoints,
     key: `endpoint\0${input.kind}\0${input.value}`,
     node: input.node,
@@ -420,60 +472,6 @@ const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
       location: range(input.node),
     },
   });
-
-const addLocated = <Value extends { readonly module_key: string | null }>(
-  context: FindingContext,
-  input: LocatedInput<Value>,
-): void =>
-  addBounded(
-    context.accumulator,
-    `${input.key}\0${String(input.node.start)}`,
-    context.maximum,
-    () =>
-      input.collection.push({
-        offset: input.node.start ?? -1,
-        value: input.value,
-      }),
-  );
-
-const addBounded = (
-  accumulator: AnalysisAccumulator,
-  key: string,
-  maximum: number,
-  add: () => void,
-): void => {
-  if (accumulator.seen.has(key)) return;
-  const count =
-    accumulator.references.length +
-    accumulator.endpoints.length +
-    accumulator.storage.length +
-    accumulator.roles.length +
-    accumulator.sourceMaps.length +
-    accumulator.registrations.length;
-  if (count >= maximum) {
-    accumulator.droppedFindings += 1;
-    return;
-  }
-  accumulator.seen.add(key);
-  add();
-};
-
-const finalizeLocated = <Value extends { readonly module_key: string | null }>(
-  values: readonly Located<Value>[],
-  modules: readonly ModuleRange[],
-): Value[] =>
-  values.map(({ offset, value }) => ({
-    ...value,
-    module_key: moduleAt(offset, modules)?.key ?? null,
-  }));
-
-const moduleAt = (
-  offset: number | null | undefined,
-  modules: readonly ModuleRange[],
-): ModuleRange | undefined => {
-  if (offset === null || offset === undefined) return undefined;
-  return modules.find(({ start, end }) => offset >= start && offset <= end);
-};
 
 const addSourceMapDirectives = (
   source: string,
@@ -487,7 +485,7 @@ const addSourceMapDirectives = (
     if (declared === undefined) continue;
     const start = match.index;
     const location = rangeForOffsets(source, start, start + match[0].length);
-    addBounded(accumulator, `source-map\0${declared}`, maximum, () =>
+    addBoundedFinding(accumulator, `source-map\0${declared}`, maximum, () =>
       accumulator.sourceMaps.push({ declared_url: declared, location }),
     );
   }

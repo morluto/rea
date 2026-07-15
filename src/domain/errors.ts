@@ -274,7 +274,10 @@ export class ArtifactOperationError extends AnalysisError {
   readonly _tag = "ArtifactOperationError";
 
   constructor(
-    readonly operation: "inventory_artifact" | "extract_artifact",
+    readonly operation:
+      | "inventory_artifact"
+      | "extract_artifact"
+      | "analyze_javascript_application",
     readonly reason:
       | "cancelled"
       | "format"

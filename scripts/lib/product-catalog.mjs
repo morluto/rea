@@ -120,6 +120,7 @@ const SOURCE_PATHS = {
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
+  javascriptApplicationAnalysis: "dist/domain/javascriptApplicationAnalysis.js",
   reconstructionVerification:
     "dist/domain/reconstructionVerificationSchemas.js",
   residualUnknown: "dist/domain/residualUnknown.js",
@@ -190,8 +191,18 @@ const toolFamilyCatalog = (sources) => {
   return { total: familyTotal, families };
 };
 
-const providerCatalog = (sources) =>
-  [
+const providerCatalog = (sources) => {
+  const applicationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "analyze_javascript_application",
+    );
+  const observationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name !== "analyze_javascript_application",
+    );
+  if (applicationContracts.length !== 1 || observationContracts.length !== 2)
+    throw new Error("Electron provider capability ownership drifted");
+  return [
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
       contracts: sources.hopperProvider.HOPPER_PROVIDER_TOOL_CONTRACTS,
@@ -214,7 +225,11 @@ const providerCatalog = (sources) =>
     },
     {
       identity: sources.electronProvider.CDP_ELECTRON_PROVIDER_IDENTITY,
-      contracts: sources.electronContracts.ELECTRON_TOOL_CONTRACTS,
+      contracts: observationContracts,
+    },
+    {
+      identity: sources.artifactProviders.JAVASCRIPT_APPLICATION_PROVIDER,
+      contracts: applicationContracts,
     },
   ]
     .map(({ identity, contracts }) => ({
@@ -224,6 +239,7 @@ const providerCatalog = (sources) =>
       capabilities: names(contracts),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
+};
 
 const durableSchemaDefinitions = (sources) => [
   [
@@ -298,6 +314,12 @@ const observationSchemaDefinitions = (sources) => [
   [
     "electron_target_list",
     sources.electronObservation.electronTargetListSchema,
+    ["schema_version"],
+  ],
+  [
+    "javascript_application_analysis",
+    sources.javascriptApplicationAnalysis
+      .javascriptApplicationAnalysisResultSchema,
     ["schema_version"],
   ],
   [

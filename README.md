@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![78 MCP tools](https://img.shields.io/badge/MCP_tools-78-5c4ee5?style=flat-square)](#78-tools-for-investigation)
+[![79 MCP tools](https://img.shields.io/badge/MCP_tools-79-5c4ee5?style=flat-square)](#79-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [78 tools](#78-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [79 tools](#79-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -219,15 +219,16 @@ Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots
 
 ### CLI or agent?
 
-| If you want to…                                                 | Use                                                                       |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Ask an agent to investigate an app and build a feature          | Install the skill, then talk to your agent                                |
-| Inspect or decompile one part of an app from the Terminal       | `rea analyze` or `rea decompile`                                          |
-| Validate, canonicalize, or compare Evidence v2 bundles          | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
-| Run or resume a persistent two-version artifact analysis        | `rea investigate-versions`                                                |
-| Reuse immutable analysis results without relaunching a provider | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
-| Import source as historical reference                           | `rea import-reference-source`                                             |
-| Capture or compare controlled process behavior                  | `rea capture-process` or `rea compare-process-captures`                   |
+| If you want to…                                                  | Use                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Ask an agent to investigate an app and build a feature           | Install the skill, then talk to your agent                                |
+| Inspect or decompile one part of an app from the Terminal        | `rea analyze` or `rea decompile`                                          |
+| Validate, canonicalize, or compare Evidence v2 bundles           | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
+| Run or resume a persistent two-version artifact analysis         | `rea investigate-versions`                                                |
+| Map a local JavaScript/Electron application without executing it | `rea analyze-javascript-application`                                      |
+| Reuse immutable analysis results without relaunching a provider  | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
+| Import source as historical reference                            | `rea import-reference-source`                                             |
+| Capture or compare controlled process behavior                   | `rea capture-process` or `rea compare-process-captures`                   |
 
 Filesystem evidence commands and MCP file tools are disabled until the operator approves absolute roots:
 
@@ -238,6 +239,7 @@ rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
 rea investigate-versions /absolute/path/to/releases/v1 /absolute/path/to/releases/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
+rea analyze-javascript-application /absolute/path/to/releases/app.asar --approved --json
 ```
 
 `investigate-versions` inventories both versions, checkpoints their observed
@@ -318,17 +320,17 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 78 tools for investigation
+## 79 tools for investigation
 
-| Tool family               | Count | Examples                                                                                                                         |
-| ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                 |
-| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery          |
-| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                    |
-| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree               |
-| Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence |
-| Electron observation      |     2 | canonical-root-confined file-page discovery and passive DOM, resource, and optionally approved script-source inspection          |
-| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle          |
+| Tool family               | Count | Examples                                                                                                                                 |
+| ------------------------- | ----: | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                         |
+| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery                  |
+| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                            |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                       |
+| Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence         |
+| Electron analysis         |     3 | passive root-confined page observation plus bounded static BrowserWindow, preload, contextBridge, IPC, utility, and native-addon mapping |
+| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                  |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
@@ -341,7 +343,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
 - Inspect Electron `file://` renderer pages through a separate canonical-root permission boundary without invoking Electron APIs; script contents remain separately approved and byte bounded.
 - Validate and canonically serialize a provider-neutral [JavaScript Application Graph v1](docs/javascript-application-graph.md) spanning packages, ASAR entries, Electron roles, JavaScript/source-map entities, browser/runtime instances, IPC, endpoints, storage, and native add-ons. This shipped domain contract performs no extraction or I/O by itself.
-- Reconstruct bounded static package, entrypoint, Webpack/Rspack module, import, worker, endpoint, storage, source-map, and native-add-on structure from a local directory or ASAR through an AST-only [application service](docs/javascript-artifact-reconstruction.md). The service does not execute bootstrap code and does not add a standalone CLI/MCP tool yet.
+- Reconstruct bounded static package, entrypoint, Webpack/Rspack module, import, worker, endpoint, storage, source-map, BrowserWindow, preload, contextBridge, IPC, utility-process, and native-add-on structure from an approved local directory or ASAR through `analyze_javascript_application` or `rea analyze-javascript-application`. The AST-only [application service](docs/javascript-artifact-reconstruction.md) never executes bootstrap code, pairs only unique exact literal IPC channels, and reports dynamic or ambiguous channels as unresolved.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -386,7 +388,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 ### Now
 
 1. **Maintain truthful product metadata** — extend the shipped canonical catalog and drift checks whenever versions, tools, providers, schemas, setup clients, or CLI capabilities change.
-2. **Electron boundary extraction and high-level surface** — extend the shipped static artifact projector with contextBridge, IPC, utility-process, and native-export boundaries, then expose one provider-neutral CLI/MCP workflow without widening authority.
+2. **Static/runtime Electron reconciliation** — correlate passive renderer scripts, frames, and targets with the shipped static application graph while preserving separate authority and unmatched facts.
 3. **Cross-provider conformance growth** — add source-owned architectures and difficult indirect/thunk cases while preserving semantic comparison and provider-specific text boundaries.
 
 ### Next

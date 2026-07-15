@@ -25,6 +25,13 @@ export const ARTIFACT_GRAPH_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for deterministic static JavaScript application analysis. */
+export const JAVASCRIPT_APPLICATION_PROVIDER = {
+  id: "rea-javascript-application",
+  name: "REA JavaScript application analyzer",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic cross-artifact comparisons. */
 export const ARTIFACT_COMPARISON_PROVIDER = {
   id: "rea-artifact-comparison",

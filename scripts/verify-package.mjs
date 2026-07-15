@@ -143,6 +143,7 @@ try {
     !help.includes("import-reference-source") ||
     !help.includes("list-browser-targets") ||
     !help.includes("inspect-web-page") ||
+    !help.includes("analyze-javascript-application") ||
     !help.includes("compare") ||
     !llms.includes("decompile") ||
     !llms.includes("function") ||
@@ -155,6 +156,7 @@ try {
     !llms.includes("inventory-artifact") ||
     !llms.includes("list-browser-targets") ||
     !llms.includes("inspect-web-page") ||
+    !llms.includes("analyze-javascript-application") ||
     doctor.healthy !== expectedDoctorHealth ||
     doctorExecution.status !== (expectedDoctorHealth ? 0 : 1) ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
@@ -179,6 +181,40 @@ try {
     artifactInventory.normalized_result?.manifest?.root_format !== "zip"
   )
     throw new Error("packaged artifact inventory CLI failed");
+  const applicationRoot = join(workspace, "electron-app");
+  await mkdir(applicationRoot);
+  await writeFile(
+    join(applicationRoot, "package.json"),
+    '{"name":"packaged-electron-fixture","main":"main.js"}\n',
+  );
+  await writeFile(
+    join(applicationRoot, "main.js"),
+    'const { BrowserWindow, ipcMain } = require("electron");\nnew BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true } });\nipcMain.handle("rea:ping", () => true);\n',
+  );
+  await writeFile(
+    join(applicationRoot, "preload.js"),
+    'const { contextBridge, ipcRenderer } = require("electron");\ncontextBridge.exposeInMainWorld("rea", { ping: () => ipcRenderer.invoke("rea:ping") });\n',
+  );
+  const applicationAnalysis = json(
+    await run(
+      cli,
+      [
+        "analyze-javascript-application",
+        applicationRoot,
+        "--approved",
+        "--json",
+      ],
+      environment,
+    ),
+  );
+  if (
+    applicationAnalysis.operation !== "analyze_javascript_application" ||
+    applicationAnalysis.provider?.id !== "rea-javascript-application" ||
+    applicationAnalysis.normalized_result?.summary?.browser_windows !== 1 ||
+    applicationAnalysis.normalized_result?.summary?.ipc
+      ?.paired_renderer_transmissions !== 1
+  )
+    throw new Error("packaged JavaScript application analysis CLI failed");
   // prettier-ignore
   const investigationReplay = await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
   const unknownProviderExecution = await runWithStatus(

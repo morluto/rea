@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "14"
+    "skill_version": "15"
   },
   "tools": {
-    "total": 78,
+    "total": 79,
     "families": [
       {
         "id": "direct",
@@ -106,8 +106,12 @@
       {
         "id": "electron",
         "surface": "electron-provider",
-        "count": 2,
-        "tools": ["inspect_electron_page", "list_electron_targets"]
+        "count": 3,
+        "tools": [
+          "analyze_javascript_application",
+          "inspect_electron_page",
+          "list_electron_targets"
+        ]
       },
       {
         "id": "session",
@@ -241,6 +245,12 @@
       "name": "REA Electron file-page CDP observation provider",
       "version": "1",
       "capabilities": ["inspect_electron_page", "list_electron_targets"]
+    },
+    {
+      "id": "rea-javascript-application",
+      "name": "REA JavaScript application analyzer",
+      "version": "1",
+      "capabilities": ["analyze_javascript_application"]
     }
   ],
   "setup_clients": [
@@ -333,6 +343,10 @@
       "version": 1
     },
     {
+      "id": "javascript_application_analysis",
+      "version": 1
+    },
+    {
       "id": "javascript_application_graph",
       "version": 1
     },
@@ -378,9 +392,10 @@
     }
   ],
   "cli": {
-    "primary_count": 38,
+    "primary_count": 39,
     "commands": [
       "analyze",
+      "analyze-javascript-application",
       "analyze-web-bundle",
       "capabilities",
       "capture-process",
@@ -428,17 +443,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 38,
-      "mcp_tools": 78,
+      "cli_commands": 39,
+      "mcp_tools": 79,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "58a6f3049700072bbf3a4a81ed16b166f69b88a609d5806182c1d603459ccddc",
+      "tools_sha256": "b16aa88111d6694ee2c7bd5f78dca14bfe6c1b83bfe408fd3fd90a785b007986",
       "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "c2e89ec36ca1191db9993a2d966c05206fe11d7d4286805794999c211143dd2e"
+      "combined_sha256": "1c73b546f56e292552a444acb9ea2163b9d649f8ffed6824dd9afaca76e99c28"
     }
   }
 }

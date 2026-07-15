@@ -42,20 +42,30 @@ export const artifactObservationEvidence = (
 /** Exact AST syntax evidence with an actionable source range. */
 export const astObservationEvidence = (
   input: EvidenceInput & { readonly range: JavaScriptSourceRange },
-): ApplicationGraphEvidence => ({
-  authority: "ast-static-analysis",
-  state: "observed",
-  confidence: "exact",
-  artifact: artifactReference(input.sha256),
-  location: {
-    available: true,
-    value: { kind: "source-range", source: input.path, ...input.range },
-  },
-  extractor: { ...EXTRACTOR, operation: input.operation },
-  coverage: input.coverage,
-  limitations: [...(input.limitations ?? [])],
-  evidence_ids: [],
-});
+): ApplicationGraphEvidence => {
+  const limitations = [
+    ...(input.limitations ?? []),
+    ...(input.coverage.status === "complete"
+      ? []
+      : [
+          "AST coverage is incomplete; omitted or dynamic facts must not be interpreted as absence.",
+        ]),
+  ];
+  return {
+    authority: "ast-static-analysis",
+    state: "observed",
+    confidence: "exact",
+    artifact: artifactReference(input.sha256),
+    location: {
+      available: true,
+      value: { kind: "source-range", source: input.path, ...input.range },
+    },
+    extractor: { ...EXTRACTOR, operation: input.operation },
+    coverage: input.coverage,
+    limitations,
+    evidence_ids: [],
+  };
+};
 
 /** Explicit static relationship inference; never promoted to observation. */
 export const staticInferenceEvidence = (

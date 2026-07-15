@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
 import {
   inspectElectronPage,
   listElectronTargets,
@@ -12,6 +13,7 @@ import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
+import { analyzeJavaScriptApplicationInputSchema } from "../domain/javascriptApplicationAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -30,7 +32,8 @@ export const registerElectronTools = (
   server: McpServer,
   options: ElectronToolRegistration,
 ): void => {
-  const [listContract, inspectContract] = ELECTRON_TOOL_CONTRACTS;
+  const [listContract, inspectContract, analyzeContract] =
+    ELECTRON_TOOL_CONTRACTS;
   server.registerTool(
     listContract.name,
     toolRegistrationOptions(listContract),
@@ -72,6 +75,24 @@ export const registerElectronTools = (
       );
       if (!result.ok) return toCallToolResult(result, inspectContract);
       return evidenceResult(options, inspectContract, result.value);
+    },
+  );
+  server.registerTool(
+    analyzeContract.name,
+    toolRegistrationOptions(analyzeContract),
+    async (input, context) => {
+      const parsed = analyzeJavaScriptApplicationInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        analyzeContract.name,
+        () =>
+          analyzeJavaScriptApplication(options.permissionAuthority, parsed, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
+      );
+      if (!result.ok) return toCallToolResult(result, analyzeContract);
+      return evidenceResult(options, analyzeContract, result.value);
     },
   );
 };

@@ -26,7 +26,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
 - `src/config.ts`: Zod-validated parsing of environment configuration into `AppConfig`.
 - `src/domain/`: pure, side-effect-free modules. `errors.ts` owns the tagged error algebra; `result.ts` owns `Result`/`ok`/`err`; `hopperValues.ts` owns shared function-dossier values plus Hopper boundary parsers; `symbolAnalysis.ts` parses Swift/ObjC names; `javascriptApplicationGraph.ts` validates and canonically commits the provider-neutral JavaScript Application Graph; `javascriptStaticAnalysis.ts` performs bounded AST-only JavaScript structure recovery.
-- `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 2 Electron, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
+- `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 3 Electron, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
 - `src/process/`: provider-neutral process ownership and lifecycle primitives. It owns private runtime roots, absolute startup deadlines, correlated request waits, bounded output capture, and TERM-to-KILL cleanup without defining any provider wire protocol.
 - `src/browser/`: loopback CDP discovery, bounded WebSocket transport, exact-origin target authorization, and passive browser observation normalization.
 - `src/hopper/`: Hopper launch and Unix-socket protocol mechanics. `BridgeLauncher.ts` spawns the Hopper app with the in-process bridge, `HopperClient.ts` correlates request/response over the socket with timeouts and cancellation, `protocol.ts` frames bridge messages.
@@ -58,7 +58,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
 - `npm run verify:ghidra`: build and run the real-Ghidra verifier against `GHIDRA_INSTALL_DIR` and optional `GHIDRA_TARGET_PATH`.
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
-- `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 78-tool target-free MCP server in an isolated environment.
+- `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 79-tool target-free MCP server in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
 - `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc output, and the error JSON schema without rewriting them.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
@@ -78,6 +78,10 @@ Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use
 - `REA_BROWSER_OBSERVE_ENABLED` (optional, default `false`): add browser observation authority to the administrator ceiling.
 - `REA_BROWSER_CDP_ENDPOINTS_JSON` (optional): approved literal loopback CDP HTTP endpoints.
 - `REA_BROWSER_ALLOWED_ORIGINS_JSON` (optional): exact HTTP(S) page origins approved for passive observation.
+- `REA_ELECTRON_OBSERVE_ENABLED` (optional, default `false`): add passive Electron file-page observation authority to the administrator ceiling.
+- `REA_ELECTRON_CDP_ENDPOINTS_JSON` (optional): approved literal loopback Electron CDP HTTP endpoints.
+- `REA_ELECTRON_FILE_ROOTS_JSON` (optional): canonical filesystem roots approved for passive Electron page observation.
+- `REA_INVESTIGATION_INPUT_ROOTS_JSON` (optional): canonical filesystem roots approved for static JavaScript/Electron application analysis and other investigation inputs.
 
 ## Coding Style & Naming Conventions
 
@@ -85,7 +89,7 @@ Use ESM TypeScript, two-space indentation, and Prettier defaults. Keep compiler 
 
 ## Testing Guidelines
 
-Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use fake launcher/socket seams; MCP tests connect with the beta.3 client. Preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 2 Electron, and 18 session tool inventory (78 total). Cover malformed input, cancellation, timeouts, process exit, concurrency, limits, and clean shutdown. Real Hopper, Ghidra, and browser claims cannot be replaced by mocks; use `npm run verify:hopper` with two distinct binaries, `npm run verify:ghidra` with the exact supported BYO installation, and `npm run verify:browser` with Chrome.
+Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use fake launcher/socket seams; MCP tests connect with the beta.3 client. Preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 3 Electron, and 18 session tool inventory (79 total). Cover malformed input, cancellation, timeouts, process exit, concurrency, limits, and clean shutdown. Real Hopper, Ghidra, and browser claims cannot be replaced by mocks; use `npm run verify:hopper` with two distinct binaries, `npm run verify:ghidra` with the exact supported BYO installation, and `npm run verify:browser` with Chrome.
 
 ## Commit & Pull Request Guidelines
 
