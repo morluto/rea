@@ -84,7 +84,7 @@ npx skills add morluto/rea
 
 在 Ubuntu 24.04+、Fedora 41+ 和 64 位 Arch Linux 上，REA 会下载 Hopper 官方的 DEB、RPM 或 Arch 软件包，验证发布方提供的大小和校验和，然后通过 `apt-get`、`dnf` 或 `pacman` 安装依赖。非 root 运行时，`pkexec` 会显示系统授权提示；REA 不调用 `sudo`。
 
-默认启动器是 `/opt/hopper/bin/Hopper`。自定义安装可设置 `HOPPER_LAUNCHER_PATH`。如果 Doctor 报告缺少分析引擎，请运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'`，安装缺少的系统库后重新运行 `rea setup`。真实分析需要 `DISPLAY` 或 `WAYLAND_DISPLAY` 以及已激活的 Hopper 许可证。Linux 上还应确保 `~/.local/bin` 位于 `PATH` 中。
+默认启动器是 `/opt/hopper/bin/Hopper`。自定义安装可设置 `HOPPER_LAUNCHER_PATH`。如果 Doctor 报告缺少分析引擎，请运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'`，安装缺少的系统库后重新运行 `rea setup`。REA 会在私有 Xvfb 显示器上运行受支持的 Hopper 演示版，并为每个分析会话选择 Hopper 提供的演示模式；无需桌面 `DISPLAY` 或付费许可证，但演示版受厂商限制。Linux 上还应确保 `~/.local/bin` 位于 `PATH` 中。
 
 ```bash
 # 1. 安装和配置 REA
@@ -96,7 +96,7 @@ npx -y rea-agents setup
 
 ### 2. 重启编程智能体
 
-Setup 会自动配置检测到的 Claude Desktop 和 Cursor。重启应用，让它加载 REA。
+Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf 和 Devin。它会自动配置检测到的前六种客户端；由于目前没有明确的本地 MCP 配置边界，检测到 Devin 时只会报告而不会修改。重启已配置的客户端，让它加载 REA。
 
 ### 3. 直接询问智能体
 
@@ -159,7 +159,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 
 ## 与其他编程智能体一起使用
 
-Setup 目前会自动配置 Claude Desktop 和 Cursor。任何支持本地 MCP 服务器的编程智能体都可以使用以下配置连接 REA。
+Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf 和 Devin，并自动配置检测到的前六种客户端；检测到 Devin 时只会报告而不会修改。任何支持本地 MCP 服务器的编程智能体都可以使用以下配置连接 REA。
 
 ```json
 {

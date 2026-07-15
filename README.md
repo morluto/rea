@@ -74,14 +74,14 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 
 ## Why REA
 
-|                          |                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.              |
-| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.           |
-| **Complexity handled**   | REA installs and manages the reverse-engineering tools behind the scenes.            |
-| **From insight to code** | Understand a feature, then build your own version in the same coding session.        |
-| **Local by design**      | Analysis runs on your Mac. REA does not upload the app to a hosted analysis service. |
-| **Keeps context**        | Investigate several apps without starting over for every question.                   |
+|                          |                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.                               |
+| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.                            |
+| **Complexity handled**   | REA installs and manages the reverse-engineering tools behind the scenes.                             |
+| **From insight to code** | Understand a feature, then build your own version in the same coding session.                         |
+| **Local by design**      | Analysis runs on your supported local host. REA does not upload the app to a hosted analysis service. |
+| **Keeps context**        | Investigate several apps without starting over for every question.                                    |
 
 ## Quick start
 
@@ -94,7 +94,7 @@ rea setup
 
 Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
 
-REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
+REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It configures the first six when detected; Devin is reported but left unchanged because it has no documented local MCP configuration boundary. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
 
 An optional curl wrapper installs the same CLI package and starts setup only when a terminal is available:
 
@@ -110,7 +110,7 @@ Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`
 npx skills add morluto/rea
 ```
 
-Ask your agent to set up REA. It will check your Mac, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
+Ask your agent to set up REA. It will check your supported host, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
 
 Review the setup plan, approve it if appropriate, then describe the app or feature you want to understand. Hopper can run in its free demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
 
@@ -310,7 +310,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 
 ## Current status
 
-REA is already useful for native application investigation on macOS:
+REA is already useful for native application, browser, and Electron investigation on supported macOS and Linux hosts:
 
 - Open Mach-O, ELF, PE, `.app`, ZIP, APK, IPA, ASAR, plist, JavaScript, source-map, and Hopper database targets.
 - Attach to a user-owned Chrome-family browser over a configured loopback CDP endpoint; capture exact-origin web structure, safe metadata, approved value-free payload shapes, bundle/source-map evidence, WebMCP declarations, user-action timelines, capture diffs, and explicitly approved screenshots without navigation or JavaScript evaluation.
@@ -352,24 +352,33 @@ All eight browser tools expose the same Evidence v2 contracts over CLI and MCP. 
 
 ## Roadmap
 
-REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The next capability families are:
+REA is growing into a toolkit for understanding software across static artifacts and observed behavior. The [current status](#current-status) above is the shipped baseline; the items below are planned work.
 
-1. **Artifact decomposition** — DMG, ASAR, ZIP, packages, universal-binary slices, application resources, embedded frameworks, mobile packages, and artifact graphs.
-2. **Web and Electron investigation** — extend the shipped passive CDP, bundle, visual-diff, and file-page observation with approved interaction, controlled replay, Electron IPC observation, semantic UI differences, and deeper JavaScript reconstruction.
-3. **Deterministic behavior harnesses** — stronger process-tree ownership, protocol fixtures, network policy, filesystem tracing, signals, reconnects, and cross-version comparison.
-4. **JavaScript and source recovery** — bundle indexing, AST/module reconstruction, source-map discovery, historical-source matching, and CodeDB-backed cross-references.
-5. **Runtime observation** — approval-gated LLDB, Frida, system logs, process and filesystem observers, and native API tracing.
-6. **More static-analysis providers** — native platform utilities first, followed by Ghidra, IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, and other engines behind provider-neutral capabilities.
-7. **More targets and platforms** — Windows-native providers and ConPTY verification, Linux parity, websites and APIs, mobile artifacts, firmware, document formats, and other software-defined systems.
-8. **Differential reconstruction expansion** — add automatic function matching, protocol/UI comparison, controlled replay, residual-unknown planning, and reconstruction verification to persistent version runs.
+### Now
 
-Roadmap items describe direction, not shipped support. New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
+1. **Truthful product metadata** — derive versions, tool inventories, schemas, setup clients, and capability documentation from canonical sources and fail CI on drift.
+2. **A second deep-analysis provider** — add explicit target-to-provider binding and a read-only Ghidra provider for free, open-source Linux analysis without pretending Hopper and Ghidra results are textually identical.
+3. **JavaScript application reconstruction** — connect packages, ASAR entries, main/preload/renderer bundles, source maps, Electron IPC boundaries, service-worker assets, and native add-ons in one evidence-bearing application graph.
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the current research matrix and admission gate.
+### Next
+
+1. **Cross-layer tracing and version comparison** — trace renderer behavior through preload, IPC, main-process, storage, network, and native boundaries, then compare those paths across application versions.
+2. **Deeper JavaScript and source recovery** — add bounded Webpack/Rspack module reconstruction, stable structural fingerprints, historical-source matching, and stronger static/runtime reconciliation.
+3. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
+
+### Later
+
+1. **Controlled interaction and replay** — keep approved JavaScript execution, browser interaction, Electron instrumentation, and fuzzing behind a separate authority from passive observation.
+2. **Native runtime observation** — approval-gated LLDB, Frida, system logs, process/filesystem observers, and native API tracing.
+3. **Additional providers and targets** — evaluate IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, Windows-native providers, mobile artifacts, firmware, document formats, and other software-defined systems.
+
+New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
+
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the accepted Ghidra direction, remaining architecture gates, and provider comparison matrix.
 
 ## Using REA with other agents
 
-Setup currently configures Claude Desktop and Cursor automatically. Any agent that supports local MCP servers can use REA with the configuration below.
+Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It automatically configures the first six when present; detected Devin installations are reported but left unchanged. Any agent that supports local MCP servers can use REA with the configuration below.
 
 ### Manual MCP configuration
 
@@ -548,7 +557,7 @@ No decompiler can guarantee the original source. REA gives an agent pseudocode, 
 <details>
 <summary><strong>Which agents can use REA?</strong></summary>
 
-Any agent that can run a local MCP server can use the manual configuration. Setup currently detects and configures Claude Desktop and Cursor automatically.
+Any agent that can run a local MCP server can use the manual configuration. Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin; it automatically configures the first six when present and reports Devin without modifying it.
 
 </details>
 

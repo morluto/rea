@@ -1,12 +1,34 @@
 # Static-analysis provider evaluation
 
-Status: research for issue #26; no provider implementation is approved by this note.
+Status: Ghidra is approved as the direction for REA's next full read-only
+analysis provider. This note does not claim that Ghidra support is implemented
+or shipped.
 
-REA should add another analysis provider only after the provider-neutral capability
-contracts, Evidence v2 metadata, ownership rules, and multi-fixture conformance
-suite are complete. A provider is not a drop-in replacement for Hopper: every
-capability must be mapped explicitly, with truthful `unavailable` results where
-the engine cannot provide equivalent semantics.
+Implementation remains gated on explicit target-to-provider binding, a generic
+analysis-profile commitment for evidence and snapshots, bounded provider
+ownership, and a multi-fixture conformance suite. A provider is not a drop-in
+replacement for Hopper: every capability must be mapped explicitly, with
+truthful `unavailable` or degraded results where the engine cannot provide
+equivalent semantics.
+
+## Approved Ghidra v1 boundary
+
+- Keep the existing provider-neutral CLI and MCP tool names.
+- Bind one deep-analysis provider to a target for the target's lifetime; never
+  fail over silently between Hopper and Ghidra.
+- Start with bring-your-own Ghidra and a compatible Java runtime. Setup must not
+  install or upgrade Java.
+- Run Ghidra headlessly in an owned process with a private temporary project,
+  bounded startup/analysis/request deadlines, cancellation, and cleanup.
+- Prefer a packaged Java bridge loaded through Ghidra's script path. PyGhidra
+  remains useful for prototypes but is not a mandatory production dependency.
+- Implement read-only inventories, assembly, decompilation, function metadata,
+  calls, references, containment, and bounded search first.
+- Report GUI cursor/navigation and persistent mutation operations as unavailable
+  until their semantics and project ownership are explicitly designed.
+- Verify real claims on Linux with at least two distinct source-owned binaries;
+  compare normalized semantic facts rather than provider-specific pseudocode
+  text.
 
 ## Shortlist
 
@@ -19,35 +41,40 @@ the engine cannot provide equivalent semantics.
 
 ## Recommended order
 
-1. Use LIEF first for provider-neutral binary metadata where the current
-   contracts already describe headers, sections, symbols, and relocations.
-2. Evaluate Rizin as a separate process provider for portable disassembly and
-   command-backed queries, with JSON-only parsing and fixture assertions.
-3. Evaluate Ghidra or Binary Ninja for decompilation and richer function
-   semantics only after the conformance fixtures can compare evidence by
-   capability rather than by provider-specific output text.
+1. Add explicit provider selection, target binding, and analysis-profile-aware
+   snapshot identity without changing existing Hopper behavior.
+2. Implement the bounded read-only Ghidra provider described above and admit
+   capabilities individually through the shared conformance corpus.
+3. Connect Electron/native-add-on application findings to the selected native
+   analysis provider without introducing provider-prefixed tools.
+4. Evaluate LIEF or Rizin later as complementary metadata/disassembly providers,
+   and Binary Ninja as an optional licensed provider, using the same admission
+   gate.
 
 ## Required admission gate
 
 Before implementation, an adapter proposal must provide:
 
 - a capability matrix covering supported, unsupported, and degraded results;
-- provider identity, version, target digest, authority, limitations, and
-  deterministic locations in every Evidence v2 record;
+- provider identity, version, analysis profile, target digest, authority,
+  limitations, and deterministic locations in every Evidence v2 record;
 - bounded subprocess or library lifetime, cancellation, timeouts, and cleanup;
-- sanitized diagnostics that do not expose license material, host paths, or
-  provider tracebacks;
+- actionable local diagnostics that retain paths, digests, mismatch locations,
+  and provider metadata while redacting credentials, authorization headers,
+  license secrets, and other genuine secrets;
 - the same source-owned fixture corpus across architectures and formats;
 - repeatable checks for function identity, addresses, strings, names, xrefs,
   CFG, and pseudocode wherever those capabilities are claimed.
 
-This keeps issue #26 a decision record rather than prematurely committing REA
-to an engine whose semantics or redistribution terms have not been verified.
+These gates turn the accepted direction into verified capabilities rather than
+prematurely claiming equivalence or redistribution support.
 
 ## Primary-source notes
 
-- Ghidra documents headless batch mode and its Java/Python runtime requirements
-  in its [Getting Started guide](https://github.com/NationalSecurityAgency/ghidra/blob/master/GhidraDocs/GettingStarted.md).
+- Ghidra 12.1.2 documents headless batch mode and its Java runtime requirements
+  in its [release-specific Getting Started guide](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.2_build/GhidraDocs/GettingStarted.md);
+  the [official release](https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.2_build)
+  supplies the corresponding distribution and checksums.
 - Rizin lists supported formats, architectures, tools, and `rzpipe` bridges in
   its [repository README](https://github.com/rizinorg/rizin); `rz-pipe` documents
   JSON command transport and pipe backends.

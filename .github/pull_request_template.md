@@ -21,12 +21,13 @@
 - [ ] Full test suite passes (`npm test`)
 - [ ] Real Hopper verification performed (`npm run verify:hopper`)
 - [ ] Linux real Hopper verification performed (`npm run verify:hopper:linux`) or unavailability explained
+- [ ] Real browser verification performed (`npm run verify:browser`) or unavailability explained
 - [ ] Package verification performed (`npm run verify:package`)
 
 ## Tool Contract Impact
 
 <!-- If this PR adds, removes, or modifies MCP tools, list them here. -->
-<!-- The current inventory is 68 tools (33 direct + 10 enhanced + 5 native + 2 artifact + 18 session). -->
+<!-- The current inventory is 78 tools (33 direct + 10 enhanced + 5 native + 2 artifact + 8 browser + 2 Electron + 18 session). -->
 
 ## Related Issues
 

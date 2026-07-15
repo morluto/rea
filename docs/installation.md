@@ -49,11 +49,22 @@ rea setup --yes --install-hopper --json
 
 ## Hopper
 
-Hopper is separate commercial software with its own license. REA reuses any detected installation and preserves Hopper during uninstall.
+Hopper is separate commercial software with its own license. Its free demo has
+vendor-defined limits, and a paid license is optional. REA reuses any detected
+installation and preserves Hopper during uninstall.
 
-On macOS, approved setup downloads the official DMG, checks its published size and digest, validates the application bundle, and atomically installs it to `~/Applications/Hopper Disassembler.app`. REA then opens Hopper for its one-time activation. Homebrew and administrator access are not used.
+On macOS, approved setup downloads the official DMG, checks its published size
+and digest, validates the application bundle, and atomically installs it to
+`~/Applications/Hopper Disassembler.app`. REA then opens Hopper so the
+operator can choose its demo mode or activate an existing license. Homebrew and
+administrator access are not used.
 
-On supported Linux distributions, approved setup verifies Hopper's official `.deb`, `.rpm`, or Arch package before invoking the native package manager. Unattended package-manager access requires `--yes --install-hopper`.
+On supported Linux distributions, approved setup verifies Hopper's official
+`.deb`, `.rpm`, or Arch package before invoking the native package manager.
+REA runs the supported demo build on a private Xvfb display and selects Hopper's
+offered demo mode for each analysis session; it does not require the user's
+desktop display. Unattended package-manager access requires
+`--yes --install-hopper`.
 
 ## Diagnose, update, and remove
 

@@ -61,10 +61,9 @@ const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
 /**
  * Owns the single active target shared by CLI and MCP adapters.
  *
- * Target transitions are serialized because each client dispatches Hopper API
- * work on its dedicated Python thread, and switching targets tears that bridge
- * down. A failed switch recreates the previous target instead of retaining a
- * client whose bridge was already shut down.
+ * Target transitions are serialized because switching targets tears down the
+ * active provider client. A failed switch recreates the previous target instead
+ * of retaining a client whose resources were already shut down.
  */
 export class BinarySession implements BinarySessionPort {
   #active:
@@ -475,7 +474,7 @@ export class BinarySession implements BinarySessionPort {
         };
   }
 
-  /** Return the immutable artifact identity captured before Hopper launched. */
+  /** Return the immutable artifact identity captured before its provider started. */
   activeTarget(): BinaryTarget | undefined {
     return this.#active === undefined
       ? undefined
@@ -483,7 +482,7 @@ export class BinarySession implements BinarySessionPort {
   }
 
   /**
-   * Invoke a Hopper tool against the active target.
+   * Invoke a provider operation against the active target.
    * Calls may overlap, but a pending target transition prevents new calls from
    * entering until the transition has settled.
    */
