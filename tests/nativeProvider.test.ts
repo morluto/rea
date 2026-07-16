@@ -30,7 +30,7 @@ describe("native macOS provider", () => {
       return Promise.resolve(
         resolutions === 1
           ? err(new NativeCommandFailure(tool, "unavailable"))
-          : ok({ path: "/bin/true", sha256: "a".repeat(64) }),
+          : ok({ path: "/usr/bin/true", sha256: "a".repeat(64) }),
       );
     });
     const options = { timeoutMs: 1_000, maxOutputBytes: 1_024 };

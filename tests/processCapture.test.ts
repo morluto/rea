@@ -249,6 +249,15 @@ describe("process capture domain", () => {
         after: initialized,
       }),
     ).toBe(true);
+    expect(
+      isInitializedPtyRoot({
+        rootPid: 100,
+        expectedRunId: "run-token",
+        before: { ...initialized, session_id: null },
+        observedRunId: "run-token",
+        after: { ...initialized, session_id: null },
+      }),
+    ).toBe(true);
   });
 
   it("keeps interaction and shim residual uncertainty in separate scopes", () => {

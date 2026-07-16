@@ -63,6 +63,8 @@ export interface GhidraJavaObservation {
 
 /** Narrow synchronous seam used by provider discovery without launching Ghidra. */
 export interface GhidraInstallationHost {
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: NodeJS.Architecture;
   readText(path: string): string | undefined;
   executable(path: string): boolean;
   probeJava(

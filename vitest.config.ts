@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -5,6 +6,7 @@ import { defineConfig } from "vitest/config";
 
 const TEST_FILES = ["tests/**/*.test.ts"];
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
+const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
 const SERIAL_INTEGRATION_TESTS = [
   "tests/browserCli.test.ts",
   "tests/cliOutput.test.ts",
@@ -37,6 +39,7 @@ const dualCoreProjects =
 export default defineConfig({
   test: {
     include: TEST_FILES,
+    env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
     ...dualCoreProjects,
     retry: 2,
     reporters: ["default", "verbose"],
