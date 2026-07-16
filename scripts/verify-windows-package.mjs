@@ -65,7 +65,11 @@ try {
     env: environment,
     windowsHide: true,
   });
-  if (!help.stdout.includes("open") || !help.stdout.includes("providers"))
+  if (
+    !/^\s{2}inspect\s/mu.test(help.stdout) ||
+    !/^\s{2}decompile\s/mu.test(help.stdout) ||
+    !/^\s{2}providers\s/mu.test(help.stdout)
+  )
     throw new Error("Packaged Windows CLI help omitted analysis commands");
 
   const server = new StdioClientTransport({
