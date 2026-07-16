@@ -3,8 +3,8 @@ name: rea-analysis
 description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
 metadata:
   version: "20"
-  tool_count: 91
-  catalog_digest: "e9aa2ad08a00f31cbfda03f4c74d584c8e5c30a78e1d712bfe8fc5bb43ea1ef1"
+  tool_count: 95
+  catalog_digest: "b3db06bedadc1ad21a6cfe76f58a9c6cebbf9bce4f9663733b6bab07a57203c3"
 ---
 
 # REA

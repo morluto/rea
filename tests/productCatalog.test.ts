@@ -110,7 +110,11 @@ describe("canonical product catalog", () => {
         ({ id }) => id === JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER.id,
       )?.capabilities,
     ).toEqual([
+      "commit_reconstruction_coverage",
       "compare_application_versions",
+      "execute_node_characterization",
+      "prepare_node_characterization",
+      "query_reconstruction_coverage",
       "run_controlled_replay",
       "trace_application_feature",
     ]);

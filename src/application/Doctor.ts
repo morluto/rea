@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -21,6 +21,10 @@ import {
   readClientRegistrationStatuses,
   type ClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
+import {
+  inspectRuntimeExecutables,
+  type RuntimeExecutableInventory,
+} from "./RuntimeExecutableDiagnostics.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_HOPPER =
@@ -83,6 +87,7 @@ export interface DoctorHost {
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   javascriptReplayCheck?(): Promise<DoctorCheck>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
+  runtimeExecutables?(): Promise<RuntimeExecutableInventory>;
 }
 
 /** Parsed identity committed by an installed REA skill. */
@@ -126,6 +131,7 @@ export const runDoctor = async (
       readonly remediation: string | null;
     };
     readonly registrations: readonly ClientRegistrationStatus[];
+    readonly runtime_executables: RuntimeExecutableInventory | null;
   };
 }> => {
   const checks: DoctorCheck[] = [];
@@ -135,6 +141,29 @@ export const runDoctor = async (
       classification: "missing_dependency",
     }),
   );
+  const runtimeExecutables = await host.runtimeExecutables?.();
+  if (runtimeExecutables !== undefined) {
+    const broken = runtimeExecutables.candidates.filter(
+      ({ healthy }) => !healthy,
+    );
+    checks.push(
+      check(
+        "node-toolchains",
+        broken.length === 0,
+        broken.length === 0
+          ? `${String(runtimeExecutables.candidates.length)} runtime executable candidates passed bounded version probes.`
+          : `${String(broken.length)} of ${String(runtimeExecutables.candidates.length)} runtime executable candidates failed bounded version probes: ${broken
+              .slice(0, 5)
+              .map(({ lexical_path: path }) => path)
+              .join(", ")}${broken.length > 5 ? ", …" : ""}`,
+        {
+          remediation:
+            "Select a verified healthy Node toolchain or repair the failing installation, then rerun rea doctor. Do not create compatibility-library symlinks.",
+          classification: "missing_dependency",
+        },
+      ),
+    );
+  }
   const macosVersion =
     host.platform === "darwin" ? await host.macosVersion() : undefined;
   const macosMajor = macosVersion === undefined ? 0 : parseMajor(macosVersion);
@@ -337,6 +366,7 @@ export const runDoctor = async (
           : "Run rea setup to update the installed REA skill.",
       },
       registrations,
+      runtime_executables: runtimeExecutables ?? null,
     },
   };
 };
@@ -457,6 +487,15 @@ export const systemDoctorHost = (
       return undefined;
     }
   },
+  runtimeExecutables: () =>
+    inspectRuntimeExecutables({
+      platform: process.platform,
+      path: process.env.PATH ?? "",
+      launcherNode: process.execPath,
+      ...(process.env.PATHEXT === undefined
+        ? {}
+        : { pathExtensions: process.env.PATHEXT.split(delimiter) }),
+    }),
   async installationPaths() {
     try {
       const command = process.platform === "win32" ? "where" : "which";

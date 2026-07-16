@@ -78,6 +78,14 @@ export const reconstructionSpecificationSchema = z
 /** Bounded reconstruction-verification input. */
 export const reconstructionVerificationInputSchema = z.strictObject({
   specification: reconstructionSpecificationSchema,
+  coverage: z
+    .strictObject({
+      workspace_id: z.string().regex(/^rcw_[a-f0-9]{64}$/u),
+      revision: z.number().int().min(1),
+      revision_sha256: digestSchema,
+      boundary_id: z.string().min(1).max(200),
+    })
+    .optional(),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(100).default(100),
   unknown_registry_approved: z.literal(true).optional(),

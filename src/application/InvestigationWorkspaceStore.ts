@@ -22,18 +22,44 @@ import { err, ok, type Result } from "../domain/result.js";
 
 type WorkspaceResult<Value> = Result<Value, InvestigationWorkspaceError>;
 
+/** Parser, serializer, and CAS transition owned by one revisioned workspace. */
+export interface RevisionedWorkspaceCodec<Document> {
+  readonly parse: (input: unknown) => Document;
+  readonly serialize: (document: Document) => string;
+  readonly validateNext: (
+    current: Document | null,
+    next: Document,
+    expectedRevision: number | null,
+  ) => WorkspaceResult<null>;
+}
+
+const investigationWorkspaceCodec: RevisionedWorkspaceCodec<InvestigationWorkspace> =
+  {
+    parse: parseInvestigationWorkspace,
+    serialize: serializeInvestigationWorkspace,
+    validateNext: validateNextRevision,
+  };
+
 /** Read a validated workspace, returning null only when it does not exist. */
 export const readInvestigationWorkspace = async (
   path: string,
   policy: EvidenceFilePolicy,
-): Promise<WorkspaceResult<InvestigationWorkspace | null>> => {
+): Promise<WorkspaceResult<InvestigationWorkspace | null>> =>
+  readRevisionedWorkspace(path, policy, investigationWorkspaceCodec);
+
+/** Read one root-confined, owner-only revisioned workspace document. */
+export const readRevisionedWorkspace = async <Document>(
+  path: string,
+  policy: EvidenceFilePolicy,
+  codec: RevisionedWorkspaceCodec<Document>,
+): Promise<WorkspaceResult<Document | null>> => {
   if (policy.roots.length === 0)
     return err(new InvestigationWorkspaceError("read", "disabled"));
   try {
     const destination = await resolveDestination(path, policy.roots);
     if (destination === null)
       return err(new InvestigationWorkspaceError("read", "outside-root"));
-    return await readWorkspaceFile(destination, policy);
+    return await readWorkspaceFile(destination, policy, codec);
   } catch (cause: unknown) {
     return err(new InvestigationWorkspaceError("read", "io", { cause }));
   }
@@ -47,12 +73,30 @@ export const writeInvestigationWorkspace = async (
   policy: EvidenceFilePolicy,
 ): Promise<
   WorkspaceResult<{ readonly path: string; readonly bytes: number }>
+> =>
+  writeRevisionedWorkspace(
+    workspace,
+    path,
+    expectedRevision,
+    policy,
+    investigationWorkspaceCodec,
+  );
+
+/** Atomically append one validated CAS-linked revision under an exclusive lock. */
+export const writeRevisionedWorkspace = async <Document>(
+  document: Document,
+  path: string,
+  expectedRevision: number | null,
+  policy: EvidenceFilePolicy,
+  codec: RevisionedWorkspaceCodec<Document>,
+): Promise<
+  WorkspaceResult<{ readonly path: string; readonly bytes: number }>
 > => {
   if (policy.roots.length === 0)
     return err(new InvestigationWorkspaceError("update", "disabled"));
   let encoded: string;
   try {
-    encoded = serializeInvestigationWorkspace(workspace);
+    encoded = codec.serialize(document);
   } catch (cause: unknown) {
     return err(
       new InvestigationWorkspaceError("update", "integrity", { cause }),
@@ -69,11 +113,11 @@ export const writeInvestigationWorkspace = async (
     const acquired = await acquireLock(destination);
     if (!acquired.ok) return acquired;
     lock = acquired.value;
-    const current = await readWorkspaceFile(destination, policy);
+    const current = await readWorkspaceFile(destination, policy, codec);
     if (!current.ok) return current;
-    const checked = validateNextRevision(
+    const checked = codec.validateNext(
       current.value,
-      workspace,
+      document,
       expectedRevision,
     );
     if (!checked.ok) return checked;
@@ -109,10 +153,11 @@ const resolveDestination = async (
   return null;
 };
 
-const readWorkspaceFile = async (
+const readWorkspaceFile = async <Document>(
   destination: string,
   policy: EvidenceFilePolicy,
-): Promise<WorkspaceResult<InvestigationWorkspace | null>> => {
+  codec: RevisionedWorkspaceCodec<Document>,
+): Promise<WorkspaceResult<Document | null>> => {
   const stats = await lstat(destination).catch((cause: unknown) => {
     if (isFileNotFound(cause)) return undefined;
     throw cause;
@@ -136,7 +181,7 @@ const readWorkspaceFile = async (
   if (!isJsonWithinLimits(decoded, policy))
     return err(new InvestigationWorkspaceError("read", "too-large"));
   try {
-    return ok(parseInvestigationWorkspace(decoded));
+    return ok(codec.parse(decoded));
   } catch (cause: unknown) {
     return err(new InvestigationWorkspaceError("read", "integrity", { cause }));
   }
@@ -222,11 +267,11 @@ const releaseLock = async (lock: {
   await unlink(lock.path).catch(() => undefined);
 };
 
-const validateNextRevision = (
+function validateNextRevision(
   current: InvestigationWorkspace | null,
   next: InvestigationWorkspace,
   expectedRevision: number | null,
-): WorkspaceResult<null> => {
+): WorkspaceResult<null> {
   if ((current?.revision ?? null) !== expectedRevision)
     return err(new InvestigationWorkspaceError("update", "revision-conflict"));
   if (current === null) {
@@ -240,7 +285,7 @@ const validateNextRevision = (
     next.previous_revision_digest === current.revision_digest
     ? ok(null)
     : err(new InvestigationWorkspaceError("update", "revision-conflict"));
-};
+}
 
 const isFileNotFound = (cause: unknown): boolean =>
   errorCode(cause) === "ENOENT";

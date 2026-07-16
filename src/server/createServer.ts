@@ -210,6 +210,23 @@ export const createServer = (
     logger: toolLogger,
     recordEvidence,
     recordEvidenceWithUnknown,
+    evidenceFilePolicy: options.evidenceFilePolicy ?? {
+      roots: [],
+      maxBytes: 1,
+      maxDepth: 1,
+      maxStringLength: 1,
+      maxNodes: 1,
+    },
+    permissionAuthority: options.permissionAuthority,
+    retainCoverageWorkspace:
+      session === undefined
+        ? undefined
+        : (workspace) => {
+            const retained =
+              session.retainReconstructionCoverageWorkspace(workspace);
+            if (retained === "added") server.sendResourceListChanged();
+            return retained;
+          },
     replay: {
       policy: options.javascriptReplayPolicy ?? {
         enabled: false,

@@ -14,6 +14,7 @@ import {
   reconstructionVerificationInputSchema,
   verifyReconstruction,
 } from "../domain/reconstructionVerification.js";
+import { evaluateReconstructionClosure } from "../domain/reconstructionCoverage.js";
 import {
   changedBehaviorResultSchema,
   changedBehaviorInputSchema,
@@ -22,6 +23,7 @@ import {
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import {
+  AnalysisInputError,
   EvidenceIntegrityError,
   type AnalysisError,
 } from "../domain/errors.js";
@@ -405,6 +407,47 @@ const registerReconstruction = (
       );
       if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
       const parsed = parsedInput.value;
+      const coverage = parsed.coverage;
+      if (coverage !== undefined) {
+        const workspace = session.reconstructionCoverageWorkspace(
+          coverage.workspace_id,
+          coverage.revision,
+        );
+        if (
+          workspace === undefined ||
+          workspace.revision_sha256 !== coverage.revision_sha256
+        )
+          return toCallToolResult(
+            err(
+              new EvidenceIntegrityError(
+                "The requested reconstruction coverage revision is not retained by this session",
+              ),
+            ),
+            contract,
+          );
+        let coverageResult;
+        try {
+          coverageResult = evaluateReconstructionClosure(
+            workspace,
+            coverage.boundary_id,
+            Date.now(),
+          );
+        } catch (cause: unknown) {
+          return toCallToolResult(
+            err(new AnalysisInputError(contract.name, { cause })),
+            contract,
+          );
+        }
+        if (coverageResult.status !== "ready")
+          return toCallToolResult(
+            err(
+              new EvidenceIntegrityError(
+                `Reconstruction coverage boundary is ${coverageResult.status}; readiness requires ready`,
+              ),
+            ),
+            contract,
+          );
+      }
       const owned = session.exportEvidenceBundle();
       const computed = await runDerivedOperation(context, contract.name, () =>
         verifyReconstruction(

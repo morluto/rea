@@ -19,6 +19,47 @@ export const registerEvidenceResources = (
   session: BinarySessionPort,
 ): void => {
   server.registerResource(
+    "reconstruction-coverage-revision",
+    new ResourceTemplate(
+      "rea://reconstruction-coverage/{workspaceId}/revision/{revision}",
+      {
+        list: () => ({
+          resources: session
+            .reconstructionCoverageWorkspaces()
+            .map((workspace) => ({
+              uri: coverageWorkspaceUri(
+                workspace.workspace_id,
+                workspace.revision,
+              ),
+              name: `${workspace.workspace_id} revision ${String(workspace.revision)}`,
+              title: `${workspace.name} coverage revision ${String(workspace.revision)}`,
+              description:
+                "Immutable evidence-backed reconstruction coverage workspace revision.",
+              mimeType: "application/json",
+            })),
+        }),
+      },
+    ),
+    {
+      title: "Reconstruction coverage revision",
+      description:
+        "Canonical CAS-linked surfaces, owners, claims, verifiers, evidence, and completion boundaries.",
+      mimeType: "application/json",
+    },
+    (uri, variables) => {
+      const workspaceId = stringVariable(variables.workspaceId, uri.href);
+      const revisionText = stringVariable(variables.revision, uri.href);
+      if (!/^\d+$/u.test(revisionText))
+        throw new ResourceNotFoundError(uri.href);
+      const workspace = session.reconstructionCoverageWorkspace(
+        workspaceId,
+        Number(revisionText),
+      );
+      if (workspace === undefined) throw new ResourceNotFoundError(uri.href);
+      return jsonResource(uri.href, workspace);
+    },
+  );
+  server.registerResource(
     "investigation-workspace-revision",
     new ResourceTemplate("rea://workspace/{workspaceId}/revision/{revision}", {
       list: () => ({
@@ -297,6 +338,9 @@ export const registerEvidenceResources = (
     },
   );
 };
+
+const coverageWorkspaceUri = (workspaceId: string, revision: number): string =>
+  `rea://reconstruction-coverage/${workspaceId}/revision/${String(revision)}`;
 
 const workspaceUri = (workspaceId: string, revision: number): string =>
   `rea://workspace/${workspaceId}/revision/${String(revision)}`;

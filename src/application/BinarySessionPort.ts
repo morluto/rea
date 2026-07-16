@@ -19,6 +19,7 @@ import type {
   UpdateUnknownInput,
 } from "../domain/residualUnknown.js";
 import type { InvestigationWorkspace } from "../domain/investigationWorkspace.js";
+import type { ReconstructionCoverageWorkspace } from "../domain/reconstructionCoverage.js";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
@@ -60,6 +61,14 @@ export interface BinarySessionPort extends AnalysisOperationPort {
     revision: number,
   ): InvestigationWorkspace | undefined;
   investigationWorkspaces(): readonly InvestigationWorkspace[];
+  retainReconstructionCoverageWorkspace(
+    workspace: ReconstructionCoverageWorkspace,
+  ): "added" | "duplicate";
+  reconstructionCoverageWorkspace(
+    workspaceId: string,
+    revision: number,
+  ): ReconstructionCoverageWorkspace | undefined;
+  reconstructionCoverageWorkspaces(): readonly ReconstructionCoverageWorkspace[];
   recordUnknown(
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError>;

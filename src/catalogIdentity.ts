@@ -59,6 +59,11 @@ const resourceTemplateCatalog = [
     name: "investigation-workspace-revision",
     uri_template: "rea://workspace/{workspaceId}/revision/{revision}",
   },
+  {
+    name: "reconstruction-coverage-revision",
+    uri_template:
+      "rea://reconstruction-coverage/{workspaceId}/revision/{revision}",
+  },
 ] as const;
 
 const digest = (value: unknown): string => {
