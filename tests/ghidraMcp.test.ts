@@ -31,7 +31,10 @@ describe("Ghidra MCP and shared CLI composition", () => {
   it("preserves provider evidence, composed parity, and capability routing", async () => {
     const calls: GhidraOperation[] = [];
     const factory: GhidraProviderClientFactory = (options) => ({
-      start: () => Promise.resolve(ok(sessionInfo(options.profileDigest))),
+      start: () =>
+        Promise.resolve(
+          ok(sessionInfo(options.profileDigest, options.targetSha256)),
+        ),
       callTool: (operation, input) => {
         calls.push(operation);
         return Promise.resolve(ok(resultFor(operation, input)));
@@ -301,9 +304,9 @@ const installationHost = (): GhidraInstallationHost => ({
   }),
 });
 
-const sessionInfo = (profileDigest: string) => ({
+const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   name: "REA Ghidra bridge" as const,
-  bridge_version: 3 as const,
+  bridge_version: 4 as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: profileDigest,
   provider: { id: "ghidra" as const, version: "12.1.2" },
@@ -317,6 +320,7 @@ const sessionInfo = (profileDigest: string) => ({
     compiler_spec_id: "gcc",
     image_base: "0x400000",
     default_address_space: "ram",
+    sha256: targetSha256,
   },
 });
 

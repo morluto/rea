@@ -76,6 +76,7 @@ describe("Ghidra headless launcher", () => {
       token,
       runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
       targetPath: "/tmp/fixture",
+      targetSha256: "b".repeat(64),
       providerVersion: "12.1.2",
       profileDigest: "a".repeat(64),
     });

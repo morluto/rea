@@ -67,7 +67,7 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 
 public final class ReaGhidraBridge extends HeadlessScript {
-    private static final int BRIDGE_VERSION = 3;
+    private static final int BRIDGE_VERSION = 4;
     private static final int MAX_DESCRIPTOR_BYTES = 16 * 1024;
     private static final int MAX_REQUEST_CHARACTERS = 256 * 1024;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -88,6 +88,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "socket_path",
         "token",
         "run_id",
+        "target_sha256",
         "provider_version",
         "profile_digest"
     );
@@ -142,6 +143,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             currentProgram.getAddressFactory().getDefaultAddressSpace();
         if (!Application.getApplicationVersion().equals(descriptor.providerVersion)) {
             throw new IllegalStateException("Ghidra provider version does not match the session");
+        }
+        String importedSha256 = currentProgram.getExecutableSHA256();
+        if (importedSha256 == null ||
+            !constantTimeEquals(
+                importedSha256.toLowerCase(Locale.ROOT),
+                descriptor.targetSha256
+            )) {
+            throw new IllegalStateException(
+                "Ghidra imported-byte digest does not match the admitted target"
+            );
         }
         try {
             initializeDecompiler();
@@ -270,6 +281,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "default_address_space",
             currentProgram.getAddressFactory().getDefaultAddressSpace().getName()
         );
+        target.addProperty("sha256", descriptor.targetSha256);
 
         JsonObject result = new JsonObject();
         result.addProperty("name", "REA Ghidra bridge");
@@ -1593,6 +1605,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireString(object, "socket_path"),
             requireString(object, "token"),
             requireString(object, "run_id"),
+            requireSha256(object, "target_sha256"),
             requireString(object, "provider_version"),
             requireString(object, "profile_digest")
         );
@@ -1660,6 +1673,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("invalid_request", name + " cannot be empty");
         }
         return result;
+    }
+
+    private static String requireSha256(JsonObject object, String name) {
+        String value = requireString(object, name);
+        if (!value.matches("[a-f0-9]{64}")) {
+            throw new IllegalArgumentException(name + " must be lowercase SHA-256");
+        }
+        return value;
     }
 
     private static int requireInteger(JsonObject object, String name) {
@@ -1798,6 +1819,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String socketPath,
         String token,
         String runId,
+        String targetSha256,
         String providerVersion,
         String profileDigest
     ) {}

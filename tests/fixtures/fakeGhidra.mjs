@@ -7,6 +7,7 @@ const [
   runId,
   providerVersion,
   profileDigest,
+  targetSha256,
   mode = "success",
 ] = process.argv.slice(2);
 
@@ -15,7 +16,8 @@ if (
   token === undefined ||
   runId === undefined ||
   providerVersion === undefined ||
-  profileDigest === undefined
+  profileDigest === undefined ||
+  targetSha256 === undefined
 ) {
   process.exit(64);
 }
@@ -79,6 +81,7 @@ else {
             providerVersion:
               mode === "wrong_identity" ? "0.0.0" : providerVersion,
             profileDigest,
+            targetSha256,
             timedOut: mode === "analysis_timeout",
           });
           const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
@@ -132,10 +135,11 @@ const sessionInfo = ({
   runId: sessionRunId,
   providerVersion: version,
   profileDigest: digest,
+  targetSha256: sha256,
   timedOut,
 }) => ({
   name: "REA Ghidra bridge",
-  bridge_version: 3,
+  bridge_version: 4,
   run_id: sessionRunId,
   profile_digest: digest,
   provider: { id: "ghidra", version },
@@ -170,6 +174,7 @@ const sessionInfo = ({
     compiler_spec_id: "gcc",
     image_base: "0x1000",
     default_address_space: "ram",
+    sha256,
   },
 });
 

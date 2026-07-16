@@ -25,6 +25,7 @@ export interface GhidraLaunchSession {
   readonly token: string;
   readonly runId: string;
   readonly targetPath: string;
+  readonly targetSha256: string;
   readonly providerVersion: string;
   readonly profileDigest: string;
 }
@@ -89,6 +90,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           socket_path: session.socketPath,
           token: session.token,
           run_id: session.runId,
+          target_sha256: session.targetSha256,
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
         })}\n`,

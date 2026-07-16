@@ -189,6 +189,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       ),
     }),
     targetPath: parsedTarget.value.path,
+    targetSha256: parsedTarget.value.sha256,
     providerVersion: SUPPORTED_GHIDRA_VERSION,
     profileDigest: profile.value.profile.digest,
     requestTimeoutMs: GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,

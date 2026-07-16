@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
+import { readFileSync } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +24,9 @@ const fixturePath = fileURLToPath(
 );
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.2";
+const TARGET_SHA256 = createHash("sha256")
+  .update(readFileSync(fixturePath))
+  .digest("hex");
 
 type FixtureMode =
   | "success"
@@ -62,6 +67,7 @@ class FixtureLauncher implements GhidraLauncher {
         session.runId,
         session.providerVersion,
         session.profileDigest,
+        session.targetSha256,
         this.mode,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
@@ -88,7 +94,8 @@ const clientFor = (
 ): GhidraClient => {
   const client = new GhidraClient({
     launcher,
-    targetPath: "/tmp/fixture",
+    targetPath: fixturePath,
+    targetSha256: TARGET_SHA256,
     providerVersion: PROVIDER_VERSION,
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
@@ -382,7 +389,7 @@ describe("GhidraClient", () => {
     if (result.ok) return;
 
     const encoded = JSON.stringify(result.error.diagnostics);
-    expect(encoded).toContain("/tmp/fixture");
+    expect(encoded).toContain(fixturePath);
     expect(encoded).toContain(PROFILE_DIGEST);
     expect(encoded).not.toContain(launcher.tokens[0] ?? "missing-token");
     expect(events).toContainEqual(
