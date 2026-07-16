@@ -102,7 +102,7 @@ const describeProperties = (
             isObject(schema) && typeof schema.description !== "string"
               ? {
                   ...describeProperties(schema),
-                  description: `${property.replaceAll("_", " ")}.`,
+                  description: property.replaceAll("_", " "),
                 }
               : describeValue(schema),
           ]),
