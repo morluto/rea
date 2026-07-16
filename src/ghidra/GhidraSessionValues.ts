@@ -41,6 +41,7 @@ const sessionInfoSchema = z
         compiler_spec_id: z.string().min(1),
         image_base: z.string().regex(/^0x[0-9a-f]+$/u),
         default_address_space: z.string().min(1),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       })
       .strict(),
   })
@@ -56,6 +57,7 @@ export const parseGhidraSessionInfo = (
     readonly runId: string;
     readonly providerVersion: string;
     readonly profileDigest: string;
+    readonly targetSha256: string;
   },
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
@@ -64,6 +66,7 @@ export const parseGhidraSessionInfo = (
     parsed.data.run_id !== expected.runId ||
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
+    parsed.data.target.sha256 !== expected.targetSha256 ||
     new Set(parsed.data.capabilities).size !==
       GHIDRA_SESSION_CAPABILITIES.length ||
     GHIDRA_SESSION_CAPABILITIES.some(

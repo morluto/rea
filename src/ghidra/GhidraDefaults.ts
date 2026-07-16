@@ -17,4 +17,4 @@ export const GHIDRA_MAX_QUEUED_REQUESTS = 32;
 /** Maximum encoded response line accepted from the Java bridge. */
 export const GHIDRA_MAX_LINE_BYTES = 1024 * 1024;
 /** Version of REA's Java bridge handshake and request protocol. */
-export const GHIDRA_BRIDGE_VERSION = 3;
+export const GHIDRA_BRIDGE_VERSION = 4;

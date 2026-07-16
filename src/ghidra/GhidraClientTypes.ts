@@ -33,6 +33,7 @@ export type GhidraDiagnostic =
 export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly targetPath: string;
+  readonly targetSha256: string;
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly requestTimeoutMs?: number;

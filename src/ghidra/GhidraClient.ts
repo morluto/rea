@@ -41,6 +41,7 @@ import {
   parseGhidraSessionInfo,
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
+import { createGhidraTargetSnapshot } from "./GhidraTargetSnapshot.js";
 import {
   attachGhidraSocket,
   connectGhidraSocketOnce,
@@ -77,6 +78,7 @@ export class GhidraClient {
   #launch: GhidraLaunch | undefined;
   #process: ProviderProcessSupervisor | undefined;
   #runtimeRoot: PrivateRuntimeRoot | undefined;
+  #snapshotPath: string | undefined;
   #token: string | undefined;
   #runId: string | undefined;
   #nextId = 1;
@@ -232,6 +234,23 @@ export class GhidraClient {
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     const socketPath = join(this.#runtimeRoot.path, "bridge.sock");
+    try {
+      const snapshot = await createGhidraTargetSnapshot(
+        this.#options.targetPath,
+        this.#runtimeRoot.path,
+        this.#options.targetSha256,
+      );
+      this.#snapshotPath = snapshot.path;
+    } catch (cause: unknown) {
+      const failure = this.#failure(
+        "start",
+        "Ghidra target snapshot failed admission",
+        cause,
+      );
+      await this.#cleanup();
+      return err(failure);
+    }
+    if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");
     this.#runId = randomUUID();
     const launched = await this.#options.launcher
@@ -241,7 +260,8 @@ export class GhidraClient {
           socketPath,
           token: this.#token,
           runId: this.#runId,
-          targetPath: this.#options.targetPath,
+          targetPath: this.#snapshotPath,
+          targetSha256: this.#options.targetSha256,
           providerVersion: this.#options.providerVersion,
           profileDigest: this.#options.profileDigest,
         },
@@ -401,6 +421,7 @@ export class GhidraClient {
       runId,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
+      targetSha256: this.#options.targetSha256,
     });
     if (parsed.ok) return parsed;
     return err(
@@ -477,6 +498,7 @@ export class GhidraClient {
       const runtimeRoot = this.#runtimeRoot;
       this.#runtimeRoot = undefined;
       await runtimeRoot?.close();
+      this.#snapshotPath = undefined;
       this.#token = undefined;
       this.#runId = undefined;
       this.#responseBuffer.reset();
@@ -542,6 +564,7 @@ export class GhidraClient {
     const snapshot = this.#process?.snapshot() ?? this.#processSnapshot;
     return createGhidraDiagnostics({
       targetPath: this.#options.targetPath,
+      targetSha256: this.#options.targetSha256,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       ...(this.#runtimeRoot === undefined

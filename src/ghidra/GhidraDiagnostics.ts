@@ -5,6 +5,7 @@ import type { GhidraLaunch } from "./GhidraLauncher.js";
 /** Inputs needed to project bounded diagnostics for one Ghidra runtime. */
 export interface GhidraDiagnosticsOptions {
   readonly targetPath: string;
+  readonly targetSha256: string;
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly runtimeRoot?: string;
@@ -30,6 +31,7 @@ export const createGhidraDiagnostics = (
       : value.replaceAll(options.token, "[REDACTED]");
   return {
     target_path: options.targetPath,
+    target_sha256: options.targetSha256,
     provider_version: options.providerVersion,
     profile_digest: options.profileDigest,
     ...(options.runtimeRoot === undefined
