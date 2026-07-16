@@ -4,6 +4,11 @@ const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.number().int().min(0);
 
+/** A 16-byte CLI metadata GUID without RFC 4122 version/variant restrictions. */
+export const cliMetadataGuidSchema = z
+  .string()
+  .regex(/^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/u);
+
 const managedPage = <Item extends z.ZodType>(item: Item) =>
   z.object({
     items: z.array(item),
@@ -39,9 +44,9 @@ const assemblyIdentitySchema = z.object({
 const moduleIdentitySchema = z.object({
   name: z.string(),
   generation: z.number().int().min(0).max(0xffff),
-  mvid: z.string().uuid().nullable(),
-  enc_id: z.string().uuid().nullable(),
-  enc_base_id: z.string().uuid().nullable(),
+  mvid: cliMetadataGuidSchema.nullable(),
+  enc_id: cliMetadataGuidSchema.nullable(),
+  enc_base_id: cliMetadataGuidSchema.nullable(),
   token: tokenSchema,
   row_offset: offsetSchema,
 });
@@ -416,7 +421,7 @@ export const managedMemberInspectionSchema = z.object({
   identity_scope: z.object({
     token_identity: z.literal("build-local"),
     requires_artifact_sha256: digestSchema,
-    requires_mvid: z.string().uuid().nullable(),
+    requires_mvid: cliMetadataGuidSchema.nullable(),
   }),
   types: managedPage(managedTypeSchema),
   fields: managedPage(managedFieldSchema),
@@ -452,7 +457,7 @@ export const managedNativeBoundaryInspectionSchema = z.object({
   identity_scope: z.object({
     token_identity: z.literal("build-local"),
     requires_artifact_sha256: digestSchema,
-    requires_mvid: z.string().uuid().nullable(),
+    requires_mvid: cliMetadataGuidSchema.nullable(),
   }),
   cli_native: z.object({
     il_only: z.boolean(),

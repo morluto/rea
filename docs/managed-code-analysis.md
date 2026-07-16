@@ -93,6 +93,10 @@ commitment groups:
   locations;
 - parser/provider version, profile schema, limits, and profile digest.
 
+CLI `#GUID` heap values are committed as their exact 16-byte GUID text. REA
+does not impose RFC 4122 UUID version or variant bits on MVID, EncId, or
+EncBaseId because ECMA-335 metadata does not require those bit patterns.
+
 ### Entity commitment
 
 - table kind and build-local token;
@@ -294,6 +298,7 @@ absolute or relative to the manifest file. A compact manifest contains:
       "token": "0x06000000",
       "signature_sha256": "<raw signature blob digest>",
       "il_size": 0,
+      "il_sha256": "<raw CIL byte digest>",
       "normalized_il_sha256": "<digest>"
     }
   ],
@@ -324,7 +329,8 @@ assembly name, runtime-family, and managed-architecture mismatches whenever the
 manifest supplies those fields. It then pages each declared MethodDef token
 directly by row, so selected methods do not need to appear in the first member
 page of a large application. `il_length` remains accepted as a legacy alias for
-`il_size`.
+`il_size`; optional `il_sha256` locks the exact raw CIL bytes in addition to
+REA's schema-versioned normalized instruction digest.
 
 The optional `application_graph` block reuses those exact-build method
 commitments. For each referenced MethodDef token, the verifier builds a bounded

@@ -4,7 +4,10 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { evidenceSchema, parseEvidence } from "./evidence.js";
-import { managedMemberInspectionSchema } from "./managedArtifact.js";
+import {
+  cliMetadataGuidSchema,
+  managedMemberInspectionSchema,
+} from "./managedArtifact.js";
 import type { JsonValue } from "./jsonValue.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -82,7 +85,7 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     artifact_path: z.string().min(1),
     byte_length: z.number().int().min(0),
     module_name: z.string().nullable(),
-    mvid: z.string().uuid().nullable(),
+    mvid: cliMetadataGuidSchema.nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
   }),
   decompiler: decompilerSchema.extend({
