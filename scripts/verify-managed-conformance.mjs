@@ -66,6 +66,14 @@ const nativeBoundaryLimits = {
   maxHeapItemBytes: 1024 * 1024,
 };
 
+const applicationGraphLimits = {
+  max_types: 100,
+  max_methods: 100,
+  max_fields: 100,
+  max_pinvoke_imports: 100,
+  max_native_implementations: 100,
+};
+
 const appManifestInspectionLimits = {
   ...inspectionLimits,
   maxMetadataBytes: 64 * 1024 * 1024,
@@ -582,6 +590,24 @@ async function runManagedAppManifestSelfTest() {
           normalized_il_sha256: method.body.normalized_il_sha256,
         },
       ],
+      application_graph: {
+        expected_node_kinds: [
+          "artifact",
+          "managed-assembly",
+          "managed-module",
+          "managed-type",
+          "managed-method",
+        ],
+        feature_traces: [
+          {
+            label: "trace pinned method by name",
+            method_token: method.token,
+            seed: "PinnedSemanticSlice",
+            match: "exact",
+            min_matched_seeds: 1,
+          },
+        ],
+      },
     },
     join(workspace, "source-owned-managed-app-manifest.json"),
   );
@@ -589,6 +615,7 @@ async function runManagedAppManifestSelfTest() {
     verified: true,
     assertions: summary.assertions,
     methods: summary.methods.length,
+    applicationGraph: summary.application_graph ?? null,
     target: summary.target,
   };
 }
@@ -664,6 +691,7 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
 
   const methods = [];
   let assertions = 1;
+  const inspectedMethods = new Map();
   for (const expectedMethod of manifest.methods) {
     const method = inspectManagedMethodByToken(bytes, target, expectedMethod);
     ensure(
@@ -679,6 +707,7 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
       `method ${expectedMethod.token} normalized IL sha256 mismatch: expected ${expectedMethod.normalized_il_sha256}, observed ${method.body.normalized_il_sha256 ?? "null"}`,
     );
     assertions += 4;
+    inspectedMethods.set(expectedMethod.token, method);
     methods.push({
       label: expectedMethod.label ?? null,
       token: method.token,
@@ -689,6 +718,18 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
       normalized_il_sha256: method.body.normalized_il_sha256,
     });
   }
+  const applicationGraph =
+    manifest.application_graph === undefined
+      ? undefined
+      : verifyManagedAppManifestApplicationGraph({
+          graphManifest: manifest.application_graph,
+          bytes,
+          target,
+          artifact,
+          manifestMethods: manifest.methods,
+          inspectedMethods,
+        });
+  if (applicationGraph !== undefined) assertions += applicationGraph.assertions;
   return {
     label: manifest.label ?? null,
     assertions,
@@ -701,15 +742,148 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
       managed_architecture: artifact.classification.managed_architecture,
     },
     methods,
+    ...(applicationGraph === undefined
+      ? {}
+      : { application_graph: applicationGraph.summary }),
+  };
+}
+
+function verifyManagedAppManifestApplicationGraph({
+  graphManifest,
+  bytes,
+  target,
+  artifact,
+  manifestMethods,
+  inspectedMethods,
+}) {
+  const graphByToken = new Map();
+  const projectionForToken = (token) => {
+    const existing = graphByToken.get(token);
+    if (existing !== undefined) return existing;
+    const method = inspectedMethods.get(token);
+    ensure(
+      method !== undefined,
+      `application graph method ${token} must also be declared in manifest.methods`,
+    );
+    const members = inspectManagedMethodPageByToken(bytes, target, token);
+    const artifactEvidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_artifact",
+      parameters: appManifestInspectionLimits,
+      result: artifact,
+      rawResult: null,
+      limitations: artifact.limitations,
+      locations: [{ kind: "artifact-path", path: target.path }],
+    });
+    const memberEvidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {
+        ...appManifestMemberLimits,
+        methodOffset: methodTokenRow(token) - 1,
+      },
+      result: members,
+      rawResult: null,
+      limitations: members.limitations,
+      locations: [{ kind: "artifact-path", path: target.path }],
+    });
+    const projected = projectManagedApplicationGraphEvidence({
+      managed_artifact: artifactEvidence,
+      managed_members: memberEvidence,
+      limits: applicationGraphLimits,
+    });
+    ensure(
+      projected.ok,
+      `application graph projection failed for method ${token}`,
+    );
+    const projection = {
+      method,
+      evidence: projected.value,
+      nodeKinds: [
+        ...new Set(
+          projected.value.normalized_result.graph.nodes.map(({ kind }) => kind),
+        ),
+      ].sort(),
+      summary: projected.value.normalized_result.summary,
+    };
+    graphByToken.set(token, projection);
+    return projection;
+  };
+
+  const firstToken = manifestMethods[0]?.token;
+  ensure(
+    firstToken !== undefined,
+    "application graph verification requires at least one manifest method",
+  );
+  const baseline = projectionForToken(firstToken);
+  let assertions = 1;
+  for (const expectedKind of graphManifest.expected_node_kinds) {
+    ensure(
+      baseline.nodeKinds.includes(expectedKind),
+      `application graph is missing expected node kind ${expectedKind}`,
+    );
+    assertions += 1;
+  }
+
+  const traces = [];
+  for (const expectedTrace of graphManifest.feature_traces) {
+    const projection = projectionForToken(expectedTrace.method_token);
+    const traced = traceApplicationFeatureEvidence({
+      application: projection.evidence,
+      native_observations: [],
+      seed: {
+        kind: "string",
+        value: expectedTrace.seed,
+        match: expectedTrace.match,
+        case_sensitive: expectedTrace.case_sensitive,
+      },
+      direction: "incoming",
+      limits: {
+        max_seed_matches: 10,
+        max_depth: 4,
+        max_nodes: 100,
+        max_edges: 200,
+        max_paths: 20,
+      },
+    });
+    ensure(
+      traced.ok,
+      `application graph trace failed for method ${expectedTrace.method_token}`,
+    );
+    const matched = traced.value.normalized_result.summary.matched_seeds;
+    ensure(
+      matched >= expectedTrace.min_matched_seeds,
+      `application graph trace ${expectedTrace.seed} matched ${String(matched)} seeds, expected at least ${String(expectedTrace.min_matched_seeds)}`,
+    );
+    assertions += 1;
+    traces.push({
+      label: expectedTrace.label ?? null,
+      method_token: expectedTrace.method_token,
+      seed: expectedTrace.seed,
+      matched_seeds: matched,
+      trace_evidence_id: traced.value.evidence_id,
+    });
+  }
+
+  return {
+    assertions,
+    summary: {
+      projections: [...graphByToken.values()].map((projection) => ({
+        method_token: projection.method.token,
+        graph_evidence_id: projection.evidence.evidence_id,
+        node_kinds: projection.nodeKinds,
+        summary: projection.summary,
+      })),
+      expected_node_kinds: graphManifest.expected_node_kinds,
+      feature_traces: traces,
+    },
   };
 }
 
 function inspectManagedMethodByToken(bytes, target, expectedMethod) {
-  const row = methodTokenRow(expectedMethod.token);
-  const members = inspectManagedMembersBytes(bytes, target, {
-    ...appManifestMemberLimits,
-    methodOffset: row - 1,
-  });
+  const members = inspectManagedMethodPageByToken(
+    bytes,
+    target,
+    expectedMethod.token,
+  );
   const method = members.methods.items.find(
     ({ token }) => token === expectedMethod.token,
   );
@@ -722,6 +896,14 @@ function inspectManagedMethodByToken(bytes, target, expectedMethod) {
     `method ${expectedMethod.token} body status is ${method.body.status}, expected present`,
   );
   return method;
+}
+
+function inspectManagedMethodPageByToken(bytes, target, token) {
+  const row = methodTokenRow(token);
+  return inspectManagedMembersBytes(bytes, target, {
+    ...appManifestMemberLimits,
+    methodOffset: row - 1,
+  });
 }
 
 function parseManagedAppManifest(rawManifest) {
@@ -756,17 +938,74 @@ function parseManagedAppManifest(rawManifest) {
     methods: methods.map((method, index) =>
       parseManagedAppManifestMethod(method, index),
     ),
+    application_graph: parseManagedAppManifestGraph(manifest.application_graph),
+  };
+}
+
+function parseManagedAppManifestGraph(rawGraph) {
+  if (rawGraph === undefined) return undefined;
+  const graph = object(rawGraph, "manifest.application_graph");
+  const expectedKinds =
+    graph.expected_node_kinds === undefined
+      ? []
+      : array(
+          graph.expected_node_kinds,
+          "manifest.application_graph.expected_node_kinds",
+        ).map((kind, index) =>
+          string(
+            kind,
+            `manifest.application_graph.expected_node_kinds[${String(index)}]`,
+          ),
+        );
+  const traces =
+    graph.feature_traces === undefined
+      ? []
+      : array(
+          graph.feature_traces,
+          "manifest.application_graph.feature_traces",
+        ).map((trace, index) => parseManagedAppManifestTrace(trace, index));
+  ensure(
+    expectedKinds.length > 0 || traces.length > 0,
+    "manifest.application_graph must declare expected_node_kinds or feature_traces",
+  );
+  return {
+    expected_node_kinds: expectedKinds,
+    feature_traces: traces,
+  };
+}
+
+function parseManagedAppManifestTrace(rawTrace, index) {
+  const prefix = `manifest.application_graph.feature_traces[${String(index)}]`;
+  const trace = object(rawTrace, prefix);
+  const match = trace.match ?? "exact";
+  ensure(
+    match === "exact" || match === "contains",
+    `${prefix}.match must be exact or contains`,
+  );
+  const caseSensitive = trace.case_sensitive ?? true;
+  ensure(
+    typeof caseSensitive === "boolean",
+    `${prefix}.case_sensitive must be a boolean`,
+  );
+  const minMatchedSeeds = trace.min_matched_seeds ?? 1;
+  ensure(
+    Number.isInteger(minMatchedSeeds) && minMatchedSeeds > 0,
+    `${prefix}.min_matched_seeds must be a positive integer`,
+  );
+  return {
+    label: optionalString(trace.label, `${prefix}.label`),
+    method_token: methodToken(trace.method_token, `${prefix}.method_token`),
+    seed: string(trace.seed, `${prefix}.seed`),
+    match,
+    case_sensitive: caseSensitive,
+    min_matched_seeds: minMatchedSeeds,
   };
 }
 
 function parseManagedAppManifestMethod(rawMethod, index) {
   const prefix = `manifest.methods[${String(index)}]`;
   const method = object(rawMethod, prefix);
-  const token = metadataToken(method.token, `${prefix}.token`);
-  ensure(
-    token.startsWith("0x06"),
-    `${prefix}.token must be a MethodDef token beginning with 0x06`,
-  );
+  const token = methodToken(method.token, `${prefix}.token`);
   return {
     label: optionalString(method.label, `${prefix}.label`),
     token,
@@ -851,6 +1090,15 @@ function metadataToken(value, name) {
   const text = string(value, name);
   ensure(/^0x[0-9a-f]{8}$/u.test(text), `${name} must be a metadata token`);
   return text;
+}
+
+function methodToken(value, name) {
+  const token = metadataToken(value, name);
+  ensure(
+    token.startsWith("0x06"),
+    `${name} must be a MethodDef token beginning with 0x06`,
+  );
+  return token;
 }
 
 function methodTokenRow(token) {
