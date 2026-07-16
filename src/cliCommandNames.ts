@@ -51,6 +51,10 @@ export const CLI_COMMANDS = Object.freeze({
   traceApplicationFeature: "trace-application-feature",
   compareApplicationVersions: "compare-application-versions",
   runControlledReplay: "run-controlled-replay",
+  prepareNodeCharacterization: "prepare-node-characterization",
+  executeNodeCharacterization: "execute-node-characterization",
+  commitReconstructionCoverage: "commit-reconstruction-coverage",
+  queryReconstructionCoverage: "query-reconstruction-coverage",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

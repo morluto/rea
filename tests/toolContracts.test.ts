@@ -52,6 +52,10 @@ describe("tool contract inventory", () => {
       "trace_application_feature",
       "compare_application_versions",
       "run_controlled_replay",
+      "prepare_node_characterization",
+      "execute_node_characterization",
+      "commit_reconstruction_coverage",
+      "query_reconstruction_coverage",
     ]);
     expect(SESSION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "open_binary",

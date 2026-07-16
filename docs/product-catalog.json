@@ -11,7 +11,7 @@
     "skill_version": "20"
   },
   "tools": {
-    "total": 91,
+    "total": 95,
     "families": [
       {
         "id": "direct",
@@ -132,9 +132,13 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 3,
+        "count": 7,
         "tools": [
+          "commit_reconstruction_coverage",
           "compare_application_versions",
+          "execute_node_characterization",
+          "prepare_node_characterization",
+          "query_reconstruction_coverage",
           "run_controlled_replay",
           "trace_application_feature"
         ]
@@ -305,7 +309,11 @@
       "name": "REA JavaScript application workflows",
       "version": "1",
       "capabilities": [
+        "commit_reconstruction_coverage",
         "compare_application_versions",
+        "execute_node_characterization",
+        "prepare_node_characterization",
+        "query_reconstruction_coverage",
         "run_controlled_replay",
         "trace_application_feature"
       ]
@@ -484,7 +492,7 @@
     }
   ],
   "cli": {
-    "primary_count": 51,
+    "primary_count": 55,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -492,6 +500,7 @@
       "capabilities",
       "capture-process",
       "capture-web-screenshot",
+      "commit-reconstruction-coverage",
       "compare",
       "compare-application-versions",
       "compare-managed-members",
@@ -504,6 +513,7 @@
       "doctor",
       "evidence-export",
       "evidence-import",
+      "execute-node-characterization",
       "extract-artifact",
       "function",
       "import-managed-reconstruction",
@@ -525,8 +535,10 @@
       "observe-web-session",
       "plan-managed-runtime-correlation",
       "policy",
+      "prepare-node-characterization",
       "project-managed-application-graph",
       "providers",
+      "query-reconstruction-coverage",
       "reconcile-javascript-runtime",
       "run-controlled-replay",
       "search",
@@ -547,17 +559,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 51,
-      "mcp_tools": 91,
+      "cli_commands": 55,
+      "mcp_tools": 95,
       "mcp_prompts": 6,
       "mcp_resources": 2,
-      "mcp_resource_templates": 7
+      "mcp_resource_templates": 8
     },
     "digests": {
-      "tools_sha256": "39df15d2e0433a062e216b85fde8300dd9fe4df5dad000227b631cfea39a22bd",
+      "tools_sha256": "3c503c53210ae6700e8afdf7cadd206ad3ee11ddf9524647cea3bda2e311ba77",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
-      "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "e9aa2ad08a00f31cbfda03f4c74d584c8e5c30a78e1d712bfe8fc5bb43ea1ef1"
+      "resources_sha256": "5dca0fcdad3e78d71a1b6ef7b4f0c12bdcd8e3ec11fcbdd9ccd3a68edadf5c80",
+      "combined_sha256": "b3db06bedadc1ad21a6cfe76f58a9c6cebbf9bce4f9663733b6bab07a57203c3"
     }
   }
 }

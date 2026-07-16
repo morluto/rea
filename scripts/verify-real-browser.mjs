@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
+import { waitForBrowserDevtoolsPort } from "../dist/browser/BrowserProcessStartup.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
@@ -59,7 +60,12 @@ try {
   browser.stderr.on("data", (chunk) => {
     if (stderr.length < 64 * 1_024) stderr += chunk.toString("utf8");
   });
-  const port = await devtoolsPort(profile, browser, () => stderr);
+  const port = await waitForBrowserDevtoolsPort({
+    child: browser,
+    executable,
+    activePortPath: join(profile, "DevToolsActivePort"),
+    stderr: () => stderr,
+  });
   const endpoint = `http://127.0.0.1:${String(port)}`;
   const provider = new CdpBrowserProvider();
   const target = await pageTarget(provider, endpoint, site.origin);
@@ -309,23 +315,6 @@ async function browserExecutable() {
   throw new Error(
     "No Chrome-family executable found; set REA_BROWSER_EXECUTABLE to run real-browser verification",
   );
-}
-
-async function devtoolsPort(profile, child, stderr) {
-  const activePort = join(profile, "DevToolsActivePort");
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    if (child.exitCode !== null)
-      throw new Error(`Chrome exited before CDP startup: ${stderr()}`);
-    try {
-      const [port] = (await readFile(activePort, "utf8")).trim().split("\n");
-      const parsed = Number(port);
-      if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
-    } catch {
-      // Chrome writes this file only after its CDP listener is ready.
-    }
-    await delay(25);
-  }
-  throw new Error(`Timed out waiting for Chrome CDP startup: ${stderr()}`);
 }
 
 async function pageTarget(provider, endpoint, origin) {

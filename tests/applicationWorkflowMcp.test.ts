@@ -1,4 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,6 +14,7 @@ import { observed } from "./fixtures/analysisExecution.js";
 import { PermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { createPermissionPolicy } from "../src/domain/permissionPolicy.js";
 import { controlledReplayOutputSchema } from "../src/domain/javascriptReplay.js";
+import { nodeCharacterizationPreparationOutputSchema } from "../src/domain/nodeRuntimeCharacterization.js";
 
 describe("application workflow MCP parity", () => {
   it("traces and compares authenticated graph Evidence in the session", async () => {
@@ -225,6 +227,78 @@ describe("application workflow MCP parity", () => {
       expect(session.exportEvidenceBundle().records).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ authority: "controlled-replay" }),
+        ]),
+      );
+      const factoryPath = resolve(root, "sanitizer.factory.txt");
+      const factoryBytes = await readFile(factoryPath);
+      const factorySha256 = createHash("sha256")
+        .update(factoryBytes)
+        .digest("hex");
+      const characterizationInput = {
+        preparation_approved: true,
+        selected_alias: "bundle",
+        expected_effect: "pure",
+        instrumentation: {
+          artifact_path: factoryPath,
+          artifact_sha256: factorySha256,
+          selection: {
+            byte_start: 0,
+            byte_end: factoryBytes.byteLength,
+            selected_sha256: factorySha256,
+            export_name: "selected",
+          },
+        },
+        replay: {
+          mode: "plan",
+          left: {
+            modules: [
+              {
+                alias: "bundle",
+                path: factoryPath,
+                format: "commonjs-factory",
+                role: "module",
+                dependencies: {},
+              },
+            ],
+            entry_alias: "bundle",
+            entry_export: "selected",
+          },
+          cases: [{ case_id: "heading", arguments: ["# Title"] }],
+          approved: false,
+        },
+      };
+      const characterizationPlan = await client.callTool({
+        name: "prepare_node_characterization",
+        arguments: characterizationInput,
+      });
+      expect(characterizationPlan.isError).not.toBe(true);
+      const approvedPlan = nodeCharacterizationPreparationOutputSchema.parse(
+        characterizationPlan.structuredContent,
+      ).plan;
+      const characterized = await client.callTool({
+        name: "execute_node_characterization",
+        arguments: {
+          execution_approved: true,
+          approved_plan_sha256: approvedPlan.plan_sha256,
+          preparation: characterizationInput,
+        },
+      });
+      expect(characterized.isError).not.toBe(true);
+      expect(characterized.structuredContent).toMatchObject({
+        phase: "execution",
+        evidence: {
+          authority: "controlled-replay",
+          provider: { id: "rea-node-characterization" },
+        },
+      });
+      expect(session.exportEvidenceBundle().records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            predicate_type: "rea.javascript-export-transformation/v1",
+          }),
+          expect.objectContaining({
+            predicate_type: "rea.runtime-characterization/v1",
+          }),
         ]),
       );
     } finally {

@@ -63,6 +63,10 @@ import {
   type InvestigationWorkspace,
 } from "../domain/investigationWorkspace.js";
 import {
+  parseReconstructionCoverageWorkspace,
+  type ReconstructionCoverageWorkspace,
+} from "../domain/reconstructionCoverage.js";
+import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
@@ -97,6 +101,10 @@ export class BinarySession implements BinarySessionPort {
   });
   readonly #snapshot = new AnalysisSnapshotCache();
   readonly #investigationWorkspaces = new Map<string, InvestigationWorkspace>();
+  readonly #reconstructionCoverageWorkspaces = new Map<
+    string,
+    ReconstructionCoverageWorkspace
+  >();
   readonly #runtimeAvailability = new Map<
     string,
     { readonly available: boolean; readonly reason: string | null }
@@ -280,6 +288,39 @@ export class BinarySession implements BinarySessionPort {
   /** List retained workspace revisions in canonical identity order. */
   investigationWorkspaces(): readonly InvestigationWorkspace[] {
     return [...this.#investigationWorkspaces.values()]
+      .sort(
+        (left, right) =>
+          left.workspace_id.localeCompare(right.workspace_id) ||
+          left.revision - right.revision,
+      )
+      .map((workspace) => structuredClone(workspace));
+  }
+
+  /** Retain one validated immutable reconstruction coverage revision. */
+  retainReconstructionCoverageWorkspace(
+    workspace: ReconstructionCoverageWorkspace,
+  ): "added" | "duplicate" {
+    const parsed = parseReconstructionCoverageWorkspace(workspace);
+    const key = `${parsed.workspace_id}:${String(parsed.revision)}`;
+    if (this.#reconstructionCoverageWorkspaces.has(key)) return "duplicate";
+    this.#reconstructionCoverageWorkspaces.set(key, parsed);
+    return "added";
+  }
+
+  /** Read one session-retained reconstruction coverage revision. */
+  reconstructionCoverageWorkspace(
+    workspaceId: string,
+    revision: number,
+  ): ReconstructionCoverageWorkspace | undefined {
+    const workspace = this.#reconstructionCoverageWorkspaces.get(
+      `${workspaceId}:${String(revision)}`,
+    );
+    return workspace === undefined ? undefined : structuredClone(workspace);
+  }
+
+  /** List reconstruction coverage revisions in canonical identity order. */
+  reconstructionCoverageWorkspaces(): readonly ReconstructionCoverageWorkspace[] {
+    return [...this.#reconstructionCoverageWorkspaces.values()]
       .sort(
         (left, right) =>
           left.workspace_id.localeCompare(right.workspace_id) ||

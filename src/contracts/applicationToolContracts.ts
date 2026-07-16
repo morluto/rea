@@ -10,6 +10,19 @@ import {
   controlledReplayInputSchema,
   controlledReplayOutputSchema,
 } from "../domain/javascriptReplay.js";
+import {
+  nodeCharacterizationExecutionInputSchema,
+  nodeCharacterizationExecutionOutputSchema,
+  nodeCharacterizationPreparationInputSchema,
+  nodeCharacterizationPreparationOutputSchema,
+} from "../domain/nodeRuntimeCharacterization.js";
+import {
+  reconstructionCoverageCommitInputSchema,
+  reconstructionCoverageCommitOutputSchema,
+  reconstructionCoverageQueryInputSchema,
+} from "../application/ReconstructionCoverageService.js";
+import { reconstructionClosureResultSchema } from "../domain/reconstructionCoverage.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { ToolContract } from "./toolContracts.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
@@ -22,6 +35,69 @@ const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
 );
+const HASH = "0".repeat(64);
+const NODE_PREPARATION_EXAMPLE = jsonObjectSchema.parse({
+  preparation_approved: true,
+  selected_alias: "bundle",
+  expected_effect: "pure",
+  instrumentation: {
+    artifact_path: "/approved/bundle.js",
+    artifact_sha256: HASH,
+    selection: {
+      byte_start: 100,
+      byte_end: 120,
+      selected_sha256: HASH,
+      export_name: "selected",
+    },
+  },
+  replay: {
+    mode: "plan",
+    left: {
+      modules: [
+        {
+          alias: "bundle",
+          path: "/approved/bundle.js",
+          format: "commonjs-factory",
+          role: "module",
+          dependencies: {},
+        },
+      ],
+      entry_alias: "bundle",
+      entry_export: "selected",
+    },
+    cases: [{ case_id: "empty", arguments: [""] }],
+    approved: false,
+  },
+});
+
+const COVERAGE_WORKSPACE_EXAMPLE = jsonObjectSchema.parse({
+  schema_version: 1,
+  workspace_id: `rcw_${HASH}`,
+  name: "replacement",
+  revision: 1,
+  previous_revision_sha256: null,
+  revision_sha256: HASH,
+  evidence_bundle: {
+    bundle_version: 2,
+    artifacts: [],
+    providers: [],
+    environments: [],
+    scenarios: [],
+    captures: [],
+    unknowns: [],
+    records: [],
+  },
+  artifacts: [],
+  surfaces: [],
+  owners: [],
+  claims: [],
+  verifier_contracts: [],
+  verifier_results: [],
+  residual_unknown_ids: [],
+  contradictions: [],
+  package_proofs: [],
+  boundaries: [],
+});
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
@@ -104,6 +180,78 @@ export const APPLICATION_TOOL_CONTRACTS = [
             result_nodes: 10000,
           },
           approved: false,
+        },
+      },
+    ],
+  },
+  {
+    name: "prepare_node_characterization",
+    ...toolContractMetadata("prepare_node_characterization"),
+    description:
+      "Prepare a hash-bound Node/JavaScript characterization plan and deterministic reversible export transformation without executing target code. The exact source, selected byte range, runtime closure, sandbox profile, cases, and limits are committed for separate execution approval.",
+    kind: "application",
+    inputSchema: nodeCharacterizationPreparationInputSchema,
+    outputSchema: nodeCharacterizationPreparationOutputSchema,
+    examples: [
+      {
+        title: "Prepare one exact bundled callable characterization",
+        input: NODE_PREPARATION_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "execute_node_characterization",
+    ...toolContractMetadata("execute_node_characterization"),
+    description:
+      "Recompute and execute one separately approved exact Node characterization plan in the owned controlled-replay boundary. Returns transformation, replay, cleanup, and provider-neutral characterization Evidence v2; stale plans fail before execution.",
+    kind: "application",
+    inputSchema: nodeCharacterizationExecutionInputSchema,
+    outputSchema: nodeCharacterizationExecutionOutputSchema,
+    examples: [
+      {
+        title: "Execute one approved exact characterization plan",
+        input: {
+          execution_approved: true,
+          approved_plan_sha256: HASH,
+          preparation: NODE_PREPARATION_EXAMPLE,
+        },
+      },
+    ],
+  },
+  {
+    name: "commit_reconstruction_coverage",
+    ...toolContractMetadata("commit_reconstruction_coverage"),
+    description:
+      "Atomically commit one canonical evidence-backed reconstruction coverage workspace revision under an approved root. CAS revisions reject lost updates; every Evidence and residual-unknown reference must resolve in the embedded canonical bundle.",
+    kind: "application",
+    inputSchema: reconstructionCoverageCommitInputSchema,
+    outputSchema: reconstructionCoverageCommitOutputSchema,
+    examples: [
+      {
+        title: "Commit the first canonical coverage revision",
+        input: {
+          approved: true,
+          workspace_path: "/approved/coverage.json",
+          expected_revision: null,
+          workspace: COVERAGE_WORKSPACE_EXAMPLE,
+        },
+      },
+    ],
+  },
+  {
+    name: "query_reconstruction_coverage",
+    ...toolContractMetadata("query_reconstruction_coverage"),
+    description:
+      "Evaluate one named reconstruction boundary from a canonical coverage workspace. Missing ownership or inventory is partial; stale, weak, truncated, skipped, or unresolved proof is unknown; contradictions, failed proof, missing owners, and authority routing fail closed.",
+    kind: "application",
+    inputSchema: reconstructionCoverageQueryInputSchema,
+    outputSchema: reconstructionClosureResultSchema,
+    examples: [
+      {
+        title: "Evaluate one replacement boundary",
+        input: {
+          workspace_path: "/approved/coverage.json",
+          boundary_id: "replacement.cli",
         },
       },
     ],

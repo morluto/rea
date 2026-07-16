@@ -11,6 +11,11 @@ import type { ToolContract } from "../contracts/toolContracts.js";
 
 interface ToolResultOptions {
   readonly evidenceResourcesAvailable?: boolean;
+  readonly resourceLinks?: readonly {
+    readonly uri: string;
+    readonly name: string;
+    readonly description: string;
+  }[];
 }
 
 /**
@@ -79,6 +84,11 @@ const successResult = (
         contract.kind === "session" ||
           options.evidenceResourcesAvailable === true,
       ),
+      ...(options.resourceLinks ?? []).map((resource) => ({
+        type: "resource_link" as const,
+        ...resource,
+        mimeType: "application/json" as const,
+      })),
     ],
     structuredContent: candidate,
   };
