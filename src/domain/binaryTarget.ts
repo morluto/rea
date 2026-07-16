@@ -1,5 +1,4 @@
 import { constants } from "node:fs";
-import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -45,6 +44,10 @@ export interface BinaryTarget {
     | "source-map";
   readonly architecture?: BinaryArchitecture;
   readonly availableArchitectures?: readonly BinaryArchitecture[];
+  /** Provider-neutral PE image role observed from COFF characteristics. */
+  readonly executableRole?: "application" | "shared-library" | "non-executable";
+  /** Whether a PE declares a non-empty CLI header data-directory entry. */
+  readonly managed?: boolean;
 }
 
 /**
@@ -65,43 +68,42 @@ export const parseBinaryTarget = async (
     const resolved = await resolveAppBundle(canonical);
     if (!resolved.ok) return err(resolved.error);
     const path = resolved.value;
-    if (!(await stat(path)).isFile())
-      return err(new BinaryTargetError(path, "target is not a regular file"));
-    if (
-      targetKind === "database" ||
-      (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
-    )
-      return ok({
-        path,
-        sourcePath: canonical,
-        sha256: await sha256File(path),
-        kind: "database",
-        format: "analysis-database",
-      });
     const handle = await open(path, "r");
-    let detected: Result<ExecutableMetadata, string>;
     try {
+      if (!(await handle.stat()).isFile())
+        return err(new BinaryTargetError(path, "target is not a regular file"));
+      if (
+        targetKind === "database" ||
+        (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+      )
+        return ok({
+          path,
+          sourcePath: canonical,
+          sha256: await sha256Handle(handle),
+          kind: "database",
+          format: "analysis-database",
+        });
       const artifactFormat = await detectArtifactFormat(path, handle);
       if (artifactFormat !== undefined)
         return ok({
           path,
           sourcePath: canonical,
-          sha256: await sha256File(path),
+          sha256: await sha256Handle(handle),
           kind: isArchiveFormat(artifactFormat) ? "archive" : "artifact",
           format: artifactFormat,
         });
-      detected = await readExecutableMetadata(handle, hostArchitecture);
+      const detected = await readExecutableMetadata(handle, hostArchitecture);
+      if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
+      return ok({
+        path,
+        sourcePath: canonical,
+        sha256: await sha256Handle(handle),
+        kind: "executable",
+        ...detected.value,
+      });
     } finally {
       await handle.close();
     }
-    if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
-    return ok({
-      path,
-      sourcePath: canonical,
-      sha256: await sha256File(path),
-      kind: "executable",
-      ...detected.value,
-    });
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(candidate, "path is not readable", { cause }),
@@ -167,9 +169,16 @@ const namedArtifactFormat = (
 const isArchiveFormat = (format: BinaryTarget["format"]): boolean =>
   ["zip", "ipa", "apk", "asar", "dmg", "pkg"].includes(format);
 
-const sha256File = async (path: string): Promise<string> => {
+const sha256Handle = async (handle: FileHandle): Promise<string> => {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (true) {
+    const observed = await handle.read(chunk, 0, chunk.length, position);
+    if (observed.bytesRead === 0) break;
+    hash.update(chunk.subarray(0, observed.bytesRead));
+    position += observed.bytesRead;
+  }
   return hash.digest("hex");
 };
 
@@ -262,7 +271,11 @@ const decodeXml = (value: string): string =>
 
 type ExecutableMetadata = Pick<
   BinaryTarget,
-  "format" | "architecture" | "availableArchitectures"
+  | "format"
+  | "architecture"
+  | "availableArchitectures"
+  | "executableRole"
+  | "managed"
 >;
 
 const readExecutableMetadata = async (
@@ -274,13 +287,7 @@ const readExecutableMetadata = async (
   const bytes = prefix.subarray(0, prefixRead.bytesRead);
   if (bytes.length >= 64 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
     const offset = bytes.readUInt32LE(0x3c);
-    if (offset > bytes.length - 6) {
-      const record = Buffer.alloc(6);
-      const recordRead = await handle.read(record, 0, record.length, offset);
-      return recordRead.bytesRead === record.length
-        ? parsePeRecord(record)
-        : err("invalid or truncated PE header");
-    }
+    return readPeMetadata(handle, offset);
   }
   if (bytes.length >= 8) {
     const magic = bytes.readUInt32BE(0);
@@ -299,6 +306,28 @@ const readExecutableMetadata = async (
     }
   }
   return parseExecutableHeader(bytes, hostArchitecture);
+};
+
+const readPeMetadata = async (
+  handle: FileHandle,
+  offset: number,
+): Promise<Result<ExecutableMetadata, string>> => {
+  const fileHeader = Buffer.alloc(24);
+  const fileHeaderRead = await handle.read(
+    fileHeader,
+    0,
+    fileHeader.length,
+    offset,
+  );
+  if (fileHeaderRead.bytesRead !== fileHeader.length)
+    return err("invalid or truncated PE header");
+  const optionalHeaderSize = fileHeader.readUInt16LE(20);
+  if (optionalHeaderSize > 4096) return err("invalid PE optional header size");
+  const record = Buffer.alloc(24 + optionalHeaderSize);
+  const recordRead = await handle.read(record, 0, record.length, offset);
+  return recordRead.bytesRead === record.length
+    ? parsePeRecord(record)
+    : err("invalid or truncated PE header");
 };
 
 /**
@@ -399,20 +428,66 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
 const parsePe = (bytes: Buffer): Result<ExecutableMetadata, string> => {
   if (bytes.length < 64) return err("truncated PE DOS header");
   const offset = bytes.readUInt32LE(0x3c);
-  if (offset > bytes.length - 6) return err("invalid or truncated PE header");
-  return parsePeRecord(bytes.subarray(offset, offset + 6));
+  if (offset > bytes.length - 24) return err("invalid or truncated PE header");
+  return parsePeRecord(bytes.subarray(offset));
 };
 
 const parsePeRecord = (record: Buffer): Result<ExecutableMetadata, string> => {
-  if (record.length < 6 || record.toString("binary", 0, 4) !== "PE\u0000\u0000")
+  if (
+    record.length < 24 ||
+    record.toString("binary", 0, 4) !== "PE\u0000\u0000"
+  )
     return err("invalid or truncated PE header");
   const architecture = peArchitecture(record.readUInt16LE(4));
   if (architecture === undefined) return err("unsupported PE architecture");
+  const optionalHeaderSize = record.readUInt16LE(20);
+  if (optionalHeaderSize > 4096 || record.length < 24 + optionalHeaderSize)
+    return err("invalid or truncated PE optional header");
+  const optionalHeader = record.subarray(24, 24 + optionalHeaderSize);
+  const managed = peManagedStatus(optionalHeader, architecture);
+  if (!managed.ok) return managed;
+  const characteristics = record.readUInt16LE(22);
   return ok({
     format: "pe",
     architecture,
     availableArchitectures: [architecture],
+    executableRole:
+      (characteristics & 0x0002) === 0
+        ? "non-executable"
+        : (characteristics & 0x2000) === 0
+          ? "application"
+          : "shared-library",
+    managed: managed.value,
   });
+};
+
+const peManagedStatus = (
+  optionalHeader: Buffer,
+  architecture: BinaryArchitecture,
+): Result<boolean, string> => {
+  if (optionalHeader.length < 2) return err("truncated PE optional header");
+  const magic = optionalHeader.readUInt16LE(0);
+  const expectedMagic =
+    architecture === "x86_64" || architecture === "arm64" ? 0x20b : 0x10b;
+  if (magic !== expectedMagic)
+    return err("PE optional-header magic does not match its architecture");
+  const directoryOffset = magic === 0x20b ? 112 : 96;
+  const directoryCountOffset = directoryOffset - 4;
+  if (optionalHeader.length < directoryCountOffset + 4)
+    return err("truncated PE optional header");
+  const directoryCount = optionalHeader.readUInt32LE(directoryCountOffset);
+  const requiredBytes = directoryOffset + directoryCount * 8;
+  if (
+    !Number.isSafeInteger(requiredBytes) ||
+    requiredBytes > optionalHeader.length
+  )
+    return err("truncated PE data-directory table");
+  if (directoryCount <= 14) return ok(false);
+  const cliDirectory = directoryOffset + 14 * 8;
+  return ok(
+    optionalHeader.readUInt32LE(cliDirectory) !== 0 ||
+      optionalHeader.readUInt32LE(cliDirectory + 4) !== 0,
+  );
 };
 
 const machArchitecture = (cpu: number): BinaryArchitecture | undefined => {
