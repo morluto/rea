@@ -399,7 +399,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser or Electron interaction remains a different future authority.
 2. **Broader application graph evidence** — extend authenticated cross-layer traces with additional static extractors and separately approved runtime authorities.
-3. **Professional managed-code analysis** — extend shipped PE/CLI triage into CIL evidence, obfuscation-resistant comparisons, and explicit managed/native composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
+3. **Professional managed-code analysis** — extend shipped PE/CLI triage, CIL evidence, managed/native declaration inventory, source-owned conformance, and obfuscation-resistant comparisons toward verified native-provider composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
 4. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later
