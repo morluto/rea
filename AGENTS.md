@@ -61,7 +61,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
 - `npm run verify:ghidra`: build and run the real-Ghidra verifier against `GHIDRA_INSTALL_DIR` and optional `GHIDRA_TARGET_PATH`.
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
-- `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, and non-managed degradation.
+- `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, non-managed degradation, and manifest-verifier self-test; set `REA_MANAGED_APP_MANIFEST_PATH` to verify an operator-local managed app manifest.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.

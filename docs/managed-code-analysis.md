@@ -248,34 +248,53 @@ acceptance does not automatically make the bytes valid.
 ## Operator-local osu! benchmark
 
 The optional osu! benchmark accepts only paths and expectations supplied by the
-operator. A compact manifest contains:
+operator. Run it with:
+
+```sh
+REA_MANAGED_APP_MANIFEST_PATH=/absolute/managed-app-manifest.json npm run verify:managed
+```
+
+`verify:managed` always runs a source-owned manifest-verifier self-test first.
+When `REA_MANAGED_APP_MANIFEST_PATH` is set, the manifest's target path may be
+absolute or relative to the manifest file. A compact manifest contains:
 
 ```json
 {
   "schema_version": 1,
+  "label": "operator-local osu!stable semantic slice",
   "target": {
+    "path": "./osu!.exe",
     "sha256": "<exact target digest>",
     "mvid": "<exact module MVID>",
     "assembly_name": "<expected simple name>",
-    "architecture": "<expected classification>"
+    "runtime_family": "dotnet-framework",
+    "managed_architecture": "x86"
   },
   "methods": [
     {
       "label": "operator-local semantic label",
       "token": "0x06000000",
-      "signature": "<normalized signature>",
-      "il_length": 0,
+      "signature_sha256": "<raw signature blob digest>",
+      "il_size": 0,
       "normalized_il_sha256": "<digest>"
     }
   ]
 }
 ```
 
-Before evaluating methods, the verifier fails closed on any target commitment
-mismatch. Output contains assertion status and compact identities only. It does
-not print method bodies, reconstructed C#, application data, runtime telemetry,
-account/service details, or full filesystem inventories. The manifest and
-target remain outside git.
+Before evaluating methods, the verifier fails closed on target SHA-256, MVID,
+assembly name, runtime-family, and managed-architecture mismatches whenever the
+manifest supplies those fields. It then pages each declared MethodDef token
+directly by row, so selected methods do not need to appear in the first member
+page of a large application. `il_length` remains accepted as a legacy alias for
+`il_size`.
+
+Output contains assertion status and compact identities only: file name,
+target SHA-256, MVID, assembly name, runtime-family, managed architecture,
+method tokens, method names, signature digests, IL sizes, and normalized IL
+digests. It does not print method bodies, reconstructed C#, application data,
+runtime telemetry, account/service details, full filesystem inventories, or
+the target's absolute path. The manifest and target remain outside git.
 
 The benchmark may prove that REA reproduces selected facts for that exact local
 build. It cannot establish general support on its own; source-built conformance
