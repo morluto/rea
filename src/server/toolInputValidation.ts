@@ -6,6 +6,7 @@ import {
 } from "../domain/errors.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { closeObjectSchemas } from "./toolRegistrationOptions.js";
 
 /** Parse one MCP request exactly once and retain only schema-owned correction data. */
 export const safeParseToolInput = <Schema extends z.ZodType>(
@@ -41,7 +42,7 @@ const unknownArgumentIssues = (
       throw new TypeError(
         "Tool input schema does not expose Standard JSON Schema",
       );
-    jsonSchema = converter({ target: "draft-2020-12" });
+    jsonSchema = closeObjectSchemas(converter({ target: "draft-2020-12" }));
     schemaCache.set(schema, jsonSchema);
   }
   return scanUnknownArguments(input, jsonSchema, jsonSchema, []);

@@ -67,7 +67,8 @@ const inputJsonSchema = (schema: z.ZodObject): Record<string, unknown> => {
   return converter({ target: "draft-2020-12" });
 };
 
-const closeObjectSchemas = (
+/** Close fixed-shape JSON Schema objects while preserving explicit maps. */
+export const closeObjectSchemas = (
   value: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> => {
   const closed = Object.fromEntries(

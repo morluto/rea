@@ -629,6 +629,28 @@ describe("enhanced MCP tools", () => {
         },
       },
     });
+    const nestedMisspelled = await client.callTool({
+      name: "analyze_function",
+      arguments: {
+        procedure: "0x1",
+        collection_offset: { commentz: 1 },
+      },
+    });
+    expect(nestedMisspelled).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          details: {
+            issues: [
+              {
+                path: ["collection_offset", "commentz"],
+                reason: "unknown_argument",
+              },
+            ],
+          },
+        },
+      },
+    });
     const bounded = await client.callTool({
       name: "trace_feature",
       arguments: { query: "needle", max_operations: 101 },
