@@ -132,6 +132,9 @@ const staticEvidence = createEvidence(
   },
 );
 
+/** Minimal valid static application Evidence for graph workflow examples. */
+export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = staticEvidence;
+
 const runtimeEvidence = createEvidence(
   undefined,
   {

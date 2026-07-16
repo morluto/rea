@@ -10,6 +10,7 @@ import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClient
 import {
   ARTIFACT_GRAPH_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
+  JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
 } from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
@@ -72,6 +73,7 @@ describe("canonical product catalog", () => {
         CDP_ELECTRON_PROVIDER_IDENTITY,
         JAVASCRIPT_APPLICATION_PROVIDER,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+        JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
       ]
         .map(({ id }) => id)
         .sort(),
@@ -99,6 +101,11 @@ describe("canonical product catalog", () => {
         ({ id }) => id === JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER.id,
       )?.capabilities,
     ).toEqual(["reconcile_javascript_runtime"]);
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER.id,
+      )?.capabilities,
+    ).toEqual(["compare_application_versions", "trace_application_feature"]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({

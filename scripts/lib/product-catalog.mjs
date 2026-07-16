@@ -99,6 +99,7 @@ const SOURCE_PATHS = {
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
   electronContracts: "dist/contracts/electronToolContracts.js",
+  applicationContracts: "dist/contracts/applicationToolContracts.js",
   supportedClients: "dist/application/SupportedClients.js",
   hopperProvider: "dist/hopper/HopperProvider.js",
   ghidraProvider: "dist/ghidra/GhidraProvider.js",
@@ -121,6 +122,9 @@ const SOURCE_PATHS = {
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
   javascriptApplicationAnalysis: "dist/domain/javascriptApplicationAnalysis.js",
+  javascriptFeatureTrace: "dist/domain/javascriptFeatureTraceSchemas.js",
+  javascriptVersionComparison:
+    "dist/domain/javascriptApplicationVersionComparisonSchemas.js",
   reconstructionVerification:
     "dist/domain/reconstructionVerificationSchemas.js",
   residualUnknown: "dist/domain/residualUnknown.js",
@@ -167,6 +171,11 @@ const toolFamilyCatalog = (sources) => {
       id: "electron",
       surface: "electron-provider",
       contracts: sources.electronContracts.ELECTRON_TOOL_CONTRACTS,
+    },
+    {
+      id: "application",
+      surface: "application-workflow",
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
     },
     {
       id: "session",
@@ -246,6 +255,11 @@ const providerCatalog = (sources) => {
         sources.artifactProviders.JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
       contracts: reconciliationContracts,
     },
+    {
+      identity:
+        sources.artifactProviders.JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+    },
   ]
     .map(({ identity, contracts }) => ({
       id: identity.id,
@@ -296,6 +310,17 @@ const durableSchemaDefinitions = (sources) => [
   [
     "javascript_application_graph",
     sources.javascriptApplicationGraph.javascriptApplicationGraphSchema,
+    ["schema_version"],
+  ],
+  [
+    "javascript_application_version_comparison",
+    sources.javascriptVersionComparison
+      .applicationVersionComparisonResultSchema,
+    ["schema_version"],
+  ],
+  [
+    "javascript_feature_trace",
+    sources.javascriptFeatureTrace.applicationFeatureTraceResultSchema,
     ["schema_version"],
   ],
   [

@@ -31,7 +31,7 @@ describe("canonical skill transaction", () => {
     expect(await readFile(`${destination}.rea.backup`, "utf8")).toBe(
       "stale managed skill\n",
     );
-    expect(await readFile(destination, "utf8")).toContain('version: "16"');
+    expect(await readFile(destination, "utf8")).toContain('version: "17"');
     expect(await readFile(destination, "utf8")).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );

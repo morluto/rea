@@ -39,6 +39,13 @@ export const JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for graph-native feature tracing and version comparison. */
+export const JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER = {
+  id: "rea-javascript-application-workflows",
+  name: "REA JavaScript application workflows",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic cross-artifact comparisons. */
 export const ARTIFACT_COMPARISON_PROVIDER = {
   id: "rea-artifact-comparison",

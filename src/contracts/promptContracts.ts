@@ -114,9 +114,13 @@ export const PROMPT_CONTRACTS = [
     },
     steps: [
       {
-        tools: ["binary_session", "open_binary"],
+        tools: [
+          "binary_session",
+          "open_binary",
+          "analyze_javascript_application",
+        ],
         instruction:
-          "Inspect provider availability and effects first. Open target_path only when no matching target is active.",
+          "Inspect provider availability and effects first. For an approved JavaScript/Electron artifact, reconstruct its application graph without execution; otherwise open target_path only when no matching target is active.",
       },
       {
         tools: ["list_documents", "set_current_document", "binary_overview"],
@@ -127,6 +131,11 @@ export const PROMPT_CONTRACTS = [
         tools: ["search_strings", "search_procedures", "procedure_address"],
         instruction:
           "Search in literal mode first, follow every continuation needed for the stated scope, and resolve selected procedures to canonical addresses.",
+      },
+      {
+        tools: ["trace_application_feature"],
+        instruction:
+          "When authenticated application-graph Evidence exists, trace a typed literal route, API, channel, module, string, or native export through a bounded cross-layer subgraph before native localization.",
       },
       {
         tools: [
@@ -178,6 +187,15 @@ export const PROMPT_CONTRACTS = [
         tools: ["inventory_artifact"],
         instruction:
           "Inventory each target independently before extraction. Follow nodes, occurrences, and edges to completion and retain every Evidence page for each manifest.",
+      },
+      {
+        tools: [
+          "analyze_javascript_application",
+          "reconcile_javascript_runtime",
+          "compare_application_versions",
+        ],
+        instruction:
+          "For JavaScript/Electron versions, reconstruct each approved artifact independently, optionally reconcile separately retained passive runtime Evidence, then compare authenticated graphs with unique-only identity tiers. Keep ambiguous and incomplete matches unknown.",
       },
       {
         tools: ["export_evidence_bundle", "compare_artifacts"],

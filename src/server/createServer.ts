@@ -19,6 +19,7 @@ import type { BrowserObservationPort } from "../application/BrowserObservationPo
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import { registerElectronTools } from "./registerElectronTools.js";
+import { registerApplicationTools } from "./registerApplicationTools.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -113,6 +114,17 @@ export const createServer = (
             server.sendResourceListChanged();
           return recorded;
         };
+  const recordEvidenceWithUnknown =
+    session === undefined
+      ? undefined
+      : (
+          evidence: Parameters<typeof session.recordEvidenceWithUnknown>[0],
+          input: Parameters<typeof session.recordEvidenceWithUnknown>[1],
+        ) => {
+          const recorded = session.recordEvidenceWithUnknown(evidence, input);
+          if (recorded.ok) server.sendResourceListChanged();
+          return recorded;
+        };
   registerOfficialTools(server, analysis, {
     logger: toolLogger,
     activeTarget,
@@ -157,6 +169,11 @@ export const createServer = (
     electron: options.electronObservation,
     permissionAuthority: options.permissionAuthority,
     recordEvidence,
+  });
+  registerApplicationTools(server, {
+    logger: toolLogger,
+    recordEvidence,
+    recordEvidenceWithUnknown,
   });
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

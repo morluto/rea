@@ -1,0 +1,67 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+} from "../src/contracts/javascriptApplicationWorkflowExamples.js";
+
+const execute = promisify(execFile);
+
+describe("application workflow CLI parity", () => {
+  const temporary: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      temporary
+        .splice(0)
+        .map(async (path) => rm(path, { recursive: true, force: true })),
+    );
+  });
+
+  it("accepts inline trace JSON and file-backed comparison JSON", async () => {
+    const traced = await runCli([
+      "trace-application-feature",
+      JSON.stringify(JAVASCRIPT_FEATURE_TRACE_EXAMPLE),
+      "--json",
+    ]);
+    expect(traced).toMatchObject({
+      operation: "trace_application_feature",
+      normalized_result: { schema_version: 1 },
+    });
+
+    const root = await mkdtemp(join(tmpdir(), "rea-application-cli-"));
+    temporary.push(root);
+    const comparisonPath = join(root, "comparison.json");
+    await writeFile(
+      comparisonPath,
+      JSON.stringify(JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE),
+    );
+    const compared = await runCli([
+      "compare-application-versions",
+      comparisonPath,
+      "--json",
+    ]);
+    expect(compared).toMatchObject({
+      operation: "compare_application_versions",
+      normalized_result: {
+        schema_version: 1,
+        summary: { unknown: expect.any(Number) },
+      },
+    });
+  }, 20_000);
+});
+
+const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", ...arguments_],
+    { cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1_024 * 1_024 },
+  );
+  return JSON.parse(stdout);
+};

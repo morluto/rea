@@ -10,6 +10,7 @@ import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
+import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
 import {
   enhancedOutputSchemas,
   officialOutputSchemas,
@@ -57,8 +58,9 @@ describe("tool contract surface", () => {
       ...ARTIFACT_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
+      ...APPLICATION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(62);
+    expect(contracts).toHaveLength(64);
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);
@@ -148,7 +150,7 @@ describe("tool contract surface", () => {
     }
   });
 
-  it("publishes no unconstrained output-schema holes across all 80 tools", () => {
+  it("publishes no unconstrained output-schema holes across all 82 tools", () => {
     const contracts = [
       ...OFFICIAL_TOOL_CONTRACTS,
       ...ENHANCED_TOOL_CONTRACTS,
@@ -156,9 +158,10 @@ describe("tool contract surface", () => {
       ...ARTIFACT_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
+      ...APPLICATION_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(80);
+    expect(contracts).toHaveLength(82);
     for (const contract of contracts) {
       const schema = contractJsonSchema(contract.outputSchema);
       expect(emptySchemaPaths(schema), contract.name).toEqual([]);
