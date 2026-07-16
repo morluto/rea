@@ -2,6 +2,7 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
+import type { z } from "zod";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
@@ -37,15 +38,23 @@ type TraceReference = {
   containing_procedure: JsonValue;
 };
 
+/** One enhanced call whose input was parsed at its owning adapter boundary. */
+export type ValidatedEnhancedCall = {
+  [Name in EnhancedToolName]: {
+    readonly name: Name;
+    readonly input: z.output<(typeof enhancedInputSchemas)[Name]>;
+  };
+}[EnhancedToolName];
+
 /**
  * Composes direct provider operations into bounded reverse-engineering tools.
- * Inputs are parsed again at this application boundary even though MCP normally
- * validates them, allowing direct callers to use the same service safely.
+ * Direct callers use `execute`; adapters that own validation use
+ * `executeValidated` so an MCP input is parsed exactly once.
  */
 export class EnhancedTools {
   constructor(private readonly analysis: AnalysisOperationPort) {}
 
-  /** Parse inputs again at the direct-call boundary, then dispatch exhaustively. */
+  /** Parse an untrusted direct-call input once, then dispatch exhaustively. */
   execute(
     name: EnhancedToolName,
     input: unknown,
@@ -55,55 +64,84 @@ export class EnhancedTools {
       case "swift_classes": {
         const parsed = enhancedInputSchemas.swift_classes.safeParse(input);
         return parsed.success
-          ? this.#swiftClasses(parsed.data.pattern, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
-          ? this.#objcClasses(parsed.data.pattern, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "get_objc_protocols":
-        return this.#objcProtocols(signal);
+        return this.executeValidated({ name, input: {} }, signal);
       case "batch_decompile": {
         const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
         return parsed.success
-          ? this.#batchDecompile(parsed.data.addresses, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "get_call_graph": {
         const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
         return parsed.success
-          ? this.#callGraph(parsed.data, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "analyze_swift_types":
-        return this.#analyzeSwiftTypes(signal);
+        return this.executeValidated({ name, input: {} }, signal);
       case "find_xrefs_to_name": {
         const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
         return parsed.success
-          ? this.#findXrefs(parsed.data.name, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "binary_overview": {
         const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
-          ? this.#binaryOverview(parsed.data, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "analyze_function": {
         const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
         return parsed.success
-          ? this.#analyzeFunction(parsed.data, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
       case "trace_feature": {
         const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
         return parsed.success
-          ? this.#traceFeature(parsed.data, signal)
+          ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidInput(name, parsed.error);
       }
+    }
+  }
+
+  /** Dispatch input already parsed by a trusted adapter boundary. */
+  executeValidated(
+    call: ValidatedEnhancedCall,
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    switch (call.name) {
+      case "swift_classes":
+        return this.#swiftClasses(call.input.pattern, signal);
+      case "get_objc_classes":
+        return this.#objcClasses(call.input.pattern, signal);
+      case "get_objc_protocols":
+        return this.#objcProtocols(signal);
+      case "batch_decompile":
+        return this.#batchDecompile(call.input.addresses, signal);
+      case "get_call_graph":
+        return this.#callGraph(call.input, signal);
+      case "analyze_swift_types":
+        return this.#analyzeSwiftTypes(signal);
+      case "find_xrefs_to_name":
+        return this.#findXrefs(call.input.name, signal);
+      case "binary_overview":
+        return this.#binaryOverview(call.input, signal);
+      case "analyze_function":
+        return this.#analyzeFunction(call.input, signal);
+      case "trace_feature":
+        return this.#traceFeature(call.input, signal);
     }
   }
 

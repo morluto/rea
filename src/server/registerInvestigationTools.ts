@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { runCrossVersionInvestigation } from "../application/CrossVersionInvestigation.js";
+import { runCrossVersionInvestigationValidated } from "../application/CrossVersionInvestigation.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
@@ -133,7 +133,7 @@ const registerChangedBehavior = (
               operation: contract.name,
             });
         }
-        const investigated = await runCrossVersionInvestigation(
+        const investigated = await runCrossVersionInvestigationValidated(
           investigationRun,
           policies.evidenceFiles,
           {

@@ -27,11 +27,16 @@ export const reconcileJavaScriptRuntimeEvidence = (
         projectInputIssues(parsed.error.issues, rawInput),
       ),
     );
+  return reconcileJavaScriptRuntimeEvidenceValidated(parsed.data);
+};
+
+/** Reconcile input already parsed by a trusted adapter boundary. */
+export const reconcileJavaScriptRuntimeEvidenceValidated = (
+  input: z.output<typeof reconcileJavaScriptRuntimeInputSchema>,
+): Result<Evidence, AnalysisError> => {
   try {
-    const result = reconcileJavaScriptRuntime(parsed.data);
-    return ok(
-      createJavaScriptRuntimeReconciliationEvidence(parsed.data, result),
-    );
+    const result = reconcileJavaScriptRuntime(input);
+    return ok(createJavaScriptRuntimeReconciliationEvidence(input, result));
   } catch (cause: unknown) {
     return err(
       cause instanceof z.ZodError || cause instanceof TypeError

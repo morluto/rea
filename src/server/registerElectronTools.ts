@@ -2,8 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
-import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
 import {
   inspectElectronPage,
   listElectronTargets,
@@ -109,10 +109,14 @@ export const registerElectronTools = (
         options.logger,
         analyzeContract.name,
         () =>
-          analyzeJavaScriptApplication(options.permissionAuthority, parsed, {
-            signal: context.mcpReq.signal,
-            progress: mcpProgressReporter(context),
-          }),
+          analyzeJavaScriptApplicationValidated(
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
       );
       if (!result.ok) return toCallToolResult(result, analyzeContract);
       return evidenceResult(options, analyzeContract, result.value);
@@ -133,7 +137,8 @@ export const registerElectronTools = (
       const result = await logToolExecution(
         options.logger,
         reconcileContract.name,
-        () => Promise.resolve(reconcileJavaScriptRuntimeEvidence(parsed)),
+        () =>
+          Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, reconcileContract);
       for (const source of [

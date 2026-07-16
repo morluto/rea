@@ -2,11 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import {
-  compareApplicationVersionsEvidence,
-  traceApplicationFeatureEvidence,
+  compareApplicationVersionsEvidenceValidated,
+  traceApplicationFeatureEvidenceValidated,
 } from "../application/JavaScriptApplicationWorkflowService.js";
 import {
-  runControlledReplay,
+  runControlledReplayValidated,
   type JavaScriptReplayDependencies,
 } from "../application/JavaScriptReplayService.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
@@ -55,7 +55,7 @@ export const registerApplicationTools = (
       const result = await logToolExecution(
         options.logger,
         traceContract.name,
-        () => Promise.resolve(traceApplicationFeatureEvidence(parsed)),
+        () => Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, traceContract);
       const sources = [parsed.application, ...parsed.native_observations];
@@ -79,7 +79,8 @@ export const registerApplicationTools = (
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
-        () => Promise.resolve(compareApplicationVersionsEvidence(parsed)),
+        () =>
+          Promise.resolve(compareApplicationVersionsEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, compareContract);
       const sources = [
@@ -117,7 +118,7 @@ export const registerApplicationTools = (
         options.logger,
         replayContract.name,
         () =>
-          runControlledReplay(options.replay, parsed, {
+          runControlledReplayValidated(options.replay, parsed, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),

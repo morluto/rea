@@ -35,27 +35,35 @@ export const traceApplicationFeatureEvidence = (
         projectInputIssues(parsed.error.issues, rawInput),
       ),
     );
+  return traceApplicationFeatureEvidenceValidated(parsed.data);
+};
+
+/** Derive one feature trace from input parsed by a trusted adapter. */
+export const traceApplicationFeatureEvidenceValidated = (
+  input: z.output<typeof traceApplicationFeatureInputSchema>,
+): Result<Evidence, AnalysisError> => {
+  const operation = "trace_application_feature";
   try {
-    const source = parseApplicationGraphEvidence(parsed.data.application);
+    const source = parseApplicationGraphEvidence(input.application);
     const nativeEvidence = parseNativeApplicationEvidence(
-      parsed.data.native_observations,
+      input.native_observations,
     );
     const result = traceApplicationFeature({
       sourceEvidenceId: source.evidence.evidence_id,
       graph: source.graph,
       nativeEvidence,
-      seed: parsed.data.seed,
-      direction: parsed.data.direction,
-      limits: parsed.data.limits,
+      seed: input.seed,
+      direction: input.direction,
+      limits: input.limits,
     });
     return ok(
       createApplicationFeatureTraceEvidence(
         {
           application_evidence_id: source.evidence.evidence_id,
           native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),
-          seed: parsed.data.seed,
-          direction: parsed.data.direction,
-          limits: parsed.data.limits,
+          seed: input.seed,
+          direction: input.direction,
+          limits: input.limits,
         },
         result,
       ),
@@ -79,14 +87,22 @@ export const compareApplicationVersionsEvidence = (
         projectInputIssues(parsed.error.issues, rawInput),
       ),
     );
+  return compareApplicationVersionsEvidenceValidated(parsed.data);
+};
+
+/** Compare versions from input parsed by a trusted adapter. */
+export const compareApplicationVersionsEvidenceValidated = (
+  input: z.output<typeof compareApplicationVersionsInputSchema>,
+): Result<Evidence, AnalysisError> => {
+  const operation = "compare_application_versions";
   try {
-    const left = parseApplicationGraphEvidence(parsed.data.left);
-    const right = parseApplicationGraphEvidence(parsed.data.right);
+    const left = parseApplicationGraphEvidence(input.left);
+    const right = parseApplicationGraphEvidence(input.right);
     const leftNative = parseNativeApplicationEvidence(
-      parsed.data.left_native_observations,
+      input.left_native_observations,
     );
     const rightNative = parseNativeApplicationEvidence(
-      parsed.data.right_native_observations,
+      input.right_native_observations,
     );
     const result = compareJavaScriptApplicationVersions({
       left: {
@@ -101,7 +117,7 @@ export const compareApplicationVersionsEvidence = (
       },
       leftNativeEvidence: leftNative,
       rightNativeEvidence: rightNative,
-      limits: parsed.data.limits,
+      limits: input.limits,
     });
     return ok(
       createApplicationVersionComparisonEvidence(
@@ -112,7 +128,7 @@ export const compareApplicationVersionsEvidence = (
           right_native_evidence_ids: rightNative.map(
             ({ evidence_id: id }) => id,
           ),
-          limits: parsed.data.limits,
+          limits: input.limits,
         },
         result,
       ),

@@ -1,6 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { EnhancedTools } from "../application/EnhancedTools.js";
+import {
+  EnhancedTools,
+  type ValidatedEnhancedCall,
+} from "../application/EnhancedTools.js";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { enhancedToolNameSchema } from "../contracts/enhancedInputs.js";
@@ -13,9 +16,10 @@ import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { UnknownRegistryError } from "../domain/errors.js";
+import { AnalysisInputError, UnknownRegistryError } from "../domain/errors.js";
+import { ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
@@ -80,16 +84,12 @@ const registerEnhancedTool = (
         total: 1,
         message: "started",
       });
-      const validatedInput = safeParseToolInput(
-        enhancedInputSchemas[name],
-        input,
-        name,
-      );
-      if (!validatedInput.ok) return toCallToolResult(validatedInput, contract);
-      const parsedInput = jsonObjectSchema.parse(validatedInput.value);
-      const parameters: Record<string, JsonValue> = { ...parsedInput };
+      const validatedCall = parseEnhancedCall(name, input);
+      if (!validatedCall.ok) return toCallToolResult(validatedCall, contract);
+      const parsedInput = validatedCall.value.input;
+      const parameters = jsonParameters(parsedInput);
       const result = await logToolExecution(registration.logger, name, () =>
-        services.execute(name, input, context.mcpReq.signal),
+        services.executeValidated(validatedCall.value, context.mcpReq.signal),
       );
       await progress.report({
         phase: name,
@@ -123,7 +123,7 @@ const registerEnhancedTool = (
           return toCallToolResult(recorded, contract);
         const unknowns = recordWorkflowUnknowns({
           name,
-          input: parsedInput,
+          input: parameters,
           result: result.value,
           evidenceId: evidence.evidence_id,
           recordUnknown: registration.recordUnknown,
@@ -136,6 +136,103 @@ const registerEnhancedTool = (
       return toCallToolResult(result, contract);
     },
   );
+};
+
+const jsonParameters = (
+  input: Readonly<Record<string, JsonValue | undefined>>,
+): Record<string, JsonValue> =>
+  Object.fromEntries(
+    Object.entries(input).filter(
+      (entry): entry is [string, JsonValue] => entry[1] !== undefined,
+    ),
+  );
+
+const parseEnhancedCall = (
+  name: ValidatedEnhancedCall["name"],
+  input: unknown,
+): Result<ValidatedEnhancedCall, AnalysisInputError> => {
+  switch (name) {
+    case "swift_classes": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.swift_classes,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "get_objc_classes": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.get_objc_classes,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "get_objc_protocols": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.get_objc_protocols,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "batch_decompile": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.batch_decompile,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "get_call_graph": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.get_call_graph,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "analyze_swift_types": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.analyze_swift_types,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "find_xrefs_to_name": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.find_xrefs_to_name,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "binary_overview": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.binary_overview,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "analyze_function": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.analyze_function,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+    case "trace_feature": {
+      const parsed = safeParseToolInput(
+        enhancedInputSchemas.trace_feature,
+        input,
+        name,
+      );
+      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
+    }
+  }
 };
 
 interface WorkflowUnknownInput {

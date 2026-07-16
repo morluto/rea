@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../src/application/EnhancedTools.js";
@@ -9,6 +9,7 @@ import {
   SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
+import { enhancedInputSchemas } from "../src/contracts/enhancedInputs.js";
 import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { err } from "../src/domain/result.js";
@@ -144,6 +145,7 @@ const emptyBounded = () => ({
 const resources: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
   );
@@ -613,6 +615,16 @@ describe("enhanced MCP tools", () => {
 
   it("returns correction-only structured validation issues", async () => {
     const client = await connect();
+    const traceParser = vi.spyOn(
+      enhancedInputSchemas.trace_feature,
+      "safeParse",
+    );
+    await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "needle", max_operations: 1 },
+    });
+    expect(traceParser).toHaveBeenCalledTimes(1);
+    traceParser.mockClear();
     const misspelled = await client.callTool({
       name: "trace_feature",
       arguments: { query: "needle", max_operatons: 1 },
@@ -629,6 +641,7 @@ describe("enhanced MCP tools", () => {
         },
       },
     });
+    expect(traceParser).not.toHaveBeenCalled();
     const nestedMisspelled = await client.callTool({
       name: "analyze_function",
       arguments: {
