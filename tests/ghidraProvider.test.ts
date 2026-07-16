@@ -128,6 +128,54 @@ describe("Ghidra provider", () => {
     });
   });
 
+  it("admits only native x86-64 PE applications on Windows P0", () => {
+    const ghidra = provider({ ...installationHost(), platform: "win32" });
+    const nativeApplication: BinaryTarget = {
+      ...executableTarget("pe", "x86_64"),
+      executableRole: "application",
+      managed: false,
+    };
+
+    expect(ghidra.inspectTargetSupport(nativeApplication)).toMatchObject({
+      status: "supported",
+      diagnostics: {
+        host_platform: "win32",
+        executable_role: "application",
+        managed: false,
+      },
+    });
+    expect(
+      ghidra.inspectTargetSupport({
+        ...nativeApplication,
+        executableRole: "shared-library",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_role_unsupported",
+    });
+    expect(
+      ghidra.inspectTargetSupport({ ...nativeApplication, managed: true }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "managed_target_unsupported",
+    });
+    expect(
+      ghidra.inspectTargetSupport({ ...nativeApplication, format: "elf" }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
+    expect(
+      ghidra.inspectTargetSupport({
+        ...nativeApplication,
+        architecture: "arm64",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+    });
+  });
+
   it("commits exact provider, isolation, and resource semantics", async () => {
     const callTool = vi.fn().mockResolvedValue(
       ok({

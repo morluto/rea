@@ -237,7 +237,7 @@ export type GhidraProviderClientFactory = (
   options: GhidraClientOptions,
 ) => Pick<GhidraClient, "start" | "callTool" | "close">;
 
-/** Linux Ghidra candidate backed by an isolated read-only headless import. */
+/** Ghidra candidate backed by an isolated read-only headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   #installation: GhidraInstallationInspection | undefined;
 
@@ -277,10 +277,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport {
+    const hostPlatform = this.installationHost?.platform ?? process.platform;
     const diagnostics = {
+      host_platform: hostPlatform,
       target_kind: target.kind,
       target_format: target.format,
       architecture: target.architecture ?? null,
+      executable_role: target.executableRole ?? null,
+      managed: target.managed ?? null,
     };
     if (target.kind !== "executable")
       return {
@@ -289,6 +293,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         reason: `Ghidra v1 imports executable targets, not ${target.kind} targets.`,
         diagnostics,
       };
+    if (hostPlatform === "win32")
+      return inspectWindowsP0TargetSupport(target, diagnostics);
     if (!SUPPORTED_FORMATS.has(target.format))
       return {
         status: "unsupported",
@@ -429,6 +435,48 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     return this.#installation;
   }
 }
+
+const inspectWindowsP0TargetSupport = (
+  target: BinaryTarget,
+  diagnostics: Readonly<Record<string, string | boolean | null>>,
+): ProviderTargetSupport => {
+  if (target.format !== "pe")
+    return {
+      status: "unsupported",
+      code: "target_format_unsupported",
+      reason: "Windows Ghidra P0 accepts PE targets only.",
+      diagnostics,
+    };
+  if (target.architecture !== "x86_64")
+    return {
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: "Windows Ghidra P0 accepts x86-64 PE targets only.",
+      diagnostics,
+    };
+  if (target.executableRole !== "application")
+    return {
+      status: "unsupported",
+      code: "target_role_unsupported",
+      reason:
+        "Windows Ghidra P0 accepts PE applications, not DLL or non-executable images.",
+      diagnostics,
+    };
+  if (target.managed !== false)
+    return {
+      status: "unsupported",
+      code: "managed_target_unsupported",
+      reason:
+        "Windows Ghidra P0 accepts native PE applications; managed or unclassified PE targets are unsupported.",
+      diagnostics,
+    };
+  return {
+    status: "supported",
+    code: null,
+    reason: null,
+    diagnostics,
+  };
+};
 
 interface GhidraClientCoordinates {
   readonly analyzeHeadlessPath: string;
