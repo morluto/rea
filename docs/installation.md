@@ -68,8 +68,9 @@ desktop display. Unattended package-manager access requires
 
 ## Ghidra
 
-REA's Ghidra provider is bring-your-own and currently supports Linux x64 with
-the exact official Ghidra 12.1.2 release and a 64-bit full JDK 21. It supplies
+REA's Ghidra provider is bring-your-own and supports Linux x64 with the exact
+official Ghidra 12.1.2 release and a 64-bit full JDK 21. An experimental
+Windows x64 P0 supports approved native x86-64 PE applications. It supplies
 discovery, analysis-profile commitment, an isolated read-only headless session,
 ten bounded inventory/name/search operations, and eight function-analysis
 operations covering metadata, decompilation, assembly, resolved calls, typed
@@ -85,19 +86,37 @@ rea doctor --json
 rea setup
 ```
 
+PowerShell configuration for Windows uses the same non-secret paths:
+
+```powershell
+$env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.1.2_PUBLIC"
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
+rea doctor --json
+rea providers --json
+```
+
+`rea setup` does not mutate Windows client configuration or install Hopper,
+Ghidra, Java, Python, or another package. Register the built `rea mcp` command
+manually in the intended client and preserve the two environment variables.
+See [Windows Ghidra P0](windows-ghidra-p0.md) for a complete example.
+
 Doctor validates the platform, architecture, application version,
-`support/analyzeHeadless`, Java version/bitness, and the presence of `javac`.
+`support/analyzeHeadless` or `support/analyzeHeadless.bat`, Java
+version/bitness, and the presence of `javac`/`javac.exe`.
 When Java is found through `PATH`, setup records its observed JDK home so GUI
 MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,
 installs, upgrades, or modifies Ghidra or Java.
 
-Each verified session uses a private temporary project and isolated
+Each verified session uses an ephemeral temporary project and isolated
 home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, a
 per-file analysis timeout, CPU and heap bounds, and its packaged Java bridge via
-`-scriptPath`; it never opens an existing user project. The local bridge socket
-and descriptor are current-user-only, and all owned runtime paths and processes
-are removed on every terminal lifecycle path.
+`-scriptPath`; it never opens an existing user project. Linux uses a
+current-user-only local bridge socket and descriptor. Windows P0 uses
+token-authenticated IPv4 loopback, a token-free endpoint record, and bounded
+process-tree termination. It does not yet prove private DACL,
+reparse-point-safe, or Job Object semantics; use only approved non-sensitive
+fixtures.
 
 Operations begin only after default auto-analysis completes. A timeout fails
 the open rather than exposing partial analysis. One session contains exactly
@@ -114,6 +133,11 @@ compile and analyze source-owned x86-64 debug/stripped ELF, AArch64 ELF,
 x86-64 PE, and x86-64 Mach-O conformance fixtures. The verifier expects `cc`,
 `clang`, and `lld-link` on `PATH`; `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can
 select alternate command paths.
+
+On a controlled Windows x64 runner, use
+`npm run verify:ghidra:windows`. The verifier generates a deterministic native
+PE fixture from source bytes, exercises every admitted Ghidra operation, checks
+target/snapshot/import digest identity, and requires complete runtime cleanup.
 
 ## Diagnose, update, and remove
 

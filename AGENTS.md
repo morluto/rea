@@ -2,7 +2,7 @@
 
 ## Product Direction
 
-REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the Linux x64 bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra supplies admitted read-only inventory and function-analysis operations but no GUI or mutation authority. Keep provider-specific code out of the domain and application layers.
+REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra is supported on Linux x64 and has an experimental Windows x64 P0 boundary for approved native x86-64 PE applications; it supplies admitted read-only inventory and function-analysis operations but no GUI or mutation authority. Keep provider-specific code out of the domain and application layers.
 
 Prioritize:
 
@@ -32,7 +32,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/browser/`: loopback CDP discovery, bounded WebSocket transport, exact-origin target authorization, and passive browser observation normalization.
 - `src/hopper/`: Hopper launch and Unix-socket protocol mechanics. `BridgeLauncher.ts` spawns the Hopper app with the in-process bridge, `HopperClient.ts` correlates request/response over the socket with timeouts and cancellation, `protocol.ts` frames bridge messages.
 - `bridge/hopper_bridge.py`: runs inside Hopper and adapts declared operations to Hopper's public Python API. Hopper's bundled MCP server is not used.
-- `src/ghidra/`: exact Ghidra 12.1.2/JDK 21 inspection, analysis-profile commitment, isolated `analyzeHeadless` launch, authenticated Unix-socket client, bounded serial request queue, and strict inventory/function boundaries.
+- `src/ghidra/`: exact Ghidra 12.1.2/JDK 21 inspection, analysis-profile commitment, digest-bound target snapshots, isolated `analyzeHeadless` launch, authenticated Unix-socket or Windows loopback transport, bounded serial request queue, and strict inventory/function boundaries.
 - `src/dotnet/`: execution-free managed PE/CLI inspection. It owns bounded PE, CLI metadata, heap, table, and resource parsing for `rea-dotnet-static`; it must never load, reflect, execute, decompile, or resolve target assemblies.
 - `bridge/ghidra/ReaGhidraBridge.java`: packaged read-only `HeadlessScript` loaded through Ghidra's `scriptPath`; it owns the persistent decompiler and adapts admitted inventory, function, reference, and CFG operations to public Ghidra APIs.
 - `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows. `AnalysisProviderRegistry` discovers overlapping deep candidates without starting them; `SessionProviderRouter` binds one candidate per target and composes it with disjoint auxiliary providers; `JavaScriptArtifactReconstruction.ts` safely projects local directories/ASARs and inert bundle syntax into the application graph without adding a caller-visible tool yet.
@@ -41,6 +41,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `tests/`: Vitest suite. `tests/fixtures/` holds reusable provider-process fixtures, source-owned synthetic JavaScript graph and Electron/Webpack/Rspack artifact trees, and the fake launcher, Hopper bridge, and CDP seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
 - `scripts/verify-real-ghidra.mjs`: real Linux Ghidra verifier for x86-64 debug/stripped ELF, AArch64 ELF, PE, and Mach-O function semantics plus complete cleanup.
+- `scripts/verify-real-ghidra-windows.mjs`: real Windows x64 Ghidra P0 verifier for the source-owned native PE fixture, all 18 admitted operations, digest linkage, loopback transport, and cleanup.
 - `scripts/verify-real-browser.mjs`: real Chrome end-to-end verifier for the passive CDP provider.
 - `scripts/print-mcp-config.mjs`: prints an MCP server config with absolute paths filled in (`npm run config:print -- /path/to/binary`).
 
@@ -60,6 +61,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run scan:todos`: scan for TODO, FIXME, and HACK markers.
 - `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
 - `npm run verify:ghidra`: build and run the real-Ghidra verifier against `GHIDRA_INSTALL_DIR` and optional `GHIDRA_TARGET_PATH`.
+- `npm run verify:ghidra:windows`: build and run the real Windows Ghidra verifier against `GHIDRA_INSTALL_DIR` and the source-owned x64 PE fixture.
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
 - `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, non-managed degradation, managed application-graph projection, manifest-verifier self-test, and optional BYO ILSpy oracle checks; set `REA_MANAGED_APP_MANIFEST_PATH` to verify an operator-local managed app manifest, including optional graph/trace assertions, and set `REA_ILSPY_CMD_PATH` to an absolute `ilspycmd` path to run the real ILSpy reconstruction oracle.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
@@ -74,7 +76,7 @@ Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use
 ## Configuration & Environment Variables
 
 - `REA_ANALYSIS_PROVIDER` (optional, default `auto`): require one deep-analysis provider ID for startup and one-shot commands, or use deterministic automatic selection. A request-level `provider_id`/`--provider` takes precedence.
-- `GHIDRA_INSTALL_DIR` (optional): absolute root of an extracted official Ghidra 12.1.2 distribution. The current adapter supports Linux x64 only.
+- `GHIDRA_INSTALL_DIR` (optional): absolute root of an extracted official Ghidra 12.1.2 distribution. The adapter supports Linux x64 and the experimental Windows x64 P0 boundary documented in `docs/windows-ghidra-p0.md`.
 - `JAVA_HOME` (optional): absolute 64-bit full JDK 21 root used by Ghidra. When absent, doctor probes `java`/`javac` from `PATH`.
 - `REA_ILSPY_CMD_PATH` (optional): absolute path to a bring-your-own `ilspycmd`; doctor reports its configured version, and `verify:managed` can use it as a real reconstruction oracle without making ILSpy a setup-installed dependency or canonical parser.
 - `HOPPER_TARGET_PATH` (optional): absolute initial binary or `.hop` target. Target-free MCP sessions use `open_binary` instead.

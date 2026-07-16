@@ -1,7 +1,8 @@
 # Static-analysis provider evaluation
 
-Status: the Ghidra read-only analysis provider is shipped. It validates an
-exact bring-your-own Ghidra 12.1.2/JDK 21 environment on Linux x64, resolves a
+Status: the Ghidra read-only analysis provider is shipped on Linux x64 and has
+an experimental Windows x64 P0 for approved native PE applications. It
+validates an exact bring-your-own Ghidra 12.1.2/JDK 21 environment, resolves a
 provider/version/profile commitment, runs one isolated read-only headless
 import, and publishes 18 operation-level capabilities after the authenticated
 post-analysis handshake.
@@ -10,7 +11,8 @@ The provider-neutral target, provider registry, deterministic target binding,
 analysis-profile commitment, Evidence provenance, snapshot v2, and bounded
 provider-process lifecycle foundations are implemented. The Ghidra launcher,
 packaged Java bridge, doctor/setup projection, bounded client lifecycle, and
-multi-target real Linux verifier are also implemented. Program identity,
+multi-target real Linux verifier, curated Windows CI, and controlled real
+Windows verifier are also implemented. Program identity,
 procedure/string/symbol inventory, memory blocks, address/name and
 containing-procedure resolution, bounded search, function metadata,
 decompilation, assembly, resolved calls, typed references, xrefs, CFG, and
@@ -42,31 +44,37 @@ follow.
   calls, references, containment, and bounded search first.
 - Report GUI cursor/navigation and persistent mutation operations as unavailable
   until their semantics and project ownership are explicitly designed.
-- Verify real claims on Linux with at least two distinct source-owned binaries;
-  compare normalized semantic facts rather than provider-specific pseudocode
-  text.
+- Verify real claims on Linux with at least two distinct source-owned binaries.
+  Verify the Windows host claim with the deterministic source-owned x86-64 PE
+  fixture and all admitted operations; compare normalized semantic facts rather
+  than provider-specific pseudocode text.
 
 ## Shipped foundation boundary
 
 `GHIDRA_INSTALL_DIR` must identify an extracted official 12.1.2 release;
 optional `JAVA_HOME` must identify a 64-bit full JDK 21, otherwise doctor probes
-`java` and `javac` from `PATH`. The adapter currently rejects non-Linux hosts,
-non-x64 hosts, other Ghidra/JDK versions, missing `analyzeHeadless`, non-
-executable targets, unknown architectures, and formats other than ELF, PE, and
-Mach-O before launch.
+`java`/`javac` or `java.exe`/`javac.exe` from `PATH`. Linux accepts x86, x86-64,
+ARM, and ARM64 ELF, PE, and Mach-O executable targets. Windows P0 accepts only
+native x86-64 PE applications and rejects DLLs, managed images, unknown roles,
+other formats, and other architectures before launch.
 
-The launcher creates one mode-0700 runtime root with private project,
-home/cache/config/data/temp, logs, descriptor, socket, and ownership manifest.
+The launcher creates one ephemeral runtime root with project,
+home/cache/config/data/temp, logs, descriptor, endpoint, target snapshot, and
+ownership manifest.
 It passes `-readOnly`, `-deleteProject`, a 300-second per-file analysis limit,
 two CPUs, and a 2 GiB heap; inherited Java option injection variables are
-cleared. The mode-0600 descriptor carries the random token without exposing it
-in argv or environment. The Java bridge deletes the descriptor after parsing,
-binds a mode-0600 Unix socket, reports actual Ghidra/language/compiler/analysis
-metadata, accepts only the exact authenticated `ping`, `shutdown`, and ten
+cleared. On Linux, the mode-0600 descriptor carries the random token without
+exposing it in argv or environment and the Java bridge binds a mode-restricted
+Unix socket. Windows uses authenticated IPv4 loopback with a strict token-free
+endpoint record. Both transports report actual
+Ghidra/language/compiler/analysis/import-digest metadata, accept only the exact
+authenticated `ping`, `shutdown`, and ten
 inventory plus eight function-analysis methods, and deletes the socket. Close,
 cancellation, timeout,
-malformed protocol, or process exit stops the token-verified owned process
-group and removes the entire runtime root.
+malformed protocol, or process exit stops the owned process resources and
+removes the entire runtime root. Windows P0 uses bounded `taskkill` tree
+termination and explicitly does not claim Job Object, private-DACL, or
+reparse-point authority; see [Windows Ghidra P0](windows-ghidra-p0.md).
 
 The provider catalog lists only the 18 proved Ghidra operations. GUI cursor,
 navigation, and mutation operations remain absent; the router therefore
@@ -109,15 +117,24 @@ process/project cleanup against real Ghidra 12.1.2. Unit fixtures separately
 cover analysis/decompile timeouts, process exit, queue saturation, and malformed
 wire output.
 
+`npm run verify:ghidra:windows` generates a deterministic source-owned native
+x86-64 PE application, proves all 18 operations through the production Windows
+launcher and loopback transport, checks target/snapshot/import SHA-256 linkage,
+and requires project, endpoint, process, and runtime cleanup. Passing that lane
+proves only the documented P0 boundary, not the remaining Windows security
+gates.
+
 ## Shared provider-process foundation
 
 `src/process/` now provides the mechanisms that a long-lived Hopper or Ghidra
-adapter genuinely shares: run-token-authenticated process-group ownership,
-mode-0700 temporary runtime roots, one absolute startup deadline, correlated
+adapter genuinely shares: POSIX run-token-authenticated process-group ownership,
+ephemeral temporary runtime roots, one absolute startup deadline, correlated
 request timeout/cancellation cleanup, bounded stdout and stderr retention with
 exact byte counts, process-exit diagnostics, and bounded TERM-to-KILL shutdown.
 Reusable fixtures exercise exit, timeout, cancellation, graceful termination,
-forced termination, double-close, spawn failure, and resource release.
+forced termination, double-close, spawn failure, and resource release. Windows
+P0 adds bounded process-tree termination as an explicitly weaker host backend;
+Job Object ownership remains unimplemented.
 
 The foundation does not define a bridge schema, socket framing, health payload,
 analysis model, or shutdown acknowledgement. Hopper keeps its authenticated
