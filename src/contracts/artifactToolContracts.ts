@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolContract } from "./toolContracts.js";
 import { artifactOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { toolContractMetadata } from "./toolEffects.js";
 
 const pageInput = {
   node_offset: z.number().int().min(0).default(0),
@@ -81,23 +82,17 @@ const artifact = <Name extends string>(
   name: Name,
   description: string,
   inputSchema: z.ZodObject,
-  mutatesFilesystem: boolean,
 ): ToolContract<Name> => {
   const outputSchema = artifactOutputSchemas[name];
   if (outputSchema === undefined)
     throw new Error(`Missing artifact output schema for ${name}`);
   return {
     name,
+    ...toolContractMetadata(name),
     description,
     kind: "artifact-provider",
     inputSchema,
     outputSchema,
-    annotations: {
-      readOnlyHint: !mutatesFilesystem,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: `Example ${name.replaceAll("_", " ")} request`,
@@ -113,13 +108,11 @@ export const ARTIFACT_TOOL_CONTRACTS = [
     "inventory_artifact",
     "Inventory the active application or package as a deterministic, content-addressed artifact graph. Returns bounded node and edge pages without extracting or mounting by default.",
     artifactInventoryInputSchema,
-    false,
   ),
   artifact(
     "extract_artifact",
     "Extract selected graph artifacts beneath an explicit output root. Requires approval, rejects traversal and symlink escapes, never overwrites, enforces bomb limits, and verifies cleanup.",
     artifactExtractionInputSchema,
-    true,
   ),
 ] as const satisfies readonly ToolContract[];
 

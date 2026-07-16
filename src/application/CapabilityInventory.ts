@@ -79,6 +79,7 @@ export const buildCapabilityInventory = (
       available: availability.reason === "available",
       reason: availability.reason,
       remediation: availability.remediation,
+      effects: { ...contract.effects },
       annotations: {
         read_only: contract.annotations.readOnlyHint ?? false,
         destructive: contract.annotations.destructiveHint ?? false,

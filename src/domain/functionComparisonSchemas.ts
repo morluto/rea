@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-import { evidenceSchema } from "./evidence.js";
-
-const evidenceInput = z.union([
-  evidenceSchema,
-  z.array(evidenceSchema).min(1).max(100),
-]);
 const comparisonStatusSchema = z.enum([
   "unchanged",
   "added",
@@ -28,9 +22,9 @@ const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 
 /** Strict bounded input for explicit function-to-function comparison. */
-export const functionComparisonInputSchema = z.object({
-  left: evidenceInput,
-  right: evidenceInput,
+export const functionComparisonInputSchema = z.strictObject({
+  left_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
+  right_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(100).default(100),
   unknown_registry_approved: z.literal(true).optional(),

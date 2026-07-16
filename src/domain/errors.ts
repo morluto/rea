@@ -69,9 +69,25 @@ export class AnalysisInputError extends AnalysisError {
   constructor(
     readonly operation: string,
     options?: ErrorOptions,
+    readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
   }
+}
+
+/** Secret-safe correction metadata for one rejected caller argument. */
+export interface AnalysisInputIssue {
+  readonly path: readonly (string | number)[];
+  readonly reason:
+    | "unknown_argument"
+    | "missing_argument"
+    | "invalid_type"
+    | "out_of_range"
+    | "invalid_value"
+    | "invalid_format";
+  readonly expected?: JsonValue;
+  readonly minimum?: number;
+  readonly maximum?: number;
 }
 
 /** Provider output failed provider-neutral application parsing. */
@@ -305,6 +321,18 @@ export class ArtifactOperationError extends AnalysisError {
 /** Evidence identity, schema, or bundle manifests failed integrity checks. */
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
+}
+
+/** A session Evidence reference is missing or has the wrong semantic identity. */
+export class EvidenceReferenceError extends EvidenceIntegrityError {
+  constructor(
+    readonly evidenceId: string,
+    readonly reason: "missing" | "wrong_operation" | "wrong_predicate",
+    readonly expected: string,
+    readonly actual: string | null,
+  ) {
+    super(`Evidence reference ${reason}: ${evidenceId}`);
+  }
 }
 
 /** A bounded evidence ledger cannot accept more records or serialized bytes. */
@@ -681,6 +709,24 @@ const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
 const errorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisInputError && error.issues.length > 0)
+    return {
+      operation: error.operation,
+      issues: error.issues.map((issue) => ({
+        path: [...issue.path],
+        reason: issue.reason,
+        ...(issue.expected === undefined ? {} : { expected: issue.expected }),
+        ...(issue.minimum === undefined ? {} : { minimum: issue.minimum }),
+        ...(issue.maximum === undefined ? {} : { maximum: issue.maximum }),
+      })),
+    };
+  if (error instanceof EvidenceReferenceError)
+    return {
+      evidence_id: error.evidenceId,
+      reason: error.reason,
+      expected: error.expected,
+      actual: error.actual,
+    };
   if (error instanceof ReplayPlanStaleError)
     return {
       approved_plan_digest: error.approvedDigest,
@@ -793,6 +839,7 @@ const missingScopeDetails = (
 });
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
+  "invalid_request",
   "provider_timeout",
   "cancelled",
   "revision_conflict",
@@ -800,6 +847,8 @@ const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
 ]);
 
 const remediationAction = (error: AnalysisError): string => {
+  if (error instanceof AnalysisInputError)
+    return "Correct the listed arguments and retry.";
   if (error instanceof ReplayPlanStaleError)
     return "Review the rebuilt replay plan and explicitly approve its new digest.";
   if (error instanceof PermissionRequiredError)

@@ -18,6 +18,8 @@ import {
   UnknownRegistryError,
 } from "../domain/errors.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
@@ -56,14 +58,15 @@ const registerOfficialTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     async (input, context) => {
-      const arguments_ = projectOfficialArguments(contract, input);
+      const parsedInput = safeParseToolInput(
+        contract.inputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const arguments_ = projectOfficialArguments(contract, parsedInput.value);
       const progress = mcpProgressReporter(context);
       await progress.report({
         phase: contract.name,
@@ -153,7 +156,7 @@ const projectOfficialArguments = (
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   input: unknown,
 ): Readonly<Record<string, JsonValue>> => {
-  const parsed = jsonObjectSchema.parse(contract.inputSchema.parse(input));
+  const parsed = jsonObjectSchema.parse(input);
 
   const projected: Record<string, JsonValue> = {};
   for (const key of Object.keys(contract.inputSchema.shape)) {

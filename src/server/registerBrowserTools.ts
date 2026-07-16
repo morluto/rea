@@ -30,6 +30,7 @@ import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
 interface BrowserToolRegistration {
@@ -58,7 +59,13 @@ export const registerBrowserTools = (
     listContract.name,
     toolRegistrationOptions(listContract),
     async (input, context) => {
-      const parsed = listBrowserTargetsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        listBrowserTargetsInputSchema,
+        input,
+        listContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, listContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         listContract.name,
@@ -78,7 +85,14 @@ export const registerBrowserTools = (
     inspectContract.name,
     toolRegistrationOptions(inspectContract),
     async (input, context) => {
-      const parsed = inspectWebPageInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        inspectWebPageInputSchema,
+        input,
+        inspectContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, inspectContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         inspectContract.name,
@@ -96,7 +110,14 @@ export const registerBrowserTools = (
     analyzeContract.name,
     toolRegistrationOptions(analyzeContract),
     async (input, context) => {
-      const parsed = analyzeWebBundleInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        analyzeWebBundleInputSchema,
+        input,
+        analyzeContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, analyzeContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         analyzeContract.name,
@@ -119,7 +140,14 @@ export const registerBrowserTools = (
     sessionContract.name,
     toolRegistrationOptions(sessionContract),
     async (input, context) => {
-      const parsed = observeWebSessionInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        observeWebSessionInputSchema,
+        input,
+        sessionContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, sessionContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         sessionContract.name,
@@ -142,7 +170,13 @@ export const registerBrowserTools = (
     webMcpContract.name,
     toolRegistrationOptions(webMcpContract),
     async (input, context) => {
-      const parsed = discoverWebMcpToolsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        discoverWebMcpToolsInputSchema,
+        input,
+        webMcpContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, webMcpContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         webMcpContract.name,
@@ -165,7 +199,14 @@ export const registerBrowserTools = (
     captureDiffContract.name,
     toolRegistrationOptions(captureDiffContract),
     async (input) => {
-      const parsed = compareWebCapturesInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareWebCapturesInputSchema,
+        input,
+        captureDiffContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, captureDiffContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         captureDiffContract.name,
@@ -179,7 +220,14 @@ export const registerBrowserTools = (
     screenshotContract.name,
     toolRegistrationOptions(screenshotContract),
     async (input, context) => {
-      const parsed = captureWebScreenshotInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        captureWebScreenshotInputSchema,
+        input,
+        screenshotContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, screenshotContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         screenshotContract.name,
@@ -202,7 +250,14 @@ export const registerBrowserTools = (
     screenshotDiffContract.name,
     toolRegistrationOptions(screenshotDiffContract),
     async (input) => {
-      const parsed = compareWebScreenshotsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareWebScreenshotsInputSchema,
+        input,
+        screenshotDiffContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, screenshotDiffContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         screenshotDiffContract.name,

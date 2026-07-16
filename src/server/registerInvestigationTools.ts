@@ -3,6 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { runCrossVersionInvestigation } from "../application/CrossVersionInvestigation.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { buildCallPath, callPathInputSchema } from "../domain/callPath.js";
 import {
   correlateStaticAndRuntime,
@@ -95,7 +97,13 @@ const registerChangedBehavior = (
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsed = changedBehaviorInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        changedBehaviorInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
       const investigationRun = parsed.investigation_run;
       if (investigationRun !== undefined) {
         const progress = mcpProgressReporter(context);
@@ -250,7 +258,13 @@ const registerCallPath = (
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsed = callPathInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        callPathInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
       const closure = evidenceClosure(
         session,
         functionEvidenceIds(parsed.functions),
@@ -313,7 +327,13 @@ const registerStaticRuntime = (
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsed = staticRuntimeCorrelationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        staticRuntimeCorrelationInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
       const closure = evidenceClosure(
         session,
         comparisonClosure([
@@ -378,30 +398,14 @@ const registerReconstruction = (
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsed = reconstructionVerificationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        reconstructionVerificationInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
       const owned = session.exportEvidenceBundle();
-      const ownedUnknowns = new Set(
-        owned.unknowns.map(({ revision_digest: digest }) => digest),
-      );
-      const ownedEvidenceIds = new Set(
-        owned.records.map(({ evidence_id: id }) => id),
-      );
-      if (
-        parsed.evidence_bundle.records.some(
-          ({ evidence_id: id }) => !ownedEvidenceIds.has(id),
-        ) ||
-        parsed.evidence_bundle.unknowns.some(
-          ({ revision_digest: digest }) => !ownedUnknowns.has(digest),
-        )
-      )
-        return toCallToolResult(
-          err(
-            new EvidenceIntegrityError(
-              "Reconstruction input unknown history is not present in this session",
-            ),
-          ),
-          contract,
-        );
       const computed = await runDerivedOperation(context, contract.name, () =>
         verifyReconstruction(
           parsed.specification,
@@ -455,12 +459,7 @@ const registerReconstruction = (
   );
 };
 
-const contractOptions = (contract: ToolContract) => ({
-  description: contract.description,
-  inputSchema: contract.inputSchema,
-  outputSchema: contract.outputSchema,
-  annotations: contract.annotations,
-});
+const contractOptions = toolRegistrationOptions;
 
 const comparisonClosure = (comparisons: readonly Evidence[]): string[] =>
   uniqueIds(

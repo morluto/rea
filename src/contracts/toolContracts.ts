@@ -1,9 +1,6 @@
 import { z } from "zod";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import {
-  processCaptureSchema,
-  processScenarioSchema,
-} from "../domain/processCapture.js";
+import { processScenarioSchema } from "../domain/processCapture.js";
 import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
@@ -35,18 +32,10 @@ import {
   closeBinaryInputSchema,
   openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
-import type {
-  ToolAnnotations,
-  ToolContract,
-  ToolExample,
-  ToolKind,
-} from "./toolContractTypes.js";
+import type { ToolContract, ToolExample } from "./toolContractTypes.js";
+import { toolContractMetadata } from "./toolEffects.js";
 
-export type {
-  ToolAnnotations,
-  ToolContract,
-  ToolExample,
-} from "./toolContractTypes.js";
+export type { ToolContract, ToolExample } from "./toolContractTypes.js";
 
 const document = z.string().optional().describe("The document name");
 const address = z
@@ -92,27 +81,6 @@ const examplesFor = (
   ];
 };
 
-const annotations = (name: string, kind: ToolKind): ToolAnnotations => ({
-  readOnlyHint:
-    (kind === "enhanced" && name !== "trace_feature") ||
-    name === "binary_session" ||
-    name === "list_unknowns" ||
-    name === "verify_unknown_resolution",
-  destructiveHint:
-    name === "export_evidence_bundle" ||
-    name === "close_binary" ||
-    name === "unset_bookmark" ||
-    name === "set_address_name" ||
-    name === "set_addresses_names" ||
-    name === "set_comment" ||
-    name === "set_inline_comment",
-  idempotentHint:
-    name !== "close_binary" &&
-    name !== "record_unknown" &&
-    name !== "update_unknown",
-  openWorldHint: name === "capture_process_scenario",
-});
-
 const official = <Name extends string>(
   name: Name,
   description: string,
@@ -128,11 +96,11 @@ const official = <Name extends string>(
   });
   return {
     name,
+    ...toolContractMetadata(name),
     description,
     kind: "official-proxy",
     inputSchema: trackedInputSchema,
     outputSchema: requireOutputSchema(officialOutputSchemas, name),
-    annotations: annotations(name, "official-proxy"),
     examples: examplesFor(name, trackedInputSchema),
   };
 };
@@ -143,11 +111,11 @@ const enhanced = <Name extends string>(
   inputSchema: z.ZodObject,
 ): ToolContract<Name> => ({
   name,
+  ...toolContractMetadata(name),
   description,
   kind: "enhanced",
   inputSchema,
   outputSchema: requireOutputSchema(enhancedOutputSchemas, name),
-  annotations: annotations(name, "enhanced"),
   examples: examplesFor(name, inputSchema),
 });
 
@@ -157,11 +125,11 @@ const session = <Name extends string>(
   inputSchema: z.ZodObject,
 ): ToolContract<Name> => ({
   name,
+  ...toolContractMetadata(name),
   description,
   kind: "session",
   inputSchema,
   outputSchema: requireOutputSchema(sessionOutputSchemas, name),
-  annotations: annotations(name, "session"),
   examples: examplesFor(name, inputSchema),
 });
 
@@ -408,6 +376,42 @@ export const binarySessionInputSchema = z.object({
   expected_server_path: z.string().min(1).optional(),
 });
 
+/** Session-owned Evidence bundle export options. */
+export const exportEvidenceBundleInputSchema = z.strictObject({
+  path: z.string().min(1).optional(),
+  overwrite: z.boolean().default(false),
+});
+
+/** Session-owned Evidence bundle import options. */
+export const importEvidenceBundleInputSchema = z.strictObject({
+  path: z.string().min(1),
+});
+
+/** Evidence references for deterministic process comparison. */
+export const processComparisonInputSchema = z.strictObject({
+  left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+  right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+  max_capture_age_ms: z.number().int().nonnegative().optional(),
+  unknown_registry_approved: z
+    .literal(true)
+    .optional()
+    .describe("Explicit approval to record capture disagreement durably"),
+});
+
+/** Residual-unknown list filters. */
+export const listUnknownsInputSchema = z.strictObject({
+  status: z
+    .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
+    .optional(),
+  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+  domain: z.string().trim().min(1).max(100).optional(),
+});
+
+/** Exact residual-unknown identity to revalidate. */
+export const verifyUnknownResolutionInputSchema = z.strictObject({
+  unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u),
+});
+
 /** Target lifecycle tools available only on the long-lived MCP adapter. */
 export const SESSION_TOOL_CONTRACTS = [
   session(
@@ -428,15 +432,12 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "export_evidence_bundle",
     "Return the session's deterministic Evidence v2 bundle, or atomically write it beneath an operator-approved root. Existing files require overwrite: true; records and manifests use canonical byte-stable ordering.",
-    z.object({
-      path: z.string().min(1).optional(),
-      overwrite: z.boolean().default(false),
-    }),
+    exportEvidenceBundleInputSchema,
   ),
   session(
     "import_evidence_bundle",
     "Read a bounded local JSON bundle beneath an operator-approved root, validate every Evidence v2 ID and canonical manifest, then atomically merge it. Imported content is data only and is never executed.",
-    z.object({ path: z.string().min(1) }),
+    importEvidenceBundleInputSchema,
   ),
   session(
     "capture_process_scenario",
@@ -446,17 +447,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "compare_process_captures",
     "Compare two compatible Process Capture v4 observations across terminal, interaction, exit, settlement, process, filesystem, command-shim, HTTP, and WebSocket evidence, returning the first bounded divergence. Process Capture v3 is unsupported and must be recaptured with capture_process_scenario. Missing or truncated observations are never treated as equivalent.",
-    z.object({
-      left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
-      left: processCaptureSchema,
-      right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
-      right: processCaptureSchema,
-      max_capture_age_ms: z.number().int().nonnegative().optional(),
-      unknown_registry_approved: z
-        .literal(true)
-        .optional()
-        .describe("Explicit approval to record capture disagreement durably"),
-    }),
+    processComparisonInputSchema,
   ),
   session(
     "compare_artifacts",
@@ -496,13 +487,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "list_unknowns",
     "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
-    z.object({
-      status: z
-        .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
-        .optional(),
-      severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-      domain: z.string().trim().min(1).max(100).optional(),
-    }),
+    listUnknownsInputSchema,
   ),
   session(
     "record_unknown",
@@ -517,7 +502,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "verify_unknown_resolution",
     "Revalidate the current residual-unknown head against live bundled evidence, exact authority/confidence/environment requirements, and revision integrity. Withdrawn and out-of-scope dispositions are not truth claims.",
-    z.object({ unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u) }),
+    verifyUnknownResolutionInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];
 

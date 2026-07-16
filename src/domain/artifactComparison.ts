@@ -6,7 +6,6 @@ import {
   type ArtifactNode,
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
-import { evidenceSchema } from "./evidence.js";
 import {
   parseArtifactInventoryEvidence,
   type InventorySet,
@@ -42,9 +41,9 @@ const comparisonDimensionSchema = z.enum([
 ]);
 
 /** Strict Evidence-backed input for deterministic artifact comparison. */
-export const artifactComparisonInputSchema = z.object({
-  left: z.union([evidenceSchema, z.array(evidenceSchema).min(1).max(100)]),
-  right: z.union([evidenceSchema, z.array(evidenceSchema).min(1).max(100)]),
+export const artifactComparisonInputSchema = z.strictObject({
+  left_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
+  right_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(500).default(100),
   unknown_registry_approved: z

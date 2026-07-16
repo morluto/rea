@@ -1,38 +1,50 @@
-import canonicalize from "canonicalize";
-
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
-import { parseEvidence, type Evidence } from "../domain/evidence.js";
+import {
+  EvidenceIntegrityError,
+  EvidenceReferenceError,
+} from "../domain/errors.js";
+import type { Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type EvidenceAuthorityResult = Result<Evidence[], EvidenceIntegrityError>;
 
-/** Resolve caller-supplied records to their immutable session-owned values. */
-export const resolveSessionEvidence = (
+/** Resolve bounded IDs to authoritative records with exact semantic identity. */
+export const resolveSessionEvidenceIds = (
   session: BinarySessionPort,
-  input: Evidence | readonly Evidence[],
+  evidenceIds: readonly string[],
+  expected: { readonly operation: string; readonly predicate: string },
 ): EvidenceAuthorityResult => {
-  const supplied = Array.isArray(input) ? input : [input];
-  const authoritative: Evidence[] = [];
-  for (const item of supplied) {
-    const parsed = parseEvidence(item);
-    const owned = session.evidenceById(parsed.evidence_id);
-    if (owned === undefined || canonicalize(owned) !== canonicalize(parsed))
+  const records: Evidence[] = [];
+  for (const evidenceId of evidenceIds) {
+    const record = session.evidenceById(evidenceId);
+    if (record === undefined)
       return err(
-        new EvidenceIntegrityError(
-          "Comparison input does not match its session-owned Evidence",
+        new EvidenceReferenceError(
+          evidenceId,
+          "missing",
+          expected.operation,
+          null,
         ),
       );
-    authoritative.push(owned);
+    if (record.operation !== expected.operation)
+      return err(
+        new EvidenceReferenceError(
+          evidenceId,
+          "wrong_operation",
+          expected.operation,
+          record.operation,
+        ),
+      );
+    if (record.predicate_type !== expected.predicate)
+      return err(
+        new EvidenceReferenceError(
+          evidenceId,
+          "wrong_predicate",
+          expected.predicate,
+          record.predicate_type,
+        ),
+      );
+    records.push(record);
   }
-  return ok(authoritative);
-};
-
-/** Check exact ownership for a single Evidence record. */
-export const isSessionEvidence = (
-  session: BinarySessionPort,
-  input: Evidence,
-): boolean => {
-  const owned = session.evidenceById(input.evidence_id);
-  return owned !== undefined && canonicalize(owned) === canonicalize(input);
+  return ok(records);
 };

@@ -6,15 +6,16 @@ import {
   compareFunctions,
   functionComparisonInputSchema,
 } from "../domain/functionComparison.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { resolveSessionEvidence } from "./sessionEvidence.js";
+import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
@@ -26,13 +27,31 @@ export const registerFunctionComparisonTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsed = functionComparisonInputSchema.parse(input);
-      const left = resolveSessionEvidence(session, parsed.left);
+      const parsedInput = safeParseToolInput(
+        functionComparisonInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
+      const expected = {
+        operation: "analyze_function",
+        predicate: "rea.analysis/v2",
+      };
+      const left = resolveSessionEvidenceIds(
+        session,
+        parsed.left_evidence_ids,
+        expected,
+      );
       if (!left.ok) return toCallToolResult(left, contract);
-      const right = resolveSessionEvidence(session, parsed.right);
+      const right = resolveSessionEvidenceIds(
+        session,
+        parsed.right_evidence_ids,
+        expected,
+      );
       if (!right.ok) return toCallToolResult(right, contract);
-      const leftIds = evidenceIds(left.value);
-      const rightIds = evidenceIds(right.value);
+      const leftIds = left.value.map(({ evidence_id: id }) => id);
+      const rightIds = right.value.map(({ evidence_id: id }) => id);
       const computed = await runDerivedOperation(context, contract.name, () =>
         compareFunctions(left.value, right.value, parsed.offset, parsed.limit),
       );
@@ -100,6 +119,3 @@ const functionUnknownInput = ({
     relationships: [],
   };
 };
-
-const evidenceIds = (input: Evidence | readonly Evidence[]): string[] =>
-  (Array.isArray(input) ? input : [input]).map(({ evidence_id: id }) => id);

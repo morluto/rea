@@ -22,6 +22,8 @@ import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
 } from "../application/InvestigationProviders.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -69,12 +71,7 @@ const registerEnhancedTool = (
   const name = enhancedToolNameSchema.parse(contract.name);
   server.registerTool(
     name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     async (input, context) => {
       const progress = mcpProgressReporter(context);
       await progress.report({
@@ -83,9 +80,13 @@ const registerEnhancedTool = (
         total: 1,
         message: "started",
       });
-      const parsedInput = jsonObjectSchema.parse(
-        enhancedInputSchemas[name].parse(input),
+      const validatedInput = safeParseToolInput(
+        enhancedInputSchemas[name],
+        input,
+        name,
       );
+      if (!validatedInput.ok) return toCallToolResult(validatedInput, contract);
+      const parsedInput = jsonObjectSchema.parse(validatedInput.value);
       const parameters: Record<string, JsonValue> = { ...parsedInput };
       const result = await logToolExecution(registration.logger, name, () =>
         services.execute(name, input, context.mcpReq.signal),

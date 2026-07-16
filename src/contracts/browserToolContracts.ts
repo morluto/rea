@@ -1,6 +1,4 @@
 import type { ToolContract } from "./toolContracts.js";
-import { z } from "zod";
-import { evidenceEnvelopeSchema } from "../domain/evidence.js";
 import {
   browserTargetListSchema,
   inspectWebPageInputSchema,
@@ -29,21 +27,16 @@ import {
   webScreenshotDiffSchema,
   webScreenshotSchema,
 } from "../domain/webScreenshot.js";
+import { toolContractMetadata } from "./toolEffects.js";
+import { evidenceResultOf } from "./toolOutputSchemas.js";
 
-const evidenceResult = <Schema extends z.ZodType>(schema: Schema) =>
-  evidenceEnvelopeSchema
-    .omit({ normalized_result: true })
-    .extend({ normalized_result: schema });
+const evidenceResult = evidenceResultOf;
 const listOutputSchema = evidenceResult(browserTargetListSchema);
-const inspectionOutputSchema = evidenceEnvelopeSchema
-  .omit({ normalized_result: true })
-  .extend({ normalized_result: webPageInspectionSchema });
-const bundleOutputSchema = evidenceEnvelopeSchema
-  .omit({ normalized_result: true })
-  .extend({ normalized_result: webBundleAnalysisSchema });
-const observationSessionOutputSchema = evidenceEnvelopeSchema
-  .omit({ normalized_result: true })
-  .extend({ normalized_result: webObservationSessionSchema });
+const inspectionOutputSchema = evidenceResult(webPageInspectionSchema);
+const bundleOutputSchema = evidenceResult(webBundleAnalysisSchema);
+const observationSessionOutputSchema = evidenceResult(
+  webObservationSessionSchema,
+);
 const webMcpOutputSchema = evidenceResult(webMcpDiscoverySchema);
 const captureDiffOutputSchema = evidenceResult(webCaptureDiffSchema);
 const screenshotOutputSchema = evidenceResult(webScreenshotSchema);
@@ -56,17 +49,12 @@ const origin = "https://app.example.test";
 export const BROWSER_TOOL_CONTRACTS = [
   {
     name: "list_browser_targets",
+    ...toolContractMetadata("list_browser_targets"),
     description:
       "List bounded page targets from an approved user-owned loopback Chrome DevTools Protocol endpoint. Only targets whose current URL matches an approved exact origin are returned; URL credentials, query values, and fragments are redacted.",
     kind: "browser-provider",
     inputSchema: listBrowserTargetsInputSchema,
     outputSchema: listOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "List approved browser page targets",
@@ -82,17 +70,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_web_page",
+    ...toolContractMetadata("inspect_web_page"),
     description:
       "Passively inspect one approved page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. Returns bounded DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence v2.",
     kind: "browser-provider",
     inputSchema: inspectWebPageInputSchema,
     outputSchema: inspectionOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "Inspect one approved browser page",
@@ -141,17 +124,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "analyze_web_bundle",
+    ...toolContractMetadata("analyze_web_bundle"),
     description:
       "Capture explicitly approved JavaScript source from one approved CDP page and statically derive a bounded chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optional separately approved source-map evidence. JavaScript is parsed but never executed.",
     kind: "browser-provider",
     inputSchema: analyzeWebBundleInputSchema,
     outputSchema: bundleOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "Analyze an approved page bundle",
@@ -182,17 +160,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "observe_web_session",
+    ...toolContractMetadata("observe_web_session"),
     description:
       "Arm a bounded CDP observation window while the user operates the page. Allows approved same-origin reload and SPA navigation, records ordered navigation, redirect, lifecycle, and failure metadata, and stops before retaining an out-of-policy destination.",
     kind: "browser-provider",
     inputSchema: observeWebSessionInputSchema,
     outputSchema: observationSessionOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "Observe one external user action",
@@ -209,17 +182,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "discover_webmcp_tools",
+    ...toolContractMetadata("discover_webmcp_tools"),
     description:
       "Passively inventory page-registered WebMCP tools using the experimental CDP WebMCP domain. Metadata is bounded and page-declared-untrusted; REA never registers or invokes discovered tools.",
     kind: "browser-provider",
     inputSchema: discoverWebMcpToolsInputSchema,
     outputSchema: webMcpOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "Discover current WebMCP declarations",
@@ -239,17 +207,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "compare_web_captures",
+    ...toolContractMetadata("compare_web_captures"),
     description:
       "Compare two normalized web captures across DOM, scripts, resources, network, safe metadata, and optional WebMCP inventories. Stable observed changes are distinguished from unknown absence caused by incomplete capture coverage.",
     kind: "browser-provider",
     inputSchema: compareWebCapturesInputSchema,
     outputSchema: captureDiffOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Compare two normalized captures",
@@ -263,17 +226,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "capture_web_screenshot",
+    ...toolContractMetadata("capture_web_screenshot"),
     description:
       "Capture the current visible viewport of one approved page as a bounded, content-addressed PNG artifact. Screenshot capture requires separate explicit approval and never scrolls, navigates, or evaluates page JavaScript.",
     kind: "browser-provider",
     inputSchema: captureWebScreenshotInputSchema,
     outputSchema: screenshotOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
     examples: [
       {
         title: "Capture an approved viewport",
@@ -290,17 +248,12 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "compare_web_screenshots",
+    ...toolContractMetadata("compare_web_screenshots"),
     description:
       "Compare two self-verifying PNG screenshot artifacts with bounded local pixel metrics. Returns exact changed-pixel ratios and channel deltas without OCR or external services.",
     kind: "browser-provider",
     inputSchema: compareWebScreenshotsInputSchema,
     outputSchema: screenshotDiffOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Compare two screenshot artifacts",

@@ -17,6 +17,7 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import { createEvidence } from "../domain/evidence.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
@@ -48,7 +49,13 @@ export const runControlledReplay = async (
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const parsed = controlledReplayInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+    return err(
+      new AnalysisInputError(
+        OPERATION,
+        { cause: parsed.error },
+        projectInputIssues(parsed.error.issues, rawInput),
+      ),
+    );
   if (!dependencies.policy.enabled)
     return err(
       new AnalysisCapabilityUnavailableError(

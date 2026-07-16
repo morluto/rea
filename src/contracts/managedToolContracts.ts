@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContracts.js";
 import { managedOutputSchemas } from "./toolOutputSchemas.js";
+import { toolContractMetadata } from "./toolEffects.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedArtifactInputSchema = z.object({
@@ -119,17 +120,12 @@ if (nativeBoundaryOutputSchema === undefined)
 export const MANAGED_TOOL_CONTRACTS = [
   {
     name: "inspect_managed_artifact",
+    ...toolContractMetadata("inspect_managed_artifact"),
     description:
       "Classify the active PE/CLI artifact and inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns bounded pages and explicit partial or malformed coverage.",
     kind: "managed-provider",
     inputSchema: managedArtifactInputSchema,
     outputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Example inspect managed artifact request",

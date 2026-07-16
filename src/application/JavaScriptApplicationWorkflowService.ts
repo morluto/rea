@@ -6,6 +6,7 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { compareJavaScriptApplicationVersions } from "../domain/javascriptApplicationVersionComparison.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { traceApplicationFeature } from "../domain/javascriptFeatureTrace.js";
@@ -26,7 +27,14 @@ export const traceApplicationFeatureEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const operation = "trace_application_feature";
   const parsed = traceApplicationFeatureInputSchema.safeParse(rawInput);
-  if (!parsed.success) return err(new AnalysisInputError(operation));
+  if (!parsed.success)
+    return err(
+      new AnalysisInputError(
+        operation,
+        undefined,
+        projectInputIssues(parsed.error.issues, rawInput),
+      ),
+    );
   try {
     const source = parseApplicationGraphEvidence(parsed.data.application);
     const nativeEvidence = parseNativeApplicationEvidence(
@@ -63,7 +71,14 @@ export const compareApplicationVersionsEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const operation = "compare_application_versions";
   const parsed = compareApplicationVersionsInputSchema.safeParse(rawInput);
-  if (!parsed.success) return err(new AnalysisInputError(operation));
+  if (!parsed.success)
+    return err(
+      new AnalysisInputError(
+        operation,
+        undefined,
+        projectInputIssues(parsed.error.issues, rawInput),
+      ),
+    );
   try {
     const left = parseApplicationGraphEvidence(parsed.data.left);
     const right = parseApplicationGraphEvidence(parsed.data.right);

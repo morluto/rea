@@ -44,7 +44,11 @@ const parseJson = (value: string): unknown => {
 
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",
-  ...projectAnalysisError(new AnalysisInputError(operation)),
+  ...projectAnalysisError(
+    new AnalysisInputError(operation, undefined, [
+      { path: [], reason: "invalid_format", expected: "JSON" },
+    ]),
+  ),
 });
 
 const jsonFileError = (
@@ -55,7 +59,15 @@ const jsonFileError = (
   ok: false as const,
   error: {
     error: "Application workflow failed",
-    ...projectAnalysisError(new AnalysisInputError(operation)),
+    ...projectAnalysisError(
+      new AnalysisInputError(
+        operation,
+        undefined,
+        reason === "invalid-json"
+          ? [{ path: [], reason: "invalid_format", expected: "JSON" }]
+          : [],
+      ),
+    ),
     input_path: path,
     input_reason: reason,
     maximum_input_bytes: MAX_JSON_INPUT_BYTES,

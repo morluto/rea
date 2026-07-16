@@ -22,6 +22,7 @@ import {
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
 interface ApplicationToolRegistration {
@@ -44,7 +45,13 @@ export const registerApplicationTools = (
     traceContract.name,
     toolRegistrationOptions(traceContract),
     async (input) => {
-      const parsed = traceApplicationFeatureInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        traceApplicationFeatureInputSchema,
+        input,
+        traceContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, traceContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         traceContract.name,
@@ -61,7 +68,14 @@ export const registerApplicationTools = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsed = compareApplicationVersionsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareApplicationVersionsInputSchema,
+        input,
+        compareContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, compareContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
@@ -92,7 +106,13 @@ export const registerApplicationTools = (
     replayContract.name,
     toolRegistrationOptions(replayContract),
     async (input, context) => {
-      const parsed = controlledReplayInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        controlledReplayInputSchema,
+        input,
+        replayContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, replayContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         replayContract.name,

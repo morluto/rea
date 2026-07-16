@@ -692,6 +692,18 @@ try {
       (await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n"
     )
       throw new Error("packaged stale-skill upgrade was not isolated");
+    const alignedDoctor = json(
+      await run(cli, ["doctor", "--json"], environment),
+    );
+    if (
+      alignedDoctor.identity?.skill?.state !== "aligned" ||
+      alignedDoctor.identity?.skill?.installed_tool_count !==
+        TOOL_CONTRACTS.length ||
+      alignedDoctor.checks?.some(({ name }) => name === "skill:identity")
+    )
+      throw new Error(
+        "packaged doctor did not report the upgraded skill aligned",
+      );
 
     await writeFile(claudeConfig, "malformed");
     await writeFile(cursorConfig, '{"existing":true}\n');
@@ -860,7 +872,7 @@ try {
     );
     if (opened.isError === true)
       throw new Error("packaged MCP could not open a binary");
-    const providerStatus = json(
+    const providerStatusEnvelope = json(
       prompts.mcpText(
         await client.callTool(
           { name: "binary_session", arguments: {} },
@@ -868,6 +880,7 @@ try {
         ),
       ),
     );
+    const providerStatus = providerStatusEnvelope.result;
     if (
       providerStatus.analysis_provider_binding?.provider?.id !== "hopper" ||
       providerStatus.analysis_provider_binding?.selection_source !== "request"
@@ -891,13 +904,13 @@ try {
       )
         throw new Error("packaged Linux MCP did not reject an unpinned Hopper");
     } else {
-      if (json(prompts.mcpText(current)).normalized_result !== "fixture")
+      if (json(prompts.mcpText(current)).result !== "fixture")
         throw new Error("packaged MCP bridge call failed");
       const batch = await client.callTool(
         { name: "batch_decompile", arguments: { addresses: ["0x1000"] } },
         mcpOptions,
       );
-      const batchResult = json(prompts.mcpText(batch)).normalized_result;
+      const batchResult = json(prompts.mcpText(batch)).result;
       if (
         batch.isError === true ||
         batchResult?.total !== 1 ||

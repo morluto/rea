@@ -2,7 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import {
+  exportEvidenceBundleInputSchema,
+  importEvidenceBundleInputSchema,
+  listUnknownsInputSchema,
+  SESSION_TOOL_CONTRACTS,
+  verifyUnknownResolutionInputSchema,
+} from "../contracts/toolContracts.js";
 import { toCallToolResult } from "./toolResult.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -43,6 +49,8 @@ import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js"
 import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
 import {
@@ -129,14 +137,16 @@ const registerProcessTools = ({
 }: ProcessToolRegistration): void => {
   server.registerTool(
     captureContract.name,
-    {
-      description: captureContract.description,
-      inputSchema: captureContract.inputSchema,
-      outputSchema: captureContract.outputSchema,
-      annotations: captureContract.annotations,
-    },
+    toolRegistrationOptions(captureContract),
     async (input, context) => {
-      const scenario = processScenarioSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        processScenarioSchema,
+        input,
+        captureContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, captureContract);
+      const scenario = parsedInput.value;
       if (permissionAuthority !== undefined) {
         const authorized = await permissionAuthority.authorize(
           {
@@ -218,19 +228,15 @@ const registerEvidenceTools = ({
 }: EvidenceToolRegistration): void => {
   server.registerTool(
     exportContract.name,
-    {
-      description: exportContract.description,
-      inputSchema: exportContract.inputSchema,
-      outputSchema: exportContract.outputSchema,
-      annotations: exportContract.annotations,
-    },
+    toolRegistrationOptions(exportContract),
     async (input) => {
-      const parsed = z
-        .object({
-          path: z.string().min(1).optional(),
-          overwrite: z.boolean().default(false),
-        })
-        .parse(input);
+      const parsedInput = safeParseToolInput(
+        exportEvidenceBundleInputSchema,
+        input,
+        exportContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, exportContract);
+      const parsed = parsedInput.value;
       const bundle = session.exportEvidenceBundle();
       if (parsed.path === undefined)
         return toCallToolResult(ok(bundle), exportContract);
@@ -273,14 +279,15 @@ const registerEvidenceTools = ({
   );
   server.registerTool(
     importContract.name,
-    {
-      description: importContract.description,
-      inputSchema: importContract.inputSchema,
-      outputSchema: importContract.outputSchema,
-      annotations: importContract.annotations,
-    },
+    toolRegistrationOptions(importContract),
     async (input) => {
-      const path = z.object({ path: z.string().min(1) }).parse(input).path;
+      const parsedInput = safeParseToolInput(
+        importEvidenceBundleInputSchema,
+        input,
+        importContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, importContract);
+      const path = parsedInput.value.path;
       if (permissionAuthority !== undefined) {
         const authorized = await permissionAuthority.authorize(
           {
@@ -335,28 +342,15 @@ const registerUnknownTools = ({
 }: UnknownToolRegistration): void => {
   server.registerTool(
     listContract.name,
-    {
-      description: listContract.description,
-      inputSchema: listContract.inputSchema,
-      outputSchema: listContract.outputSchema,
-      annotations: listContract.annotations,
-    },
+    toolRegistrationOptions(listContract),
     (input) => {
-      const filters = z
-        .object({
-          status: z
-            .enum([
-              "open",
-              "investigating",
-              "blocked",
-              "contradicted",
-              "resolved",
-            ])
-            .optional(),
-          severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-          domain: z.string().trim().min(1).max(100).optional(),
-        })
-        .parse(input);
+      const parsedInput = safeParseToolInput(
+        listUnknownsInputSchema,
+        input,
+        listContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, listContract);
+      const filters = parsedInput.value;
       return toCallToolResult(
         ok(
           session.listUnknowns({
@@ -373,48 +367,45 @@ const registerUnknownTools = ({
   );
   server.registerTool(
     recordContract.name,
-    {
-      description: recordContract.description,
-      inputSchema: recordContract.inputSchema,
-      outputSchema: recordContract.outputSchema,
-      annotations: recordContract.annotations,
-    },
+    toolRegistrationOptions(recordContract),
     (input) => {
-      const recorded = session.recordUnknown(
-        recordUnknownInputSchema.parse(input),
+      const parsedInput = safeParseToolInput(
+        recordUnknownInputSchema,
+        input,
+        recordContract.name,
       );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, recordContract);
+      const recorded = session.recordUnknown(parsedInput.value);
       if (recorded.ok) server.sendResourceListChanged();
       return toCallToolResult(recorded, recordContract);
     },
   );
   server.registerTool(
     updateContract.name,
-    {
-      description: updateContract.description,
-      inputSchema: updateContract.inputSchema,
-      outputSchema: updateContract.outputSchema,
-      annotations: updateContract.annotations,
-    },
+    toolRegistrationOptions(updateContract),
     (input) => {
-      const updated = session.updateUnknown(
-        updateUnknownInputSchema.parse(input),
+      const parsedInput = safeParseToolInput(
+        updateUnknownInputSchema,
+        input,
+        updateContract.name,
       );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, updateContract);
+      const updated = session.updateUnknown(parsedInput.value);
       if (updated.ok) server.sendResourceListChanged();
       return toCallToolResult(updated, updateContract);
     },
   );
   server.registerTool(
     verifyContract.name,
-    {
-      description: verifyContract.description,
-      inputSchema: verifyContract.inputSchema,
-      outputSchema: verifyContract.outputSchema,
-      annotations: verifyContract.annotations,
-    },
+    toolRegistrationOptions(verifyContract),
     (input) => {
-      const unknownId = z
-        .object({ unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u) })
-        .parse(input).unknown_id;
+      const parsedInput = safeParseToolInput(
+        verifyUnknownResolutionInputSchema,
+        input,
+        verifyContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, verifyContract);
+      const unknownId = parsedInput.value.unknown_id;
       return toCallToolResult(
         session.verifyUnknownResolution(unknownId),
         verifyContract,
@@ -458,14 +449,15 @@ const registerLifecycleTools = ({
   const [openContract, closeContract, statusContract] = contracts;
   server.registerTool(
     openContract.name,
-    {
-      description: openContract.description,
-      inputSchema: openContract.inputSchema,
-      outputSchema: openContract.outputSchema,
-      annotations: openContract.annotations,
-    },
+    toolRegistrationOptions(openContract),
     async (input, context) => {
-      const parsed = openBinaryInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        openBinaryInputSchema,
+        input,
+        openContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, openContract);
+      const parsed = parsedInput.value;
       let snapshot: AnalysisSnapshot | undefined;
       if (parsed.snapshot_path !== undefined) {
         if (permissionAuthority !== undefined) {
@@ -526,14 +518,15 @@ const registerLifecycleTools = ({
   );
   server.registerTool(
     closeContract.name,
-    {
-      description: closeContract.description,
-      inputSchema: closeContract.inputSchema,
-      outputSchema: closeContract.outputSchema,
-      annotations: closeContract.annotations,
-    },
+    toolRegistrationOptions(closeContract),
     async (input) => {
-      const parsed = closeBinaryInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        closeBinaryInputSchema,
+        input,
+        closeContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, closeContract);
+      const parsed = parsedInput.value;
       if (parsed.snapshot_path !== undefined) {
         if (permissionAuthority !== undefined) {
           const authorized = await permissionAuthority.authorize(
@@ -688,7 +681,12 @@ export const registerSessionTools = (
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
-  registerBundleComparisonTool(server, session, compareBundlesContract);
+  registerBundleComparisonTool(
+    server,
+    session,
+    compareBundlesContract,
+    evidenceFilePolicy,
+  );
   const investigationContracts = [
     changedBehaviorContract,
     callPathContract,

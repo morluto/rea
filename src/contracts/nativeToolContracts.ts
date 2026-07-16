@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolContract } from "./toolContracts.js";
 import { nativeOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { toolContractMetadata } from "./toolEffects.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},
@@ -22,16 +23,11 @@ const native = <Name extends string>(
     throw new Error(`Missing native output schema for ${name}`);
   return {
     name,
+    ...toolContractMetadata(name),
     description,
     kind: "native-provider",
     inputSchema,
     outputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: `Example ${name.replaceAll("_", " ")} request`,

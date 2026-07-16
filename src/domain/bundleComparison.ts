@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import {
-  evidenceBundleSchema,
   parseEvidenceBundle,
   serializeEvidenceBundle,
   type EvidenceBundle,
@@ -22,9 +21,9 @@ const classificationSchema = z.enum([
 ]);
 
 /** Strict bounded input for canonical Evidence bundle comparison. */
-export const bundleComparisonInputSchema = z.object({
-  left: evidenceBundleSchema,
-  right: evidenceBundleSchema,
+export const bundleComparisonInputSchema = z.strictObject({
+  left_bundle_path: z.string().min(1).max(4_096),
+  right_bundle_path: z.string().min(1).max(4_096),
   record_pairs: z
     .array(
       z.object({
