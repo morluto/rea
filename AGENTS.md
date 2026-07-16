@@ -26,7 +26,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
 - `src/config.ts`: Zod-validated parsing of environment configuration into `AppConfig`.
 - `src/domain/`: pure, side-effect-free modules. `errors.ts` owns the tagged error algebra; `result.ts` owns `Result`/`ok`/`err`; `hopperValues.ts` owns shared function-dossier values plus Hopper boundary parsers; `symbolAnalysis.ts` parses Swift/ObjC names; `javascriptApplicationGraph.ts` validates and canonically commits the provider-neutral JavaScript Application Graph; `javascriptStaticAnalysis.ts` performs bounded AST-only JavaScript structure recovery.
-- `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, 6 managed, 8 browser, 4 Electron, 3 application, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
+- `src/contracts/`: caller-visible tool schemas and catalog metadata; `toolContracts.ts` owns the canonical inventory and `enhancedInputs.ts` owns enhanced input parsing.
 - `src/process/`: provider-neutral process ownership and lifecycle primitives. It owns private runtime roots, absolute startup deadlines, correlated request waits, bounded output capture, and TERM-to-KILL cleanup without defining any provider wire protocol.
 - `src/replay/`: Linux x64 controlled-JavaScript-replay adapter. It owns exact runtime closure inspection, Bubblewrap/seccomp/cgroup admission, the disposable worker, strict parent/worker protocol validation, and complete cleanup observation.
 - `src/browser/`: loopback CDP discovery, bounded WebSocket transport, exact-origin target authorization, and passive browser observation normalization.
@@ -47,13 +47,14 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 ## Build, Test, and Development Commands
 
 - `npm ci`: install exact lockfile dependencies.
+- `npm run deps:check`: verify that installed direct dependency versions match the root lockfile; on failure, run `npm ci`, then retry.
 - `npm run build`: compile `src/` into `dist/`.
 - `npm test`: build, then run the Vitest suite once.
 - `npm run typecheck`: run strict TypeScript checks without emitting files.
 - `npm run lint`: apply oxlint rules (complexity, max-lines, unused vars, and TypeScript-specific checks).
 - `npm run lint:fix`: auto-fix oxlint violations where possible.
 - `npm run format:check`: verify Prettier formatting.
-- `npm run check`: run typecheck, lint, format:check, and tests.
+- `npm run check`: run typecheck, lint, format:check, generated-document freshness checks, and tests.
 - `npm run knip`: detect unused files, dependencies, and exports.
 - `npm run jscpd`: detect duplicate code blocks.
 - `npm run scan:todos`: scan for TODO, FIXME, and HACK markers.
@@ -62,7 +63,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
 - `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, and non-managed degradation.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
-- `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 89-tool target-free MCP server in an isolated environment.
+- `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
 - `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc output, and the error JSON schema without rewriting them.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
@@ -96,7 +97,9 @@ Use ESM TypeScript, two-space indentation, and Prettier defaults. Keep compiler 
 
 ## Testing Guidelines
 
-Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use fake launcher/socket seams; MCP tests connect with the beta.3 client. Preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 6 managed, 8 browser, 4 Electron, 3 application, and 18 session tool inventory (89 total). Cover malformed input, cancellation, timeouts, process exit, concurrency, limits, and clean shutdown. Real Hopper, Ghidra, browser, JavaScript replay, managed conformance, and any real managed-tool claims cannot be replaced by mocks; use the corresponding `verify:*` command.
+Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use fake launcher/socket seams; MCP tests connect with the client SDK version pinned in `package.json`. Preserve the canonical tool inventory defined by `TOOL_CONTRACTS` and verified through `CATALOG_IDENTITY` and generated product metadata. Cover malformed input, cancellation, timeouts, process exit, concurrency, limits, and clean shutdown. Real Hopper, Ghidra, browser, JavaScript replay, managed conformance, and any real managed-tool claims cannot be replaced by mocks; use the corresponding `verify:*` command.
+
+MCP tool catalogs must remain complete and self-describing. Prefer capability- and session-scoped tool advertisement over schema truncation. Do not impose arbitrary serialized-byte ceilings on tool schemas or `tools/list`; assess model-context cost only against a named client's actual model-facing projection and tokenizer.
 
 ## Commit & Pull Request Guidelines
 

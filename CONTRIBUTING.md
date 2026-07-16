@@ -17,7 +17,7 @@ the package `prepare` lifecycle, and prepares the Husky hook. Run
 `npm run build` again after source changes when you need the standalone CLI or
 MCP server without running the test prebuild.
 
-Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, 8 browser, 4 Electron, 2 application workflow, and 18 session tools (82 total) unless a deliberate contract change updates every verifier and snapshot.
+Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the canonical tool inventory defined by `TOOL_CONTRACTS` unless a deliberate contract change updates every verifier, generated catalog artifact, and snapshot. Prefer capability- and session-scoped tool advertisement over schema truncation.
 
 Before submitting a pull request, run:
 
@@ -75,7 +75,7 @@ Publish the public package:
 npm publish --access public
 ```
 
-After npm registry propagation, verify the published CLI and connect a beta.3 MCP client to the published server to confirm all 82 tools:
+After npm registry propagation, verify the published CLI and connect the client SDK version pinned in `package.json` to the published server to confirm the canonical tool catalog:
 
 ```bash
 npx -y rea-agents --help

@@ -8,8 +8,6 @@ const README_PATHS = [
   "README_ko.md",
   "README_ar.md",
 ];
-const familyLabel = (id) => (id === "electron" ? "Electron" : id);
-
 const tableCounts = (content, path, expectedCounts) => {
   const lines = content.split(/\r?\n/u);
   for (const [index, line] of lines.entries()) {
@@ -50,37 +48,11 @@ export const documentationFactIssues = async (root, catalog) => {
     }
   }
 
-  const inventory = catalog.tools.families
-    .map(({ id, count }) => `${String(count)} ${familyLabel(id)}`)
-    .join(", ")
-    .replace(/, ([^,]+)$/u, ", and $1");
-  const plusInventory = catalog.tools.families
-    .map(({ id, count }) => `${String(count)} ${familyLabel(id)}`)
-    .join(" + ");
   const agents = await readFile(join(root, "AGENTS.md"), "utf8");
-  requireText(issues, "AGENTS.md", agents, inventory);
-  requireText(
-    issues,
-    "AGENTS.md",
-    agents,
-    `(${String(catalog.tools.total)} total)`,
-  );
-  requireText(
-    issues,
-    "AGENTS.md",
-    agents,
-    `${String(catalog.tools.total)}-tool target-free MCP server`,
-  );
   requireText(issues, "AGENTS.md", agents, "docs/product-catalog.json");
 
   const templatePath = ".github/pull_request_template.md";
   const template = await readFile(join(root, templatePath), "utf8");
-  requireText(
-    issues,
-    templatePath,
-    template,
-    `current inventory is ${String(catalog.tools.total)} tools (${plusInventory})`,
-  );
   requireText(issues, templatePath, template, "docs/product-catalog.json");
 
   const english = await readFile(join(root, "README.md"), "utf8");

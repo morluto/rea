@@ -8,7 +8,7 @@ const analysis = {
   execute: () => Promise.resolve(ok(null)),
 };
 
-describe("beta.3 server composition", () => {
+describe("MCP server composition", () => {
   it("constructs independent MCP server instances", () => {
     expect(createServer(analysis)).not.toBe(createServer(analysis));
   });
