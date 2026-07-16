@@ -9,8 +9,8 @@ const MAX_OUTPUT_BYTES = 65_536;
 const MAX_DIAGNOSTIC_BYTES = 4_096;
 const PROBE_CONCURRENCY = 4;
 
-export type RuntimeToolName = (typeof TOOL_NAMES)[number];
-export type RuntimeProbeFailureCode =
+type RuntimeToolName = (typeof TOOL_NAMES)[number];
+type RuntimeProbeFailureCode =
   | "runtime_dynamic_library_missing"
   | "runtime_invalid_version_output"
   | "runtime_timeout"
@@ -19,7 +19,7 @@ export type RuntimeProbeFailureCode =
   | "runtime_nonzero_exit";
 
 /** Stable, bounded classification of one failed executable probe. */
-export interface RuntimeProbeFailure {
+interface RuntimeProbeFailure {
   readonly code: RuntimeProbeFailureCode;
   readonly exit_code: number | null;
   readonly signal: NodeJS.Signals | null;
@@ -28,7 +28,7 @@ export interface RuntimeProbeFailure {
 }
 
 /** One lexical PATH candidate and its canonical executable probe result. */
-export interface RuntimeExecutableDiagnostic {
+interface RuntimeExecutableDiagnostic {
   readonly tool: RuntimeToolName;
   readonly lexical_path: string;
   readonly canonical_path: string;

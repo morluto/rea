@@ -87,6 +87,3 @@ export const nodeCharacterizationExecutionOutputSchema = z.strictObject({
 export type NodeCharacterizationPreparationInput = z.infer<
   typeof nodeCharacterizationPreparationInputSchema
 >;
-export type NodeCharacterizationExecutionInput = z.infer<
-  typeof nodeCharacterizationExecutionInputSchema
->;
