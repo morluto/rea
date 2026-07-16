@@ -127,13 +127,35 @@ const compactJsonSchema = (
   const counts = new Map<string, number>();
   collectSchemas(schemaBody, counts, true);
   const candidates = [...counts.entries()]
-    .filter(([encoded, count]) => count > 1 && encoded.length >= 128)
+    .filter(([, count]) => count > 1)
     .sort(
       ([left], [right]) =>
         right.length - left.length || left.localeCompare(right),
     )
-    .map(([encoded], index) => [encoded, `rea_${String(index)}`] as const);
+    .map(([encoded]) => encoded);
   if (candidates.length === 0) return schemaBody;
+  let compacted: Record<string, unknown> = schemaBody;
+  let compactedBytes = JSON.stringify(compacted).length;
+  const selected: Array<readonly [string, string]> = [];
+  for (const encoded of candidates) {
+    const proposed = [
+      ...selected,
+      [encoded, `rea_${String(selected.length)}`] as const,
+    ];
+    const candidate = compactWithDefinitions(schemaBody, proposed);
+    const candidateBytes = JSON.stringify(candidate).length;
+    if (candidateBytes >= compactedBytes) continue;
+    selected.push([encoded, `rea_${String(selected.length)}`]);
+    compacted = candidate;
+    compactedBytes = candidateBytes;
+  }
+  return compacted;
+};
+
+const compactWithDefinitions = (
+  schemaBody: Readonly<Record<string, unknown>>,
+  candidates: readonly (readonly [string, string])[],
+): Record<string, unknown> => {
   const names = new Map(candidates);
   const definitions = Object.fromEntries(
     candidates.map(([encoded, name]) => [

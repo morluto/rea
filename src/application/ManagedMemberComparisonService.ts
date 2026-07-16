@@ -29,15 +29,23 @@ export const compareManagedMembersEvidence = (
   const operation = "compare_managed_members";
   const parsed = compareManagedMembersInputSchema.safeParse(rawInput);
   if (!parsed.success) return err(new AnalysisInputError(operation));
+  return compareManagedMembersEvidenceValidated(parsed.data);
+};
+
+/** Compare managed members from input parsed by a trusted adapter. */
+export const compareManagedMembersEvidenceValidated = (
+  input: CompareManagedMembersInput,
+): Result<Evidence, AnalysisError> => {
+  const operation = "compare_managed_members";
   try {
-    const left = parseManagedMemberEvidence(parsed.data.left);
-    const right = parseManagedMemberEvidence(parsed.data.right);
+    const left = parseManagedMemberEvidence(input.left);
+    const right = parseManagedMemberEvidence(input.right);
     const result = compareManagedMembers(
       { evidenceId: left.evidenceId, result: left.result },
       { evidenceId: right.evidenceId, result: right.result },
-      parsed.data.limits,
+      input.limits,
     );
-    return ok(createManagedMemberComparisonEvidence(parsed.data, result));
+    return ok(createManagedMemberComparisonEvidence(input, result));
   } catch (cause: unknown) {
     return workflowFailure(operation, cause);
   }

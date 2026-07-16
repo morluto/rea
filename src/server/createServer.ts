@@ -183,6 +183,7 @@ export const createServer = (
     logger: toolLogger,
     recordEvidence,
     recordEvidenceWithUnknown,
+    session,
     runtime: {
       policy: options.managedRuntimePolicy ?? {
         enabled: false,

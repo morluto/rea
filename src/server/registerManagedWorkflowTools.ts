@@ -1,24 +1,31 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { compareManagedMembersEvidence } from "../application/ManagedMemberComparisonService.js";
+import { compareManagedMembersEvidenceValidated } from "../application/ManagedMemberComparisonService.js";
 import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
 import {
-  planManagedRuntimeCorrelationEvidence,
+  planManagedRuntimeCorrelationEvidenceValidated,
   type ManagedRuntimeCorrelationDependencies,
 } from "../application/ManagedRuntimeCorrelationService.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managedWorkflowToolContracts.js";
 import {
-  compareManagedMembersInputSchema,
-  managedMemberComparisonResultSchema,
-} from "../domain/managedMemberComparison.js";
+  compareManagedMembersReferenceInputSchema,
+  managedRuntimeCorrelationReferenceInputSchema,
+  MANAGED_WORKFLOW_TOOL_CONTRACTS,
+} from "../contracts/managedWorkflowToolContracts.js";
+import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
-import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { Evidence } from "../domain/evidence.js";
+import {
+  EvidenceIntegrityError,
+  EvidenceReferenceError,
+} from "../domain/errors.js";
+import { err, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
+import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
 
 interface ManagedWorkflowToolRegistration {
   readonly logger: Logger;
@@ -27,6 +34,7 @@ interface ManagedWorkflowToolRegistration {
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
   readonly runtime: ManagedRuntimeCorrelationDependencies;
+  readonly session: BinarySessionPort | undefined;
 }
 
 /** Register provider-neutral managed-code workflows. */
@@ -41,11 +49,31 @@ export const registerManagedWorkflowTools = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsed = compareManagedMembersInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareManagedMembersReferenceInputSchema,
+        input,
+        compareContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, compareContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.left_evidence_id,
+        parsedInput.value.right_evidence_id,
+      ]);
+      if (!resolved.ok) return toCallToolResult(resolved, compareContract);
+      const [left, right] = resolved.value;
+      if (left === undefined || right === undefined)
+        throw new TypeError("Managed comparison Evidence resolution failed");
+      const {
+        left_evidence_id: _leftEvidenceId,
+        right_evidence_id: _rightEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, left, right };
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
-        () => Promise.resolve(compareManagedMembersEvidence(parsed)),
+        () => Promise.resolve(compareManagedMembersEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, compareContract);
       const recorded = recordSources(options.recordEvidence, [
@@ -117,11 +145,33 @@ export const registerManagedWorkflowTools = (
     runtimeContract.name,
     toolRegistrationOptions(runtimeContract),
     async (input) => {
-      const parsed = managedRuntimeCorrelationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        managedRuntimeCorrelationReferenceInputSchema,
+        input,
+        runtimeContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, runtimeContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.static_members_evidence_id,
+      ]);
+      if (!resolved.ok) return toCallToolResult(resolved, runtimeContract);
+      const staticMembers = resolved.value[0];
+      if (staticMembers === undefined)
+        throw new TypeError("Managed runtime Evidence resolution failed");
+      const {
+        static_members_evidence_id: _staticMembersEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, static_members: staticMembers };
       const result = await logToolExecution(
         options.logger,
         runtimeContract.name,
-        () => planManagedRuntimeCorrelationEvidence(options.runtime, parsed),
+        () =>
+          planManagedRuntimeCorrelationEvidenceValidated(
+            options.runtime,
+            parsed,
+          ),
       );
       if (!result.ok) return toCallToolResult(result, runtimeContract);
       const recordedSource = options.recordEvidence?.(parsed.static_members);
@@ -145,6 +195,26 @@ const contract = (
   );
   if (found === undefined) throw new Error(`Missing ${name} contract`);
   return found;
+};
+
+const resolveManagedEvidence = (
+  session: BinarySessionPort | undefined,
+  evidenceIds: readonly string[],
+): Result<Evidence[], EvidenceIntegrityError> => {
+  const firstId = evidenceIds[0] ?? "ev_missing";
+  return session === undefined
+    ? err(
+        new EvidenceReferenceError(
+          firstId,
+          "missing",
+          "inspect_managed_members",
+          null,
+        ),
+      )
+    : resolveSessionEvidenceIds(session, evidenceIds, {
+        operation: "inspect_managed_members",
+        predicate: "rea.analysis/v2",
+       });
 };
 
 const recordSources = (

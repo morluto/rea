@@ -1,7 +1,7 @@
 {
   "generated_from": "@modelcontextprotocol/server 2.0.0-beta.4 wire registration",
-  "tool_count": 84,
-  "tools_list_bytes": 518457,
+  "tool_count": 88,
+  "tools_list_bytes": 517143,
   "budgets": {
     "tools_list_bytes": 524288,
     "per_tool_bytes": 65536
@@ -15,15 +15,15 @@
     },
     {
       "name": "analyze_function",
-      "bytes": 10206,
+      "bytes": 8935,
       "input_schema_bytes": 2037,
-      "output_schema_bytes": 7692
+      "output_schema_bytes": 6421
     },
     {
       "name": "analyze_javascript_application",
-      "bytes": 19871,
+      "bytes": 17446,
       "input_schema_bytes": 2633,
-      "output_schema_bytes": 16597
+      "output_schema_bytes": 14172
     },
     {
       "name": "analyze_swift_types",
@@ -33,45 +33,45 @@
     },
     {
       "name": "analyze_web_bundle",
-      "bytes": 14995,
+      "bytes": 14276,
       "input_schema_bytes": 6550,
-      "output_schema_bytes": 7940
+      "output_schema_bytes": 7221
     },
     {
       "name": "batch_decompile",
-      "bytes": 12102,
+      "bytes": 10638,
       "input_schema_bytes": 226,
-      "output_schema_bytes": 11475
+      "output_schema_bytes": 10011
     },
     {
       "name": "binary_overview",
-      "bytes": 1643,
+      "bytes": 1620,
       "input_schema_bytes": 250,
-      "output_schema_bytes": 977
+      "output_schema_bytes": 954
     },
     {
       "name": "binary_session",
-      "bytes": 13235,
+      "bytes": 11822,
       "input_schema_bytes": 367,
-      "output_schema_bytes": 12368
+      "output_schema_bytes": 10955
     },
     {
       "name": "build_call_path",
-      "bytes": 11300,
-      "input_schema_bytes": 7493,
-      "output_schema_bytes": 3335
+      "bytes": 10235,
+      "input_schema_bytes": 6850,
+      "output_schema_bytes": 2913
     },
     {
       "name": "capture_process_scenario",
-      "bytes": 20991,
-      "input_schema_bytes": 10463,
-      "output_schema_bytes": 9774
+      "bytes": 19830,
+      "input_schema_bytes": 10303,
+      "output_schema_bytes": 8773
     },
     {
       "name": "capture_web_screenshot",
-      "bytes": 5661,
+      "bytes": 5389,
       "input_schema_bytes": 771,
-      "output_schema_bytes": 4454
+      "output_schema_bytes": 4182
     },
     {
       "name": "close_binary",
@@ -87,51 +87,57 @@
     },
     {
       "name": "compare_application_versions",
-      "bytes": 27986,
-      "input_schema_bytes": 10250,
-      "output_schema_bytes": 17168
+      "bytes": 24888,
+      "input_schema_bytes": 9296,
+      "output_schema_bytes": 15024
     },
     {
       "name": "compare_artifacts",
-      "bytes": 4095,
+      "bytes": 3869,
       "input_schema_bytes": 759,
-      "output_schema_bytes": 2851
+      "output_schema_bytes": 2625
     },
     {
       "name": "compare_bundles",
-      "bytes": 4559,
+      "bytes": 4169,
       "input_schema_bytes": 928,
-      "output_schema_bytes": 3132
+      "output_schema_bytes": 2742
     },
     {
       "name": "compare_functions",
-      "bytes": 4828,
+      "bytes": 4356,
       "input_schema_bytes": 725,
-      "output_schema_bytes": 3611
+      "output_schema_bytes": 3139
+    },
+    {
+      "name": "compare_managed_members",
+      "bytes": 7583,
+      "input_schema_bytes": 960,
+      "output_schema_bytes": 6099
     },
     {
       "name": "compare_process_captures",
-      "bytes": 3866,
+      "bytes": 3311,
       "input_schema_bytes": 565,
-      "output_schema_bytes": 2716
+      "output_schema_bytes": 2161
     },
     {
       "name": "compare_web_captures",
-      "bytes": 33869,
-      "input_schema_bytes": 31489,
-      "output_schema_bytes": 1940
+      "bytes": 29996,
+      "input_schema_bytes": 27683,
+      "output_schema_bytes": 1873
     },
     {
       "name": "compare_web_screenshots",
-      "bytes": 3428,
-      "input_schema_bytes": 1489,
+      "bytes": 3351,
+      "input_schema_bytes": 1412,
       "output_schema_bytes": 1546
     },
     {
       "name": "correlate_static_and_runtime",
-      "bytes": 13332,
-      "input_schema_bytes": 8963,
-      "output_schema_bytes": 3876
+      "bytes": 12426,
+      "input_schema_bytes": 8307,
+      "output_schema_bytes": 3626
     },
     {
       "name": "current_address",
@@ -159,27 +165,27 @@
     },
     {
       "name": "discover_webmcp_tools",
-      "bytes": 7256,
+      "bytes": 6797,
       "input_schema_bytes": 1087,
-      "output_schema_bytes": 5765
+      "output_schema_bytes": 5306
     },
     {
       "name": "export_evidence_bundle",
-      "bytes": 12103,
+      "bytes": 11008,
       "input_schema_bytes": 196,
-      "output_schema_bytes": 11479
+      "output_schema_bytes": 10384
     },
     {
       "name": "extract_artifact",
-      "bytes": 6414,
+      "bytes": 6212,
       "input_schema_bytes": 1321,
-      "output_schema_bytes": 4701
+      "output_schema_bytes": 4499
     },
     {
       "name": "find_changed_behavior",
-      "bytes": 12296,
-      "input_schema_bytes": 8586,
-      "output_schema_bytes": 3182
+      "bytes": 12036,
+      "input_schema_bytes": 8540,
+      "output_schema_bytes": 2968
     },
     {
       "name": "find_xrefs_to_name",
@@ -189,9 +195,9 @@
     },
     {
       "name": "get_call_graph",
-      "bytes": 12061,
+      "bytes": 10619,
       "input_schema_bytes": 361,
-      "output_schema_bytes": 11228
+      "output_schema_bytes": 9786
     },
     {
       "name": "get_objc_classes",
@@ -225,51 +231,63 @@
     },
     {
       "name": "inspect_electron_page",
-      "bytes": 10081,
+      "bytes": 9514,
       "input_schema_bytes": 1936,
-      "output_schema_bytes": 7685
+      "output_schema_bytes": 7118
     },
     {
       "name": "inspect_macho",
-      "bytes": 9368,
+      "bytes": 7672,
       "input_schema_bytes": 62,
-      "output_schema_bytes": 8933
+      "output_schema_bytes": 7237
     },
     {
       "name": "inspect_managed_artifact",
-      "bytes": 12894,
+      "bytes": 11489,
       "input_schema_bytes": 1251,
-      "output_schema_bytes": 11159
+      "output_schema_bytes": 9754
+    },
+    {
+      "name": "inspect_managed_members",
+      "bytes": 13925,
+      "input_schema_bytes": 2048,
+      "output_schema_bytes": 11387
+    },
+    {
+      "name": "inspect_managed_native_boundaries",
+      "bytes": 9704,
+      "input_schema_bytes": 1267,
+      "output_schema_bytes": 7912
     },
     {
       "name": "inspect_plist",
-      "bytes": 2883,
+      "bytes": 2769,
       "input_schema_bytes": 189,
-      "output_schema_bytes": 2320
+      "output_schema_bytes": 2206
     },
     {
       "name": "inspect_signature",
-      "bytes": 2946,
+      "bytes": 2793,
       "input_schema_bytes": 62,
-      "output_schema_bytes": 2519
+      "output_schema_bytes": 2366
     },
     {
       "name": "inspect_web_page",
-      "bytes": 23933,
+      "bytes": 21829,
       "input_schema_bytes": 5042,
-      "output_schema_bytes": 18381
+      "output_schema_bytes": 16277
     },
     {
       "name": "inventory_artifact",
-      "bytes": 10608,
+      "bytes": 9791,
       "input_schema_bytes": 1885,
-      "output_schema_bytes": 8336
+      "output_schema_bytes": 7519
     },
     {
       "name": "list_architectures",
-      "bytes": 2782,
+      "bytes": 2555,
       "input_schema_bytes": 62,
-      "output_schema_bytes": 2387
+      "output_schema_bytes": 2160
     },
     {
       "name": "list_bookmarks",
@@ -279,9 +297,9 @@
     },
     {
       "name": "list_browser_targets",
-      "bytes": 3072,
+      "bytes": 2950,
       "input_schema_bytes": 658,
-      "output_schema_bytes": 1966
+      "output_schema_bytes": 1844
     },
     {
       "name": "list_documents",
@@ -291,39 +309,39 @@
     },
     {
       "name": "list_electron_targets",
-      "bytes": 2991,
+      "bytes": 2869,
       "input_schema_bytes": 636,
-      "output_schema_bytes": 1932
+      "output_schema_bytes": 1810
     },
     {
       "name": "list_names",
-      "bytes": 2842,
+      "bytes": 2786,
       "input_schema_bytes": 594,
-      "output_schema_bytes": 1818
+      "output_schema_bytes": 1762
     },
     {
       "name": "list_procedures",
-      "bytes": 2739,
+      "bytes": 2683,
       "input_schema_bytes": 475,
-      "output_schema_bytes": 1818
+      "output_schema_bytes": 1762
     },
     {
       "name": "list_segments",
-      "bytes": 2817,
+      "bytes": 2656,
       "input_schema_bytes": 282,
-      "output_schema_bytes": 2128
+      "output_schema_bytes": 1967
     },
     {
       "name": "list_strings",
-      "bytes": 2837,
+      "bytes": 2781,
       "input_schema_bytes": 594,
-      "output_schema_bytes": 1818
+      "output_schema_bytes": 1762
     },
     {
       "name": "list_unknowns",
-      "bytes": 4477,
+      "bytes": 4279,
       "input_schema_bytes": 358,
-      "output_schema_bytes": 3710
+      "output_schema_bytes": 3512
     },
     {
       "name": "next_address",
@@ -333,15 +351,21 @@
     },
     {
       "name": "observe_web_session",
-      "bytes": 6320,
+      "bytes": 5976,
       "input_schema_bytes": 765,
-      "output_schema_bytes": 5090
+      "output_schema_bytes": 4746
     },
     {
       "name": "open_binary",
       "bytes": 1702,
       "input_schema_bytes": 386,
       "output_schema_bytes": 696
+    },
+    {
+      "name": "plan_managed_runtime_correlation",
+      "bytes": 7556,
+      "input_schema_bytes": 2128,
+      "output_schema_bytes": 4768
     },
     {
       "name": "prev_address",
@@ -387,21 +411,21 @@
     },
     {
       "name": "procedure_references",
-      "bytes": 4319,
+      "bytes": 4192,
       "input_schema_bytes": 798,
-      "output_schema_bytes": 3054
+      "output_schema_bytes": 2927
     },
     {
       "name": "reconcile_javascript_runtime",
-      "bytes": 30201,
-      "input_schema_bytes": 9566,
-      "output_schema_bytes": 20110
+      "bytes": 27214,
+      "input_schema_bytes": 8993,
+      "output_schema_bytes": 17696
     },
     {
       "name": "record_unknown",
-      "bytes": 6725,
+      "bytes": 6527,
       "input_schema_bytes": 2646,
-      "output_schema_bytes": 3685
+      "output_schema_bytes": 3487
     },
     {
       "name": "resolve_containing_procedure",
@@ -411,21 +435,21 @@
     },
     {
       "name": "run_controlled_replay",
-      "bytes": 21072,
-      "input_schema_bytes": 6098,
-      "output_schema_bytes": 14387
+      "bytes": 19234,
+      "input_schema_bytes": 5922,
+      "output_schema_bytes": 12725
     },
     {
       "name": "search_procedures",
-      "bytes": 2238,
+      "bytes": 2215,
       "input_schema_bytes": 812,
-      "output_schema_bytes": 964
+      "output_schema_bytes": 941
     },
     {
       "name": "search_strings",
-      "bytes": 2247,
+      "bytes": 2224,
       "input_schema_bytes": 812,
-      "output_schema_bytes": 964
+      "output_schema_bytes": 941
     },
     {
       "name": "set_address_name",
@@ -471,9 +495,9 @@
     },
     {
       "name": "trace_application_feature",
-      "bytes": 27741,
-      "input_schema_bytes": 9241,
-      "output_schema_bytes": 17969
+      "bytes": 24958,
+      "input_schema_bytes": 8688,
+      "output_schema_bytes": 15739
     },
     {
       "name": "trace_feature",
@@ -489,21 +513,21 @@
     },
     {
       "name": "update_unknown",
-      "bytes": 7884,
-      "input_schema_bytes": 3810,
-      "output_schema_bytes": 3685
+      "bytes": 7572,
+      "input_schema_bytes": 3696,
+      "output_schema_bytes": 3487
     },
     {
       "name": "verify_reconstruction",
-      "bytes": 6692,
-      "input_schema_bytes": 2688,
-      "output_schema_bytes": 3510
+      "bytes": 6161,
+      "input_schema_bytes": 2455,
+      "output_schema_bytes": 3212
     },
     {
       "name": "verify_unknown_resolution",
-      "bytes": 4481,
+      "bytes": 4283,
       "input_schema_bytes": 177,
-      "output_schema_bytes": 3866
+      "output_schema_bytes": 3668
     },
     {
       "name": "xrefs",
