@@ -35,6 +35,30 @@ describe("executable header parsing", () => {
     expect(result.ok && result.value).toMatchObject({ format, architecture });
   });
 
+  it("distinguishes native PE applications, DLLs, and managed assemblies", () => {
+    const application = parseExecutableHeader(pe(0x8664), "x64");
+    const library = parseExecutableHeader(pe(0x8664, 64, 0x2002), "x64");
+    const managed = parseExecutableHeader(pe(0x8664, 64, 0x0002, true), "x64");
+    const nonExecutable = parseExecutableHeader(pe(0x8664, 64, 0), "x64");
+
+    expect(application.ok && application.value).toMatchObject({
+      executableRole: "application",
+      managed: false,
+    });
+    expect(library.ok && library.value).toMatchObject({
+      executableRole: "shared-library",
+      managed: false,
+    });
+    expect(managed.ok && managed.value).toMatchObject({
+      executableRole: "application",
+      managed: true,
+    });
+    expect(nonExecutable.ok && nonExecutable.value).toMatchObject({
+      executableRole: "non-executable",
+      managed: false,
+    });
+  });
+
   it("selects the host architecture from a FAT table", () => {
     const bytes = fat([0x01000007, 0x0100000c]);
     const arm = parseExecutableHeader(bytes, "arm64");
@@ -62,6 +86,17 @@ describe("executable header parsing", () => {
     pe(0xffff),
   ])("rejects malformed, truncated, or unsupported metadata", (bytes) => {
     expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
+  });
+
+  it("rejects malformed PE optional-header commitments", () => {
+    const wrongMagic = pe(0x8664);
+    wrongMagic.writeUInt16LE(0x10b, 64 + 24);
+    const truncatedDirectories = pe(0x8664);
+    truncatedDirectories.writeUInt16LE(112, 64 + 20);
+    truncatedDirectories.writeUInt32LE(16, 64 + 24 + 108);
+
+    expect(parseExecutableHeader(wrongMagic, "x64").ok).toBe(false);
+    expect(parseExecutableHeader(truncatedDirectories, "x64").ok).toBe(false);
   });
 });
 
@@ -218,11 +253,29 @@ const fat = (cpus: readonly number[], declared = cpus.length): Buffer => {
   cpus.forEach((cpu, index) => bytes.writeUInt32BE(cpu, 8 + index * 20));
   return bytes;
 };
-const pe = (machine: number, offset = 64): Buffer => {
-  const bytes = Buffer.alloc(Math.max(128, offset + 6));
+const pe = (
+  machine: number,
+  offset = 64,
+  characteristics = 0x0002,
+  managed = false,
+): Buffer => {
+  const optionalHeaderSize =
+    machine === 0x014c || machine === 0x01c0 ? 224 : 240;
+  const bytes = Buffer.alloc(Math.max(512, offset + 24 + optionalHeaderSize));
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt32LE(offset, 0x3c);
   bytes.write("PE\0\0", offset, "binary");
   bytes.writeUInt16LE(machine, offset + 4);
+  bytes.writeUInt16LE(optionalHeaderSize, offset + 20);
+  bytes.writeUInt16LE(characteristics, offset + 22);
+  const optionalHeader = offset + 24;
+  const pe32 = machine === 0x014c || machine === 0x01c0;
+  bytes.writeUInt16LE(pe32 ? 0x10b : 0x20b, optionalHeader);
+  const directoryOffset = pe32 ? 96 : 112;
+  bytes.writeUInt32LE(16, optionalHeader + directoryOffset - 4);
+  if (managed) {
+    bytes.writeUInt32LE(0x2000, optionalHeader + directoryOffset + 14 * 8);
+    bytes.writeUInt32LE(72, optionalHeader + directoryOffset + 14 * 8 + 4);
+  }
   return bytes;
 };
