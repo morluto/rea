@@ -7,15 +7,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Reader;
 import java.math.BigInteger;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -85,7 +90,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "schema_version",
-        "socket_path",
+        "transport",
+        "endpoint_path",
         "token",
         "run_id",
         "target_sha256",
@@ -167,19 +173,74 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private void serve(SessionDescriptor descriptor) throws Exception {
-        Path socketPath = Path.of(descriptor.socketPath);
+        if (descriptor.transport.equals("unix-socket")) {
+            serveUnixSocket(descriptor);
+            return;
+        }
+        if (descriptor.transport.equals("authenticated-loopback-tcp")) {
+            serveLoopbackTcp(descriptor);
+            return;
+        }
+        throw new IllegalArgumentException("REA bridge transport is invalid");
+    }
+
+    private void serveUnixSocket(SessionDescriptor descriptor) throws Exception {
+        Path socketPath = Path.of(descriptor.endpointPath);
         Files.deleteIfExists(socketPath);
         try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
             server.bind(UnixDomainSocketAddress.of(socketPath));
             Files.setPosixFilePermissions(socketPath, PosixFilePermissions.fromString("rw-------"));
-            try (SocketChannel client = server.accept();
-                 BufferedReader reader = new BufferedReader(Channels.newReader(client, StandardCharsets.UTF_8));
-                 BufferedWriter writer = new BufferedWriter(Channels.newWriter(client, StandardCharsets.UTF_8))) {
-                serveClient(descriptor, reader, writer);
-            }
+            acceptClient(server, descriptor);
         }
         finally {
             Files.deleteIfExists(socketPath);
+        }
+    }
+
+    private void serveLoopbackTcp(SessionDescriptor descriptor) throws Exception {
+        Path endpointPath = Path.of(descriptor.endpointPath);
+        Path pendingPath = endpointPath.resolveSibling(endpointPath.getFileName() + ".pending");
+        Files.deleteIfExists(endpointPath);
+        Files.deleteIfExists(pendingPath);
+        try (ServerSocketChannel server = ServerSocketChannel.open()) {
+            server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
+            InetSocketAddress address = (InetSocketAddress) server.getLocalAddress();
+            JsonObject endpoint = new JsonObject();
+            endpoint.addProperty("schema_version", 1);
+            endpoint.addProperty("host", "127.0.0.1");
+            endpoint.addProperty("port", address.getPort());
+            Files.writeString(
+                pendingPath,
+                GSON.toJson(endpoint) + "\n",
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE
+            );
+            try {
+                Files.move(pendingPath, endpointPath, StandardCopyOption.ATOMIC_MOVE);
+            }
+            catch (AtomicMoveNotSupportedException exception) {
+                Files.move(pendingPath, endpointPath);
+            }
+            acceptClient(server, descriptor);
+        }
+        finally {
+            Files.deleteIfExists(pendingPath);
+            Files.deleteIfExists(endpointPath);
+        }
+    }
+
+    private void acceptClient(
+            ServerSocketChannel server,
+            SessionDescriptor descriptor) throws Exception {
+        try (SocketChannel client = server.accept();
+             BufferedReader reader = new BufferedReader(
+                 Channels.newReader(client, StandardCharsets.UTF_8)
+             );
+             BufferedWriter writer = new BufferedWriter(
+                 Channels.newWriter(client, StandardCharsets.UTF_8)
+             )) {
+            serveClient(descriptor, reader, writer);
         }
     }
 
@@ -1598,11 +1659,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)),
             DESCRIPTOR_KEYS
         );
-        if (requireInteger(object, "schema_version") != 1) {
+        if (requireInteger(object, "schema_version") != 2) {
             throw new IllegalArgumentException("REA session descriptor version is invalid");
         }
         return new SessionDescriptor(
-            requireString(object, "socket_path"),
+            requireString(object, "transport"),
+            requireString(object, "endpoint_path"),
             requireString(object, "token"),
             requireString(object, "run_id"),
             requireSha256(object, "target_sha256"),
@@ -1816,7 +1878,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InstructionScan(List<Instruction> instructions, boolean truncated) {}
     private record TruncatedValue(String value, boolean truncated) {}
     private record SessionDescriptor(
-        String socketPath,
+        String transport,
+        String endpointPath,
         String token,
         String runId,
         String targetSha256,

@@ -17,11 +17,13 @@ import {
   GHIDRA_MAX_HEAP,
 } from "./GhidraDefaults.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
-  readonly socketPath: string;
+  readonly transport: GhidraTransportKind;
+  readonly endpointPath: string;
   readonly token: string;
   readonly runId: string;
   readonly targetPath: string;
@@ -86,8 +88,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       await writeFileAtomic(
         paths.descriptorPath,
         `${JSON.stringify({
-          schema_version: 1,
-          socket_path: session.socketPath,
+          schema_version: 2,
+          transport: session.transport,
+          endpoint_path: session.endpointPath,
           token: session.token,
           run_id: session.runId,
           target_sha256: session.targetSha256,

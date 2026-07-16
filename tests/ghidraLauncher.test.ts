@@ -72,7 +72,8 @@ describe("Ghidra headless launcher", () => {
     });
     const launched = await launcher.launch({
       runtimeRoot,
-      socketPath: join(runtimeRoot, "bridge.sock"),
+      transport: "unix-socket",
+      endpointPath: join(runtimeRoot, "bridge.sock"),
       token,
       runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
       targetPath: "/tmp/fixture",

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
 import type { Socket } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -46,9 +46,13 @@ import {
   attachGhidraSocket,
   connectGhidraSocketOnce,
 } from "./GhidraSocketConnection.js";
+import {
+  observeGhidraEndpoint,
+  type GhidraEndpoint,
+} from "./GhidraTransport.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
-const SESSION_ROOT = "/tmp";
+const SESSION_ROOT = tmpdir();
 
 export type {
   GhidraClientOptions,
@@ -65,7 +69,10 @@ export type GhidraOperation =
 /** Owns one authenticated, private, read-only Ghidra headless session. */
 export class GhidraClient {
   readonly #options: Required<
-    Pick<GhidraClientOptions, "requestTimeoutMs" | "startupTimeoutMs">
+    Pick<
+      GhidraClientOptions,
+      "requestTimeoutMs" | "startupTimeoutMs" | "transport"
+    >
   > &
     GhidraClientOptions;
   readonly #pending = new PendingOperations<
@@ -120,6 +127,7 @@ export class GhidraClient {
       ...options,
       requestTimeoutMs: options.requestTimeoutMs ?? GHIDRA_REQUEST_TIMEOUT_MS,
       startupTimeoutMs: options.startupTimeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
+      transport: options.transport ?? "unix-socket",
     };
     this.#requestQueue = new GhidraRequestQueue(
       GHIDRA_MAX_QUEUED_REQUESTS,
@@ -233,7 +241,15 @@ export class GhidraClient {
       );
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
-    const socketPath = join(this.#runtimeRoot.path, "bridge.sock");
+    const endpoint: GhidraEndpoint = {
+      transport: this.#options.transport,
+      path: join(
+        this.#runtimeRoot.path,
+        this.#options.transport === "unix-socket"
+          ? "bridge.sock"
+          : "bridge-endpoint.json",
+      ),
+    };
     try {
       const snapshot = await createGhidraTargetSnapshot(
         this.#options.targetPath,
@@ -257,7 +273,8 @@ export class GhidraClient {
       .launch(
         {
           runtimeRoot: this.#runtimeRoot.path,
-          socketPath,
+          transport: endpoint.transport,
+          endpointPath: endpoint.path,
           token: this.#token,
           runId: this.#runId,
           targetPath: this.#snapshotPath,
@@ -283,7 +300,7 @@ export class GhidraClient {
     this.#process = new ProviderProcessSupervisor(launched.value, {
       onDiagnostic: (event) => this.#onProcessDiagnostic(event),
     });
-    const connected = await this.#connect(socketPath, deadline);
+    const connected = await this.#connect(endpoint, deadline);
     if (!connected.ok) {
       const failure = connected.error;
       await this.#cleanup();
@@ -319,7 +336,7 @@ export class GhidraClient {
   }
 
   async #connect(
-    socketPath: string,
+    endpoint: GhidraEndpoint,
     deadline: ProviderStartupDeadline,
   ): Promise<Result<undefined, GhidraSessionError>> {
     while (deadline.remainingMs() > 0) {
@@ -331,15 +348,15 @@ export class GhidraClient {
         return err(
           this.#failure("process", "Ghidra exited before bridge startup"),
         );
-      try {
-        await access(socketPath);
-      } catch {
+      const observed = await observeGhidraEndpoint(endpoint);
+      if (!observed.ok) return observed;
+      if (observed.value === null) {
         if ((await deadline.wait(50)) === "aborted")
           return err(this.#interruptionFailure(deadline));
         continue;
       }
       const connected = await connectGhidraSocketOnce(
-        socketPath,
+        observed.value,
         deadline.signal,
       );
       if (connected.ok) {
@@ -565,6 +582,7 @@ export class GhidraClient {
     return createGhidraDiagnostics({
       targetPath: this.#options.targetPath,
       targetSha256: this.#options.targetSha256,
+      transport: this.#options.transport,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       ...(this.#runtimeRoot === undefined

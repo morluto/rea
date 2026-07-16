@@ -17,6 +17,7 @@ import type {
   GhidraLaunchSession,
   GhidraLauncher,
 } from "../src/ghidra/GhidraLauncher.js";
+import type { GhidraTransportKind } from "../src/ghidra/GhidraTransport.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../src/ghidra/GhidraSessionValues.js";
 
 const fixturePath = fileURLToPath(
@@ -46,7 +47,7 @@ type FixtureMode =
 
 class FixtureLauncher implements GhidraLauncher {
   readonly runtimeRoots: string[] = [];
-  readonly socketPaths: string[] = [];
+  readonly endpointPaths: string[] = [];
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
 
@@ -54,7 +55,7 @@ class FixtureLauncher implements GhidraLauncher {
 
   async launch(session: GhidraLaunchSession) {
     this.runtimeRoots.push(session.runtimeRoot);
-    this.socketPaths.push(session.socketPath);
+    this.endpointPaths.push(session.endpointPath);
     this.tokens.push(session.token);
     const projectRoot = join(session.runtimeRoot, "project");
     await mkdir(projectRoot, { recursive: true });
@@ -62,12 +63,13 @@ class FixtureLauncher implements GhidraLauncher {
       process.execPath,
       [
         fixturePath,
-        session.socketPath,
+        session.endpointPath,
         session.token,
         session.runId,
         session.providerVersion,
         session.profileDigest,
         session.targetSha256,
+        session.transport,
         this.mode,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
@@ -90,12 +92,16 @@ const clientFor = (
     readonly startupTimeoutMs?: number;
     readonly requestTimeoutMs?: number;
     readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
+    readonly transport?: GhidraTransportKind;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
     launcher,
     targetPath: fixturePath,
     targetSha256: TARGET_SHA256,
+    ...(options.transport === undefined
+      ? {}
+      : { transport: options.transport }),
     providerVersion: PROVIDER_VERSION,
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
@@ -132,7 +138,25 @@ describe("GhidraClient", () => {
         },
       },
     });
-    expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(108);
+    expect(Buffer.byteLength(launcher.endpointPaths[0] ?? "")).toBeLessThan(
+      108,
+    );
+  });
+
+  it("completes the same authenticated handshake over loopback TCP", async () => {
+    const launcher = new FixtureLauncher();
+    const client = clientFor(launcher, {
+      transport: "authenticated-loopback-tcp",
+    });
+
+    await expect(client.start()).resolves.toMatchObject({
+      ok: true,
+      value: {
+        bridge_version: 4,
+        target: { sha256: TARGET_SHA256 },
+      },
+    });
+    expect(launcher.endpointPaths[0]).toMatch(/bridge-endpoint\.json$/u);
   });
 
   it("correlates an admitted inventory request after startup", async () => {
@@ -369,7 +393,8 @@ describe("GhidraClient", () => {
 
     expect(client.diagnostics()).toMatchObject({
       runtime_root: launcher.runtimeRoots[0],
-      socket_path: launcher.socketPaths[0],
+      transport: "unix-socket",
+      endpoint_path: launcher.endpointPaths[0],
       project_root: join(launcher.runtimeRoots[0] ?? "", "project"),
       process_id: expect.any(Number),
     });
