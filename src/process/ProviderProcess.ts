@@ -17,6 +17,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly runId: string;
   /** Null disables argv-prefix matching for interpreter-driven launch scripts. */
   readonly expectedCommand?: string | null;
+  /** Preserve a pre-quoted Windows command-interpreter invocation exactly. */
+  readonly windowsVerbatimArguments?: boolean;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -108,6 +110,7 @@ export const spawnOwnedProviderProcess = async (
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
+    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
     env: {
       ...process.env,
       ...options.env,

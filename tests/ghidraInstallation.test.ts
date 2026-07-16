@@ -38,13 +38,17 @@ const host = (
 describe("Ghidra installation inspection", () => {
   it("clears inherited JVM option injection before probing Java", () => {
     expect(
-      ghidraJavaEnvironment("/opt/jdk-21", {
-        PATH: "/usr/bin",
-        _JAVA_OPTIONS: "-Xmx99G",
-        JAVA_TOOL_OPTIONS: "-javaagent:/tmp/agent.jar",
-        JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=99",
-        GHIDRA_JAVA_OPTIONS: "-Duser.home=/tmp/unapproved",
-      }),
+      ghidraJavaEnvironment(
+        "/opt/jdk-21",
+        {
+          PATH: "/usr/bin",
+          _JAVA_OPTIONS: "-Xmx99G",
+          JAVA_TOOL_OPTIONS: "-javaagent:/tmp/agent.jar",
+          JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=99",
+          GHIDRA_JAVA_OPTIONS: "-Duser.home=/tmp/unapproved",
+        },
+        "linux",
+      ),
     ).toMatchObject({
       PATH: "/opt/jdk-21/bin:/usr/bin",
       JAVA_HOME: "/opt/jdk-21",

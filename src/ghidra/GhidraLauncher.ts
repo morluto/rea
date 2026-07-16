@@ -131,6 +131,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         // analyzeHeadless is an interpreter-driven script. Parent identity and
         // the per-process run token remain the cleanup authority.
         expectedCommand: null,
+        windowsVerbatimArguments: platform === "win32",
         env: ghidraLaunchEnvironment(paths, this.options.javaHome, platform),
       });
       await writeFileAtomic(
