@@ -2,6 +2,7 @@ import { createConnection, type Socket } from "node:net";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
+import type { GhidraConnectTarget } from "./GhidraTransport.js";
 
 /** Stable listeners attached for the lifetime of one bridge socket. */
 export interface GhidraSocketHandlers {
@@ -26,13 +27,16 @@ export const attachGhidraSocket = (
   };
 };
 
-/** Open one abort-aware Ghidra Unix-socket connection attempt. */
+/** Open one abort-aware connection to an observed local Ghidra endpoint. */
 export const connectGhidraSocketOnce = (
-  socketPath: string,
+  target: GhidraConnectTarget,
   signal: AbortSignal,
 ): Promise<Result<Socket, GhidraSessionError>> =>
   new Promise((resolve) => {
-    const socket = createConnection(socketPath);
+    const socket =
+      "path" in target
+        ? createConnection(target.path)
+        : createConnection({ host: target.host, port: target.port });
     const detach = (): void => {
       socket.off("connect", onConnect);
       socket.off("error", onError);
@@ -48,7 +52,7 @@ export const connectGhidraSocketOnce = (
       resolve(
         err(
           new GhidraSessionError("start", "Ghidra bridge connection failed", {
-            socket_path: socketPath,
+            endpoint: target,
             error: cause.message,
           }),
         ),
@@ -62,7 +66,7 @@ export const connectGhidraSocketOnce = (
           new GhidraSessionError(
             "cancelled",
             "Ghidra bridge connection was cancelled",
-            { socket_path: socketPath },
+            { endpoint: target },
           ),
         ),
       );

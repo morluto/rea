@@ -79,6 +79,18 @@ describe("Ghidra bridge truthfulness", () => {
     );
   });
 
+  it("binds the Windows fallback to authenticated IPv4 loopback", () => {
+    expect(bridgeSource).toContain(
+      'descriptor.transport.equals("unix-socket")',
+    );
+    expect(bridgeSource).toContain(
+      'descriptor.transport.equals("authenticated-loopback-tcp")',
+    );
+    expect(bridgeSource).toContain('InetAddress.getByName("127.0.0.1")');
+    expect(bridgeSource).toContain('endpoint.addProperty("host", "127.0.0.1")');
+    expect(bridgeSource).toContain("StandardCopyOption.ATOMIC_MOVE");
+  });
+
   it("does not admit mutation methods into the Java dispatch", () => {
     for (const method of [
       'case "set_comment"',

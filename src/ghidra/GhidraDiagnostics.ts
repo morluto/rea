@@ -1,11 +1,13 @@
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Inputs needed to project bounded diagnostics for one Ghidra runtime. */
 export interface GhidraDiagnosticsOptions {
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly transport: GhidraTransportKind;
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly runtimeRoot?: string;
@@ -32,13 +34,18 @@ export const createGhidraDiagnostics = (
   return {
     target_path: options.targetPath,
     target_sha256: options.targetSha256,
+    transport: options.transport,
     provider_version: options.providerVersion,
     profile_digest: options.profileDigest,
     ...(options.runtimeRoot === undefined
       ? {}
       : {
           runtime_root: options.runtimeRoot,
-          socket_path: `${options.runtimeRoot}/bridge.sock`,
+          endpoint_path: `${options.runtimeRoot}/${
+            options.transport === "unix-socket"
+              ? "bridge.sock"
+              : "bridge-endpoint.json"
+          }`,
         }),
     ...(options.launch === undefined
       ? {}

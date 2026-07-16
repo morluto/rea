@@ -3,6 +3,7 @@ import type { Result } from "../domain/result.js";
 import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
@@ -34,6 +35,7 @@ export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly transport?: GhidraTransportKind;
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly requestTimeoutMs?: number;

@@ -357,6 +357,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       }),
       targetPath: target.path,
       targetSha256: target.sha256,
+      transport:
+        installation.platform === "win32"
+          ? "authenticated-loopback-tcp"
+          : "unix-socket",
       providerVersion: prerequisites.value.providerVersion,
       profileDigest: committedProfile.digest,
       logger: this.logger.child({ layer: "ghidra-bridge" }),

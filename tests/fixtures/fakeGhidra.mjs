@@ -1,23 +1,25 @@
-import { rm } from "node:fs/promises";
+import { rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 
 const [
-  socketPath,
+  endpointPath,
   token,
   runId,
   providerVersion,
   profileDigest,
   targetSha256,
+  transport,
   mode = "success",
 ] = process.argv.slice(2);
 
 if (
-  socketPath === undefined ||
+  endpointPath === undefined ||
   token === undefined ||
   runId === undefined ||
   providerVersion === undefined ||
   profileDigest === undefined ||
-  targetSha256 === undefined
+  targetSha256 === undefined ||
+  !["unix-socket", "authenticated-loopback-tcp"].includes(transport)
 ) {
   process.exit(64);
 }
@@ -25,7 +27,7 @@ if (
 if (mode === "exit") process.exit(73);
 if (mode === "silent") setInterval(() => undefined, 1_000);
 else {
-  await rm(socketPath, { force: true });
+  await rm(endpointPath, { force: true });
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
     let buffer = "";
@@ -128,7 +130,24 @@ else {
       }
     });
   });
-  server.listen(socketPath);
+  if (transport === "unix-socket") server.listen(endpointPath);
+  else {
+    server.listen(0, "127.0.0.1", async () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") process.exit(65);
+      const pending = `${endpointPath}.pending`;
+      await writeFile(
+        pending,
+        `${JSON.stringify({
+          schema_version: 1,
+          host: "127.0.0.1",
+          port: address.port,
+        })}\n`,
+        { flag: "wx" },
+      );
+      await rename(pending, endpointPath);
+    });
+  }
 }
 
 const sessionInfo = ({
