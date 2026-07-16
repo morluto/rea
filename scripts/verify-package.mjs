@@ -20,6 +20,7 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { verifyPackagedInvestigation } from "./verify-package-investigation.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
+import { buildManagedPeFixture } from "./lib/managed-pe-fixture.mjs";
 
 const exec = promisify(execFile);
 const root = process.cwd();
@@ -215,6 +216,83 @@ try {
       ?.paired_renderer_transmissions !== 1
   )
     throw new Error("packaged JavaScript application analysis CLI failed");
+
+  const managedPath = join(workspace, "managed-fixture.exe");
+  const managedRightPath = join(workspace, "managed-fixture-right.exe");
+  await Promise.all([
+    writeFile(
+      managedPath,
+      buildManagedPeFixture({
+        pinvoke: {
+          moduleName: "user32.dll",
+          importName: "MessageBoxW",
+          mappingFlags: 0x0345,
+        },
+      }),
+    ),
+    writeFile(
+      managedRightPath,
+      buildManagedPeFixture({
+        mvid: Buffer.from([
+          0xde, 0xad, 0xbe, 0xef, 0x44, 0x33, 0x66, 0x55, 0xaa, 0xbb, 0xcc,
+          0xdd, 0xee, 0xff, 0x11, 0x22,
+        ]),
+      }),
+    ),
+  ]);
+  const managedArtifact = json(
+    await run(
+      cli,
+      ["inspect-managed-artifact", managedPath, "--json"],
+      environment,
+    ),
+  );
+  if (
+    managedArtifact.operation !== "inspect_managed_artifact" ||
+    managedArtifact.provider?.id !== "rea-dotnet-static" ||
+    managedArtifact.normalized_result?.classification?.status !== "managed"
+  )
+    throw new Error("packaged managed artifact CLI failed");
+  const managedMembers = json(
+    await run(
+      cli,
+      ["inspect-managed-members", managedPath, "--json"],
+      environment,
+    ),
+  );
+  if (
+    managedMembers.operation !== "inspect_managed_members" ||
+    managedMembers.normalized_result?.methods?.total !== 1
+  )
+    throw new Error("packaged managed member CLI failed");
+  const managedBoundaries = json(
+    await run(
+      cli,
+      ["inspect-managed-native-boundaries", managedPath, "--json"],
+      environment,
+    ),
+  );
+  if (
+    managedBoundaries.operation !== "inspect_managed_native_boundaries" ||
+    managedBoundaries.normalized_result?.pinvoke_imports?.total !== 1 ||
+    managedBoundaries.normalized_result?.pinvoke_imports?.items?.[0]
+      ?.verification !== "managed-declaration-only"
+  )
+    throw new Error("packaged managed native-boundary CLI failed");
+  const managedComparison = json(
+    await run(
+      cli,
+      ["compare-managed-members", managedPath, managedRightPath, "--json"],
+      environment,
+    ),
+  );
+  if (
+    managedComparison.operation !== "compare_managed_members" ||
+    managedComparison.provider?.id !== "rea-dotnet-workflows" ||
+    managedComparison.normalized_result?.algorithm?.name_matching !== "not-used"
+  )
+    throw new Error("packaged managed comparison CLI failed");
+
   // prettier-ignore
   const investigationReplay = await verifyPackagedInvestigation({ cli, workspace, evidenceRoot, artifactArchive, environment });
   const unknownProviderExecution = await runWithStatus(
@@ -766,7 +844,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

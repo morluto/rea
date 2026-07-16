@@ -302,8 +302,11 @@ The managed-code track advances as reviewable pull requests:
 3. bounded metadata, signatures, method bodies, and normalized CIL (shipped);
 4. obfuscation-resistant slices and cross-version comparison (shipped for
    static member observations);
-5. managed/native composition and truthful deployment degradation;
-6. source-built, pinned real-tool, package, CLI, and MCP conformance; and
+5. managed/native composition and truthful deployment degradation (declaration
+   inventory shipped; verified native-provider matching remains planned);
+6. source-built managed conformance and package/CLI verification (source-owned
+   PE/CLI corpus shipped through `npm run verify:managed`; pinned external
+   ILSpy/dnSpy/Windows checks remain planned); and
 7. separately authorized runtime correlation.
 
 Each implementation PR updates generated product facts only for behavior it
