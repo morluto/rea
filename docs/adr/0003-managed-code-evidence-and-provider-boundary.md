@@ -8,8 +8,11 @@
   edges, and field-access anchors are shipped through `inspect_managed_members`
   / `rea inspect-managed-members`. Static member comparison and build-local
   token remapping are shipped through `compare_managed_members` /
-  `rea compare-managed-members`. Decompiled C#, managed/native composition, and
-  runtime correlation remain future contracts.
+  `rea compare-managed-members`. Declaration-only managed/native boundary
+  inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL
+  method flags is shipped through `inspect_managed_native_boundaries` /
+  `rea inspect-managed-native-boundaries`. Decompiled C#, verified native
+  export/function matching, and runtime correlation remain future contracts.
 
 ## Context
 
@@ -381,8 +384,9 @@ or development-only oracles.
 
 1. Add read-only triage and identity with malformed-input bounds. Shipped.
 2. Add metadata, signatures, method bodies, normalized CIL, and exact Evidence. Shipped.
-3. Add obfuscation-resistant slices and cross-build match states.
-4. Compose explicit managed/native boundaries with Hopper/Ghidra.
+3. Add obfuscation-resistant slices and cross-build match states. Shipped.
+4. Compose explicit managed/native boundaries with Hopper/Ghidra. Declaration
+   inventory shipped; native-provider matching remains planned.
 5. Add source-built, pinned real-tool, package, CLI, and MCP conformance.
 6. Consider separately authorized runtime correlation only after the static
    foundation and its authority model are stable.

@@ -717,6 +717,72 @@ const registerManagedCommands = (
         ),
       ),
   });
+  cli.command(CLI_COMMANDS.inspectManagedNativeBoundaries, {
+    description:
+      "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
+    args: z.object({
+      path: z.string().describe("Managed PE executable or assembly path"),
+    }),
+    options: z.object({
+      moduleRefOffset: z.number().int().min(0).default(0),
+      moduleRefLimit: z.number().int().min(1).max(500).default(100),
+      importOffset: z.number().int().min(0).default(0),
+      importLimit: z.number().int().min(1).max(500).default(100),
+      implementationOffset: z.number().int().min(0).default(0),
+      implementationLimit: z.number().int().min(1).max(500).default(100),
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(4_096)
+        .max(1_073_741_824)
+        .default(268_435_456),
+      maxMetadataBytes: z
+        .number()
+        .int()
+        .min(256)
+        .max(268_435_456)
+        .default(67_108_864),
+      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
+      maxHeapItemBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+    }),
+    alias: {
+      moduleRefOffset: "module-ref-offset",
+      moduleRefLimit: "module-ref-limit",
+      importOffset: "import-offset",
+      importLimit: "import-limit",
+      implementationOffset: "implementation-offset",
+      implementationLimit: "implementation-limit",
+      maxFileBytes: "max-file-bytes",
+      maxMetadataBytes: "max-metadata-bytes",
+      maxTableRows: "max-table-rows",
+      maxHeapItemBytes: "max-heap-item-bytes",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect-managed-native-boundaries", () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_native_boundaries",
+          {
+            module_ref_offset: options.moduleRefOffset,
+            module_ref_limit: options.moduleRefLimit,
+            import_offset: options.importOffset,
+            import_limit: options.importLimit,
+            implementation_offset: options.implementationOffset,
+            implementation_limit: options.implementationLimit,
+            max_file_bytes: options.maxFileBytes,
+            max_metadata_bytes: options.maxMetadataBytes,
+            max_table_rows: options.maxTableRows,
+            max_heap_item_bytes: options.maxHeapItemBytes,
+          },
+          logger,
+        ),
+      ),
+  });
   cli.command(CLI_COMMANDS.compareManagedMembers, {
     description:
       "Compare two managed PE/CLI member inventories without name-based matching",

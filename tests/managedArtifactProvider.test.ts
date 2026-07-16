@@ -10,6 +10,7 @@ import type { AnalysisExecution } from "../src/application/AnalysisProvider.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
+  managedNativeBoundaryInspectionSchema,
 } from "../src/domain/managedArtifact.js";
 import type { BinaryTarget } from "../src/domain/binaryTarget.js";
 import { parseBinaryTarget } from "../src/domain/binaryTarget.js";
@@ -17,6 +18,7 @@ import { parseEvidence } from "../src/domain/evidence.js";
 import { ManagedStaticProvider } from "../src/dotnet/ManagedStaticProvider.js";
 import { inspectManagedArtifactBytes } from "../src/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../src/dotnet/ManagedMemberInspector.js";
+import { inspectManagedNativeBoundariesBytes } from "../src/dotnet/ManagedNativeBoundaryInspector.js";
 import {
   buildManagedPeFixture,
   buildNativePeFixture,
@@ -51,6 +53,18 @@ const memberLimits = {
   maxHeapItemBytes: 1024 * 1024,
   maxMethodBodyBytes: 1024 * 1024,
   maxMethodInstructions: 1_000,
+};
+
+const nativeBoundaryLimits = {
+  moduleRefOffset: 0,
+  moduleRefLimit: 100,
+  importOffset: 0,
+  importLimit: 100,
+  implementationOffset: 0,
+  implementationLimit: 100,
+  maxMetadataBytes: 1024 * 1024,
+  maxTableRows: 1_000,
+  maxHeapItemBytes: 1024 * 1024,
 };
 
 describe("managed PE/CLI static provider", () => {
@@ -221,6 +235,71 @@ describe("managed PE/CLI static provider", () => {
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
 
+  it("inspects managed/native PInvoke declarations without verifying native exports", () => {
+    const bytes = buildManagedPeFixture({
+      pinvoke: {
+        moduleName: "user32.dll",
+        importName: "MessageBoxW",
+        mappingFlags: 0x0345,
+      },
+      readyToRun: true,
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      target(bytes),
+      nativeBoundaryLimits,
+    );
+
+    expect(result.cli_native).toMatchObject({
+      il_only: true,
+      ready_to_run_signature: true,
+      managed_native_header_rva: 0x2700,
+      managed_native_header_size: 4,
+    });
+    expect(result.module_refs.items).toEqual([
+      {
+        token: "0x1a000001",
+        row_offset: expect.any(Number),
+        name: "user32.dll",
+      },
+    ]);
+    expect(result.pinvoke_imports.items).toEqual([
+      expect.objectContaining({
+        token: "0x1c000001",
+        member_token: "0x06000001",
+        member_kind: "method",
+        member_name: "Main",
+        import_name: "MessageBoxW",
+        import_scope_token: "0x1a000001",
+        import_scope_name: "user32.dll",
+        no_mangle: true,
+        char_set: "unicode",
+        call_convention: "stdcall",
+        supports_last_error: true,
+        verification: "managed-declaration-only",
+      }),
+    ]);
+    expect(result.native_implementations.items).toEqual([
+      expect.objectContaining({
+        token: "0x06000001",
+        name: "Main",
+        pinvoke_declared: true,
+        boundary_kind: "pinvoke",
+        body_interpretation: "native-or-runtime",
+      }),
+    ]);
+    expect(result.summary).toMatchObject({
+      module_ref_count: 1,
+      pinvoke_import_count: 1,
+      native_implementation_count: 1,
+      ready_to_run: true,
+      mixed_mode_or_native_header: true,
+    });
+    expect(result.limitations).toContain(
+      "P/Invoke rows prove managed import declarations only; this inspection does not verify that a native library, export, thunk, or provider-qualified function exists.",
+    );
+  });
+
   it("keeps member evidence bounded and typed for pagination and unavailable metadata", () => {
     const bytes = buildManagedPeFixture();
     const paged = inspectManagedMembersBytes(bytes, target(bytes), {
@@ -334,6 +413,19 @@ describe("managed PE/CLI static provider", () => {
       field_accesses: { total: 1 },
     });
 
+    const boundaries = await client.execute(
+      "inspect_managed_native_boundaries",
+      {},
+    );
+    expect(boundaries.ok).toBe(true);
+    if (!boundaries.ok) return;
+    expect(asManagedNativeBoundaryResult(boundaries.value)).toMatchObject({
+      artifact: { path, sha256: parsed.value.sha256, format: "pe" },
+      module_refs: { total: 0 },
+      pinvoke_imports: { total: 0 },
+      native_implementations: { total: 0 },
+    });
+
     const cancelled = new AbortController();
     cancelled.abort();
     const cancelledResult = await client.execute(
@@ -400,6 +492,19 @@ describe("managed PE/CLI static provider", () => {
         methods: { total: 1 },
       },
     });
+
+    const boundaryEvidence = parseEvidence(
+      await runProviderAnalysis(path, "inspect_managed_native_boundaries", {}),
+    );
+    expect(boundaryEvidence).toMatchObject({
+      operation: "inspect_managed_native_boundaries",
+      provider: { id: "rea-dotnet-static" },
+      subject: { local_path: path, format: "pe" },
+      normalized_result: {
+        identity_scope: { token_identity: "build-local" },
+        pinvoke_imports: { total: 0 },
+      },
+    });
   });
 });
 
@@ -417,3 +522,6 @@ const asManagedResult = (execution: AnalysisExecution) =>
 
 const asManagedMemberResult = (execution: AnalysisExecution) =>
   managedMemberInspectionSchema.parse(execution.result);
+
+const asManagedNativeBoundaryResult = (execution: AnalysisExecution) =>
+  managedNativeBoundaryInspectionSchema.parse(execution.result);

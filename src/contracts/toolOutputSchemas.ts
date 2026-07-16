@@ -27,6 +27,7 @@ import {
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
+  managedNativeBoundaryInspectionSchema,
 } from "../domain/managedArtifact.js";
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
@@ -538,6 +539,9 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 export const managedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_managed_artifact: resultOf(managedArtifactInspectionSchema),
   inspect_managed_members: resultOf(managedMemberInspectionSchema),
+  inspect_managed_native_boundaries: resultOf(
+    managedNativeBoundaryInspectionSchema,
+  ),
 };
 
 /** Exact Evidence v2 schema for provider-neutral managed workflows. */

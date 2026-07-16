@@ -6,6 +6,11 @@ interface ManagedPeFixtureOptions {
   readonly metadataValidMaskExtra?: bigint;
   readonly methodName?: string;
   readonly mvid?: Buffer;
+  readonly pinvoke?: {
+    readonly importName?: string;
+    readonly mappingFlags?: number;
+    readonly moduleName?: string;
+  };
   readonly readyToRun?: boolean;
   readonly references?: readonly string[];
   readonly resourceData?: Buffer;
@@ -104,11 +109,17 @@ const typeDefRow = (
 const fieldRow = (name: number, signature: number): Buffer =>
   Buffer.concat([u16(0x0001), u16(name), u16(signature)]);
 
-const methodDefRow = (name: number, signature: number, rva = 0): Buffer =>
+const methodDefRow = (
+  name: number,
+  signature: number,
+  rva = 0,
+  flags = 0x0016,
+  implFlags = 0,
+): Buffer =>
   Buffer.concat([
     u32(rva),
-    u16(0),
-    u16(0x0016),
+    u16(implFlags),
+    u16(flags),
     u16(name),
     u16(signature),
     u16(0),
@@ -116,6 +127,20 @@ const methodDefRow = (name: number, signature: number, rva = 0): Buffer =>
 
 const memberRefRow = (name: number, signature: number): Buffer =>
   Buffer.concat([u16((1 << 3) | 1), u16(name), u16(signature)]);
+
+const moduleRefRow = (name: number): Buffer => Buffer.concat([u16(name)]);
+
+const implMapRow = (
+  importName: number,
+  importScope: number,
+  mappingFlags: number,
+): Buffer =>
+  Buffer.concat([
+    u16(mappingFlags),
+    u16((1 << 1) | 1),
+    u16(importName),
+    u16(importScope),
+  ]);
 
 const assemblyRow = (name: number): Buffer =>
   Buffer.concat([
@@ -253,6 +278,14 @@ export const buildManagedPeFixture = (
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
   const fieldName = strings.add(options.fieldName ?? "counter");
   const methodName = strings.add(options.methodName ?? "Main");
+  const pinvokeModuleName =
+    options.pinvoke === undefined
+      ? null
+      : strings.add(options.pinvoke.moduleName ?? "user32.dll");
+  const pinvokeImportName =
+    options.pinvoke === undefined
+      ? null
+      : strings.add(options.pinvoke.importName ?? "MessageBoxW");
   const resourceName = strings.add("Fixture.resources");
   const referenceNames = options.references ?? ["System.Runtime"];
   const referenceStringIndexes = referenceNames.map((name) =>
@@ -272,9 +305,36 @@ export const buildManagedPeFixture = (
     [1, [typeRefRow(attributeName, attributeNamespace)]],
     [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
     [4, [fieldRow(fieldName, fieldSignature)]],
-    [6, [methodDefRow(methodName, methodSignature, 0x2800)]],
+    [
+      6,
+      [
+        methodDefRow(
+          methodName,
+          methodSignature,
+          0x2800,
+          options.pinvoke === undefined ? 0x0016 : 0x2016,
+        ),
+      ],
+    ],
     [10, [memberRefRow(constructorName, constructorSignature)]],
     [12, [customAttributeRow(attributeBlob)]],
+    ...(pinvokeModuleName === null
+      ? []
+      : ([[26, [moduleRefRow(pinvokeModuleName)]]] as const)),
+    ...(pinvokeImportName === null
+      ? []
+      : ([
+          [
+            28,
+            [
+              implMapRow(
+                pinvokeImportName,
+                1,
+                options.pinvoke?.mappingFlags ?? 0x0344,
+              ),
+            ],
+          ],
+        ] as const)),
     [32, [assemblyRow(assemblyName)]],
     [35, referenceStringIndexes.map((name) => assemblyRefRow(name, tokenBlob))],
     [40, [manifestResourceRow(resourceName)]],

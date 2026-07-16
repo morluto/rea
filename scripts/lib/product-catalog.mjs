@@ -373,6 +373,11 @@ const observationSchemaDefinitions = (sources) => [
     ["schema_version"],
   ],
   [
+    "managed_native_boundary_inspection",
+    sources.managedArtifact.managedNativeBoundaryInspectionSchema,
+    ["schema_version"],
+  ],
+  [
     "managed_member_comparison",
     sources.managedComparison.managedMemberComparisonResultSchema,
     ["schema_version"],

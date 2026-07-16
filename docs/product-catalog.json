@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "19"
+    "skill_version": "20"
   },
   "tools": {
-    "total": 86,
+    "total": 87,
     "families": [
       {
         "id": "direct",
@@ -91,11 +91,12 @@
       {
         "id": "managed",
         "surface": "managed",
-        "count": 3,
+        "count": 4,
         "tools": [
           "compare_managed_members",
           "inspect_managed_artifact",
-          "inspect_managed_members"
+          "inspect_managed_members",
+          "inspect_managed_native_boundaries"
         ]
       },
       {
@@ -271,7 +272,11 @@
       "id": "rea-dotnet-static",
       "name": "REA managed static analysis provider",
       "version": "1",
-      "capabilities": ["inspect_managed_artifact", "inspect_managed_members"]
+      "capabilities": [
+        "inspect_managed_artifact",
+        "inspect_managed_members",
+        "inspect_managed_native_boundaries"
+      ]
     },
     {
       "id": "rea-dotnet-workflows",
@@ -420,6 +425,10 @@
       "version": 1
     },
     {
+      "id": "managed_native_boundary_inspection",
+      "version": 1
+    },
+    {
       "id": "process_capture",
       "version": 4
     },
@@ -461,7 +470,7 @@
     }
   ],
   "cli": {
-    "primary_count": 46,
+    "primary_count": 47,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -489,6 +498,7 @@
       "inspect-macho",
       "inspect-managed-artifact",
       "inspect-managed-members",
+      "inspect-managed-native-boundaries",
       "inspect-plist",
       "inspect-signature",
       "inspect-web-page",
@@ -519,17 +529,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 46,
-      "mcp_tools": 86,
+      "cli_commands": 47,
+      "mcp_tools": 87,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "accea09cad0d0baaffa0adb8e500446d8ab722fddd369b0e02032d0bac2c585a",
+      "tools_sha256": "64566ea70551ba0ed3816cf33d8f10b35211951cbbab8d6949eb13e206ae6633",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "f63bae31a611d889d92908fa5d79021fac7237f7d5f85c88b04e10d970bd61b8"
+      "combined_sha256": "499d935ee20c1b0d8010afe9ce6f0ec00e9843b20349df9ed6ebc3471f777d01"
     }
   }
 }

@@ -18,6 +18,7 @@ export const CLI_COMMANDS = Object.freeze({
   extractArtifact: "extract-artifact",
   inspectManagedArtifact: "inspect-managed-artifact",
   inspectManagedMembers: "inspect-managed-members",
+  inspectManagedNativeBoundaries: "inspect-managed-native-boundaries",
   compareManagedMembers: "compare-managed-members",
   inspectMacho: "inspect-macho",
   inspectSignature: "inspect-signature",
