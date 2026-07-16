@@ -397,7 +397,8 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser or Electron interaction remains a different future authority.
 2. **Broader application graph evidence** — extend authenticated cross-layer traces with additional static extractors and separately approved runtime authorities.
-3. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
+3. **Professional managed-code analysis** — add execution-free PE/CLI metadata and CIL evidence, obfuscation-resistant comparisons, and explicit managed/native composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
+4. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later
 
@@ -407,7 +408,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; and the [controlled replay guide](docs/controlled-javascript-replay.md) plus [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the shipped JavaScript replay boundary.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; the [controlled replay guide](docs/controlled-javascript-replay.md) plus [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the shipped JavaScript replay boundary; and [ADR-0003](docs/adr/0003-managed-code-evidence-and-provider-boundary.md) for the planned managed-code evidence and provider design.
 
 ## Using REA with other agents
 
