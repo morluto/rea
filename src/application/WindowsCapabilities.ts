@@ -9,7 +9,7 @@ import {
 } from "./ProcessCaptureCapability.js";
 
 /** One named Windows host observation without inferred authority. */
-export interface WindowsCapabilityOutcome {
+interface WindowsCapabilityOutcome {
   readonly available: boolean;
   readonly reason: string | null;
 }
