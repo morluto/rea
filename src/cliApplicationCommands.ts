@@ -4,12 +4,17 @@ import {
   compareApplicationVersionsEvidence,
   traceApplicationFeatureEvidence,
 } from "./application/JavaScriptApplicationWorkflowService.js";
+import { runControlledReplay } from "./application/JavaScriptReplayService.js";
+import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
+import { parseConfig } from "./config.js";
+import { LinuxJavaScriptReplayRunner } from "./replay/LinuxJavaScriptReplayRunner.js";
+import { SystemJavaScriptReplayHost } from "./replay/SystemJavaScriptReplayHost.js";
 
 /** Register CLI equivalents of provider-neutral application graph workflows. */
 export const registerApplicationCommands = (
@@ -30,6 +35,35 @@ export const registerApplicationCommands = (
     "Compare two authenticated JavaScript Application Graph versions",
     compareApplicationVersionsEvidence,
   );
+  cli.command(CLI_COMMANDS.runControlledReplay, {
+    description:
+      "Plan or execute an approved extracted-module replay in the Linux sandbox",
+    args: z.object({
+      inputJson: z.string().describe("Inline replay JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, CLI_COMMANDS.runControlledReplay, async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          CLI_COMMANDS.runControlledReplay,
+        );
+        if (!input.ok) return input.error;
+        const config = parseConfig(process.env);
+        if (!config.ok) return projectAnalysisError(config.error);
+        const authority = await loadConfiguredPermissionAuthority(config.value);
+        if (!authority.ok) return projectAnalysisError(authority.error);
+        const result = await runControlledReplay(
+          {
+            policy: config.value.javascriptReplayPolicy,
+            host: new SystemJavaScriptReplayHost(),
+            runner: new LinuxJavaScriptReplayRunner(),
+            authority: authority.value,
+          },
+          input.value,
+        );
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
 };
 
 const registerJsonCommand = (

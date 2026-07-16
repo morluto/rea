@@ -35,6 +35,10 @@ describe("runtime configuration", () => {
       expect(result.value.electronObservationEnabled).toBe(false);
       expect(result.value.electronCdpEndpoints).toEqual([]);
       expect(result.value.electronFileRoots).toEqual([]);
+      expect(result.value.javascriptReplayPolicy).toMatchObject({
+        enabled: false,
+        roots: [],
+      });
     }
   });
 
@@ -87,6 +91,45 @@ describe("runtime configuration", () => {
       network: "loopback",
       mount: false,
     });
+  });
+
+  it("builds a no-network JavaScript replay ceiling only when enabled", () => {
+    const result = parseConfig({
+      REA_JAVASCRIPT_REPLAY_ENABLED: "true",
+      REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["/tmp/extracted-modules"]',
+      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.permissionCeilings).toContainEqual({
+      capability: "javascript_replay",
+      roots: ["/tmp/extracted-modules"],
+      executables: [
+        "/opt/node/bin/node",
+        "/usr/bin/bwrap",
+        "/usr/bin/systemd-run",
+        "/usr/bin/systemctl",
+        "/usr/bin/bash",
+      ],
+      environment_names: [],
+      network: "none",
+      mount: true,
+    });
+    expect(result.value.administratorPermissionGrants).toContainEqual(
+      expect.objectContaining({
+        capability: "javascript_replay",
+        lifetime: "administrator",
+      }),
+    );
+  });
+
+  it("rejects relative JavaScript replay roots and executables", () => {
+    expect(
+      parseConfig({ REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["relative/module"]' })
+        .ok,
+    ).toBe(false);
+    expect(
+      parseConfig({ REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" }).ok,
+    ).toBe(false);
   });
 
   it("rejects relative Electron file roots", () => {

@@ -38,6 +38,7 @@ const ANALYSIS_ERROR_TAGS = [
   "NoBinaryOpenError",
   "BinaryTargetError",
   "PermissionRequiredError",
+  "ReplayPlanStaleError",
 ] as const;
 
 /** Stable tag for an expected analysis failure. */
@@ -491,7 +492,8 @@ export interface AnalysisErrorProjection
     | "outside_approved_root"
     | "configuration_invalid"
     | "target_unavailable"
-    | "execution_failure";
+    | "execution_failure"
+    | "plan_stale";
   readonly category:
     | "invalid_input"
     | "permission_required"
@@ -527,6 +529,18 @@ export class PermissionRequiredError extends AnalysisError {
   }
 }
 
+/** Approved replay commitment no longer matches the immediately rebuilt plan. */
+export class ReplayPlanStaleError extends AnalysisError {
+  readonly _tag = "ReplayPlanStaleError" as const;
+
+  constructor(
+    readonly approvedDigest: string,
+    readonly actualDigest: string,
+  ) {
+    super("Controlled replay plan changed before execution");
+  }
+}
+
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
   error: AnalysisError,
@@ -552,6 +566,7 @@ export const projectAnalysisError = (
 };
 
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
+  if (error instanceof ReplayPlanStaleError) return "plan_stale";
   if (error instanceof PermissionRequiredError) return "permission_required";
   if (
     error instanceof ProviderSelectionError &&
@@ -658,12 +673,20 @@ const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
     case "UnknownRegistryError":
     case "PermissionRequiredError":
       throw new TypeError("Unhandled specialized analysis error");
+    case "ReplayPlanStaleError":
+      throw new TypeError("Unhandled specialized replay error");
   }
 };
 
 const errorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof ReplayPlanStaleError)
+    return {
+      approved_plan_digest: error.approvedDigest,
+      actual_plan_digest: error.actualDigest,
+      application_code_admitted: false,
+    };
   if (error instanceof PermissionRequiredError)
     return {
       capability: error.requested.capability,
@@ -777,6 +800,8 @@ const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
 ]);
 
 const remediationAction = (error: AnalysisError): string => {
+  if (error instanceof ReplayPlanStaleError)
+    return "Review the rebuilt replay plan and explicitly approve its new digest.";
   if (error instanceof PermissionRequiredError)
     return error.elicitationSupported
       ? "Approve the exact missing scope, then retry the operation."
@@ -787,6 +812,7 @@ const remediationAction = (error: AnalysisError): string => {
 const errorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
+  if (error instanceof ReplayPlanStaleError) return "integrity_mismatch";
   if (error instanceof PermissionRequiredError) return "permission_required";
   if (
     error instanceof ProviderSelectionError &&
@@ -862,6 +888,8 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 const userMessage = (error: AnalysisError): string => {
+  if (error instanceof ReplayPlanStaleError)
+    return "The controlled replay plan changed before execution. Refresh the current state and try again.";
   if (error instanceof PermissionRequiredError)
     return "This operation needs additional local permission. Review the requested scope and remediation.";
   if (error instanceof AnalysisInputError)
@@ -1007,6 +1035,7 @@ const KNOWN_ERROR_TAGS = {
   NoBinaryOpenError: true,
   BinaryTargetError: true,
   PermissionRequiredError: true,
+  ReplayPlanStaleError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 
 const assertKnownTag = (tag: AnalysisErrorTag): void => {

@@ -16,7 +16,8 @@ export type PermissionCapability =
   | "snapshot_write"
   | "artifact_extract"
   | "native_mount"
-  | "reference_read";
+  | "reference_read"
+  | "javascript_replay";
 
 /** Ordered network authority; each mode includes the modes before it. */
 type PermissionNetwork = "none" | "loopback" | "external";

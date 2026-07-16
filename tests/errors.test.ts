@@ -25,6 +25,7 @@ import {
   ProviderAdapterError,
   ProviderSelectionError,
   PermissionRequiredError,
+  ReplayPlanStaleError,
   UnknownRegistryError,
   projectAnalysisError,
   type AnalysisError,
@@ -170,10 +171,14 @@ describe("analysis error projection", () => {
         false,
         true,
       ),
+      ReplayPlanStaleError: new ReplayPlanStaleError(
+        "a".repeat(64),
+        "b".repeat(64),
+      ),
     } satisfies Readonly<Record<AnalysisErrorTag, AnalysisError>>;
     const errors = Object.values(byTag);
     const projected = errors.map(projectAnalysisError);
-    expect(projected).toHaveLength(26);
+    expect(projected).toHaveLength(27);
     const serialized = JSON.stringify(projected);
     for (const hidden of [
       "secret-token",

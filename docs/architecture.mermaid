@@ -25,6 +25,7 @@ graph TD
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>bounded queue, launcher, client, protocol"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
+        REPLAY["src/replay/<br/>Disposable JavaScript worker<br/>Bubblewrap, seccomp, cgroup limits"]
     end
 
     subgraph "Provider Process Foundation"
@@ -32,7 +33,7 @@ graph TD
     end
 
     subgraph "Contracts Layer"
-        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>82 analysis, browser, Electron, application, and session tools"]
+        CONTRACTS["src/contracts/<br/>Caller-visible tool schemas<br/>83 analysis, browser, Electron, application, and session tools"]
     end
 
     subgraph "Domain Layer"
@@ -64,6 +65,7 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> BROWSER
+    APP --> REPLAY
     HOPPER --> HOPPER_BRIDGE
     GHIDRA --> GHIDRA_BRIDGE
     HOPPER --> PROCESS
@@ -77,9 +79,11 @@ graph TD
     GHIDRA --> DOMAIN
     AUX --> DOMAIN
     BROWSER --> DOMAIN
+    REPLAY --> DOMAIN
     PROCESS --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
     TESTS -.-> GHIDRA
     TESTS -.-> PROCESS
     TESTS -.-> BROWSER
+    TESTS -.-> REPLAY

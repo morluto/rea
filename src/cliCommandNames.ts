@@ -42,6 +42,7 @@ export const CLI_COMMANDS = Object.freeze({
   reconcileJavaScriptRuntime: "reconcile-javascript-runtime",
   traceApplicationFeature: "trace-application-feature",
   compareApplicationVersions: "compare-application-versions",
+  runControlledReplay: "run-controlled-replay",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

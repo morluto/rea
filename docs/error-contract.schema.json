@@ -816,6 +816,45 @@
       },
       "required": ["code", "category", "message", "retryable", "remediation"],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "plan_stale" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "permission_required",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "restart_required": { "type": "boolean" },
+            "elicitation_supported": { "type": "boolean" }
+          },
+          "required": ["action", "restart_required"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": { "$ref": "#/$defs/__schema0" }
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
     }
   ],
   "$defs": {

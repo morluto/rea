@@ -20,6 +20,13 @@ import { registerBrowserTools } from "./registerBrowserTools.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
+import type {
+  JavaScriptReplayHost,
+  JavaScriptReplayPolicy,
+  JavaScriptReplayRunner,
+} from "../application/JavaScriptReplayPlanning.js";
+import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
+import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -31,11 +38,15 @@ export interface CreateServerOptions {
   readonly browserObservation?: BrowserObservationPort;
   readonly electronObservation?: ElectronObservationPort;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
+  readonly javascriptReplayPolicy?: JavaScriptReplayPolicy;
+  readonly javascriptReplayHost?: JavaScriptReplayHost;
+  readonly javascriptReplayRunner?: JavaScriptReplayRunner;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
   };
 }
 
@@ -174,6 +185,21 @@ export const createServer = (
     logger: toolLogger,
     recordEvidence,
     recordEvidenceWithUnknown,
+    replay: {
+      policy: options.javascriptReplayPolicy ?? {
+        enabled: false,
+        roots: [],
+        nodePath: process.execPath,
+        bubblewrapPath: "/usr/bin/bwrap",
+        systemdRunPath: "/usr/bin/systemd-run",
+        systemctlPath: "/usr/bin/systemctl",
+        shellPath: "/usr/bin/bash",
+      },
+      host: options.javascriptReplayHost ?? new SystemJavaScriptReplayHost(),
+      runner:
+        options.javascriptReplayRunner ?? new LinuxJavaScriptReplayRunner(),
+      authority: options.permissionAuthority,
+    },
   });
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

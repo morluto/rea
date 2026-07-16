@@ -75,15 +75,15 @@ carry these records without another persistence format.
 
 ## Controlled replay boundary
 
-These shipped workflows never execute a graph node or recovered module. A
-future extracted-module replay may consume an exact trace handoff only through
-the separate `javascript_replay` authority, two-phase content-bound approval,
-and mandatory Linux OS sandbox fixed by
+Static graph workflows never execute a graph node or recovered module.
+`run_controlled_replay` is the separate extracted-module boundary: it requires
+the `javascript_replay` authority, a plan call followed by exact content-bound
+approval, and the mandatory Linux OS sandbox fixed by
 [ADR-0002](adr/0002-controlled-replay-authority-and-sandbox.md). Browser,
 Electron, Process Capture, artifact-read, and static-analysis approvals do not
 authorize that execution.
 
-Replay observations will retain `controlled-replay` authority. They cannot
+Replay observations retain `controlled-replay` authority. They cannot
 promote static inference into passive runtime observation or prove that the
 original application, renderer, preload, main process, or remote service
 behaved identically.

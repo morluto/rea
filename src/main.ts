@@ -127,6 +127,10 @@ export const run = async (
     roots: [...config.value.analysisSnapshotFilePolicy.roots],
   };
   const runtimeInvestigationRoots = [...config.value.investigationInputRoots];
+  const runtimeJavascriptReplayPolicy = {
+    ...config.value.javascriptReplayPolicy,
+    roots: [...config.value.javascriptReplayPolicy.roots],
+  };
   const liveServers = new Set<ReturnType<typeof createServer>>();
   let handle: StdioServerHandle;
   try {
@@ -146,6 +150,7 @@ export const run = async (
             electronObservation,
             artifactIntegrityContinueEnabled: () =>
               currentConfig.artifactIntegrityContinueEnabled,
+            javascriptReplayPolicy: runtimeJavascriptReplayPolicy,
             availabilityPolicy: () => ({
               processCaptureEnabled:
                 currentConfig.processExecutionPolicy.enabled,
@@ -158,6 +163,8 @@ export const run = async (
                 currentConfig.electronObservationEnabled &&
                 currentConfig.electronCdpEndpoints.length > 0 &&
                 currentConfig.electronFileRoots.length > 0,
+              javascriptReplayEnabled:
+                currentConfig.javascriptReplayPolicy.enabled,
             }),
           },
         );
@@ -232,6 +239,10 @@ export const run = async (
           0,
           runtimeInvestigationRoots.length,
           ...refreshed.value.investigationInputRoots,
+        );
+        Object.assign(
+          runtimeJavascriptReplayPolicy,
+          refreshed.value.javascriptReplayPolicy,
         );
         for (const server of liveServers) server.sendToolListChanged();
       });
