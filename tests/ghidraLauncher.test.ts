@@ -7,15 +7,23 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   ghidraHeadlessArguments,
+  ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../src/ghidra/GhidraLauncher.js";
 
 const fixturePath = fileURLToPath(
-  new URL("./fixtures/captureGhidraLaunch.mjs", import.meta.url),
+  new URL(
+    process.platform === "win32"
+      ? "./fixtures/captureGhidraLaunch.cmd"
+      : "./fixtures/captureGhidraLaunch.mjs",
+    import.meta.url,
+  ),
 );
 const roots: string[] = [];
 
-beforeAll(() => chmod(fixturePath, 0o755));
+beforeAll(async () => {
+  if (process.platform !== "win32") await chmod(fixturePath, 0o755);
+});
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -57,6 +65,48 @@ describe("Ghidra headless launcher", () => {
     ]);
   });
 
+  it("wraps the Windows batch launcher without enabling a Node shell", () => {
+    const command = ghidraHeadlessCommand({
+      platform: "win32",
+      analyzeHeadlessPath:
+        "C:\\Program Files\\Ghidra 12.1.2\\support\\analyzeHeadless.bat",
+      arguments: [
+        "C:\\REA Runtime\\project",
+        "rea-project",
+        "-import",
+        "C:\\REA Runtime\\target.exe",
+      ],
+      comSpec: "C:\\Windows\\System32\\cmd.exe",
+    });
+
+    expect(command).toEqual({
+      command: "C:\\Windows\\System32\\cmd.exe",
+      arguments: [
+        "/d",
+        "/e:on",
+        "/v:off",
+        "/s",
+        "/c",
+        '""C:\\Program Files\\Ghidra 12.1.2\\support\\analyzeHeadless.bat" "C:\\REA Runtime\\project" "rea-project" "-import" "C:\\REA Runtime\\target.exe""',
+      ],
+    });
+  });
+
+  it.each([
+    "C:\\targets\\%TEMP%\\fixture.exe",
+    "C:\\targets\\fixture & calc.exe",
+    'C:\\targets\\fixture".exe',
+  ])("rejects a Windows command-interpreter path: %s", (targetPath) => {
+    expect(() =>
+      ghidraHeadlessCommand({
+        platform: "win32",
+        analyzeHeadlessPath: "C:\\Ghidra\\support\\analyzeHeadless.bat",
+        arguments: ["-import", targetPath],
+        comSpec: "C:\\Windows\\System32\\cmd.exe",
+      }),
+    ).toThrow(/metacharacters/u);
+  });
+
   it("keeps authority in a private descriptor and isolates Ghidra state", async () => {
     vi.stubEnv("GHIDRA_JAVA_OPTIONS", "-javaagent:/unapproved/agent.jar");
     vi.stubEnv("JAVA_TOOL_OPTIONS", "-Duser.home=/unapproved/home");
@@ -65,9 +115,11 @@ describe("Ghidra headless launcher", () => {
     const runtimeRoot = await mkdtemp(join(tmpdir(), "rea-launcher-test-"));
     roots.push(runtimeRoot);
     const token = "secret-token-that-must-not-leak";
+    const javaHome =
+      process.platform === "win32" ? "C:\\Java\\jdk-21" : "/opt/jdk-21";
     const launcher = new GhidraHeadlessLauncher({
       analyzeHeadlessPath: fixturePath,
-      javaHome: "/opt/jdk-21",
+      javaHome,
       bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
     });
     const launched = await launcher.launch({
@@ -91,10 +143,17 @@ describe("Ghidra headless launcher", () => {
     expect(encodedArguments).not.toContain(token);
     expect(encodedEnvironment).not.toContain(token);
     expect(capture).toMatchObject({
-      descriptor_mode: 0o600,
+      ...(process.platform === "win32" ? {} : { descriptor_mode: 0o600 }),
       descriptor_has_token: true,
       environment: {
         HOME: join(runtimeRoot, "home"),
+        ...(process.platform === "win32"
+          ? {
+              USERPROFILE: join(runtimeRoot, "home"),
+              TEMP: join(runtimeRoot, "tmp"),
+              TMP: join(runtimeRoot, "tmp"),
+            }
+          : {}),
         TMPDIR: join(runtimeRoot, "tmp"),
         XDG_CACHE_HOME: join(runtimeRoot, "cache"),
         XDG_CONFIG_HOME: join(runtimeRoot, "config"),
@@ -104,17 +163,22 @@ describe("Ghidra headless launcher", () => {
         JAVA_TOOL_OPTIONS: "",
         JDK_JAVA_OPTIONS: "",
         _JAVA_OPTIONS: "",
-        JAVA_HOME: "/opt/jdk-21",
+        JAVA_HOME: javaHome,
         REA_PROCESS_RUN_ID: "d6fcbb66-e829-4ff6-a535-0035aec63139",
       },
     });
-    expect(capture.environment.PATH).toMatch(/^\/opt\/jdk-21\/bin:/u);
+    expect(capture.environment.PATH).toMatch(
+      process.platform === "win32"
+        ? /^C:\\Java\\jdk-21\\bin;/u
+        : /^\/opt\/jdk-21\/bin:/u,
+    );
     expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).toContain(
       `-Duser.home=${join(runtimeRoot, "home")}`,
     );
-    expect((await stat(join(runtimeRoot, "ownership.json"))).mode & 0o777).toBe(
-      0o600,
-    );
+    if (process.platform !== "win32")
+      expect(
+        (await stat(join(runtimeRoot, "ownership.json"))).mode & 0o777,
+      ).toBe(0o600);
 
     const cleaned = await launched.value.cleanup?.();
     expect(cleaned).toMatchObject({ cleaned: true });

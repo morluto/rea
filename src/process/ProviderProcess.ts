@@ -105,6 +105,7 @@ export const spawnOwnedProviderProcess = async (
 ): Promise<SpawnedOwnedProviderProcess> => {
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
+    windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
     env: {

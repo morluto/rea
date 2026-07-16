@@ -14,7 +14,10 @@ await writeFile(
     arguments: arguments_,
     environment: {
       HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
       TMPDIR: process.env.TMPDIR,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
       XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
       XDG_DATA_HOME: process.env.XDG_DATA_HOME,

@@ -109,6 +109,11 @@ const healthLimitations = Object.freeze([
   "The session serves operations only after default Ghidra auto-analysis completes; an analysis timeout fails the open instead of exposing partial results.",
   "The imported Program and temporary project are ephemeral, read-only to REA, and deleted on close.",
 ]);
+const windowsP0Limitations = Object.freeze([
+  "Windows Ghidra P0 accepts approved native x86-64 PE applications only; DLL, managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
+  "Windows P0 process-tree cleanup uses bounded taskkill termination and does not claim Job Object ownership, private DACL enforcement, or reparse-point-safe path authority.",
+]);
 
 const limitationsFor = (operation: string): readonly string[] => {
   const common = [
@@ -228,6 +233,17 @@ const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     }),
   ),
 );
+const WINDOWS_P0_CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
+  CAPABILITIES.map((capability) =>
+    Object.freeze({
+      ...capability,
+      limitations: Object.freeze([
+        ...capability.limitations,
+        ...windowsP0Limitations,
+      ]),
+    }),
+  ),
+);
 
 const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);
 const SUPPORTED_FORMATS = new Set(["elf", "pe", "mach-o"]);
@@ -254,7 +270,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return CAPABILITIES;
+    return (this.installationHost?.platform ?? process.platform) === "win32"
+      ? WINDOWS_P0_CAPABILITIES
+      : CAPABILITIES;
   }
 
   inspectAvailability(): ProviderAvailability {
@@ -345,6 +363,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!prerequisites.ok) return unavailableClient(prerequisites.error);
     const committedProfile = prerequisites.value.profile;
+    const providerLimitations =
+      installation.platform === "win32" ? windowsP0Limitations : [];
     const client = this.clientFactory({
       launcher: new GhidraHeadlessLauncher({
         analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
@@ -354,6 +374,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
         ),
+        platform: installation.platform,
       }),
       targetPath: target.path,
       targetSha256: target.sha256,
@@ -386,7 +407,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           return ok(
             createAnalysisExecution(started.value, committedProfile.provider, {
               analysisProfile: committedProfile,
-              limitations: healthLimitations,
+              limitations: [...healthLimitations, ...providerLimitations],
             }),
           );
         }
@@ -410,7 +431,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           createAnalysisExecution(result.value, committedProfile.provider, {
             rawResult: called.value,
             analysisProfile: committedProfile,
-            limitations: limitationsFor(operation),
+            limitations: [...limitationsFor(operation), ...providerLimitations],
           }),
         );
       },

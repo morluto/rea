@@ -39,6 +39,11 @@ export interface ProcessOwnershipHost {
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
 }
 
+/** Narrow Windows P0 seam for bounded process-tree termination. */
+export interface WindowsProcessTreeHost {
+  terminateTree(rootPid: number): Promise<"terminated" | "missing">;
+}
+
 /** Per-member reason that token-verified cleanup failed closed. */
 interface ProcessOwnershipValidationFailure {
   readonly pid: number;
@@ -62,6 +67,30 @@ export type ProcessGroupObservation =
   | { readonly state: "empty" }
   | { readonly state: "alive" }
   | { readonly state: "unverifiable"; readonly reason: string };
+
+/**
+ * Terminate one Windows process tree through the platform utility.
+ *
+ * This is a bounded P0 cleanup mechanism, not Job Object ownership proof. The
+ * caller-visible Windows limitations must preserve that distinction.
+ */
+export const cleanupWindowsProcessTree = async (
+  rootPid: number,
+  host: WindowsProcessTreeHost = systemWindowsProcessTreeHost,
+): Promise<ProcessCleanupResult> => {
+  if (!Number.isSafeInteger(rootPid) || rootPid <= 0)
+    return { cleaned: false, reason: "Windows process-tree PID is invalid" };
+  try {
+    const result = await host.terminateTree(rootPid);
+    return { cleaned: true, signaled: result === "terminated" };
+  } catch {
+    return {
+      cleaned: false,
+      reason:
+        "Windows P0 process-tree termination failed; Job Object ownership is unavailable",
+    };
+  }
+};
 
 /** Select the PTY root group and groups led by an observed captured process. */
 export const selectCapturedProcessGroupIds = (
@@ -132,6 +161,27 @@ const systemHost: ProcessOwnershipHost = {
   },
   signalGroup(processGroupId, signal) {
     process.kill(-processGroupId, signal);
+  },
+};
+
+const systemWindowsProcessTreeHost: WindowsProcessTreeHost = {
+  async terminateTree(rootPid) {
+    try {
+      await execFileAsync(
+        "taskkill.exe",
+        ["/pid", String(rootPid), "/t", "/f"],
+        { windowsHide: true, timeout: 5_000 },
+      );
+      return "terminated";
+    } catch (cause: unknown) {
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        (cause.code === 128 || cause.code === "ESRCH")
+      )
+        return "missing";
+      throw cause;
+    }
   },
 };
 
