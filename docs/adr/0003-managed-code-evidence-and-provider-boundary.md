@@ -22,8 +22,12 @@
   runtime-correlation admission planning is shipped through
   `plan_managed_runtime_correlation` / `rea plan-managed-runtime-correlation`;
   it does not attach, load, debug, reflect, instrument, invoke, or execute
-  target code. Native-body bridge mapping and an actual runtime executor remain
-  future contracts.
+  target code. Managed static graph projection is shipped through
+  `project_managed_application_graph` /
+  `rea project-managed-application-graph`; it projects authenticated managed
+  Evidence into the application graph without changing managed tokens into
+  native addresses. Native-body bridge mapping and an actual runtime executor
+  remain future contracts.
 
 ## Context
 
@@ -406,6 +410,8 @@ or development-only oracles.
    planned.
 6. Add separately authorized runtime-correlation admission planning. Shipped;
    runtime execution remains planned.
+7. Project authenticated managed static Evidence into the application graph.
+   Shipped.
 
 Every gate must keep unsupported ReadyToRun, NativeAOT, IL2CPP, mixed-mode, or
 bundle cases explicit rather than broadening claims to make a fixture pass.

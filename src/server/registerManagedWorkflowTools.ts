@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { compareManagedMembersEvidenceValidated } from "../application/ManagedMemberComparisonService.js";
+import { projectManagedApplicationGraphEvidence } from "../application/ManagedApplicationGraphService.js";
 import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidenceValidated } from "../application/ManagedReconstructionService.js";
 import {
@@ -10,6 +11,7 @@ import {
 } from "../application/ManagedRuntimeCorrelationService.js";
 import {
   compareManagedMembersReferenceInputSchema,
+  managedApplicationGraphReferenceInputSchema,
   managedNativeVerificationReferenceInputSchema,
   managedReconstructionReferenceInputSchema,
   managedRuntimeCorrelationReferenceInputSchema,
@@ -48,6 +50,7 @@ export const registerManagedWorkflowTools = (
   );
   const reconstructionContract = contract("import_managed_reconstruction");
   const runtimeContract = contract("plan_managed_runtime_correlation");
+  const graphContract = contract("project_managed_application_graph");
   server.registerTool(
     compareContract.name,
     toolRegistrationOptions(compareContract),
@@ -301,6 +304,68 @@ export const registerManagedWorkflowTools = (
       });
     },
   );
+  server.registerTool(
+    graphContract.name,
+    toolRegistrationOptions(graphContract),
+    async (input) => {
+      const parsedInput = safeParseToolInput(
+        managedApplicationGraphReferenceInputSchema,
+        input,
+        graphContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, graphContract);
+      const managedArtifact =
+        parsedInput.value.managed_artifact_evidence_id === undefined
+          ? undefined
+          : resolveManagedArtifactEvidence(
+              options.session,
+              parsedInput.value.managed_artifact_evidence_id,
+            );
+      if (managedArtifact !== undefined && !managedArtifact.ok)
+        return toCallToolResult(managedArtifact, graphContract);
+      const managedMembers =
+        parsedInput.value.managed_members_evidence_id === undefined
+          ? undefined
+          : resolveManagedEvidence(options.session, [
+              parsedInput.value.managed_members_evidence_id,
+            ]);
+      if (managedMembers !== undefined && !managedMembers.ok)
+        return toCallToolResult(managedMembers, graphContract);
+      const managedBoundaries =
+        parsedInput.value.managed_native_boundaries_evidence_id === undefined
+          ? undefined
+          : resolveManagedBoundaryEvidence(
+              options.session,
+              parsedInput.value.managed_native_boundaries_evidence_id,
+            );
+      if (managedBoundaries !== undefined && !managedBoundaries.ok)
+        return toCallToolResult(managedBoundaries, graphContract);
+      const parsed = {
+        limits: parsedInput.value.limits,
+        managed_artifact: managedArtifact?.value[0],
+        managed_members: managedMembers?.value[0],
+        managed_native_boundaries: managedBoundaries?.value[0],
+      };
+      const result = await logToolExecution(
+        options.logger,
+        graphContract.name,
+        () => Promise.resolve(projectManagedApplicationGraphEvidence(parsed)),
+      );
+      if (!result.ok) return toCallToolResult(result, graphContract);
+      const recordedSources = recordSources(
+        options.recordEvidence,
+        sourceEvidence(parsed),
+      );
+      if (!recordedSources.ok)
+        return toCallToolResult(recordedSources, graphContract);
+      const recorded = options.recordEvidence?.(result.value);
+      if (recorded !== undefined && !recorded.ok)
+        return toCallToolResult(recorded, graphContract);
+      return toCallToolResult(result, graphContract, {
+        evidenceResourcesAvailable: recorded !== undefined,
+      });
+    },
+  );
 };
 
 const contract = (
@@ -319,6 +384,15 @@ const resolveManagedEvidence = (
 ): Result<Evidence[], EvidenceIntegrityError> =>
   resolveSessionEvidenceIds(session, evidenceIds, {
     operation: "inspect_managed_members",
+    predicate: "rea.analysis/v2",
+  });
+
+const resolveManagedArtifactEvidence = (
+  session: BinarySessionPort,
+  evidenceId: string,
+): Result<Evidence[], EvidenceIntegrityError> =>
+  resolveSessionEvidenceIds(session, [evidenceId], {
+    operation: "inspect_managed_artifact",
     predicate: "rea.analysis/v2",
   });
 
@@ -362,3 +436,14 @@ const recordSources = (
   }
   return { ok: true as const, value: null };
 };
+
+const sourceEvidence = (input: {
+  readonly managed_artifact?: Evidence | undefined;
+  readonly managed_members?: Evidence | undefined;
+  readonly managed_native_boundaries?: Evidence | undefined;
+}): Evidence[] =>
+  [
+    input.managed_artifact,
+    input.managed_members,
+    input.managed_native_boundaries,
+  ].filter((evidence): evidence is Evidence => evidence !== undefined);

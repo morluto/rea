@@ -152,6 +152,18 @@ export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
 
 const runtimeExampleEvidence = evidence(runtimeMembers());
 
+/** Minimal valid managed application graph projection request. */
+export const MANAGED_APPLICATION_GRAPH_EXAMPLE = {
+  managed_members: runtimeExampleEvidence,
+  limits: {
+    max_types: 100,
+    max_methods: 100,
+    max_fields: 100,
+    max_pinvoke_imports: 100,
+    max_native_implementations: 100,
+  },
+};
+
 const boundaryEvidence = () => {
   const result: ManagedNativeBoundaryInspection = {
     schema_version: 1,

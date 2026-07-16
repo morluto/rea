@@ -4,11 +4,13 @@ import { compareManagedMembersInputSchema } from "../domain/managedMemberCompari
 import { managedNativeVerificationInputSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
+import { projectManagedApplicationGraphInputSchema } from "../domain/managedApplicationGraph.js";
 import type { ToolContract } from "./toolContracts.js";
 import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
 import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
+  MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
@@ -17,6 +19,9 @@ import { toolContractMetadata } from "./toolEffects.js";
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const managedEvidenceIdSchema = evidenceIdSchema.describe(
   "Session-owned inspect_managed_members Evidence ID",
+);
+const managedArtifactEvidenceIdSchema = evidenceIdSchema.describe(
+  "Session-owned inspect_managed_artifact Evidence ID",
 );
 const managedBoundaryEvidenceIdSchema = evidenceIdSchema.describe(
   "Session-owned inspect_managed_native_boundaries Evidence ID",
@@ -91,6 +96,33 @@ export const managedNativeVerificationReferenceInputSchema = z
     }
   });
 
+/** MCP references for projecting managed Evidence into an application graph. */
+export const managedApplicationGraphReferenceInputSchema = z
+  .strictObject({
+    managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
+    managed_members_evidence_id: managedEvidenceIdSchema.optional(),
+    managed_native_boundaries_evidence_id:
+      managedBoundaryEvidenceIdSchema.optional(),
+    limits: projectManagedApplicationGraphInputSchema.shape.limits,
+  })
+  .superRefine((input, context) => {
+    const ids = [
+      input.managed_artifact_evidence_id,
+      input.managed_members_evidence_id,
+      input.managed_native_boundaries_evidence_id,
+    ].filter((id): id is string => id !== undefined);
+    if (ids.length === 0)
+      context.addIssue({
+        code: "custom",
+        message: "At least one managed Evidence ID is required",
+      });
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: "custom",
+        message: "Managed application graph Evidence IDs must be unique",
+      });
+  });
+
 const comparisonOutputSchema =
   managedWorkflowOutputSchemas.compare_managed_members;
 if (comparisonOutputSchema === undefined)
@@ -114,6 +146,12 @@ const nativeVerificationOutputSchema =
 if (nativeVerificationOutputSchema === undefined)
   throw new Error(
     "Missing managed workflow output schema for verify_managed_native_boundaries",
+  );
+const managedApplicationGraphOutputSchema =
+  managedWorkflowOutputSchemas.project_managed_application_graph;
+if (managedApplicationGraphOutputSchema === undefined)
+  throw new Error(
+    "Missing managed workflow output schema for project_managed_application_graph",
   );
 
 /** Provider-neutral managed-code workflow contracts. */
@@ -201,6 +239,25 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
             MANAGED_RUNTIME_CORRELATION_EXAMPLE.requested_effect,
           host: MANAGED_RUNTIME_CORRELATION_EXAMPLE.host,
           bounds: MANAGED_RUNTIME_CORRELATION_EXAMPLE.bounds,
+        },
+      },
+    ],
+  },
+  {
+    name: "project_managed_application_graph",
+    ...toolContractMetadata("project_managed_application_graph"),
+    description:
+      "Project authenticated managed artifact, member, and native-boundary Evidence into the provider-neutral application graph without executing managed code, loading assemblies, or translating managed metadata tokens to native addresses. The graph preserves managed static observations as managed-specific nodes linked to source Evidence.",
+    kind: "application",
+    inputSchema: managedApplicationGraphReferenceInputSchema,
+    outputSchema: managedApplicationGraphOutputSchema,
+    examples: [
+      {
+        title: "Project static managed observations into an application graph",
+        input: {
+          managed_members_evidence_id:
+            MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members.evidence_id,
+          limits: MANAGED_APPLICATION_GRAPH_EXAMPLE.limits,
         },
       },
     ],

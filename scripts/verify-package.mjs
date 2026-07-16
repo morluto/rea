@@ -372,6 +372,41 @@ try {
       ?.verification !== "managed-declaration-only"
   )
     throw new Error("packaged managed native-boundary CLI failed");
+  const managedApplicationGraphInput = {
+    managed_artifact: managedArtifact,
+    managed_members: managedMembers,
+    managed_native_boundaries: managedBoundaries,
+    limits: {
+      max_types: 100,
+      max_methods: 100,
+      max_fields: 100,
+      max_pinvoke_imports: 100,
+      max_native_implementations: 100,
+    },
+  };
+  const managedApplicationGraph = json(
+    await run(
+      cli,
+      [
+        "project-managed-application-graph",
+        JSON.stringify(managedApplicationGraphInput),
+        "--json",
+      ],
+      environment,
+    ),
+  );
+  if (
+    managedApplicationGraph.operation !== "project_managed_application_graph" ||
+    managedApplicationGraph.provider?.id !== "rea-dotnet-workflows" ||
+    managedApplicationGraph.confidence !== "inferred" ||
+    managedApplicationGraph.normalized_result?.summary?.pinvoke_imports !== 1 ||
+    managedApplicationGraph.normalized_result?.graph?.schema !==
+      "JavaScriptApplicationGraph" ||
+    !managedApplicationGraph.normalized_result?.graph?.nodes?.some(
+      ({ kind }) => kind === "managed-pinvoke-import",
+    )
+  )
+    throw new Error("packaged managed application-graph CLI failed");
   const managedNativeVerificationInput = {
     managed_boundaries: managedBoundaries,
     native_observations: [
@@ -1001,7 +1036,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedRuntimePlanCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

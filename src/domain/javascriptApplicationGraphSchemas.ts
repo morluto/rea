@@ -37,6 +37,13 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "storage",
   "native-addon",
   "native-export",
+  "managed-assembly",
+  "managed-module",
+  "managed-type",
+  "managed-method",
+  "managed-field",
+  "managed-pinvoke-import",
+  "managed-native-implementation",
   "runtime-script-instance",
   "unknown",
 ] as const;

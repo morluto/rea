@@ -12,6 +12,8 @@ import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComp
 import { verifyManagedNativeBoundariesEvidence } from "../dist/application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
+import { projectManagedApplicationGraphEvidence } from "../dist/application/ManagedApplicationGraphService.js";
+import { traceApplicationFeatureEvidence } from "../dist/application/JavaScriptApplicationWorkflowService.js";
 import { createPermissionAuthority } from "../dist/application/PermissionAuthority.js";
 import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
 import { createEvidence } from "../dist/domain/evidence.js";
@@ -155,6 +157,35 @@ try {
     frameworkBoundaries.pinvoke_imports.items[0]?.call_convention,
     "stdcall",
   );
+  const frameworkMembers = inspectManagedMembersBytes(
+    framework.bytes,
+    framework.target,
+    memberLimits,
+  );
+  const frameworkArtifactEvidence = createEvidence(
+    framework.target,
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_artifact",
+      parameters: inspectionLimits,
+      result: frameworkArtifact,
+      rawResult: null,
+      limitations: frameworkArtifact.limitations,
+      locations: [{ kind: "artifact-path", path: framework.target.path }],
+    },
+  );
+  const frameworkMemberEvidence = createEvidence(
+    framework.target,
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: memberLimits,
+      result: frameworkMembers,
+      rawResult: null,
+      limitations: frameworkMembers.limitations,
+      locations: [{ kind: "artifact-path", path: framework.target.path }],
+    },
+  );
   const frameworkBoundaryEvidence = createEvidence(
     framework.target,
     MANAGED_STATIC_PROVIDER,
@@ -198,6 +229,52 @@ try {
   });
   assert.equal(nativeVerification.ok, true);
   assert.equal(nativeVerification.value.normalized_result.summary.verified, 1);
+  const applicationGraph = projectManagedApplicationGraphEvidence({
+    managed_artifact: frameworkArtifactEvidence,
+    managed_members: frameworkMemberEvidence,
+    managed_native_boundaries: frameworkBoundaryEvidence,
+    limits: {
+      max_types: 100,
+      max_methods: 100,
+      max_fields: 100,
+      max_pinvoke_imports: 100,
+      max_native_implementations: 100,
+    },
+  });
+  assert.equal(applicationGraph.ok, true);
+  assert.equal(
+    applicationGraph.value.normalized_result.summary.pinvoke_imports,
+    1,
+  );
+  assert.equal(
+    applicationGraph.value.normalized_result.graph.nodes.some(
+      ({ kind }) => kind === "managed-pinvoke-import",
+    ),
+    true,
+  );
+  const applicationTrace = traceApplicationFeatureEvidence({
+    application: applicationGraph.value,
+    native_observations: [],
+    seed: {
+      kind: "string",
+      value: "MessageBoxW",
+      match: "exact",
+      case_sensitive: true,
+    },
+    direction: "incoming",
+    limits: {
+      max_seed_matches: 5,
+      max_depth: 4,
+      max_nodes: 50,
+      max_edges: 100,
+      max_paths: 10,
+    },
+  });
+  assert.equal(applicationTrace.ok, true);
+  assert.equal(
+    applicationTrace.value.normalized_result.summary.matched_seeds,
+    1,
+  );
 
   const readyToRun = await fixture("r2r-x64.exe", {
     machine: 0x8664,
@@ -415,7 +492,7 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
-      verified: 11 + (operatorManifest === null ? 0 : 1),
+      verified: 12 + (operatorManifest === null ? 0 : 1),
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
@@ -424,12 +501,14 @@ try {
         "verify_managed_native_boundaries",
         "import_managed_reconstruction",
         "plan_managed_runtime_correlation",
+        "project_managed_application_graph",
       ],
       coverage: [
         "modern-dotnet-anycpu",
         "dotnet-framework-x86-pinvoke",
         "x64-ready-to-run-native-body",
         "managed-native-verification",
+        "managed-application-graph-projection",
         "unicode-obfuscated-identifiers",
         "decompiler-reconstruction-import",
         "runtime-correlation-admission-plan",
