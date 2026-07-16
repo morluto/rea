@@ -1,5 +1,76 @@
 # Changelog
 
+## [2.0.0](https://github.com/morluto/rea/compare/rea-agents-1.7.0...rea-agents-2.0.0) (2026-07-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** require Evidence for managed reconstruction
+* **mcp:** comparison tools now require session-owned Evidence IDs or approved bundle paths, and structured Evidence results use compact references.
+
+### Features
+
+* **application:** add cross-layer graph workflows ([778b995](https://github.com/morluto/rea/commit/778b995bbfd4b4bb28ace9bf0f7428e50cd1be50))
+* **application:** add isolated JavaScript replay ([d86231a](https://github.com/morluto/rea/commit/d86231ad33e750c2a6ef60a33d833ac8db9219be))
+* **dotnet:** add managed artifact triage ([c251c38](https://github.com/morluto/rea/commit/c251c38aa2ead24e4aaeb95678a10dddaa212dc4))
+* **dotnet:** add managed member comparison ([55794d6](https://github.com/morluto/rea/commit/55794d6083d6746fa2c7ad08a5f548c05272b1ae))
+* **dotnet:** add managed member inspection ([98cad37](https://github.com/morluto/rea/commit/98cad3788d05ae31d86bb448d6fa8e5ebb1c742c))
+* **dotnet:** add managed native boundary inspection ([466b1bb](https://github.com/morluto/rea/commit/466b1bbebee8c9266708de885b5e5405d23d0b7c))
+* **dotnet:** add managed runtime correlation planning ([5f66cfd](https://github.com/morluto/rea/commit/5f66cfd57aeec39bb3337cbbbc2b7c3c8460df54))
+* **dotnet:** import managed reconstructions ([c506664](https://github.com/morluto/rea/commit/c5066647445f3a8be0a9df4ff0f41b7e478f79b5))
+* **dotnet:** verify managed native boundaries ([8cbc125](https://github.com/morluto/rea/commit/8cbc125b9393f3cc84a8a1b4e1cb160714c833ad))
+* **electron:** map static process and IPC boundaries ([3fa2304](https://github.com/morluto/rea/commit/3fa2304bc70beb96cf30feb51bb6d7ac4fb7a2b0))
+* **electron:** reconcile static artifacts with passive runtime ([8c67dbd](https://github.com/morluto/rea/commit/8c67dbd49e74b2f304a03845a8a55e6a433cc915))
+* **managed:** project static evidence into application graph ([6194c1a](https://github.com/morluto/rea/commit/6194c1a781a97043dbd02f0f6717c17598459abe))
+* **managed:** project static evidence into application graph ([77178bb](https://github.com/morluto/rea/commit/77178bba543ed40b5cb29d301ad930e698a1968c))
+* **mcp:** harden contracts and evidence references ([ee1cd40](https://github.com/morluto/rea/commit/ee1cd40405405097b9d5f9686cbcc765ab03d96a))
+* **mcp:** require Evidence for managed reconstruction ([d36af5d](https://github.com/morluto/rea/commit/d36af5d0f708637f514f356521242b2b1066c8ed))
+* **setup:** verify installed skill catalog identity ([b2d1f2a](https://github.com/morluto/rea/commit/b2d1f2affdc7faa0e1c56feefe596eb39dea0612))
+
+
+### Bug Fixes
+
+* **deps:** run freshness check from escaped paths ([8a1c128](https://github.com/morluto/rea/commit/8a1c128b67ee41ce054fe984946a5d7bfcc1a3b4))
+* **mcp:** align runtime unknown argument validation ([d1e7220](https://github.com/morluto/rea/commit/d1e72207f48609e3214a66c2a248c70a2a1abd6c))
+* **mcp:** hide managed workflows without a session ([412bbaf](https://github.com/morluto/rea/commit/412bbaf05e0d6fa5add68303c83325628cc2e7da))
+* **mcp:** integrate managed contracts after rebase ([9c4a93d](https://github.com/morluto/rea/commit/9c4a93d9b1be36155bd9c0a39d8b541ec3986c64))
+* **mcp:** normalize inferred field descriptions ([a807471](https://github.com/morluto/rea/commit/a807471e4e612e215ef82ebd2d16a1c454d5ad31))
+* **mcp:** parse adapter inputs exactly once ([37c0f39](https://github.com/morluto/rea/commit/37c0f399544c9424c55e468d6784da61426a458e))
+* **mcp:** remove arbitrary schema byte gate ([fd08025](https://github.com/morluto/rea/commit/fd08025dcd21cc31fa1e7356c90e76b4863b1af2))
+* **mcp:** remove schema byte compaction ([f728295](https://github.com/morluto/rea/commit/f728295bd00585623b9597cf5702051aefa8ddc9))
+* **package:** accept expected doctor diagnostics ([0f2d013](https://github.com/morluto/rea/commit/0f2d01300a4bc9fc534114a6913ec8dfcd5fa457))
+* **test:** make host fixtures portable ([f23f529](https://github.com/morluto/rea/commit/f23f52903cb6df4eed6fec0e09f79c82ad9825dc))
+
+
+### Code Refactoring
+
+* **mcp:** remove obsolete managed evidence parser ([f7aa191](https://github.com/morluto/rea/commit/f7aa19154d9bc24b3ccdb8bde40ee926f06049a1))
+
+
+### Documentation
+
+* **analysis:** define managed-code evidence boundary ([80faff3](https://github.com/morluto/rea/commit/80faff3e5bf8baa65b0b18e03594e86753a76ac6))
+* **api:** refresh managed reconstruction contracts ([2b06433](https://github.com/morluto/rea/commit/2b064335ea63db4484d16b35544dd5e8024ecf6d))
+* **dotnet:** refresh managed reconstruction api ([cc1e47c](https://github.com/morluto/rea/commit/cc1e47c615bbbb6d2f7dc24ec1710c39e4b96bf4))
+* refresh application workflow API links ([4a30820](https://github.com/morluto/rea/commit/4a30820a93a33f4ebb7b69202890c5c6a114ba0f))
+* refresh managed native verification api ([849c052](https://github.com/morluto/rea/commit/849c05290aced212505c2621f208e89266c3ea96))
+* refresh managed runtime api docs ([798631a](https://github.com/morluto/rea/commit/798631ade628464b6b233d240e53b7eea44721a0))
+* refresh runtime reconciliation API ([87b2348](https://github.com/morluto/rea/commit/87b23482e28ed4e43674c4b9a775da4b16cb4636))
+* **security:** define controlled replay authority ([461990d](https://github.com/morluto/rea/commit/461990da3f8e4ec573217432943f04311d577524))
+* stabilize replay API source links ([a8c1057](https://github.com/morluto/rea/commit/a8c1057279d529d9f16ab9b093b0f6518915b6fa))
+
+
+### Tests
+
+* **dotnet:** add managed conformance verifier ([2b75fcf](https://github.com/morluto/rea/commit/2b75fcfaac8432b08b2d88cd95492333df2674d4))
+* **dotnet:** verify managed app graph manifests ([5be4051](https://github.com/morluto/rea/commit/5be405169ef752e34199022e97c5fa4896693472))
+* **dotnet:** verify managed app graph manifests ([a5e5c68](https://github.com/morluto/rea/commit/a5e5c68d117cdef33a47291ed4f641c9a89045f3))
+* **dotnet:** verify managed app manifests ([793a948](https://github.com/morluto/rea/commit/793a948c1b6a61ce3ba2860fe977b19180c6fa9b))
+* **hopper:** avoid scheduler-sensitive exit timing ([6e6827c](https://github.com/morluto/rea/commit/6e6827cd76fc080a959695ab19bfcc34b80c270c))
+* **mcp:** cover strict compact wire contracts ([8de25d0](https://github.com/morluto/rea/commit/8de25d02302e7a03c1a0c6ab19ccb459758973ca))
+* **mcp:** derive sessionless managed inventory ([cab7c4a](https://github.com/morluto/rea/commit/cab7c4a5212eb5bf2b233c835ac57b5764a4e0f3))
+* **replay:** use portable seam executables ([3183f47](https://github.com/morluto/rea/commit/3183f47c0f785bdda52f9db6613932440094c522))
+
 ## [1.7.0](https://github.com/morluto/rea/compare/rea-agents-1.6.0...rea-agents-1.7.0) (2026-07-15)
 
 
