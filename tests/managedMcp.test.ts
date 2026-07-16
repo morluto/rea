@@ -108,10 +108,7 @@ describe("managed artifact MCP tools", () => {
       );
 
       expect(inspected).toMatchObject({
-        operation: "inspect_managed_artifact",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-        normalized_result: {
+        result: {
           classification: {
             status: "managed",
             runtime_family: "modern-dotnet",

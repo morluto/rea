@@ -6,17 +6,26 @@ import { ok } from "../src/domain/result.js";
 import { err } from "../src/domain/result.js";
 import { HopperProcessError } from "../src/domain/errors.js";
 import { toCallToolResult } from "../src/server/toolResult.js";
-import {
-  createEvidence,
-  evidenceEnvelopeSchema,
-} from "../src/domain/evidence.js";
+import { createEvidence } from "../src/domain/evidence.js";
+import { evidenceResultOf } from "../src/contracts/toolOutputSchemas.js";
 
 const contract: ToolContract = {
   name: "provider_neutral_fixture",
+  title: "Provider Neutral Fixture",
   description: "Fixture contract for provider-neutral output validation.",
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
+  effects: {
+    mutatesTarget: false,
+    mutatesSession: false,
+    writesFilesystem: false,
+    launchesProcess: false,
+    accessesNetwork: false,
+    changesUiState: false,
+    mayDiscardData: false,
+    idempotent: true,
+  },
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -39,13 +48,8 @@ describe("tool result projection", () => {
     expect(JSON.stringify(result)).not.toContain("expected Hopper");
   });
   it("classifies output contract failures without naming a provider", () => {
-    expect(toCallToolResult(ok({ value: 42 }), contract)).toEqual({
-      content: [
-        {
-          type: "text",
-          text: "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
-        },
-      ],
+    const result = toCallToolResult(ok({ value: 42 }), contract);
+    expect(result).toMatchObject({
       structuredContent: {
         error: {
           code: "unreadable_output",
@@ -62,6 +66,10 @@ describe("tool result projection", () => {
       },
       isError: true,
     });
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: JSON.stringify(result.structuredContent),
+    });
   });
 
   it("links successful evidence only when its session resource exists", () => {
@@ -77,7 +85,7 @@ describe("tool result projection", () => {
     );
     const evidenceContract: ToolContract = {
       ...contract,
-      outputSchema: evidenceEnvelopeSchema,
+      outputSchema: evidenceResultOf(z.object({ value: z.string() })),
     };
 
     expect(

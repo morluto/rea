@@ -20,6 +20,10 @@ import {
   officialOutputSchemas,
   sessionOutputSchemas,
 } from "../src/contracts/toolOutputSchemas.js";
+import {
+  annotationsFromEffects,
+  TOOL_EFFECTS,
+} from "../src/contracts/toolEffects.js";
 
 const convertContractJsonSchema = (schema: z.ZodType) =>
   z.toJSONSchema(schema, {
@@ -72,6 +76,10 @@ describe("tool contract surface", () => {
       const outputSchema = contractJsonSchema(contract.outputSchema);
       expect(inputSchema.type).toBe("object");
       expect(outputSchema.type).toBe("object");
+      expect(contract.title.length).toBeGreaterThan(2);
+      expect(contract.annotations).toEqual(
+        annotationsFromEffects(contract.effects),
+      );
       expect(typeof contract.annotations.idempotentHint).toBe("boolean");
       expect(typeof contract.annotations.openWorldHint).toBe("boolean");
       expect(typeof contract.annotations.readOnlyHint).toBe("boolean");
@@ -84,6 +92,21 @@ describe("tool contract surface", () => {
         );
       }
     }
+  });
+
+  it("audits every tool effect explicitly with no heuristic fallback", () => {
+    const names = [
+      ...OFFICIAL_TOOL_CONTRACTS,
+      ...ENHANCED_TOOL_CONTRACTS,
+      ...NATIVE_TOOL_CONTRACTS,
+      ...ARTIFACT_TOOL_CONTRACTS,
+      ...MANAGED_TOOL_CONTRACTS,
+      ...BROWSER_TOOL_CONTRACTS,
+      ...ELECTRON_TOOL_CONTRACTS,
+      ...APPLICATION_TOOL_CONTRACTS,
+      ...SESSION_TOOL_CONTRACTS,
+    ].map(({ name }) => name);
+    expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(names.sort());
   });
 
   it("keeps exactly eighteen additive session contracts", () => {

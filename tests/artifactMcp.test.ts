@@ -12,7 +12,6 @@ import { BinarySession } from "../src/application/BinarySession.js";
 import { ArtifactProvider } from "../src/artifacts/ArtifactProvider.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../src/contracts/artifactComparisonExample.js";
 import { evidenceBundleSchema } from "../src/domain/evidenceBundle.js";
-import { parseEvidence } from "../src/domain/evidence.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 
@@ -148,7 +147,9 @@ describe("artifact graph MCP integration", () => {
         },
       });
       expect(result.isError).not.toBe(true);
-      const evidence = parseEvidence(result.structuredContent);
+      const compact = compactResult(result.structuredContent);
+      const evidence = session.evidenceById(compact.evidence_id);
+      if (evidence === undefined) throw new Error("missing inventory Evidence");
       const inventory = z
         .object({
           occurrences: z.object({
@@ -165,7 +166,7 @@ describe("artifact graph MCP integration", () => {
             }),
           ),
         })
-        .parse(evidence.normalized_result);
+        .parse(compact.result);
       expect(inventory.integrity_contradictions).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -197,16 +198,12 @@ describe("artifact graph MCP integration", () => {
       const compared = await client.callTool({
         name: "compare_artifacts",
         arguments: {
-          left: evidence,
-          right: evidence,
+          left_evidence_ids: [evidence.evidence_id],
+          right_evidence_ids: [evidence.evidence_id],
         },
       });
       expect(compared.isError).not.toBe(true);
-      const comparison = parseEvidence(
-        z.object({ result: z.unknown() }).parse(compared.structuredContent)
-          .result,
-      );
-      expect(comparison.normalized_result).toMatchObject({
+      expect(compactResult(compared.structuredContent).result).toMatchObject({
         status: "contradiction",
         summary: { contradiction: 2 },
         changes: {
@@ -333,13 +330,15 @@ describe("artifact graph MCP integration", () => {
         arguments: {},
       });
       expect(inventory.isError).not.toBe(true);
-      const evidence = parseEvidence(inventory.structuredContent);
+      const inventoryResult = compactResult(inventory.structuredContent);
+      const evidence = session.evidenceById(inventoryResult.evidence_id);
+      if (evidence === undefined) throw new Error("missing inventory Evidence");
       expect(evidence).toMatchObject({
         provider: { id: "rea-artifact-graph" },
         subject: { format: "ipa" },
-        normalized_result: {
-          manifest: { root_format: "ipa" },
-        },
+      });
+      expect(inventoryResult.result).toMatchObject({
+        manifest: { root_format: "ipa" },
       });
       const openedChanged = await client.callTool({
         name: "open_binary",
@@ -350,24 +349,22 @@ describe("artifact graph MCP integration", () => {
         name: "inventory_artifact",
         arguments: {},
       });
-      const changedEvidence = parseEvidence(changedInventory.structuredContent);
+      const changedResult = compactResult(changedInventory.structuredContent);
+      const changedEvidence = session.evidenceById(changedResult.evidence_id);
+      if (changedEvidence === undefined)
+        throw new Error("missing changed Evidence");
       const compared = await client.callTool({
         name: "compare_artifacts",
         arguments: {
-          left: evidence,
-          right: changedEvidence,
+          left_evidence_ids: [evidence.evidence_id],
+          right_evidence_ids: [changedEvidence.evidence_id],
           unknown_registry_approved: true,
         },
       });
       expect(compared.isError).not.toBe(true);
-      const comparisonEvidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(compared.structuredContent)
-          .result,
-      );
-      expect(comparisonEvidence).toMatchObject({
-        provider: { id: "rea-artifact-comparison" },
-        evidence_links: [evidence.evidence_id, changedEvidence.evidence_id],
-        normalized_result: { status: "changed" },
+      expect(compactResult(compared.structuredContent)).toMatchObject({
+        result: { status: "changed" },
+        evidence_id: expect.stringMatching(/^ev_/u),
       });
       const unknowns = await client.callTool({
         name: "list_unknowns",
@@ -398,3 +395,12 @@ describe("artifact graph MCP integration", () => {
     }
   });
 });
+
+const compactResult = (value: unknown) =>
+  z
+    .object({
+      result: z.unknown(),
+      evidence_id: z.string(),
+      evidence_uri: z.string(),
+    })
+    .parse(value);

@@ -1,0 +1,515 @@
+{
+  "generated_from": "@modelcontextprotocol/server 2.0.0-beta.4 wire registration",
+  "tool_count": 84,
+  "tools_list_bytes": 518457,
+  "budgets": {
+    "tools_list_bytes": 524288,
+    "per_tool_bytes": 65536
+  },
+  "tools": [
+    {
+      "name": "address_name",
+      "bytes": 1133,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 313
+    },
+    {
+      "name": "analyze_function",
+      "bytes": 10206,
+      "input_schema_bytes": 2037,
+      "output_schema_bytes": 7692
+    },
+    {
+      "name": "analyze_javascript_application",
+      "bytes": 19871,
+      "input_schema_bytes": 2633,
+      "output_schema_bytes": 16597
+    },
+    {
+      "name": "analyze_swift_types",
+      "bytes": 1321,
+      "input_schema_bytes": 62,
+      "output_schema_bytes": 852
+    },
+    {
+      "name": "analyze_web_bundle",
+      "bytes": 14995,
+      "input_schema_bytes": 6550,
+      "output_schema_bytes": 7940
+    },
+    {
+      "name": "batch_decompile",
+      "bytes": 12102,
+      "input_schema_bytes": 226,
+      "output_schema_bytes": 11475
+    },
+    {
+      "name": "binary_overview",
+      "bytes": 1643,
+      "input_schema_bytes": 250,
+      "output_schema_bytes": 977
+    },
+    {
+      "name": "binary_session",
+      "bytes": 13235,
+      "input_schema_bytes": 367,
+      "output_schema_bytes": 12368
+    },
+    {
+      "name": "build_call_path",
+      "bytes": 11300,
+      "input_schema_bytes": 7493,
+      "output_schema_bytes": 3335
+    },
+    {
+      "name": "capture_process_scenario",
+      "bytes": 20991,
+      "input_schema_bytes": 10463,
+      "output_schema_bytes": 9774
+    },
+    {
+      "name": "capture_web_screenshot",
+      "bytes": 5661,
+      "input_schema_bytes": 771,
+      "output_schema_bytes": 4454
+    },
+    {
+      "name": "close_binary",
+      "bytes": 1073,
+      "input_schema_bytes": 214,
+      "output_schema_bytes": 379
+    },
+    {
+      "name": "comment",
+      "bytes": 1082,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 313
+    },
+    {
+      "name": "compare_application_versions",
+      "bytes": 27986,
+      "input_schema_bytes": 10250,
+      "output_schema_bytes": 17168
+    },
+    {
+      "name": "compare_artifacts",
+      "bytes": 4095,
+      "input_schema_bytes": 759,
+      "output_schema_bytes": 2851
+    },
+    {
+      "name": "compare_bundles",
+      "bytes": 4559,
+      "input_schema_bytes": 928,
+      "output_schema_bytes": 3132
+    },
+    {
+      "name": "compare_functions",
+      "bytes": 4828,
+      "input_schema_bytes": 725,
+      "output_schema_bytes": 3611
+    },
+    {
+      "name": "compare_process_captures",
+      "bytes": 3866,
+      "input_schema_bytes": 565,
+      "output_schema_bytes": 2716
+    },
+    {
+      "name": "compare_web_captures",
+      "bytes": 33869,
+      "input_schema_bytes": 31489,
+      "output_schema_bytes": 1940
+    },
+    {
+      "name": "compare_web_screenshots",
+      "bytes": 3428,
+      "input_schema_bytes": 1489,
+      "output_schema_bytes": 1546
+    },
+    {
+      "name": "correlate_static_and_runtime",
+      "bytes": 13332,
+      "input_schema_bytes": 8963,
+      "output_schema_bytes": 3876
+    },
+    {
+      "name": "current_address",
+      "bytes": 938,
+      "input_schema_bytes": 282,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "current_document",
+      "bytes": 842,
+      "input_schema_bytes": 219,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "current_procedure",
+      "bytes": 952,
+      "input_schema_bytes": 282,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "demangle_swift",
+      "bytes": 2276,
+      "input_schema_bytes": 221,
+      "output_schema_bytes": 1717
+    },
+    {
+      "name": "discover_webmcp_tools",
+      "bytes": 7256,
+      "input_schema_bytes": 1087,
+      "output_schema_bytes": 5765
+    },
+    {
+      "name": "export_evidence_bundle",
+      "bytes": 12103,
+      "input_schema_bytes": 196,
+      "output_schema_bytes": 11479
+    },
+    {
+      "name": "extract_artifact",
+      "bytes": 6414,
+      "input_schema_bytes": 1321,
+      "output_schema_bytes": 4701
+    },
+    {
+      "name": "find_changed_behavior",
+      "bytes": 12296,
+      "input_schema_bytes": 8586,
+      "output_schema_bytes": 3182
+    },
+    {
+      "name": "find_xrefs_to_name",
+      "bytes": 1346,
+      "input_schema_bytes": 128,
+      "output_schema_bytes": 763
+    },
+    {
+      "name": "get_call_graph",
+      "bytes": 12061,
+      "input_schema_bytes": 361,
+      "output_schema_bytes": 11228
+    },
+    {
+      "name": "get_objc_classes",
+      "bytes": 1141,
+      "input_schema_bytes": 127,
+      "output_schema_bytes": 606
+    },
+    {
+      "name": "get_objc_protocols",
+      "bytes": 1079,
+      "input_schema_bytes": 62,
+      "output_schema_bytes": 610
+    },
+    {
+      "name": "goto_address",
+      "bytes": 1094,
+      "input_schema_bytes": 424,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "import_evidence_bundle",
+      "bytes": 882,
+      "input_schema_bytes": 142,
+      "output_schema_bytes": 321
+    },
+    {
+      "name": "inline_comment",
+      "bytes": 1064,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 313
+    },
+    {
+      "name": "inspect_electron_page",
+      "bytes": 10081,
+      "input_schema_bytes": 1936,
+      "output_schema_bytes": 7685
+    },
+    {
+      "name": "inspect_macho",
+      "bytes": 9368,
+      "input_schema_bytes": 62,
+      "output_schema_bytes": 8933
+    },
+    {
+      "name": "inspect_managed_artifact",
+      "bytes": 12894,
+      "input_schema_bytes": 1251,
+      "output_schema_bytes": 11159
+    },
+    {
+      "name": "inspect_plist",
+      "bytes": 2883,
+      "input_schema_bytes": 189,
+      "output_schema_bytes": 2320
+    },
+    {
+      "name": "inspect_signature",
+      "bytes": 2946,
+      "input_schema_bytes": 62,
+      "output_schema_bytes": 2519
+    },
+    {
+      "name": "inspect_web_page",
+      "bytes": 23933,
+      "input_schema_bytes": 5042,
+      "output_schema_bytes": 18381
+    },
+    {
+      "name": "inventory_artifact",
+      "bytes": 10608,
+      "input_schema_bytes": 1885,
+      "output_schema_bytes": 8336
+    },
+    {
+      "name": "list_architectures",
+      "bytes": 2782,
+      "input_schema_bytes": 62,
+      "output_schema_bytes": 2387
+    },
+    {
+      "name": "list_bookmarks",
+      "bytes": 1091,
+      "input_schema_bytes": 282,
+      "output_schema_bytes": 437
+    },
+    {
+      "name": "list_browser_targets",
+      "bytes": 3072,
+      "input_schema_bytes": 658,
+      "output_schema_bytes": 1966
+    },
+    {
+      "name": "list_documents",
+      "bytes": 883,
+      "input_schema_bytes": 219,
+      "output_schema_bytes": 310
+    },
+    {
+      "name": "list_electron_targets",
+      "bytes": 2991,
+      "input_schema_bytes": 636,
+      "output_schema_bytes": 1932
+    },
+    {
+      "name": "list_names",
+      "bytes": 2842,
+      "input_schema_bytes": 594,
+      "output_schema_bytes": 1818
+    },
+    {
+      "name": "list_procedures",
+      "bytes": 2739,
+      "input_schema_bytes": 475,
+      "output_schema_bytes": 1818
+    },
+    {
+      "name": "list_segments",
+      "bytes": 2817,
+      "input_schema_bytes": 282,
+      "output_schema_bytes": 2128
+    },
+    {
+      "name": "list_strings",
+      "bytes": 2837,
+      "input_schema_bytes": 594,
+      "output_schema_bytes": 1818
+    },
+    {
+      "name": "list_unknowns",
+      "bytes": 4477,
+      "input_schema_bytes": 358,
+      "output_schema_bytes": 3710
+    },
+    {
+      "name": "next_address",
+      "bytes": 1039,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "observe_web_session",
+      "bytes": 6320,
+      "input_schema_bytes": 765,
+      "output_schema_bytes": 5090
+    },
+    {
+      "name": "open_binary",
+      "bytes": 1702,
+      "input_schema_bytes": 386,
+      "output_schema_bytes": 696
+    },
+    {
+      "name": "prev_address",
+      "bytes": 1045,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "procedure_address",
+      "bytes": 1082,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "procedure_assembly",
+      "bytes": 1096,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "procedure_callees",
+      "bytes": 1121,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 310
+    },
+    {
+      "name": "procedure_callers",
+      "bytes": 1085,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 310
+    },
+    {
+      "name": "procedure_info",
+      "bytes": 1982,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 1216
+    },
+    {
+      "name": "procedure_pseudo_code",
+      "bytes": 1172,
+      "input_schema_bytes": 383,
+      "output_schema_bytes": 313
+    },
+    {
+      "name": "procedure_references",
+      "bytes": 4319,
+      "input_schema_bytes": 798,
+      "output_schema_bytes": 3054
+    },
+    {
+      "name": "reconcile_javascript_runtime",
+      "bytes": 30201,
+      "input_schema_bytes": 9566,
+      "output_schema_bytes": 20110
+    },
+    {
+      "name": "record_unknown",
+      "bytes": 6725,
+      "input_schema_bytes": 2646,
+      "output_schema_bytes": 3685
+    },
+    {
+      "name": "resolve_containing_procedure",
+      "bytes": 2185,
+      "input_schema_bytes": 424,
+      "output_schema_bytes": 1280
+    },
+    {
+      "name": "run_controlled_replay",
+      "bytes": 21072,
+      "input_schema_bytes": 6098,
+      "output_schema_bytes": 14387
+    },
+    {
+      "name": "search_procedures",
+      "bytes": 2238,
+      "input_schema_bytes": 812,
+      "output_schema_bytes": 964
+    },
+    {
+      "name": "search_strings",
+      "bytes": 2247,
+      "input_schema_bytes": 812,
+      "output_schema_bytes": 964
+    },
+    {
+      "name": "set_address_name",
+      "bytes": 1141,
+      "input_schema_bytes": 478,
+      "output_schema_bytes": 286
+    },
+    {
+      "name": "set_addresses_names",
+      "bytes": 1175,
+      "input_schema_bytes": 427,
+      "output_schema_bytes": 361
+    },
+    {
+      "name": "set_bookmark",
+      "bytes": 1118,
+      "input_schema_bytes": 471,
+      "output_schema_bytes": 286
+    },
+    {
+      "name": "set_comment",
+      "bytes": 1148,
+      "input_schema_bytes": 487,
+      "output_schema_bytes": 286
+    },
+    {
+      "name": "set_current_document",
+      "bytes": 1003,
+      "input_schema_bytes": 298,
+      "output_schema_bytes": 285
+    },
+    {
+      "name": "set_inline_comment",
+      "bytes": 1142,
+      "input_schema_bytes": 487,
+      "output_schema_bytes": 286
+    },
+    {
+      "name": "swift_classes",
+      "bytes": 1135,
+      "input_schema_bytes": 127,
+      "output_schema_bytes": 606
+    },
+    {
+      "name": "trace_application_feature",
+      "bytes": 27741,
+      "input_schema_bytes": 9241,
+      "output_schema_bytes": 17969
+    },
+    {
+      "name": "trace_feature",
+      "bytes": 3340,
+      "input_schema_bytes": 555,
+      "output_schema_bytes": 2299
+    },
+    {
+      "name": "unset_bookmark",
+      "bytes": 1055,
+      "input_schema_bytes": 424,
+      "output_schema_bytes": 286
+    },
+    {
+      "name": "update_unknown",
+      "bytes": 7884,
+      "input_schema_bytes": 3810,
+      "output_schema_bytes": 3685
+    },
+    {
+      "name": "verify_reconstruction",
+      "bytes": 6692,
+      "input_schema_bytes": 2688,
+      "output_schema_bytes": 3510
+    },
+    {
+      "name": "verify_unknown_resolution",
+      "bytes": 4481,
+      "input_schema_bytes": 177,
+      "output_schema_bytes": 3866
+    },
+    {
+      "name": "xrefs",
+      "bytes": 1112,
+      "input_schema_bytes": 401,
+      "output_schema_bytes": 310
+    }
+  ]
+}

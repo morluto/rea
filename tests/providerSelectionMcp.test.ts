@@ -111,9 +111,8 @@ describe("provider selection over MCP", () => {
     });
     expect(observed.isError).not.toBe(true);
     expect(structured(observed)).toMatchObject({
-      provider: { id: "beta", version: "1" },
-      analysis_profile: { provider: { id: "beta", version: "1" } },
-      normalized_result: "beta:address_name",
+      result: "beta:address_name",
+      evidence_id: expect.stringMatching(/^ev_/u),
     });
     expect(starts).toEqual(["beta"]);
 

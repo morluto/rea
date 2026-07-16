@@ -55,13 +55,53 @@ describe("application workflow CLI parity", () => {
       },
     });
   }, 20_000);
+
+  it("returns safe actionable JSON validation details", async () => {
+    const malformed = await runCli([
+      "trace-application-feature",
+      "{not-json",
+      "--json",
+    ]);
+    expect(malformed).toMatchObject({
+      code: "invalid_request",
+      retryable: true,
+      details: {
+        issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+      },
+    });
+    expect(JSON.stringify(malformed)).not.toContain("not-json");
+
+    const missing = await runCli(["trace-application-feature", "{}", "--json"]);
+    expect(missing).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["application"],
+            reason: "missing_argument",
+          }),
+        ]),
+      },
+    });
+  });
 });
 
 const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
-  const { stdout } = await execute(
-    process.execPath,
-    ["scripts/rea.mjs", ...arguments_],
-    { cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1_024 * 1_024 },
-  );
-  return JSON.parse(stdout);
+  try {
+    const { stdout } = await execute(
+      process.execPath,
+      ["scripts/rea.mjs", ...arguments_],
+      { cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1_024 * 1_024 },
+    );
+    return JSON.parse(stdout);
+  } catch (cause: unknown) {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "stdout" in cause &&
+      typeof cause.stdout === "string"
+    )
+      return JSON.parse(cause.stdout);
+    throw cause;
+  }
 };

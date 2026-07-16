@@ -201,11 +201,9 @@ describe("official Hopper proxy tools", () => {
       arguments: {},
     });
     expect(result.isError).toBe(true);
-    expect(result.content).toEqual([
-      {
-        type: "text",
-        text: "Analysis could not complete. Retry once; if it continues, run `rea doctor`.",
-      },
-    ]);
+    expect(result.content[0]).toEqual({
+      type: "text",
+      text: JSON.stringify(result.structuredContent),
+    });
   });
 });

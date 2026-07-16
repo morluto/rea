@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,12 +73,13 @@ describe("target-free MCP lifecycle", () => {
       }),
     ).result;
 
-    expect(first).toMatchObject({ path: targetPath });
-    expect(second).toMatchObject({ path: targetPath });
+    const canonicalTargetPath = await realpath(targetPath);
+    expect(first).toMatchObject({ path: canonicalTargetPath });
+    expect(second).toMatchObject({ path: canonicalTargetPath });
     expect(z.object({ sha256: z.string() }).parse(second).sha256).not.toBe(
       z.object({ sha256: z.string() }).parse(first).sha256,
     );
-    expect(closed).toEqual([targetPath]);
+    expect(closed).toEqual([canonicalTargetPath]);
     expect(
       z
         .object({ result: z.object({ path: z.string(), sha256: z.string() }) })
@@ -88,7 +89,7 @@ describe("target-free MCP lifecycle", () => {
           ),
         ).result,
     ).toEqual({
-      path: targetPath,
+      path: canonicalTargetPath,
       sha256: z.object({ sha256: z.string() }).parse(second).sha256,
     });
   });
@@ -139,9 +140,7 @@ describe("target-free MCP lifecycle", () => {
       arguments: {},
     });
     expect(before.isError).toBe(true);
-    expect(text(before)).toBe(
-      "No app is open. Ask the user which app to investigate, then call open_binary with its local path.",
-    );
+    expect(text(before)).toBe(JSON.stringify(before.structuredContent));
     expect((await mcp.listTools()).tools).toHaveLength(89);
     const deniedCapture = await mcp.callTool({
       name: "capture_process_scenario",
@@ -158,7 +157,7 @@ describe("target-free MCP lifecycle", () => {
       },
     });
     expect(text(deniedCapture)).toBe(
-      "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.",
+      JSON.stringify(deniedCapture.structuredContent),
     );
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
@@ -304,7 +303,7 @@ describe("target-free MCP lifecycle", () => {
     });
     expect(
       text(await mcp.callTool({ name: "binary_session", arguments: {} })),
-    ).toContain('"open": false');
+    ).toContain('"open":false');
     expect(
       (
         await mcp.callTool({

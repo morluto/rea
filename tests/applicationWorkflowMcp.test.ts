@@ -37,9 +37,7 @@ describe("application workflow MCP parity", () => {
       });
       expect(traced.isError).not.toBe(true);
       expect(traced.structuredContent).toMatchObject({
-        operation: "trace_application_feature",
-        provider: { id: "rea-javascript-application-workflows" },
-        normalized_result: {
+        result: {
           schema_version: 1,
           coverage: { status: expect.any(String) },
         },
@@ -54,8 +52,7 @@ describe("application workflow MCP parity", () => {
       });
       expect(compared.isError).not.toBe(true);
       expect(compared.structuredContent).toMatchObject({
-        operation: "compare_application_versions",
-        normalized_result: {
+        result: {
           schema_version: 1,
           summary: { unknown: expect.any(Number) },
           coverage: { status: expect.any(String) },
