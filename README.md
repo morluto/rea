@@ -401,13 +401,13 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 ### Later
 
-1. **Controlled interaction and replay** — keep approved JavaScript execution, browser interaction, Electron instrumentation, and fuzzing behind a separate authority from passive observation.
+1. **Controlled interaction and replay** — implement extracted-module JavaScript execution and fuzzing behind the separately approved, Linux OS-sandboxed boundary fixed by [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md); browser or Electron interaction remains a different future authority.
 2. **Native runtime observation** — approval-gated LLDB, Frida, system logs, process/filesystem observers, and native API tracing.
 3. **Additional providers and targets** — evaluate IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, Windows-native providers, mobile artifacts, firmware, document formats, and other software-defined systems.
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix, and [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for the binding, selection, profile, snapshot, and compatibility decisions.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; and [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the accepted but not-yet-implemented JavaScript replay security boundary.
 
 ## Using REA with other agents
 
@@ -587,7 +587,7 @@ unpacked; REA does not silently accept the mismatched artifact.
 
 ## Security model
 
-REA does not provide a hosted analysis service. Hopper and Ghidra bridge communication uses authenticated private local sockets. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. REA is not a security sandbox: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+REA does not provide a hosted analysis service. Hopper and Ghidra bridge communication uses authenticated private local sockets. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. Shipped providers, passive observers, and Process Capture are not security sandboxes: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. No JavaScript replay execution path ships today; its future implementation must satisfy the mandatory OS-sandbox and fail-closed policy in [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md). Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 
