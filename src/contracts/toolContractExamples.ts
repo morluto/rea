@@ -1,5 +1,4 @@
 import type { JsonValue } from "../domain/jsonValue.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { UNKNOWN_CONTRACT_EXAMPLES } from "./unknownContractExamples.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "./artifactComparisonExample.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
@@ -42,32 +41,18 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   },
   compare_process_captures: {
     left_evidence_id: `ev_${"0".repeat(64)}`,
-    left: EMPTY_PROCESS_CAPTURE_EXAMPLE,
     right_evidence_id: `ev_${"1".repeat(64)}`,
-    right: EMPTY_PROCESS_CAPTURE_EXAMPLE,
   },
-  compare_artifacts: ARTIFACT_COMPARISON_EXAMPLE,
-  compare_functions: FUNCTION_COMPARISON_EXAMPLE,
+  compare_artifacts: {
+    left_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.left.evidence_id],
+    right_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
+  },
+  compare_functions: {
+    left_evidence_ids: [FUNCTION_COMPARISON_EXAMPLE.left.evidence_id],
+    right_evidence_ids: [FUNCTION_COMPARISON_EXAMPLE.right.evidence_id],
+  },
   compare_bundles: {
-    left: {
-      bundle_version: 2,
-      artifacts: [],
-      providers: [],
-      environments: [],
-      scenarios: [],
-      captures: [],
-      unknowns: [],
-      records: [],
-    },
-    right: {
-      bundle_version: 2,
-      artifacts: [],
-      providers: [],
-      environments: [],
-      scenarios: [],
-      captures: [],
-      unknowns: [],
-      records: [],
-    },
+    left_bundle_path: "/approved/left-evidence.json",
+    right_bundle_path: "/approved/right-evidence.json",
   },
 };

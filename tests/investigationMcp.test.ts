@@ -15,7 +15,7 @@ import {
   PROCESS_COMPARISON_EVIDENCE,
 } from "../src/contracts/investigationExamples.js";
 import { changedBehaviorResultSchema } from "../src/domain/changedBehavior.js";
-import { createEvidence, parseEvidence } from "../src/domain/evidence.js";
+import { createEvidence } from "../src/domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../src/domain/jsonValue.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
@@ -96,9 +96,7 @@ describe("investigation MCP workflows", () => {
         arguments: arguments_,
       });
       expect(first.isError).not.toBe(true);
-      const firstEvidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(first.structuredContent).result,
-      );
+      const firstEvidence = sessionEvidence(session, first.structuredContent);
       expect(firstEvidence.normalized_result).toMatchObject({
         behavior_status: "unknown",
         summary: { static_candidates: 2 },
@@ -136,10 +134,7 @@ describe("investigation MCP workflows", () => {
         arguments: arguments_,
       });
       expect(second.isError, JSON.stringify(second)).not.toBe(true);
-      const secondEvidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(second.structuredContent)
-          .result,
-      );
+      const secondEvidence = sessionEvidence(session, second.structuredContent);
       expect(secondEvidence.evidence_id).toBe(firstEvidence.evidence_id);
       expect(
         await readInvestigationWorkspace(workspace, filePolicy),
@@ -245,9 +240,9 @@ describe("investigation MCP workflows", () => {
         arguments: { investigation_run: investigationRun },
       });
       expect(created.isError, JSON.stringify(created)).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(created.structuredContent)
-          .result,
+      const evidence = sessionEvidence(
+        initial.session,
+        created.structuredContent,
       );
       const result = changedBehaviorResultSchema.parse(
         evidence.normalized_result,
@@ -322,12 +317,10 @@ describe("investigation MCP workflows", () => {
         },
       });
       expect(response.isError).toBe(true);
-      expect(response.content).toEqual([
-        {
-          type: "text",
-          text: "Artifact path is not allowed. Choose a path inside the artifact and try again.",
-        },
-      ]);
+      expect(response.content[0]).toEqual({
+        type: "text",
+        text: JSON.stringify(response.structuredContent),
+      });
     } finally {
       await close(session, server, client);
       await rm(directory, { recursive: true, force: true });
@@ -354,10 +347,7 @@ describe("investigation MCP workflows", () => {
         },
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(response.structuredContent)
-          .result,
-      );
+      const evidence = sessionEvidence(session, response.structuredContent);
       expect(evidence).toMatchObject({
         provider: { id: "rea-changed-behavior" },
         normalized_result: { behavior_status: "unknown" },
@@ -386,10 +376,7 @@ describe("investigation MCP workflows", () => {
         arguments: INVESTIGATION_EXAMPLES.build_call_path,
       });
       expect(response.isError).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(response.structuredContent)
-          .result,
-      );
+      const evidence = sessionEvidence(session, response.structuredContent);
       expect(evidence).toMatchObject({
         provider: { id: "rea-call-path" },
         normalized_result: {
@@ -481,10 +468,7 @@ describe("investigation MCP workflows", () => {
         arguments: INVESTIGATION_EXAMPLES.correlate_static_and_runtime,
       });
       expect(response.isError).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(response.structuredContent)
-          .result,
-      );
+      const evidence = sessionEvidence(session, response.structuredContent);
       expect(evidence).toMatchObject({
         provider: { id: "rea-static-runtime-correlation" },
         confidence: "inferred",
@@ -560,10 +544,7 @@ describe("investigation MCP workflows", () => {
         },
       });
       expect(response.isError).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(response.structuredContent)
-          .result,
-      );
+      const evidence = sessionEvidence(session, response.structuredContent);
       expect(evidence).toMatchObject({
         provider: { id: "rea-reconstruction-verifier" },
         normalized_result: { status: "pass", summary: { passed: 1 } },
@@ -613,10 +594,7 @@ describe("investigation MCP workflows", () => {
         },
       });
       expect(response.isError).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(response.structuredContent)
-          .result,
-      );
+      const evidence = sessionEvidence(session, response.structuredContent);
       expect(evidence.normalized_result).toMatchObject({
         status: "unknown",
         summary: { unknown: 1 },
@@ -668,6 +646,15 @@ const evidencePolicy = (root: string): EvidenceFilePolicy => ({
   maxStringLength: 1024 * 1024,
   maxNodes: 1_000_000,
 });
+
+const sessionEvidence = (session: BinarySession, value: unknown) => {
+  const parsed = z
+    .object({ evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u) })
+    .parse(value);
+  const evidence = session.evidenceById(parsed.evidence_id);
+  if (evidence === undefined) throw new TypeError("Missing session Evidence");
+  return evidence;
+};
 
 const investigationAuthority = async (
   root: string,

@@ -1,13 +1,25 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { describe, expect, it } from "vitest";
-import { z } from "zod";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { BinarySession } from "../src/application/BinarySession.js";
-import { createEvidence, parseEvidence } from "../src/domain/evidence.js";
-import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
-import { createResidualUnknown } from "../src/domain/residualUnknown.js";
+import { createEvidence } from "../src/domain/evidence.js";
+import {
+  createEvidenceBundle,
+  serializeEvidenceBundle,
+} from "../src/domain/evidenceBundle.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
+
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
 
 const sourceEvidence = (label: string) =>
   createEvidence(
@@ -23,124 +35,30 @@ const sourceEvidence = (label: string) =>
   );
 
 describe("bundle comparison MCP integration", () => {
-  it("rejects altered records that reuse session Evidence IDs", async () => {
-    const session = new BinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
-    }));
-    const leftRecord = sourceEvidence("left-authority");
-    const rightRecord = sourceEvidence("right-authority");
-    session.recordEvidence(leftRecord);
-    session.recordEvidence(rightRecord);
-    const altered = {
-      ...leftRecord,
-      limitations: ["caller altered this record"],
-    };
-    const server = createServer(session, session);
-    const client = new Client({ name: "bundle-authority-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "compare_bundles",
-        arguments: {
-          left: createEvidenceBundle([altered]),
-          right: createEvidenceBundle([rightRecord]),
-        },
-      });
-      expect(result.isError).toBe(true);
-      expect(session.exportEvidenceBundle().records).toHaveLength(2);
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
-
-  it("rejects unknown histories that are not owned by the session", async () => {
-    const session = new BinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
-    }));
-    const leftRecord = sourceEvidence("left-unowned-unknown");
-    const rightRecord = sourceEvidence("right-unowned-unknown");
-    expect(session.recordEvidence(leftRecord).ok).toBe(true);
-    expect(session.recordEvidence(rightRecord).ok).toBe(true);
-    const unknown = createResidualUnknown(
-      {
-        approved: true,
-        question: "Unowned history?",
-        severity: "high",
-        domain: "bundle-comparison-test",
-        supporting_evidence_ids: [leftRecord.evidence_id],
-        contradicting_evidence_ids: [],
-        required_authority: "shipped-artifact",
-        required_confidence: "observed",
-        required_environment: null,
-        recommended_probes: [],
-        relationships: [],
-      },
-      leftRecord.evidence_id,
-      null,
-    );
-    const server = createServer(session, session);
-    const client = new Client({ name: "bundle-unknown-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "compare_bundles",
-        arguments: {
-          left: createEvidenceBundle([leftRecord], [unknown]),
-          right: createEvidenceBundle([rightRecord]),
-        },
-      });
-      expect(result.isError).toBe(true);
-      expect(session.exportEvidenceBundle()).toMatchObject({
-        records: [leftRecord, rightRecord].sort((left, right) =>
-          left.evidence_id.localeCompare(right.evidence_id),
-        ),
-        unknowns: [],
-      });
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
-  });
-
-  it("records a digest-anchored comparison linked to every source record", async () => {
-    const session = new BinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
-    }));
+  it("reads two approved bounded bundle files and records a compact result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-mcp-"));
+    roots.push(root);
+    const leftPath = join(root, "left.json");
+    const rightPath = join(root, "right.json");
     const leftRecord = sourceEvidence("left");
     const rightRecord = sourceEvidence("right");
-    expect(session.recordEvidence(leftRecord).ok).toBe(true);
-    expect(session.recordEvidence(rightRecord).ok).toBe(true);
-    const server = createServer(session, session);
-    const client = new Client({ name: "bundle-comparison-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      writeFile(
+        leftPath,
+        serializeEvidenceBundle(createEvidenceBundle([leftRecord])),
+      ),
+      writeFile(
+        rightPath,
+        serializeEvidenceBundle(createEvidenceBundle([rightRecord])),
+      ),
+    ]);
+    const connected = await connect(root);
     try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
+      const result = await connected.client.callTool({
         name: "compare_bundles",
         arguments: {
-          left: createEvidenceBundle([leftRecord]),
-          right: createEvidenceBundle([rightRecord]),
+          left_bundle_path: leftPath,
+          right_bundle_path: rightPath,
           record_pairs: [
             {
               left_evidence_id: leftRecord.evidence_id,
@@ -150,24 +68,101 @@ describe("bundle comparison MCP integration", () => {
         },
       });
       expect(result.isError).not.toBe(true);
-      const evidence = parseEvidence(
-        z.object({ result: z.unknown() }).parse(result.structuredContent)
-          .result,
-      );
-      expect(evidence).toMatchObject({
-        provider: { id: "rea-bundle-comparison" },
-        evidence_links: [
-          leftRecord.evidence_id,
-          rightRecord.evidence_id,
-        ].sort(),
-        normalized_result: { status: "changed" },
+      expect(result.structuredContent).toMatchObject({
+        result: { status: "changed" },
+        evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
+        evidence_uri: expect.stringMatching(/^rea:\/\/evidence\/ev_/u),
       });
     } finally {
+      await connected.close();
+    }
+  });
+
+  it("rejects a bundle path outside the approved root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-root-"));
+    const outside = await mkdtemp(join(tmpdir(), "rea-bundle-outside-"));
+    roots.push(root, outside);
+    const leftPath = join(root, "left.json");
+    const rightPath = join(outside, "right.json");
+    const encoded = serializeEvidenceBundle(createEvidenceBundle([]));
+    await Promise.all([
+      writeFile(leftPath, encoded),
+      writeFile(rightPath, encoded),
+    ]);
+    const connected = await connect(root);
+    try {
+      const result = await connected.client.callTool({
+        name: "compare_bundles",
+        arguments: {
+          left_bundle_path: leftPath,
+          right_bundle_path: rightPath,
+        },
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: "outside_approved_root" } },
+      });
+    } finally {
+      await connected.close();
+    }
+  });
+
+  it("rejects an oversized approved bundle", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-bundle-size-"));
+    roots.push(root);
+    const leftPath = join(root, "left.json");
+    const rightPath = join(root, "right.json");
+    await Promise.all([
+      writeFile(leftPath, " ".repeat(2_000)),
+      writeFile(rightPath, serializeEvidenceBundle(createEvidenceBundle([]))),
+    ]);
+    const connected = await connect(root, 1_024);
+    try {
+      const result = await connected.client.callTool({
+        name: "compare_bundles",
+        arguments: {
+          left_bundle_path: leftPath,
+          right_bundle_path: rightPath,
+        },
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { error: { code: "truncated" } },
+      });
+    } finally {
+      await connected.close();
+    }
+  });
+});
+
+const connect = async (root: string, maxBytes = 1024 * 1024) => {
+  const session = new BinarySession(() => ({
+    health: () => Promise.resolve(),
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(),
+  }));
+  const server = createServer(session, session, {
+    evidenceFilePolicy: {
+      roots: [root],
+      maxBytes,
+      maxDepth: 68,
+      maxStringLength: 1024 * 1024,
+      maxNodes: 100_000,
+    },
+  });
+  const client = new Client({ name: "bundle-comparison-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: async () => {
       await Promise.allSettled([
         client.close(),
         server.close(),
         session.close(),
       ]);
-    }
-  });
-});
+    },
+  };
+};

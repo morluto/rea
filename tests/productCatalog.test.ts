@@ -171,11 +171,19 @@ describe("canonical product catalog", () => {
     }
   });
 
-  it("reports tool, setup-client, and schema fact drift", async () => {
+  it("reports tool-family, setup-client, and schema fact drift", async () => {
     const catalog = await createProductCatalog(root);
+    const firstFamily = catalog.tools.families[0];
+    if (firstFamily === undefined) throw new TypeError("Missing tool family");
     const drifted = {
       ...catalog,
-      tools: { ...catalog.tools, total: catalog.tools.total + 1 },
+      tools: {
+        ...catalog.tools,
+        families: [
+          { ...firstFamily, count: firstFamily.count + 1 },
+          ...catalog.tools.families.slice(1),
+        ],
+      },
       setup_clients: [
         ...catalog.setup_clients,
         {
@@ -192,11 +200,9 @@ describe("canonical product catalog", () => {
       ),
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(
-      issues.some((issue) =>
-        issue.includes(`${String(catalog.tools.total + 1)}-tool`),
-      ),
-    ).toBe(true);
+    expect(issues.some((issue) => issue.includes("tool family counts"))).toBe(
+      true,
+    );
     expect(issues.some((issue) => issue.includes("Future Client"))).toBe(true);
     expect(issues.some((issue) => issue.includes("Process Capture v5"))).toBe(
       true,

@@ -16,6 +16,8 @@ import { silentLogger } from "../src/logger.js";
 
 const INSTALL = "/opt/ghidra_12.1.2_PUBLIC";
 const installationHost = (): GhidraInstallationHost => ({
+  platform: "linux",
+  architecture: "x64",
   readText: () => "application.version=12.1.2\n",
   executable: () => true,
   probeJava: () => ({

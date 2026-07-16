@@ -11,8 +11,10 @@ export { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 
 const toolCatalog = TOOL_CONTRACTS.map((contract) => ({
   name: contract.name,
+  title: contract.title,
   surface: contract.kind,
   description: contract.description,
+  effects: { ...contract.effects },
   annotations: contract.annotations,
   input_schema: z.toJSONSchema(contract.inputSchema, {
     unrepresentable: "any",
@@ -87,9 +89,10 @@ export const CATALOG_IDENTITY = {
       resource_templates: resourceTemplateCatalog,
     }),
   },
-  tools: toolCatalog.map(({ name, surface, annotations }) => ({
+  tools: toolCatalog.map(({ name, surface, effects, annotations }) => ({
     name,
     surface,
+    effects,
     annotations: {
       read_only: annotations.readOnlyHint ?? false,
       destructive: annotations.destructiveHint ?? false,

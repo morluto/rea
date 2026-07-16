@@ -415,6 +415,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       ...(this.config.ghidraJavaHome === undefined
         ? {}
         : { javaHome: this.config.ghidraJavaHome }),
+      ...(this.installationHost?.platform === undefined
+        ? {}
+        : { platform: this.installationHost.platform }),
+      ...(this.installationHost?.architecture === undefined
+        ? {}
+        : { architecture: this.installationHost.architecture }),
     };
     this.#installation ??=
       this.installationHost === undefined

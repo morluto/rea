@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+import { CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
+
 const version = process.argv[2];
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? ""))
   throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
@@ -22,7 +24,7 @@ transport.stderr?.on("data", (chunk) => {
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  if (tools.tools.length !== 80)
+  if (tools.tools.length !== CATALOG_IDENTITY.counts.mcp_tools)
     throw new Error(
       `Published MCP exposed ${String(tools.tools.length)} tools`,
     );
@@ -40,5 +42,5 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ package: "rea-agents", version, mcpTools: 80 })}\n`,
+  `${JSON.stringify({ package: "rea-agents", version, mcpTools: CATALOG_IDENTITY.counts.mcp_tools })}\n`,
 );

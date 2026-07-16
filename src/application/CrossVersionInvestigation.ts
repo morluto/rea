@@ -72,20 +72,26 @@ export const runCrossVersionInvestigation = async (
         cause: parsed.error,
       }),
     );
+  return runCrossVersionInvestigationValidated(parsed.data, policy, execution);
+};
+
+/** Run input already parsed by a trusted adapter boundary. */
+export const runCrossVersionInvestigationValidated = async (
+  input: CrossVersionInvestigationInput,
+  policy: EvidenceFilePolicy,
+  execution: CrossVersionInvestigationExecution,
+): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {
   const initial = await readInvestigationWorkspace(
-    parsed.data.workspace_path,
+    input.workspace_path,
     policy,
   );
   if (!initial.ok) return initial;
-  const preflight = validateWorkspaceRequest(initial.value, parsed.data);
+  const preflight = validateWorkspaceRequest(initial.value, input);
   if (!preflight.ok) return preflight;
   if (isCancelled(execution.signal))
     return err(new AnalysisCancelledError("find_changed_behavior"));
-  if (parsed.data.replay_run_id !== undefined) {
-    const replay = selectCompletedInvestigationReplay(
-      initial.value,
-      parsed.data,
-    );
+  if (input.replay_run_id !== undefined) {
+    const replay = selectCompletedInvestigationReplay(initial.value, input);
     if (!replay.ok) return replay;
     return completeOutcome(
       replay.value.workspace,
@@ -106,7 +112,7 @@ export const runCrossVersionInvestigation = async (
   });
 
   const snapshots = await scanVersions(
-    parsed.data,
+    input,
     execution.inputRoots,
     execution.signal,
     execution.integrityContinueEnabled,
@@ -119,7 +125,7 @@ export const runCrossVersionInvestigation = async (
     message: "Version inputs scanned",
   });
   return continueInvestigation({
-    input: parsed.data,
+    input,
     initial: initial.value,
     snapshots: snapshots.value,
     policy,

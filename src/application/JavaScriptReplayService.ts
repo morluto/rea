@@ -17,6 +17,7 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import { createEvidence } from "../domain/evidence.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
@@ -48,7 +49,22 @@ export const runControlledReplay = async (
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const parsed = controlledReplayInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+    return err(
+      new AnalysisInputError(
+        OPERATION,
+        { cause: parsed.error },
+        projectInputIssues(parsed.error.issues, rawInput),
+      ),
+    );
+  return runControlledReplayValidated(dependencies, parsed.data, options);
+};
+
+/** Plan or execute replay input already parsed by a trusted adapter. */
+export const runControlledReplayValidated = async (
+  dependencies: JavaScriptReplayDependencies,
+  input: z.output<typeof controlledReplayInputSchema>,
+  options: ExecutionOptions = {},
+): Promise<Result<JsonValue, AnalysisError>> => {
   if (!dependencies.policy.enabled)
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -67,9 +83,9 @@ export const runControlledReplay = async (
     );
   if (isAborted(options.signal))
     return err(new AnalysisCancelledError(OPERATION));
-  const request = permissionRequest(parsed.data, dependencies.policy);
+  const request = permissionRequest(input, dependencies.policy);
   const authorized =
-    parsed.data.mode === "plan"
+    input.mode === "plan"
       ? await dependencies.authority.explain(request, "read")
       : await dependencies.authority.authorize(request, "read");
   if (!authorized.ok)
@@ -83,7 +99,7 @@ export const runControlledReplay = async (
   let prepared;
   try {
     prepared = await prepareReplayPlan(
-      parsed.data,
+      input,
       dependencies.policy,
       dependencies.host,
     );
@@ -98,7 +114,7 @@ export const runControlledReplay = async (
   }
   if (isAborted(options.signal))
     return err(new AnalysisCancelledError(OPERATION));
-  if (parsed.data.mode === "plan")
+  if (input.mode === "plan")
     return ok(
       asJson({
         phase: "plan",
@@ -107,21 +123,21 @@ export const runControlledReplay = async (
         evidence: null,
       }),
     );
-  if (parsed.data.plan_digest !== prepared.publicPlan.plan_digest)
+  if (input.plan_digest !== prepared.publicPlan.plan_digest)
     return err(
       new ReplayPlanStaleError(
-        parsed.data.plan_digest ?? "",
+        input.plan_digest ?? "",
         prepared.publicPlan.plan_digest,
       ),
     );
   let canonicalExportPath: string | undefined;
-  if (parsed.data.reproducer_export !== undefined) {
-    if (parsed.data.reproducer_export.approved !== true)
+  if (input.reproducer_export !== undefined) {
+    if (input.reproducer_export.approved !== true)
       return err(new AnalysisInputError(`${OPERATION}:reproducer_export`));
     const exportAuthorized = await dependencies.authority.authorize(
       {
         capability: "evidence_write",
-        roots: [parsed.data.reproducer_export.path],
+        roots: [input.reproducer_export.path],
         executables: [],
         environment_names: [],
         network: "none",
@@ -139,7 +155,7 @@ export const runControlledReplay = async (
             }),
       );
     canonicalExportPath = exportAuthorized.value.request.roots[0];
-    if (canonicalExportPath !== parsed.data.reproducer_export.path)
+    if (canonicalExportPath !== input.reproducer_export.path)
       return err(
         new AnalysisInputError(`${OPERATION}:reproducer_export:path`, {
           cause: new TypeError(
@@ -176,7 +192,7 @@ export const runControlledReplay = async (
     if (executed.termination === "cancelled")
       return err(new AnalysisCancelledError(OPERATION));
     if (
-      parsed.data.reproducer_export !== undefined &&
+      input.reproducer_export !== undefined &&
       canonicalExportPath !== undefined &&
       executed.cleanup.state === "complete"
     ) {
@@ -184,7 +200,7 @@ export const runControlledReplay = async (
         schema_version: 1,
         plan: prepared.publicPlan,
         result: executed,
-        sources: parsed.data.reproducer_export.include_sources
+        sources: input.reproducer_export.include_sources
           ? {
               left: prepared.leftSources,
               ...(prepared.rightSources === undefined

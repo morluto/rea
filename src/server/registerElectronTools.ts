@@ -2,8 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
-import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
 import {
   inspectElectronPage,
   listElectronTargets,
@@ -20,6 +20,7 @@ import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
 interface ElectronToolRegistration {
@@ -40,7 +41,13 @@ export const registerElectronTools = (
     listContract.name,
     toolRegistrationOptions(listContract),
     async (input, context) => {
-      const parsed = listElectronTargetsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        listElectronTargetsInputSchema,
+        input,
+        listContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, listContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         listContract.name,
@@ -60,7 +67,14 @@ export const registerElectronTools = (
     inspectContract.name,
     toolRegistrationOptions(inspectContract),
     async (input, context) => {
-      const parsed = inspectElectronPageInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        inspectElectronPageInputSchema,
+        input,
+        inspectContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, inspectContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         inspectContract.name,
@@ -83,15 +97,26 @@ export const registerElectronTools = (
     analyzeContract.name,
     toolRegistrationOptions(analyzeContract),
     async (input, context) => {
-      const parsed = analyzeJavaScriptApplicationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        analyzeJavaScriptApplicationInputSchema,
+        input,
+        analyzeContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, analyzeContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         analyzeContract.name,
         () =>
-          analyzeJavaScriptApplication(options.permissionAuthority, parsed, {
-            signal: context.mcpReq.signal,
-            progress: mcpProgressReporter(context),
-          }),
+          analyzeJavaScriptApplicationValidated(
+            options.permissionAuthority,
+            parsed,
+            {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            },
+          ),
       );
       if (!result.ok) return toCallToolResult(result, analyzeContract);
       return evidenceResult(options, analyzeContract, result.value);
@@ -101,11 +126,19 @@ export const registerElectronTools = (
     reconcileContract.name,
     toolRegistrationOptions(reconcileContract),
     async (input) => {
-      const parsed = reconcileJavaScriptRuntimeInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        reconcileJavaScriptRuntimeInputSchema,
+        input,
+        reconcileContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, reconcileContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         reconcileContract.name,
-        () => Promise.resolve(reconcileJavaScriptRuntimeEvidence(parsed)),
+        () =>
+          Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, reconcileContract);
       for (const source of [

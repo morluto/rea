@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import {
   compareManagedMembers,
-  compareManagedMembersInputSchema,
   managedMemberComparisonResultSchema,
   parseManagedMemberEvidence,
   type CompareManagedMembersInput,
@@ -22,22 +21,20 @@ import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js"
 import { MANAGED_STATIC_PROVIDER } from "./InvestigationProviders.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
 
-/** Authenticate two managed member Evidence records and compare token remaps. */
-export const compareManagedMembersEvidence = (
-  rawInput: unknown,
+/** Compare managed members from input parsed by a trusted adapter. */
+export const compareManagedMembersEvidenceValidated = (
+  input: CompareManagedMembersInput,
 ): Result<Evidence, AnalysisError> => {
   const operation = "compare_managed_members";
-  const parsed = compareManagedMembersInputSchema.safeParse(rawInput);
-  if (!parsed.success) return err(new AnalysisInputError(operation));
   try {
-    const left = parseManagedMemberEvidence(parsed.data.left);
-    const right = parseManagedMemberEvidence(parsed.data.right);
+    const left = parseManagedMemberEvidence(input.left);
+    const right = parseManagedMemberEvidence(input.right);
     const result = compareManagedMembers(
       { evidenceId: left.evidenceId, result: left.result },
       { evidenceId: right.evidenceId, result: right.result },
-      parsed.data.limits,
+      input.limits,
     );
-    return ok(createManagedMemberComparisonEvidence(parsed.data, result));
+    return ok(createManagedMemberComparisonEvidence(input, result));
   } catch (cause: unknown) {
     return workflowFailure(operation, cause);
   }

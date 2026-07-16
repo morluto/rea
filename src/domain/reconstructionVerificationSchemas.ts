@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { evidenceBundleSchema } from "./evidenceBundle.js";
-
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const unknownIdSchema = z.string().regex(/^unk_[a-f0-9]{64}$/u);
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -78,9 +76,8 @@ export const reconstructionSpecificationSchema = z
   });
 
 /** Bounded reconstruction-verification input. */
-export const reconstructionVerificationInputSchema = z.object({
+export const reconstructionVerificationInputSchema = z.strictObject({
   specification: reconstructionSpecificationSchema,
-  evidence_bundle: evidenceBundleSchema,
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(100).default(100),
   unknown_registry_approved: z.literal(true).optional(),

@@ -10,11 +10,12 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { resolveSessionEvidence } from "./sessionEvidence.js";
+import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
@@ -26,18 +27,36 @@ export const registerArtifactComparisonTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsed = artifactComparisonInputSchema.parse(input);
-      const left = resolveSessionEvidence(session, parsed.left);
+      const parsedInput = safeParseToolInput(
+        artifactComparisonInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
+      const expected = {
+        operation: "inventory_artifact",
+        predicate: "rea.analysis/v2",
+      };
+      const left = resolveSessionEvidenceIds(
+        session,
+        parsed.left_evidence_ids,
+        expected,
+      );
       if (!left.ok) return toCallToolResult(left, contract);
-      const right = resolveSessionEvidence(session, parsed.right);
+      const right = resolveSessionEvidenceIds(
+        session,
+        parsed.right_evidence_ids,
+        expected,
+      );
       if (!right.ok) return toCallToolResult(right, contract);
       const computed = await runDerivedOperation(context, contract.name, () =>
         compareArtifacts(left.value, right.value, parsed.offset, parsed.limit),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const comparison = computed.value;
-      const leftEvidenceIds = evidenceIds(parsed.left);
-      const rightEvidenceIds = evidenceIds(parsed.right);
+      const leftEvidenceIds = parsed.left_evidence_ids;
+      const rightEvidenceIds = parsed.right_evidence_ids;
       const evidence = createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
         predicateType: "rea.artifact-comparison/v1",
         operation: contract.name,
@@ -67,12 +86,8 @@ export const registerArtifactComparisonTool = (
 
 const artifactUnknownInput = (
   input: {
-    readonly left:
-      | { readonly evidence_id: string }
-      | readonly { readonly evidence_id: string }[];
-    readonly right:
-      | { readonly evidence_id: string }
-      | readonly { readonly evidence_id: string }[];
+    readonly left_evidence_ids: readonly string[];
+    readonly right_evidence_ids: readonly string[];
     readonly unknown_registry_approved?: true | undefined;
   },
   status: ReturnType<typeof compareArtifacts>["status"],
@@ -85,8 +100,8 @@ const artifactUnknownInput = (
     severity:
       status === "unknown" || status === "truncated" ? "high" : "medium",
     domain: "artifact-comparison",
-    supporting_evidence_ids: evidenceIds(input.left),
-    contradicting_evidence_ids: evidenceIds(input.right),
+    supporting_evidence_ids: [...input.left_evidence_ids],
+    contradicting_evidence_ids: [...input.right_evidence_ids],
     required_authority: "shipped-artifact",
     required_confidence: "observed",
     required_environment: null,
@@ -99,10 +114,3 @@ const artifactUnknownInput = (
     relationships: [],
   };
 };
-
-const evidenceIds = (
-  input:
-    | { readonly evidence_id: string }
-    | readonly { readonly evidence_id: string }[],
-): string[] =>
-  (Array.isArray(input) ? input : [input]).map(({ evidence_id: id }) => id);

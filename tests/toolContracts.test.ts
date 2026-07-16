@@ -15,7 +15,7 @@ import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
 
 describe("tool contract inventory", () => {
-  it("publishes 72 analysis contracts and eighteen session tools", () => {
+  it("publishes the canonical analysis and session tool inventory", () => {
     expect(OFFICIAL_TOOL_CONTRACTS).toHaveLength(33);
     expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(10);
     expect(NATIVE_TOOL_CONTRACTS).toHaveLength(5);
@@ -72,8 +72,9 @@ describe("tool contract inventory", () => {
       "update_unknown",
       "verify_unknown_resolution",
     ]);
-    expect(TOOL_CONTRACTS).toHaveLength(90);
-    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(90);
+    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(
+      TOOL_CONTRACTS.length,
+    );
   });
 
   it("retains documented enhanced-tool limits at the input boundary", () => {

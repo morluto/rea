@@ -25,9 +25,16 @@ export const importManagedReconstructionEvidence = (
   const parsed = managedReconstructionImportInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+  return importManagedReconstructionEvidenceValidated(parsed.data);
+};
+
+/** Import reconstruction from input parsed by a trusted adapter. */
+export const importManagedReconstructionEvidenceValidated = (
+  input: ManagedReconstructionImportInput,
+): Result<Evidence, AnalysisError> => {
   try {
-    const result = importManagedReconstruction(parsed.data);
-    return ok(createManagedReconstructionEvidence(parsed.data, result));
+    const result = importManagedReconstruction(input);
+    return ok(createManagedReconstructionEvidence(input, result));
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError

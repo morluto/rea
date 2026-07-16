@@ -42,6 +42,17 @@ export const planManagedRuntimeCorrelationEvidence = async (
   const parsed = managedRuntimeCorrelationInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+  return planManagedRuntimeCorrelationEvidenceValidated(
+    dependencies,
+    parsed.data,
+  );
+};
+
+/** Plan runtime correlation from input parsed by a trusted adapter. */
+export const planManagedRuntimeCorrelationEvidenceValidated = async (
+  dependencies: ManagedRuntimeCorrelationDependencies,
+  input: ManagedRuntimeCorrelationInput,
+): Promise<Result<Evidence, AnalysisError>> => {
   if (!dependencies.policy.enabled)
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -61,7 +72,7 @@ export const planManagedRuntimeCorrelationEvidence = async (
   let staticEvidence: Evidence;
   let artifactPath: string;
   try {
-    staticEvidence = parseEvidence(parsed.data.static_members);
+    staticEvidence = parseEvidence(input.static_members);
     artifactPath = artifactPathFor(staticEvidence);
   } catch (cause: unknown) {
     return err(new AnalysisInputError(OPERATION, { cause }));
@@ -74,7 +85,7 @@ export const planManagedRuntimeCorrelationEvidence = async (
       environment_names: [],
       network: "none",
       mount: false,
-      operation_identity: operationIdentity(parsed.data, staticEvidence),
+      operation_identity: operationIdentity(input, staticEvidence),
     },
     "read",
     { restartRequired: true },
@@ -89,7 +100,7 @@ export const planManagedRuntimeCorrelationEvidence = async (
     );
   try {
     const result = planManagedRuntimeCorrelation(
-      parsed.data,
+      input,
       dependencies.policy.executablePath,
       authorized.value.grant_id,
     );
@@ -106,10 +117,10 @@ export const planManagedRuntimeCorrelationEvidence = async (
           operation: OPERATION,
           parameters: {
             static_members_evidence_id: staticEvidence.evidence_id,
-            method: jsonValueSchema.parse(parsed.data.method),
-            requested_effect: parsed.data.requested_effect,
-            host: jsonValueSchema.parse(parsed.data.host),
-            bounds: jsonValueSchema.parse(parsed.data.bounds),
+            method: jsonValueSchema.parse(input.method),
+            requested_effect: input.requested_effect,
+            host: jsonValueSchema.parse(input.host),
+            bounds: jsonValueSchema.parse(input.bounds),
           },
           result: jsonValueSchema.parse(result),
           rawResult: null,

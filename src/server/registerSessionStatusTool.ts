@@ -9,6 +9,8 @@ import { toCallToolResult } from "./toolResult.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import { buildCapabilityInventory } from "../application/CapabilityInventory.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 
 /** Register the read-only provider and target status operation. */
 export const registerSessionStatusTool = (
@@ -27,14 +29,15 @@ export const registerSessionStatusTool = (
 ): void => {
   server.registerTool(
     contract.name,
-    {
-      description: contract.description,
-      inputSchema: contract.inputSchema,
-      outputSchema: contract.outputSchema,
-      annotations: contract.annotations,
-    },
+    toolRegistrationOptions(contract),
     (input) => {
-      const parsed = binarySessionInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        binarySessionInputSchema,
+        input,
+        contract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+      const parsed = parsedInput.value;
       const client = server.server.getClientVersion();
       const clientCapabilities = server.server.getClientCapabilities();
       const status = session.status();

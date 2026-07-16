@@ -6,7 +6,6 @@ import { EnhancedTools } from "../src/application/EnhancedTools.js";
 import { AnalysisProviderRegistry } from "../src/application/AnalysisProviderRegistry.js";
 import { SessionProviderRouter } from "../src/application/SessionProviderRouter.js";
 import { parseConfig } from "../src/config.js";
-import { parseEvidence } from "../src/domain/evidence.js";
 import type { JsonValue } from "../src/domain/jsonValue.js";
 import { ok } from "../src/domain/result.js";
 import type { GhidraInstallationHost } from "../src/ghidra/GhidraInstallation.js";
@@ -67,7 +66,8 @@ describe("Ghidra MCP and shared CLI composition", () => {
       });
       expect(opened.isError).not.toBe(true);
 
-      const listed = parseEvidence(
+      const listed = sessionEvidence(
+        session,
         (
           await mcp.callTool({
             name: "list_procedures",
@@ -104,7 +104,8 @@ describe("Ghidra MCP and shared CLI composition", () => {
         },
       });
 
-      const mcpOverview = parseEvidence(
+      const mcpOverview = sessionEvidence(
+        session,
         (
           await mcp.callTool({
             name: "binary_overview",
@@ -131,7 +132,8 @@ describe("Ghidra MCP and shared CLI composition", () => {
         },
       });
 
-      const pseudocode = parseEvidence(
+      const pseudocode = sessionEvidence(
+        session,
         (
           await mcp.callTool({
             name: "procedure_pseudo_code",
@@ -149,7 +151,8 @@ describe("Ghidra MCP and shared CLI composition", () => {
         ]),
       });
 
-      const analyzed = parseEvidence(
+      const analyzed = sessionEvidence(
+        session,
         (
           await mcp.callTool({
             name: "analyze_function",
@@ -206,7 +209,7 @@ describe("Ghidra MCP and shared CLI composition", () => {
       });
       expect(batch.isError).not.toBe(true);
       expect(batch.structuredContent).toMatchObject({
-        normalized_result: {
+        result: {
           succeeded: 1,
           failed: 0,
           items: [{ status: "ok" }],
@@ -269,7 +272,24 @@ describe("Ghidra MCP and shared CLI composition", () => {
   });
 });
 
+const sessionEvidence = (session: BinarySession, value: unknown) => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("evidence_id" in value) ||
+    typeof value.evidence_id !== "string"
+  )
+    throw new TypeError(
+      `Missing compact Evidence ID: ${JSON.stringify(value)}`,
+    );
+  const evidence = session.evidenceById(value.evidence_id);
+  if (evidence === undefined) throw new TypeError("Missing session Evidence");
+  return evidence;
+};
+
 const installationHost = (): GhidraInstallationHost => ({
+  platform: "linux",
+  architecture: "x64",
   readText: () => "application.version=12.1.2\n",
   executable: () => true,
   probeJava: () => ({

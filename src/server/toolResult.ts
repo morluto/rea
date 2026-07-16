@@ -29,14 +29,15 @@ export const toCallToolResult = (
 
 const errorResult = (error: AnalysisError): CallToolResult => {
   const projected = projectAnalysisError(error);
+  const structuredContent = { error: projected };
   return {
     content: [
       {
         type: "text",
-        text: projected.message,
+        text: JSON.stringify(structuredContent),
       },
     ],
-    structuredContent: { error: projected },
+    structuredContent,
     isError: true,
   };
 };
@@ -46,30 +47,33 @@ const successResult = (
   contract: ToolContract,
   options: ToolResultOptions,
 ): CallToolResult => {
-  const candidate = contract.kind === "session" ? { result: value } : value;
+  const candidate =
+    compactEvidence(value) ??
+    (contract.kind === "session" ? { result: value } : value);
   const parsed = contract.outputSchema.safeParse(candidate);
   if (!parsed.success) {
+    const structuredContent = {
+      error: projectAnalysisError(
+        new AnalysisOutputError(
+          contract.name,
+          "output does not match the tool contract",
+        ),
+      ),
+    };
     return {
       content: [
         {
           type: "text",
-          text: "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+          text: JSON.stringify(structuredContent),
         },
       ],
-      structuredContent: {
-        error: projectAnalysisError(
-          new AnalysisOutputError(
-            contract.name,
-            "output does not match the tool contract",
-          ),
-        ),
-      },
+      structuredContent,
       isError: true,
     };
   }
   return {
     content: [
-      { type: "text", text: formatValue(value) },
+      { type: "text", text: JSON.stringify(parsed.data) },
       ...evidenceResourceLinks(
         value,
         contract.kind === "session" ||
@@ -77,6 +81,23 @@ const successResult = (
       ),
     ],
     structuredContent: candidate,
+  };
+};
+
+const compactEvidence = (value: JsonValue): JsonValue | undefined => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof value.evidence_id !== "string" ||
+    !/^ev_[a-f0-9]{64}$/u.test(value.evidence_id) ||
+    !("normalized_result" in value)
+  )
+    return undefined;
+  return {
+    result: value.normalized_result,
+    evidence_id: value.evidence_id,
+    evidence_uri: `rea://evidence/${value.evidence_id}`,
   };
 };
 
@@ -102,11 +123,4 @@ const evidenceResourceLinks = (
       mimeType: "application/json",
     },
   ];
-};
-
-const formatValue = (value: JsonValue): string => {
-  if (value === null) return "OK";
-  if (typeof value === "string") return value;
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
 };

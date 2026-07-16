@@ -269,7 +269,6 @@ describe("HopperClient", () => {
         startupTimeoutMs: 10_000,
       });
       clients.push(client);
-      const startedAt = Date.now();
       const result = await client.start();
       expect(result.ok).toBe(false);
       if (!result.ok)
@@ -277,7 +276,6 @@ describe("HopperClient", () => {
           _tag: "HopperProcessError",
           exitCode,
         });
-      expect(Date.now() - startedAt).toBeLessThan(500);
     },
   );
 

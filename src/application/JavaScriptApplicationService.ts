@@ -30,6 +30,15 @@ export const analyzeJavaScriptApplication = async (
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
   if (!parsed.success) return err(new AnalysisInputError(OPERATION));
+  return analyzeJavaScriptApplicationValidated(authority, parsed.data, options);
+};
+
+/** Analyze input already parsed by a trusted adapter boundary. */
+export const analyzeJavaScriptApplicationValidated = async (
+  authority: PermissionAuthority | undefined,
+  input: z.output<typeof analyzeJavaScriptApplicationInputSchema>,
+  options: ExecutionOptions = {},
+): Promise<Result<Evidence, AnalysisError>> => {
   if (authority === undefined)
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -41,12 +50,12 @@ export const analyzeJavaScriptApplication = async (
   const authorized = await authority.authorize(
     {
       capability: "investigation_input",
-      roots: [parsed.data.input_path],
+      roots: [input.input_path],
       executables: [],
       environment_names: [],
       network: "none",
       mount: false,
-      operation_identity: `${OPERATION}:${parsed.data.input_path}`,
+      operation_identity: `${OPERATION}:${input.input_path}`,
     },
     "read",
   );
@@ -55,7 +64,7 @@ export const analyzeJavaScriptApplication = async (
       authorized.error instanceof PermissionRequiredError
         ? authorized.error
         : new ArtifactOperationError(OPERATION, "path", {
-            logicalPath: parsed.data.input_path,
+            logicalPath: input.input_path,
             declaredSha256: null,
             calculatedSha256: null,
             unpacked: false,
@@ -70,10 +79,10 @@ export const analyzeJavaScriptApplication = async (
   try {
     const reconstructed = await reconstructJavaScriptArtifact(
       {
-        input_path: parsed.data.input_path,
-        format: parsed.data.format,
-        source_map_read_approved: parsed.data.source_map_read_approved,
-        limits: parsed.data.limits,
+        input_path: input.input_path,
+        format: input.format,
+        source_map_read_approved: input.source_map_read_approved,
+        limits: input.limits,
       },
       options.signal,
     );
@@ -91,7 +100,7 @@ export const analyzeJavaScriptApplication = async (
       message: "Application graph and Electron boundaries reconstructed",
       terminal: true,
     });
-    return ok(createJavaScriptApplicationEvidence(parsed.data, result));
+    return ok(createJavaScriptApplicationEvidence(input, result));
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure)
       return err(

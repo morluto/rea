@@ -1,7 +1,6 @@
 import { compareFunctions } from "../domain/functionComparison.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import {
   compareProcessCaptures,
   processCaptureSchema,
@@ -130,10 +129,5 @@ export const INVESTIGATION_EXAMPLES = {
         },
       ],
     },
-    evidence_bundle: createEvidenceBundle([
-      PROCESS_CAPTURE_REFERENCE,
-      PROCESS_CAPTURE_RECONSTRUCTION,
-      PROCESS_COMPARISON_EVIDENCE,
-    ]),
   },
 };

@@ -50,9 +50,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "prebuild": "node scripts/generate-package-metadata.mjs",
+    "deps:check": "node scripts/check-dependency-install.mjs",
+    "prebuild": "npm run deps:check && node scripts/generate-package-metadata.mjs",
     "build": "tsc -p tsconfig.build.json",
     "postbuild": "node scripts/record-build-cache.mjs",
+    "precheck": "npm run deps:check",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run docs:check && npm test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -85,9 +87,11 @@
     "verify:package": "npm run build && node scripts/verify-package.mjs",
     "verify:published": "node scripts/verify-published-package.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
-    "docs:generate": "npm run build && node scripts/generate-product-catalog.mjs && typedoc && node scripts/generate-error-schema.mjs",
-    "docs:check": "node scripts/generate-package-metadata.mjs --check && npm run build && node scripts/generate-product-catalog.mjs --check && node scripts/check-doc-facts.mjs && node scripts/check-typedoc.mjs && node scripts/generate-error-schema.mjs --check",
+    "docs:generate": "npm run build && node scripts/generate-skill-metadata.mjs && node scripts/generate-product-catalog.mjs && typedoc && node scripts/generate-error-schema.mjs",
+    "docs:check": "node scripts/generate-package-metadata.mjs --check && npm run build && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/check-doc-facts.mjs && node scripts/check-typedoc.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "npm run build && node scripts/generate-error-schema.mjs",
+    "prepack": "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
+    "prepublishOnly": "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
     "prepare": "npm run build && husky",
     "rebuild:native": "node scripts/rebuild-native.mjs"
   },

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { evidenceEnvelopeSchema } from "../domain/evidence.js";
 import {
   processCaptureComparisonSchema,
   processCaptureSchema,
@@ -47,10 +46,14 @@ import {
   type ProviderRejectionCode,
 } from "./providerSelection.js";
 
-const resultOf = (schema: z.ZodType) =>
-  evidenceEnvelopeSchema
-    .omit({ normalized_result: true })
-    .extend({ normalized_result: schema });
+/** Compact MCP result with an immutable link to complete session Evidence. */
+export const evidenceResultOf = (schema: z.ZodType) =>
+  z.strictObject({
+    result: schema,
+    evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+    evidence_uri: z.string().regex(/^rea:\/\/evidence\/ev_[a-f0-9]{64}$/u),
+  });
+const resultOf = evidenceResultOf;
 const lifecycleResultOf = (schema: z.ZodType) => z.object({ result: schema });
 
 /** Resolve a required named output schema or reject contract drift. */
@@ -195,6 +198,16 @@ const sessionProvider = z.object({
         "policy_disabled",
       ]),
       remediation: z.string().nullable(),
+      effects: z.strictObject({
+        mutatesTarget: z.boolean(),
+        mutatesSession: z.boolean(),
+        writesFilesystem: z.boolean(),
+        launchesProcess: z.boolean(),
+        accessesNetwork: z.boolean(),
+        changesUiState: z.boolean(),
+        mayDiscardData: z.boolean(),
+        idempotent: z.boolean(),
+      }),
       annotations: z.object({
         read_only: z.boolean(),
         destructive: z.boolean(),
@@ -614,51 +627,15 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       total: z.number().int().min(0),
     }),
   ),
-  capture_process_scenario: lifecycleResultOf(
-    evidenceEnvelopeSchema
-      .omit({ normalized_result: true })
-      .extend({ normalized_result: processCaptureSchema }),
-  ),
-  compare_process_captures: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: processCaptureComparisonSchema,
-    }),
-  ),
-  compare_artifacts: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: artifactComparisonResultSchema,
-    }),
-  ),
-  compare_functions: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: functionComparisonResultSchema,
-    }),
-  ),
-  compare_bundles: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: bundleComparisonResultSchema,
-    }),
-  ),
-  find_changed_behavior: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: changedBehaviorResultSchema,
-    }),
-  ),
-  build_call_path: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: callPathResultSchema,
-    }),
-  ),
-  correlate_static_and_runtime: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: staticRuntimeCorrelationResultSchema,
-    }),
-  ),
-  verify_reconstruction: lifecycleResultOf(
-    evidenceEnvelopeSchema.omit({ normalized_result: true }).extend({
-      normalized_result: reconstructionVerificationResultSchema,
-    }),
-  ),
+  capture_process_scenario: resultOf(processCaptureSchema),
+  compare_process_captures: resultOf(processCaptureComparisonSchema),
+  compare_artifacts: resultOf(artifactComparisonResultSchema),
+  compare_functions: resultOf(functionComparisonResultSchema),
+  compare_bundles: resultOf(bundleComparisonResultSchema),
+  find_changed_behavior: resultOf(changedBehaviorResultSchema),
+  build_call_path: resultOf(callPathResultSchema),
+  correlate_static_and_runtime: resultOf(staticRuntimeCorrelationResultSchema),
+  verify_reconstruction: resultOf(reconstructionVerificationResultSchema),
   list_unknowns: lifecycleResultOf(z.array(residualUnknownSchema)),
   record_unknown: lifecycleResultOf(residualUnknownSchema),
   update_unknown: lifecycleResultOf(residualUnknownSchema),

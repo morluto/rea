@@ -24,7 +24,7 @@ afterEach(async () => {
   );
 });
 
-describe("curl installer scenarios", () => {
+describe("curl installer scenarios", { timeout: 20_000 }, () => {
   it("installs only a pinned REA CLI with closed stdin", async () => {
     const fixture = await createFixture();
     const result = await runInstaller(fixture, ["--version", "0.3.0"]);

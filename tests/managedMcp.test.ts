@@ -99,20 +99,58 @@ describe("managed artifact MCP tools", () => {
       expect(tools.tools.map(({ name }) => name)).toContain(
         "plan_managed_runtime_correlation",
       );
+      for (const evidence of [
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries,
+        ...MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations,
+      ])
+        expect(session.recordEvidence(evidence)).toMatchObject({ ok: true });
       const verifiedNative = structured(
         await client.callTool({
           name: "verify_managed_native_boundaries",
-          arguments: MANAGED_NATIVE_VERIFICATION_EXAMPLE,
+          arguments: {
+            managed_boundaries_evidence_id:
+              MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries
+                .evidence_id,
+            native_observation_evidence_ids:
+              MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations.map(
+                ({ evidence_id: evidenceId }) => evidenceId,
+              ),
+            limits: MANAGED_NATIVE_VERIFICATION_EXAMPLE.limits,
+          },
         }),
       );
 
       expect(verifiedNative).toMatchObject({
-        operation: "verify_managed_native_boundaries",
-        provider: { id: "rea-dotnet-workflows" },
-        confidence: "inferred",
-        normalized_result: {
+        evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
+        evidence_uri: expect.stringMatching(/^rea:\/\/evidence\/ev_/u),
+        result: {
           summary: { verified: 1 },
           algorithm: { token_to_address_mapping: "not-inferred" },
+        },
+      });
+      const nativeEvidence =
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
+      if (nativeEvidence === undefined)
+        throw new Error("missing native Evidence");
+      const wrongManagedReference = await client.callTool({
+        name: "verify_managed_native_boundaries",
+        arguments: {
+          managed_boundaries_evidence_id: nativeEvidence.evidence_id,
+          native_observation_evidence_ids: [
+            MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries.evidence_id,
+          ],
+        },
+      });
+      expect(wrongManagedReference).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "evidence_integrity_mismatch",
+            details: {
+              reason: "wrong_operation",
+              actual: "inspect_macho",
+            },
+          },
         },
       });
 
@@ -128,10 +166,7 @@ describe("managed artifact MCP tools", () => {
       );
 
       expect(inspected).toMatchObject({
-        operation: "inspect_managed_artifact",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-        normalized_result: {
+        result: {
           classification: {
             status: "managed",
             runtime_family: "modern-dotnet",
@@ -140,12 +175,13 @@ describe("managed artifact MCP tools", () => {
         },
       });
 
-      const members = structured(
+      const membersResult = structured(
         await client.callTool({
           name: "inspect_managed_members",
           arguments: { method_limit: 1 },
         }),
       );
+      const members = sessionEvidence(session, membersResult);
 
       expect(members).toMatchObject({
         operation: "inspect_managed_members",
@@ -167,10 +203,7 @@ describe("managed artifact MCP tools", () => {
       );
 
       expect(boundaries).toMatchObject({
-        operation: "inspect_managed_native_boundaries",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-        normalized_result: {
+        result: {
           identity_scope: { token_identity: "build-local" },
           pinvoke_imports: { total: 0, limit: 1 },
           native_implementations: { total: 0 },
@@ -181,18 +214,19 @@ describe("managed artifact MCP tools", () => {
         name: "open_binary",
         arguments: { path: rightPath },
       });
-      const rightMembers = structured(
+      const rightMembersResult = structured(
         await client.callTool({
           name: "inspect_managed_members",
           arguments: { method_limit: 1 },
         }),
       );
-      const compared = structured(
+      const rightMembers = sessionEvidence(session, rightMembersResult);
+      const comparedResult = structured(
         await client.callTool({
           name: "compare_managed_members",
           arguments: {
-            left: members,
-            right: rightMembers,
+            left_evidence_id: members.evidence_id,
+            right_evidence_id: rightMembers.evidence_id,
             limits: {
               max_method_matches: 100,
               max_field_matches: 100,
@@ -201,6 +235,7 @@ describe("managed artifact MCP tools", () => {
           },
         }),
       );
+      const compared = sessionEvidence(session, comparedResult);
 
       expect(compared).toMatchObject({
         operation: "compare_managed_members",
@@ -228,11 +263,11 @@ describe("managed artifact MCP tools", () => {
         .parse(method).items[0];
       expect(methodItem).toBeDefined();
       if (methodItem === undefined) return;
-      const imported = structured(
+      const importedResult = structured(
         await client.callTool({
           name: "import_managed_reconstruction",
           arguments: {
-            static_members: members,
+            static_members_evidence_id: members.evidence_id,
             decompiler: {
               name: "ilspycmd",
               version: "9.1.0.7988",
@@ -256,6 +291,7 @@ describe("managed artifact MCP tools", () => {
           },
         }),
       );
+      const imported = sessionEvidence(session, importedResult);
 
       expect(imported).toMatchObject({
         operation: "import_managed_reconstruction",
@@ -272,11 +308,11 @@ describe("managed artifact MCP tools", () => {
           ],
         },
       });
-      const planned = structured(
+      const plannedResult = structured(
         await client.callTool({
           name: "plan_managed_runtime_correlation",
           arguments: {
-            static_members: members,
+            static_members_evidence_id: members.evidence_id,
             method: {
               token: methodItem.token,
               signature_sha256: methodItem.signature.raw_sha256,
@@ -298,6 +334,7 @@ describe("managed artifact MCP tools", () => {
           },
         }),
       );
+      const planned = sessionEvidence(session, plannedResult);
 
       expect(planned).toMatchObject({
         operation: "plan_managed_runtime_correlation",
@@ -324,4 +361,14 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
   )
     throw new Error("missing structured result");
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
+};
+
+const sessionEvidence = (
+  session: BinarySession,
+  result: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => {
+  const evidenceId = z.string().parse(result.evidence_id);
+  const evidence = session.evidenceById(evidenceId);
+  if (evidence === undefined) throw new Error("missing session Evidence");
+  return z.record(z.string(), z.unknown()).parse(evidence);
 };

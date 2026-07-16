@@ -4,6 +4,7 @@ description: Reverse engineer native, Electron/JavaScript, and web applications 
 metadata:
   version: "20"
   tool_count: 90
+  catalog_digest: "d72ee2d2095854cc885036dacf27ddfb9d2f1c598eced3b0dc7aa7a013d45e39"
 ---
 
 # REA

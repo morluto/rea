@@ -7,6 +7,8 @@ import {
   type GhidraInstallationInspection,
 } from "../src/ghidra/GhidraInstallation.js";
 import { projectGhidraDoctorInspection } from "../src/ghidra/GhidraDoctor.js";
+import { CATALOG_IDENTITY } from "../src/catalogIdentity.js";
+import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 const INSTALL = "/opt/ghidra_12.1.2_PUBLIC";
 const installationHost = (
@@ -65,6 +67,12 @@ const doctorHost = (
   manualHopperPaths: () => Promise.resolve([]),
   providerInspections: () =>
     Promise.resolve([projectGhidraDoctorInspection(ghidra)]),
+  installedSkillIdentity: () =>
+    Promise.resolve({
+      version: PRODUCT_IDENTITY.skillVersion,
+      toolCount: CATALOG_IDENTITY.counts.mcp_tools,
+      catalogDigest: CATALOG_IDENTITY.digests.combined_sha256,
+    }),
 });
 
 describe("Ghidra doctor integration", () => {

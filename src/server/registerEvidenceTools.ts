@@ -14,6 +14,7 @@ import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import {
   AnalysisProtocolError,
@@ -47,9 +48,13 @@ export const registerEvidenceTools = (
           total: 1,
           message: "started",
         });
-        const parameters = jsonObjectSchema.parse(
-          contract.inputSchema.parse(input),
+        const parsedInput = safeParseToolInput(
+          contract.inputSchema,
+          input,
+          contract.name,
         );
+        if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
+        const parameters = jsonObjectSchema.parse(parsedInput.value);
         if (options.permissionAuthority !== undefined) {
           const request = permissionRequest(contract.name, parameters);
           if (request !== undefined) {

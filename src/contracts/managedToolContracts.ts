@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContracts.js";
 import { managedOutputSchemas } from "./toolOutputSchemas.js";
+import { toolContractMetadata } from "./toolEffects.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedArtifactInputSchema = z.object({
@@ -119,17 +120,12 @@ if (nativeBoundaryOutputSchema === undefined)
 export const MANAGED_TOOL_CONTRACTS = [
   {
     name: "inspect_managed_artifact",
+    ...toolContractMetadata("inspect_managed_artifact"),
     description:
       "Classify the active PE/CLI artifact and inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns bounded pages and explicit partial or malformed coverage.",
     kind: "managed-provider",
     inputSchema: managedArtifactInputSchema,
     outputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Example inspect managed artifact request",
@@ -139,17 +135,12 @@ export const MANAGED_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_managed_members",
+    ...toolContractMetadata("inspect_managed_members"),
     description:
       "Inspect bounded PE/CLI metadata members, signatures, method body IL hashes, exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID.",
     kind: "managed-provider",
     inputSchema: managedMemberInputSchema,
     outputSchema: memberOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Example inspect managed members request",
@@ -159,17 +150,12 @@ export const MANAGED_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_managed_native_boundaries",
+    ...toolContractMetadata("inspect_managed_native_boundaries"),
     description:
       "Inspect PE/CLI ModuleRef, ImplMap/PInvoke declarations, CLI native-header indicators, and non-IL method implementation flags without loading or executing target code. Results are managed declarations and degraded native-boundary observations, not verified native exports or addresses.",
     kind: "managed-provider",
     inputSchema: managedNativeBoundaryInputSchema,
     outputSchema: nativeBoundaryOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Example inspect managed/native boundary request",

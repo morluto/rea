@@ -1,29 +1,31 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { compareManagedMembersEvidence } from "../application/ManagedMemberComparisonService.js";
+import { compareManagedMembersEvidenceValidated } from "../application/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNativeVerificationService.js";
-import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
+import { importManagedReconstructionEvidenceValidated } from "../application/ManagedReconstructionService.js";
 import {
-  planManagedRuntimeCorrelationEvidence,
+  planManagedRuntimeCorrelationEvidenceValidated,
   type ManagedRuntimeCorrelationDependencies,
 } from "../application/ManagedRuntimeCorrelationService.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managedWorkflowToolContracts.js";
 import {
-  compareManagedMembersInputSchema,
-  managedMemberComparisonResultSchema,
-} from "../domain/managedMemberComparison.js";
-import {
-  managedNativeVerificationInputSchema,
-  managedNativeVerificationResultSchema,
-} from "../domain/managedNativeVerification.js";
-import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
-import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
+  compareManagedMembersReferenceInputSchema,
+  managedNativeVerificationReferenceInputSchema,
+  managedReconstructionReferenceInputSchema,
+  managedRuntimeCorrelationReferenceInputSchema,
+  MANAGED_WORKFLOW_TOOL_CONTRACTS,
+} from "../contracts/managedWorkflowToolContracts.js";
+import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
+import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { EvidenceIntegrityError } from "../domain/errors.js";
+import type { Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
+import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
 
 interface ManagedWorkflowToolRegistration {
   readonly logger: Logger;
@@ -32,6 +34,7 @@ interface ManagedWorkflowToolRegistration {
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
   readonly runtime: ManagedRuntimeCorrelationDependencies;
+  readonly session: BinarySessionPort;
 }
 
 /** Register provider-neutral managed-code workflows. */
@@ -49,11 +52,31 @@ export const registerManagedWorkflowTools = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsed = compareManagedMembersInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareManagedMembersReferenceInputSchema,
+        input,
+        compareContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, compareContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.left_evidence_id,
+        parsedInput.value.right_evidence_id,
+      ]);
+      if (!resolved.ok) return toCallToolResult(resolved, compareContract);
+      const [left, right] = resolved.value;
+      if (left === undefined || right === undefined)
+        throw new TypeError("Managed comparison Evidence resolution failed");
+      const {
+        left_evidence_id: _leftEvidenceId,
+        right_evidence_id: _rightEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, left, right };
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
-        () => Promise.resolve(compareManagedMembersEvidence(parsed)),
+        () => Promise.resolve(compareManagedMembersEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, compareContract);
       const recorded = recordSources(options.recordEvidence, [
@@ -103,7 +126,38 @@ export const registerManagedWorkflowTools = (
     nativeVerificationContract.name,
     toolRegistrationOptions(nativeVerificationContract),
     async (input) => {
-      const parsed = managedNativeVerificationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        managedNativeVerificationReferenceInputSchema,
+        input,
+        nativeVerificationContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, nativeVerificationContract);
+      const managedBoundaries = resolveManagedBoundaryEvidence(
+        options.session,
+        parsedInput.value.managed_boundaries_evidence_id,
+      );
+      if (!managedBoundaries.ok)
+        return toCallToolResult(managedBoundaries, nativeVerificationContract);
+      const nativeObservations = resolveNativeEvidence(
+        options.session,
+        parsedInput.value.native_observation_evidence_ids,
+      );
+      if (!nativeObservations.ok)
+        return toCallToolResult(nativeObservations, nativeVerificationContract);
+      const managedBoundary = managedBoundaries.value[0];
+      if (managedBoundary === undefined)
+        throw new TypeError("Managed boundary Evidence resolution failed");
+      const {
+        managed_boundaries_evidence_id: _managedBoundariesEvidenceId,
+        native_observation_evidence_ids: _nativeObservationEvidenceIds,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = {
+        ...referencedInput,
+        managed_boundaries: managedBoundary,
+        native_observations: nativeObservations.value,
+      };
       const result = await logToolExecution(
         options.logger,
         nativeVerificationContract.name,
@@ -163,11 +217,33 @@ export const registerManagedWorkflowTools = (
     reconstructionContract.name,
     toolRegistrationOptions(reconstructionContract),
     async (input) => {
-      const parsed = managedReconstructionImportInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        managedReconstructionReferenceInputSchema,
+        input,
+        reconstructionContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, reconstructionContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.static_members_evidence_id,
+      ]);
+      if (!resolved.ok)
+        return toCallToolResult(resolved, reconstructionContract);
+      const staticMembers = resolved.value[0];
+      if (staticMembers === undefined)
+        throw new TypeError(
+          "Managed reconstruction Evidence resolution failed",
+        );
+      const {
+        static_members_evidence_id: _staticMembersEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, static_members: staticMembers };
       const result = await logToolExecution(
         options.logger,
         reconstructionContract.name,
-        () => Promise.resolve(importManagedReconstructionEvidence(parsed)),
+        () =>
+          Promise.resolve(importManagedReconstructionEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, reconstructionContract);
       const recordedSource = options.recordEvidence?.(parsed.static_members);
@@ -185,11 +261,33 @@ export const registerManagedWorkflowTools = (
     runtimeContract.name,
     toolRegistrationOptions(runtimeContract),
     async (input) => {
-      const parsed = managedRuntimeCorrelationInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        managedRuntimeCorrelationReferenceInputSchema,
+        input,
+        runtimeContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, runtimeContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.static_members_evidence_id,
+      ]);
+      if (!resolved.ok) return toCallToolResult(resolved, runtimeContract);
+      const staticMembers = resolved.value[0];
+      if (staticMembers === undefined)
+        throw new TypeError("Managed runtime Evidence resolution failed");
+      const {
+        static_members_evidence_id: _staticMembersEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, static_members: staticMembers };
       const result = await logToolExecution(
         options.logger,
         runtimeContract.name,
-        () => planManagedRuntimeCorrelationEvidence(options.runtime, parsed),
+        () =>
+          planManagedRuntimeCorrelationEvidenceValidated(
+            options.runtime,
+            parsed,
+          ),
       );
       if (!result.ok) return toCallToolResult(result, runtimeContract);
       const recordedSource = options.recordEvidence?.(parsed.static_members);
@@ -213,6 +311,45 @@ const contract = (
   );
   if (found === undefined) throw new Error(`Missing ${name} contract`);
   return found;
+};
+
+const resolveManagedEvidence = (
+  session: BinarySessionPort,
+  evidenceIds: readonly string[],
+): Result<Evidence[], EvidenceIntegrityError> =>
+  resolveSessionEvidenceIds(session, evidenceIds, {
+    operation: "inspect_managed_members",
+    predicate: "rea.analysis/v2",
+  });
+
+const resolveManagedBoundaryEvidence = (
+  session: BinarySessionPort,
+  evidenceId: string,
+): Result<Evidence[], EvidenceIntegrityError> =>
+  resolveSessionEvidenceIds(session, [evidenceId], {
+    operation: "inspect_managed_native_boundaries",
+    predicate: "rea.analysis/v2",
+  });
+
+const resolveNativeEvidence = (
+  session: BinarySessionPort,
+  evidenceIds: readonly string[],
+): Result<Evidence[], EvidenceIntegrityError> => {
+  const records: Evidence[] = [];
+  for (const evidenceId of evidenceIds) {
+    const operation = session.evidenceById(evidenceId)?.operation;
+    const expectedOperation =
+      operation === "inspect_macho" || operation === "analyze_function"
+        ? operation
+        : "inspect_macho or analyze_function";
+    const resolved = resolveSessionEvidenceIds(session, [evidenceId], {
+      operation: expectedOperation,
+      predicate: "rea.analysis/v2",
+    });
+    if (!resolved.ok) return resolved;
+    records.push(...resolved.value);
+  }
+  return { ok: true, value: records };
 };
 
 const recordSources = (

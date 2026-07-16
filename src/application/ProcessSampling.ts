@@ -40,16 +40,22 @@ export const isInitializedPtyRoot = (options: {
   readonly before: ProcessIdentitySnapshot;
   readonly observedRunId: string | undefined;
   readonly after: ProcessIdentitySnapshot;
-}): boolean =>
-  options.before.pid === options.rootPid &&
-  options.before.process_group_id === options.rootPid &&
-  options.before.session_id === options.rootPid &&
-  options.after.pid === options.rootPid &&
-  options.after.parent_pid === options.before.parent_pid &&
-  options.after.process_group_id === options.rootPid &&
-  options.after.session_id === options.rootPid &&
-  options.after.startTime === options.before.startTime &&
-  options.observedRunId === options.expectedRunId;
+}): boolean => {
+  const sessionIdentityMatches =
+    (options.before.session_id === options.rootPid &&
+      options.after.session_id === options.rootPid) ||
+    (options.before.session_id === null && options.after.session_id === null);
+  return (
+    options.before.pid === options.rootPid &&
+    options.before.process_group_id === options.rootPid &&
+    sessionIdentityMatches &&
+    options.after.pid === options.rootPid &&
+    options.after.parent_pid === options.before.parent_pid &&
+    options.after.process_group_id === options.rootPid &&
+    options.after.startTime === options.before.startTime &&
+    options.observedRunId === options.expectedRunId
+  );
+};
 
 const isExpectedProcReadFailure = (cause: unknown): boolean =>
   cause instanceof Error &&
@@ -315,7 +321,7 @@ const readPsRows = async (
       pid: Number(match[1]),
       parent_pid: Number(match[2]),
       process_group_id: Number(match[3]),
-      session_id: Number(match[4]),
+      session_id: Number(match[4]) || null,
       command: match[5] ?? "",
       startTime: undefined,
     }))
@@ -346,7 +352,7 @@ const inspectInitializedPtyRoot = async (
   if (
     before === undefined ||
     before.process_group_id !== rootPid ||
-    before.session_id !== rootPid
+    (before.session_id !== rootPid && before.session_id !== null)
   )
     return undefined;
   let observedRunId: string | undefined;

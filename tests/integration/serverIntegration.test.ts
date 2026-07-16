@@ -23,6 +23,7 @@ import {
   SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../../src/contracts/toolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../src/contracts/managedWorkflowToolContracts.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -59,6 +60,59 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
   )
     throw new Error("missing structured result");
   return Object.fromEntries(Object.entries(result.structuredContent));
+};
+
+const objectEntries = (value: unknown): readonly [string, unknown][] =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.entries(value)
+    : [];
+
+const referencedSchema = (schema: unknown, root: unknown): unknown => {
+  const object = Object.fromEntries(objectEntries(schema));
+  const reference = object.$ref;
+  if (typeof reference !== "string" || !reference.startsWith("#/$defs/"))
+    return schema;
+  return Object.fromEntries(objectEntries(root)).$defs instanceof Object
+    ? Object.fromEntries(
+        objectEntries(Object.fromEntries(objectEntries(root)).$defs),
+      )[reference.slice(8)]
+    : schema;
+};
+
+const assertDescribedStrictObjects = (
+  schema: unknown,
+  root = schema,
+  path = "$",
+): void => {
+  for (const [key, value] of objectEntries(schema)) {
+    if (key === "properties") {
+      const properties = objectEntries(value);
+      for (const [property, propertySchema] of properties) {
+        const resolved = referencedSchema(propertySchema, root);
+        const propertyObject = Object.fromEntries(
+          objectEntries(propertySchema),
+        );
+        expect(
+          propertyObject.description ??
+            Object.fromEntries(objectEntries(resolved)).description,
+          `${path}.properties.${property}`,
+        ).toEqual(expect.any(String));
+        assertDescribedStrictObjects(
+          propertySchema,
+          root,
+          `${path}.properties.${property}`,
+        );
+      }
+      expect(
+        Object.fromEntries(objectEntries(schema)).additionalProperties,
+      ).toBe(false);
+      continue;
+    }
+    assertDescribedStrictObjects(value, root, `${path}.${key}`);
+  }
+  if (Array.isArray(schema))
+    for (const [index, value] of schema.entries())
+      assertDescribedStrictObjects(value, root, `${path}[${String(index)}]`);
 };
 
 describe("full MCP integration with multi-tool sequences", () => {
@@ -98,10 +152,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     expect(listResult.isError).not.toBe(true);
     expect(structured(listResult)).toMatchObject({
-      subject: null,
-      operation: "list_procedures",
-      provider: { id: "fixture", version: "1" },
-      normalized_result: {
+      result: {
         items: [
           { address: "0x1000", value: "main" },
           { address: "0x2000", value: "helper" },
@@ -116,9 +167,7 @@ describe("full MCP integration with multi-tool sequences", () => {
       arguments: { procedure: "0x1000" },
     });
     expect(structured(decompileResult)).toMatchObject({
-      operation: "procedure_pseudo_code",
-      parameters: { document: null, procedure: "0x1000" },
-      normalized_result: "pseudo for 0x1000",
+      result: "pseudo for 0x1000",
     });
 
     const xrefResult = await client.callTool({
@@ -126,12 +175,11 @@ describe("full MCP integration with multi-tool sequences", () => {
       arguments: {},
     });
     expect(structured(xrefResult)).toMatchObject({
-      operation: "xrefs",
-      normalized_result: ["0x1000"],
+      result: ["0x1000"],
     });
   });
 
-  it("preserves the complete 90-tool inventory with a session", async () => {
+  it("preserves the complete canonical inventory with a session", async () => {
     const session = new BinarySession(
       (_path) =>
         ({
@@ -154,13 +202,30 @@ describe("full MCP integration with multi-tool sequences", () => {
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(90);
+    expect(listed.tools).toHaveLength(TOOL_CONTRACTS.length);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("open_binary");
     expect(names).toContain("close_binary");
     expect(names).toContain("binary_session");
     expect(names).toContain("binary_overview");
     expect(names).toContain("batch_decompile");
+
+    const contracts = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
+      TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
+    );
+    for (const tool of listed.tools) {
+      const contract = contracts.get(tool.name);
+      expect(contract, tool.name).toBeDefined();
+      expect(tool.title, tool.name).toBe(contract?.title);
+      expect(tool.description, tool.name).toBe(contract?.description);
+      expect(tool.annotations, tool.name).toEqual(contract?.annotations);
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      assertDescribedStrictObjects(
+        tool.inputSchema,
+        tool.inputSchema,
+        tool.name,
+      );
+    }
   });
 
   it("records approved trace truncation as a deduplicated residual unknown", async () => {
@@ -355,9 +420,7 @@ describe("full MCP integration with multi-tool sequences", () => {
       name: "compare_process_captures",
       arguments: {
         left_evidence_id: leftEvidence.evidence_id,
-        left,
         right_evidence_id: rightEvidence.evidence_id,
-        right,
         unknown_registry_approved: true,
       },
     });
@@ -384,7 +447,9 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(
-      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+      TOOL_CONTRACTS.length -
+        SESSION_TOOL_CONTRACTS.length -
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
     );
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("binary_overview");
@@ -408,9 +473,7 @@ describe("full MCP integration with multi-tool sequences", () => {
         category: "execution_failure",
       },
     });
-    expect(text(result)).toBe(
-      "Analysis could not complete. Retry once; if it continues, run `rea doctor`.",
-    );
+    expect(text(result)).toBe(JSON.stringify(result.structuredContent));
   });
 
   it("handles concurrent tool calls without corruption", async () => {

@@ -1,9 +1,10 @@
 import type { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ToolEffects } from "./toolEffects.js";
 
 /** Caller-visible MCP execution hints. */
-export interface ToolAnnotations {
+interface ToolAnnotations {
   readonly readOnlyHint: boolean;
   readonly destructiveHint: boolean;
   readonly idempotentHint: boolean;
@@ -17,7 +18,7 @@ export interface ToolExample {
 }
 
 /** Adapter family responsible for implementing a public MCP tool. */
-export type ToolKind =
+type ToolKind =
   | "official-proxy"
   | "enhanced"
   | "native-provider"
@@ -31,10 +32,12 @@ export type ToolKind =
 /** Single source of truth for a public MCP tool. */
 export interface ToolContract<Name extends string = string> {
   readonly name: Name;
+  readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
   readonly inputSchema: z.ZodObject;
   readonly outputSchema: z.ZodObject;
+  readonly effects: ToolEffects;
   readonly annotations: ToolAnnotations;
   readonly examples: readonly ToolExample[];
 }

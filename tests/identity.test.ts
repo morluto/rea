@@ -14,7 +14,8 @@ describe("package identity", () => {
         scripts: z.object({
           start: z.string(),
           prepare: z.string(),
-          prepack: z.string().optional(),
+          prepack: z.string(),
+          prepublishOnly: z.string(),
         }),
       })
       .parse(
@@ -30,6 +31,11 @@ describe("package identity", () => {
     expect(PRODUCT_IDENTITY.mcpCommand).toBe(`npx -y ${packageJson.name} mcp`);
     expect(packageJson.scripts.start).toBe("node scripts/rea.mjs mcp");
     expect(packageJson.scripts.prepare).toBe("npm run build && husky");
-    expect(packageJson.scripts.prepack).toBeUndefined();
+    expect(packageJson.scripts.prepack).toBe(
+      "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
+    );
+    expect(packageJson.scripts.prepublishOnly).toBe(
+      "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
+    );
   });
 });

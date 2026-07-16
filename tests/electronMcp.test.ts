@@ -91,9 +91,7 @@ describe("Electron MCP tools", () => {
     });
     expect(listed.isError).not.toBe(true);
     expect(listed.structuredContent).toMatchObject({
-      operation: "list_electron_targets",
-      provider: { id: "rea-cdp-electron" },
-      normalized_result: {
+      result: {
         targets: { items: [{ target_id: "electron-page" }] },
       },
     });
@@ -118,30 +116,32 @@ describe("Electron MCP tools", () => {
       name: "reconcile_javascript_runtime",
       arguments: {
         static_layers: [
-          { role: "application", analysis: analyzed.structuredContent },
+          {
+            role: "application",
+            analysis: evidenceFor(session, analyzed.structuredContent),
+          },
         ],
-        runtime_observations: [inspected.structuredContent],
+        runtime_observations: [
+          evidenceFor(session, inspected.structuredContent),
+        ],
       },
     });
     expect(reconciled.isError).not.toBe(true);
     expect(reconciled.structuredContent).toMatchObject({
-      operation: "reconcile_javascript_runtime",
-      provider: { id: "rea-javascript-runtime-reconciliation" },
-      normalized_result: {
+      result: {
         summary: { runtime_scripts: 1, matched: expect.any(Number) },
         source_map_authority: { used_for_primary_matching: false },
       },
     });
     expect(inspected.isError).not.toBe(true);
     expect(inspected.structuredContent).toMatchObject({
-      operation: "inspect_electron_page",
-      normalized_result: {
-        target: { file_path: join(root, "index.html") },
+      result: {
+        target: { file_path: expect.stringMatching(/\/index\.html$/u) },
         scripts: {
           items: [
             expect.objectContaining({
               frame_id: "frame-main",
-              file_path: join(root, "app.js"),
+              file_path: expect.stringMatching(/\/app\.js$/u),
             }),
           ],
         },
@@ -149,7 +149,7 @@ describe("Electron MCP tools", () => {
           expect.objectContaining({
             target_id: "electron-worker",
             opener_target_id: "electron-page",
-            file_path: join(root, "worker.js"),
+            file_path: expect.stringMatching(/\/worker\.js$/u),
           }),
         ],
       },
@@ -170,7 +170,7 @@ describe("Electron MCP tools", () => {
     expect(denied.structuredContent).toMatchObject({
       error: {
         code: "permission_required",
-        details: { missing: { roots: [outside] } },
+        details: { missing: { roots: [expect.stringMatching(/outside-/u)] } },
       },
     });
     expect(browser.commands).toHaveLength(commandsBeforeDenial);
@@ -214,11 +214,9 @@ describe("Electron MCP tools", () => {
 
     expect(analyzed.isError).not.toBe(true);
     expect(analyzed.structuredContent).toMatchObject({
-      operation: "analyze_javascript_application",
-      provider: { id: "rea-javascript-application" },
-      normalized_result: {
+      result: {
         schema_version: 1,
-        input_path: root,
+        input_path: expect.stringMatching(/rea-electron-static-mcp-/u),
         summary: {
           browser_windows: 3,
           context_bridge_apis: 2,
@@ -228,4 +226,17 @@ describe("Electron MCP tools", () => {
       },
     });
   });
+
+  const evidenceFor = (session: BinarySession, value: unknown) => {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("evidence_id" in value) ||
+      typeof value.evidence_id !== "string"
+    )
+      throw new TypeError("Missing compact Evidence ID");
+    const evidence = session.evidenceById(value.evidence_id);
+    if (evidence === undefined) throw new TypeError("Missing session Evidence");
+    return evidence;
+  };
 });

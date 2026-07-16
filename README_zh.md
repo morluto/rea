@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![90 MCP tools](https://img.shields.io/badge/MCP_tools-90-5c4ee5?style=flat-square)](#90-个工具组成的工作台)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](#调查工具目录)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [90 个工具](#90-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
+[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [工具目录](#调查工具目录) · [工作原理](#工作原理) · [常见问题](#常见问题)
 
 <br />
 
@@ -147,19 +147,19 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 - 分析 Swift 和 Objective-C 元数据。
 - 在 Hopper 中留下名称、注释与书签，使人与智能体的分析互相增强。
 
-## 90 个工具组成的工作台
+## 调查工具目录
 
-| 工具类别       | 数量 | 示例                                                                                                                      |
-| -------------- | ---: | ------------------------------------------------------------------------------------------------------------------------- |
-| 二进制检查     |   33 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                                    |
-| 组合分析       |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现      |
-| macOS 原生工具 |    5 | Mach-O 元数据、代码签名、plist、架构与 Swift 符号还原，无需启动 Hopper                                                    |
-| 制品图谱       |    2 | 确定性目录、ZIP/APK/IPA 与 ASAR 清单，以及显式选择的事务式提取                                                            |
-| Managed PE/CLI |    7 | PE/CLI 身份、元数据成员、CIL 哈希、P/Invoke/原生边界声明、反编译重建导入、结构化 token 重映射、运行时关联计划与跨版本比较 |
-| 浏览器观察     |    8 | 精确来源 CDP 抓取、bundle/source map 分析、WebMCP 发现、会话时间线、capture diff 与视觉证据                               |
-| Electron 分析  |    4 | 限定 canonical 文件根的被动观察、有界静态应用映射，以及基于 Evidence 的静态/运行时对账                                    |
-| 应用工作流     |    3 | 有界跨层追踪、唯一匹配跨版本图比较，以及经批准的 Linux 隔离 extracted-module replay                                       |
-| 二进制会话     |   18 | `open_binary`、`binary_session`、证据包、进程、制品与函数比较、残余未知项注册表                                           |
+| 工具类别       | 数量 | 示例                                                                                                                            |
+| -------------- | ---: | ------------------------------------------------------------------------------------------------------------------------------- |
+| 二进制检查     |   33 | 过程、伪代码、汇编、字符串、名称、段、调用者、被调用者、交叉引用、注释                                                          |
+| 组合分析       |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现            |
+| macOS 原生工具 |    5 | Mach-O 元数据、代码签名、plist、架构与 Swift 符号还原，无需启动 Hopper                                                          |
+| 制品图谱       |    2 | 确定性目录、ZIP/APK/IPA 与 ASAR 清单，以及显式选择的事务式提取                                                                  |
+| Managed PE/CLI |    7 | PE/CLI 身份、元数据成员、CIL 哈希、P/Invoke/原生边界声明与验证、反编译重建导入、结构化 token 重映射、运行时关联计划与跨版本比较 |
+| 浏览器观察     |    8 | 精确来源 CDP 抓取、bundle/source map 分析、WebMCP 发现、会话时间线、capture diff 与视觉证据                                     |
+| Electron 分析  |    4 | 限定 canonical 文件根的被动观察、有界静态应用映射，以及基于 Evidence 的静态/运行时对账                                          |
+| 应用工作流     |    3 | 有界跨层追踪、唯一匹配跨版本图比较，以及经批准的 Linux 隔离 extracted-module replay                                             |
+| 二进制会话     |   18 | `open_binary`、`binary_session`、证据包、进程、制品与函数比较、残余未知项注册表                                                 |
 
 ## 与其他编程智能体一起使用
 

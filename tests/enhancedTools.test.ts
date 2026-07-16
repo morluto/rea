@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AnalysisOperationPort } from "../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../src/application/EnhancedTools.js";
@@ -9,6 +9,8 @@ import {
   SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
+import { enhancedInputSchemas } from "../src/contracts/enhancedInputs.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflowToolContracts.js";
 import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { err } from "../src/domain/result.js";
@@ -144,6 +146,7 @@ const emptyBounded = () => ({
 const resources: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
   );
@@ -174,6 +177,14 @@ const jsonResult = (result: CallToolResult): JsonValue => {
   ) {
     return structured.data.normalized_result ?? null;
   }
+  if (
+    typeof structured.data === "object" &&
+    structured.data !== null &&
+    !Array.isArray(structured.data) &&
+    "evidence_id" in structured.data &&
+    "result" in structured.data
+  )
+    return structured.data.result ?? null;
   const text = result.content.find((item) => item.type === "text");
   if (text?.type !== "text")
     throw new Error("Tool result omitted text content");
@@ -188,7 +199,9 @@ describe("enhanced MCP tools", () => {
     const client = await connect();
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(
-      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+      TOOL_CONTRACTS.length -
+        SESSION_TOOL_CONTRACTS.length -
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
     );
     expect(
       listed.tools
@@ -567,7 +580,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toBe(
-      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+      JSON.stringify(result.structuredContent),
     );
   });
 
@@ -603,6 +616,80 @@ describe("enhanced MCP tools", () => {
     expect(JSON.stringify(result)).toContain("operation budget");
   });
 
+  it("returns correction-only structured validation issues", async () => {
+    const client = await connect();
+    const traceParser = vi.spyOn(
+      enhancedInputSchemas.trace_feature,
+      "safeParse",
+    );
+    await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "needle", max_operations: 1 },
+    });
+    expect(traceParser).toHaveBeenCalledTimes(1);
+    traceParser.mockClear();
+    const misspelled = await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "needle", max_operatons: 1 },
+    });
+    expect(misspelled).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "invalid_request",
+          retryable: true,
+          details: {
+            issues: [{ path: ["max_operatons"], reason: "unknown_argument" }],
+          },
+        },
+      },
+    });
+    expect(traceParser).not.toHaveBeenCalled();
+    const nestedMisspelled = await client.callTool({
+      name: "analyze_function",
+      arguments: {
+        procedure: "0x1",
+        collection_offset: { commentz: 1 },
+      },
+    });
+    expect(nestedMisspelled).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          details: {
+            issues: [
+              {
+                path: ["collection_offset", "commentz"],
+                reason: "unknown_argument",
+              },
+            ],
+          },
+        },
+      },
+    });
+    const bounded = await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "needle", max_operations: 101 },
+    });
+    expect(bounded.structuredContent).toMatchObject({
+      error: {
+        details: {
+          issues: [
+            {
+              path: ["max_operations"],
+              reason: "out_of_range",
+              maximum: 100,
+            },
+          ],
+        },
+      },
+    });
+    expect(bounded.content[0]).toEqual({
+      type: "text",
+      text: JSON.stringify(bounded.structuredContent),
+    });
+  });
+
   it("returns a typed tool error for malformed Hopper boundary values", async () => {
     const client = await connect({
       execute: () => Promise.resolve(ok(["not", "a", "procedure", "map"])),
@@ -614,7 +701,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toBe(
-      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+      JSON.stringify(result.structuredContent),
     );
   });
 
@@ -635,7 +722,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toBe(
-      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+      JSON.stringify(result.structuredContent),
     );
   });
 
@@ -671,7 +758,7 @@ describe("enhanced MCP tools", () => {
     expect(result.isError).toBe(true);
     const text = result.content.find((item) => item.type === "text");
     expect(text?.type === "text" ? text.text : "").toBe(
-      "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
+      JSON.stringify(result.structuredContent),
     );
   });
 

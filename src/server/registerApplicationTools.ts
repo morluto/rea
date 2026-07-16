@@ -2,11 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import {
-  compareApplicationVersionsEvidence,
-  traceApplicationFeatureEvidence,
+  compareApplicationVersionsEvidenceValidated,
+  traceApplicationFeatureEvidenceValidated,
 } from "../application/JavaScriptApplicationWorkflowService.js";
 import {
-  runControlledReplay,
+  runControlledReplayValidated,
   type JavaScriptReplayDependencies,
 } from "../application/JavaScriptReplayService.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
@@ -22,6 +22,7 @@ import {
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
 interface ApplicationToolRegistration {
@@ -44,11 +45,17 @@ export const registerApplicationTools = (
     traceContract.name,
     toolRegistrationOptions(traceContract),
     async (input) => {
-      const parsed = traceApplicationFeatureInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        traceApplicationFeatureInputSchema,
+        input,
+        traceContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, traceContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         traceContract.name,
-        () => Promise.resolve(traceApplicationFeatureEvidence(parsed)),
+        () => Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, traceContract);
       const sources = [parsed.application, ...parsed.native_observations];
@@ -61,11 +68,19 @@ export const registerApplicationTools = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsed = compareApplicationVersionsInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        compareApplicationVersionsInputSchema,
+        input,
+        compareContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, compareContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
-        () => Promise.resolve(compareApplicationVersionsEvidence(parsed)),
+        () =>
+          Promise.resolve(compareApplicationVersionsEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, compareContract);
       const sources = [
@@ -92,12 +107,18 @@ export const registerApplicationTools = (
     replayContract.name,
     toolRegistrationOptions(replayContract),
     async (input, context) => {
-      const parsed = controlledReplayInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        controlledReplayInputSchema,
+        input,
+        replayContract.name,
+      );
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, replayContract);
+      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         replayContract.name,
         () =>
-          runControlledReplay(options.replay, parsed, {
+          runControlledReplayValidated(options.replay, parsed, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),
