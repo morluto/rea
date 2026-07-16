@@ -17,7 +17,8 @@ export type PermissionCapability =
   | "artifact_extract"
   | "native_mount"
   | "reference_read"
-  | "javascript_replay";
+  | "javascript_replay"
+  | "managed_runtime";
 
 /** Ordered network authority; each mode includes the modes before it. */
 type PermissionNetwork = "none" | "loopback" | "external";

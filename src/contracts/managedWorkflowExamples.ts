@@ -66,6 +66,65 @@ const evidence = (result: ManagedMemberInspection) =>
     limitations: result.limitations,
   });
 
+const runtimeMembers = (): ManagedMemberInspection => {
+  const result = emptyManagedMembers(
+    "2".repeat(64),
+    "11112222-3333-4444-5555-666677778888",
+  );
+  return {
+    ...result,
+    methods: {
+      ...result.methods,
+      items: [
+        {
+          token: "0x06000001",
+          row_offset: 128,
+          declaring_type_token: "0x02000001",
+          declaring_type: "Example.Program",
+          name: "Main",
+          rva: 8192,
+          impl_flags: 0,
+          flags: 22,
+          signature: {
+            raw_length: 3,
+            raw_sha256: "3".repeat(64),
+            kind: "method",
+            parse_status: "decoded",
+            calling_convention: "default",
+            generic_parameter_count: 0,
+            parameter_count: 0,
+            return_type: "void",
+            parameter_types: [],
+            field_type: null,
+            issue: null,
+          },
+          body: {
+            status: "present",
+            header_format: "tiny",
+            rva: 8192,
+            file_offset: 512,
+            max_stack: 8,
+            init_locals: false,
+            local_var_sig_token: null,
+            il_size: 1,
+            il_sha256: "4".repeat(64),
+            normalized_il_sha256: "5".repeat(64),
+            instruction_count: 1,
+            decoded_instruction_count: 1,
+            truncated_instructions: 0,
+            opcode_counts: { ret: 1 },
+            anchors: [],
+            exception_regions: [],
+            issue: null,
+          },
+        },
+      ],
+      total: 1,
+      returned: 1,
+    },
+  };
+};
+
 /** Minimal valid managed member comparison request for public contracts. */
 export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
   left: evidence(
@@ -78,5 +137,30 @@ export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
     max_method_matches: 100,
     max_field_matches: 50,
     max_candidates: 25,
+  },
+};
+
+const runtimeExampleEvidence = evidence(runtimeMembers());
+
+/** Minimal valid managed runtime-correlation planning request. */
+export const MANAGED_RUNTIME_CORRELATION_EXAMPLE = {
+  static_members: runtimeExampleEvidence,
+  method: {
+    token: "0x06000001",
+    signature_sha256: "3".repeat(64),
+    normalized_il_sha256: "5".repeat(64),
+  },
+  requested_effect: "attach",
+  host: {
+    os: "linux",
+    clr_family: "dotnet",
+    architecture: "x86_64",
+  },
+  bounds: {
+    timeout_ms: 5_000,
+    max_threads: 32,
+    max_output_bytes: 65_536,
+    allow_network: false,
+    allow_ui: false,
   },
 };

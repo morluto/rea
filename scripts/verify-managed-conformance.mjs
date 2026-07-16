@@ -9,6 +9,10 @@ import { inspectManagedArtifactBytes } from "../dist/dotnet/ManagedArtifactInspe
 import { inspectManagedMembersBytes } from "../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../dist/dotnet/ManagedNativeBoundaryInspector.js";
 import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComparisonService.js";
+import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
+import { createPermissionAuthority } from "../dist/application/PermissionAuthority.js";
+import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
+import { createEvidence } from "../dist/domain/evidence.js";
 import {
   alternateMvid,
   buildManagedPeFixture,
@@ -178,6 +182,78 @@ try {
   assert.equal(obfuscatedMembers.types.items[0]?.full_name, "Fixture.ꙮType");
   assert.equal(obfuscatedMembers.methods.items[0]?.name, "λ⛧");
   assert.equal(obfuscatedMembers.fields.items[0]?.name, "字段");
+  const runtimeExecutable = join(workspace, "dotnet");
+  await writeFile(runtimeExecutable, "#!/bin/sh\n");
+  const runtimeCeiling = {
+    capability: "managed_runtime",
+    roots: [workspace],
+    executables: [runtimeExecutable],
+    environment_names: [],
+    network: "none",
+    mount: false,
+  };
+  const runtimeAuthority = await createPermissionAuthority(
+    [runtimeCeiling],
+    [
+      {
+        ...runtimeCeiling,
+        grant_id: "administrator:managed_runtime",
+        lifetime: "administrator",
+        operation_identity: null,
+        expires_at: null,
+      },
+    ],
+  );
+  assert.equal(runtimeAuthority.ok, true);
+  const runtimeMethod = obfuscatedMembers.methods.items[0];
+  assert.ok(runtimeMethod);
+  const runtimePlan = await planManagedRuntimeCorrelationEvidence(
+    {
+      policy: {
+        enabled: true,
+        roots: [workspace],
+        executablePath: runtimeExecutable,
+      },
+      authority: runtimeAuthority.value,
+    },
+    {
+      static_members: createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
+        operation: "inspect_managed_members",
+        parameters: { path: obfuscated.path },
+        result: obfuscatedMembers,
+        rawResult: null,
+        limitations: obfuscatedMembers.limitations,
+      }),
+      method: {
+        token: runtimeMethod.token,
+        signature_sha256: runtimeMethod.signature.raw_sha256,
+        normalized_il_sha256: runtimeMethod.body.normalized_il_sha256,
+      },
+      requested_effect: "debugger",
+      host: {
+        os: "linux",
+        clr_family: "dotnet",
+        architecture: "x86_64",
+      },
+      bounds: {
+        timeout_ms: 5_000,
+        max_threads: 32,
+        max_output_bytes: 65_536,
+        allow_network: false,
+        allow_ui: false,
+      },
+    },
+  );
+  assert.equal(runtimePlan.ok, true);
+  assert.equal(runtimePlan.value.normalized_result.executed, false);
+  assert.equal(
+    runtimePlan.value.normalized_result.authority_model.capability,
+    "managed_runtime",
+  );
+  assert.equal(
+    runtimePlan.value.normalized_result.effect_taxonomy.uses_debugger,
+    true,
+  );
 
   const left = await fixture("token-drift-left.exe", {
     methodName: "StableSemanticSlice",
@@ -235,18 +311,20 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
-      verified: 7,
+      verified: 8,
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
         "inspect_managed_native_boundaries",
         "compare_managed_members",
+        "plan_managed_runtime_correlation",
       ],
       coverage: [
         "modern-dotnet-anycpu",
         "dotnet-framework-x86-pinvoke",
         "x64-ready-to-run-native-body",
         "unicode-obfuscated-identifiers",
+        "runtime-correlation-admission-plan",
         "mvid-and-token-drift",
         "not-managed",
         "malformed-metadata",

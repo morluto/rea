@@ -57,6 +57,7 @@ export const buildCapabilityInventory = (
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
     readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   },
 ) => {
   const status = statusSchema.parse(sessionStatus);
@@ -103,6 +104,7 @@ const availabilityFor = (
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
     readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   },
 ): {
   readonly reason: ToolAvailabilityReason;
@@ -121,6 +123,17 @@ const availabilityFor = (
         "Enable javascript_replay with exact source roots and sandbox executables.",
     };
   if (name === "run_controlled_replay")
+    return { reason: "available", remediation: null };
+  if (
+    name === "plan_managed_runtime_correlation" &&
+    !policy.managedRuntimeEnabled
+  )
+    return {
+      reason: "policy_disabled",
+      remediation:
+        "Enable managed_runtime with exact artifact roots and a runtime executable.",
+    };
+  if (name === "plan_managed_runtime_correlation")
     return { reason: "available", remediation: null };
   if (kind === "application") return { reason: "available", remediation: null };
   if (name === "import_evidence_bundle" && policy.evidenceFileRoots === 0)

@@ -265,6 +265,56 @@ try {
     managedMembers.normalized_result?.methods?.total !== 1
   )
     throw new Error("packaged managed member CLI failed");
+  const managedMethod = managedMembers.normalized_result.methods.items[0];
+  const managedRuntimePlanInput = {
+    static_members: managedMembers,
+    method: {
+      token: managedMethod.token,
+      signature_sha256: managedMethod.signature.raw_sha256,
+      normalized_il_sha256: managedMethod.body.normalized_il_sha256,
+    },
+    requested_effect: "attach",
+    host: {
+      os: "linux",
+      clr_family: "dotnet",
+      architecture: "x86_64",
+    },
+    bounds: {
+      timeout_ms: 5_000,
+      max_threads: 32,
+      max_output_bytes: 65_536,
+      allow_network: false,
+      allow_ui: false,
+    },
+  };
+  const managedRuntimePlan = json(
+    await run(
+      cli,
+      [
+        "plan-managed-runtime-correlation",
+        JSON.stringify(managedRuntimePlanInput),
+        "--json",
+      ],
+      {
+        ...environment,
+        REA_MANAGED_RUNTIME_ENABLED: "true",
+        REA_MANAGED_RUNTIME_ROOTS_JSON: JSON.stringify([workspace]),
+        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: process.execPath,
+      },
+    ),
+  );
+  if (
+    managedRuntimePlan.operation !== "plan_managed_runtime_correlation" ||
+    managedRuntimePlan.provider?.id !== "rea-dotnet-workflows" ||
+    managedRuntimePlan.normalized_result?.executed !== false ||
+    managedRuntimePlan.normalized_result?.authority_model?.capability !==
+      "managed_runtime" ||
+    managedRuntimePlan.normalized_result?.effect_taxonomy?.attaches_process !==
+      true ||
+    managedRuntimePlan.normalized_result?.effect_taxonomy
+      ?.invokes_target_code !== false
+  )
+    throw new Error("packaged managed runtime-correlation CLI failed");
   const managedBoundaries = json(
     await run(
       cli,
@@ -844,7 +894,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
