@@ -131,6 +131,82 @@ describe("managed PE/CLI static provider", () => {
     expect(result.coverage.issues).toEqual([]);
   });
 
+  it("accepts CLI metadata GUIDs without RFC UUID version or variant bits", () => {
+    const bytes = buildManagedPeFixture({
+      mvid: Buffer.from("3aebc60edc4a544b1f458b4ed40b33b1", "hex"),
+    });
+    const result = inspectManagedArtifactBytes(bytes, target(bytes), limits);
+    const members = inspectManagedMembersBytes(
+      bytes,
+      target(bytes),
+      memberLimits,
+    );
+    const boundaries = inspectManagedNativeBoundariesBytes(
+      bytes,
+      target(bytes),
+      nativeBoundaryLimits,
+    );
+
+    expect(result.module?.mvid).toBe("0ec6eb3a-4adc-4b54-1f45-8b4ed40b33b1");
+    expect(result.classification.status).toBe("managed");
+    expect(members.identity_scope.requires_mvid).toBe(result.module?.mvid);
+    expect(boundaries.identity_scope.requires_mvid).toBe(result.module?.mvid);
+  });
+
+  it("reads fat method header size from the full flags-and-size word", () => {
+    const il = Buffer.from([
+      0x21, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x22, 0x00,
+      0x00, 0x80, 0x3f, 0x26, 0x23, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0,
+      0x3f, 0x26, 0xfe, 0x06, 0x01, 0x00, 0x00, 0x06, 0x26, 0x2a,
+    ]);
+    const header = Buffer.alloc(12);
+    header.writeUInt16LE(0x3013, 0);
+    header.writeUInt16LE(8, 2);
+    header.writeUInt32LE(il.length, 4);
+    const bytes = buildManagedPeFixture({
+      ilBody: Buffer.concat([header, il]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      target(bytes),
+      memberLimits,
+    );
+
+    expect(result.methods.items[0]?.body).toMatchObject({
+      status: "present",
+      header_format: "fat",
+      il_size: il.length,
+      il_sha256: createHash("sha256").update(il).digest("hex"),
+      opcode_counts: {
+        "ldc.i8": 1,
+        pop: 4,
+        "ldc.r4": 1,
+        "ldc.r8": 1,
+        ldftn: 1,
+        ret: 1,
+      },
+      issue: null,
+    });
+  });
+
+  it("does not normalize reserved CIL opcodes as operand-free instructions", () => {
+    const bytes = buildManagedPeFixture({
+      ilBody: Buffer.from([0x0a, 0x24, 0x2a]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      target(bytes),
+      memberLimits,
+    );
+
+    expect(result.methods.items[0]?.body).toMatchObject({
+      status: "malformed",
+      il_size: 2,
+      decoded_instruction_count: 0,
+      issue: "Unsupported CIL opcode 0x24 at IL offset 0",
+    });
+  });
+
   it("inspects metadata members, signatures, CIL hashes, call edges, and field anchors", () => {
     const bytes = buildManagedPeFixture();
     const result = inspectManagedMembersBytes(

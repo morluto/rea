@@ -600,6 +600,7 @@ async function runManagedAppManifestSelfTest() {
           token: method.token,
           signature_sha256: method.signature.raw_sha256,
           il_size: method.body.il_size,
+          il_sha256: method.body.il_sha256,
           normalized_il_sha256: method.body.normalized_il_sha256,
         },
       ],
@@ -884,11 +885,16 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
       method.body.il_size === expectedMethod.il_size,
       `method ${expectedMethod.token} IL size mismatch: expected ${String(expectedMethod.il_size)}, observed ${String(method.body.il_size)}`,
     );
+    if (expectedMethod.il_sha256 !== undefined)
+      ensure(
+        method.body.il_sha256 === expectedMethod.il_sha256,
+        `method ${expectedMethod.token} IL sha256 mismatch: expected ${expectedMethod.il_sha256}, observed ${method.body.il_sha256 ?? "null"}`,
+      );
     ensure(
       method.body.normalized_il_sha256 === expectedMethod.normalized_il_sha256,
       `method ${expectedMethod.token} normalized IL sha256 mismatch: expected ${expectedMethod.normalized_il_sha256}, observed ${method.body.normalized_il_sha256 ?? "null"}`,
     );
-    assertions += 4;
+    assertions += expectedMethod.il_sha256 === undefined ? 4 : 5;
     inspectedMethods.set(expectedMethod.token, method);
     methods.push({
       label: expectedMethod.label ?? null,
@@ -897,6 +903,7 @@ async function verifyManagedAppManifest(rawManifest, manifestPath) {
       name: method.name,
       signature_sha256: method.signature.raw_sha256,
       il_size: method.body.il_size,
+      il_sha256: method.body.il_sha256,
       normalized_il_sha256: method.body.normalized_il_sha256,
     });
   }
@@ -1103,7 +1110,7 @@ function parseManagedAppManifest(rawManifest) {
     target: {
       path: string(target.path, "manifest.target.path"),
       sha256: digest(target.sha256, "manifest.target.sha256"),
-      mvid: optionalUuid(target.mvid, "manifest.target.mvid"),
+      mvid: optionalCliMetadataGuid(target.mvid, "manifest.target.mvid"),
       assembly_name: optionalString(
         target.assembly_name,
         "manifest.target.assembly_name",
@@ -1196,6 +1203,10 @@ function parseManagedAppManifestMethod(rawMethod, index) {
       `${prefix}.signature_sha256`,
     ),
     il_size: ilSize(method, prefix),
+    il_sha256:
+      method.il_sha256 === undefined
+        ? undefined
+        : digest(method.il_sha256, `${prefix}.il_sha256`),
     normalized_il_sha256: digest(
       method.normalized_il_sha256,
       `${prefix}.normalized_il_sha256`,
@@ -1255,7 +1266,7 @@ function digest(value, name) {
   return text;
 }
 
-function optionalUuid(value, name) {
+function optionalCliMetadataGuid(value, name) {
   if (value === undefined) return undefined;
   if (value === null) return null;
   const text = string(value, name);

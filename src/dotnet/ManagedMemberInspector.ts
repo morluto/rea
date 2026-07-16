@@ -497,6 +497,7 @@ const OPCODES = new Map<
   { readonly name: string; readonly operand: string }
 >([
   [0x00, { name: "nop", operand: "none" }],
+  [0x01, { name: "break", operand: "none" }],
   [0x02, { name: "ldarg.0", operand: "none" }],
   [0x03, { name: "ldarg.1", operand: "none" }],
   [0x04, { name: "ldarg.2", operand: "none" }],
@@ -511,7 +512,9 @@ const OPCODES = new Map<
   [0x0d, { name: "stloc.3", operand: "none" }],
   [0x0e, { name: "ldarg.s", operand: "short-var" }],
   [0x0f, { name: "ldarga.s", operand: "short-var" }],
+  [0x10, { name: "starg.s", operand: "short-var" }],
   [0x11, { name: "ldloc.s", operand: "short-var" }],
+  [0x12, { name: "ldloca.s", operand: "short-var" }],
   [0x13, { name: "stloc.s", operand: "short-var" }],
   [0x14, { name: "ldnull", operand: "none" }],
   [0x15, { name: "ldc.i4.m1", operand: "none" }],
@@ -526,43 +529,191 @@ const OPCODES = new Map<
   [0x1e, { name: "ldc.i4.8", operand: "none" }],
   [0x1f, { name: "ldc.i4.s", operand: "short-i" }],
   [0x20, { name: "ldc.i4", operand: "i" }],
+  [0x21, { name: "ldc.i8", operand: "i8" }],
+  [0x22, { name: "ldc.r4", operand: "r4" }],
+  [0x23, { name: "ldc.r8", operand: "r8" }],
   [0x25, { name: "dup", operand: "none" }],
   [0x26, { name: "pop", operand: "none" }],
+  [0x27, { name: "jmp", operand: "method" }],
   [0x28, { name: "call", operand: "method" }],
+  [0x29, { name: "calli", operand: "signature" }],
   [0x2a, { name: "ret", operand: "none" }],
   [0x2b, { name: "br.s", operand: "short-branch" }],
   [0x2c, { name: "brfalse.s", operand: "short-branch" }],
   [0x2d, { name: "brtrue.s", operand: "short-branch" }],
+  [0x2e, { name: "beq.s", operand: "short-branch" }],
+  [0x2f, { name: "bge.s", operand: "short-branch" }],
+  [0x30, { name: "bgt.s", operand: "short-branch" }],
+  [0x31, { name: "ble.s", operand: "short-branch" }],
+  [0x32, { name: "blt.s", operand: "short-branch" }],
+  [0x33, { name: "bne.un.s", operand: "short-branch" }],
+  [0x34, { name: "bge.un.s", operand: "short-branch" }],
+  [0x35, { name: "bgt.un.s", operand: "short-branch" }],
+  [0x36, { name: "ble.un.s", operand: "short-branch" }],
+  [0x37, { name: "blt.un.s", operand: "short-branch" }],
   [0x38, { name: "br", operand: "branch" }],
   [0x39, { name: "brfalse", operand: "branch" }],
   [0x3a, { name: "brtrue", operand: "branch" }],
+  [0x3b, { name: "beq", operand: "branch" }],
+  [0x3c, { name: "bge", operand: "branch" }],
+  [0x3d, { name: "bgt", operand: "branch" }],
+  [0x3e, { name: "ble", operand: "branch" }],
+  [0x3f, { name: "blt", operand: "branch" }],
+  [0x40, { name: "bne.un", operand: "branch" }],
+  [0x41, { name: "bge.un", operand: "branch" }],
+  [0x42, { name: "bgt.un", operand: "branch" }],
+  [0x43, { name: "ble.un", operand: "branch" }],
+  [0x44, { name: "blt.un", operand: "branch" }],
   [0x45, { name: "switch", operand: "switch" }],
+  [0x46, { name: "ldind.i1", operand: "none" }],
+  [0x47, { name: "ldind.u1", operand: "none" }],
+  [0x48, { name: "ldind.i2", operand: "none" }],
+  [0x49, { name: "ldind.u2", operand: "none" }],
+  [0x4a, { name: "ldind.i4", operand: "none" }],
+  [0x4b, { name: "ldind.u4", operand: "none" }],
+  [0x4c, { name: "ldind.i8", operand: "none" }],
+  [0x4d, { name: "ldind.i", operand: "none" }],
+  [0x4e, { name: "ldind.r4", operand: "none" }],
+  [0x4f, { name: "ldind.r8", operand: "none" }],
+  [0x50, { name: "ldind.ref", operand: "none" }],
+  [0x51, { name: "stind.ref", operand: "none" }],
+  [0x52, { name: "stind.i1", operand: "none" }],
+  [0x53, { name: "stind.i2", operand: "none" }],
+  [0x54, { name: "stind.i4", operand: "none" }],
+  [0x55, { name: "stind.i8", operand: "none" }],
+  [0x56, { name: "stind.r4", operand: "none" }],
+  [0x57, { name: "stind.r8", operand: "none" }],
   [0x58, { name: "add", operand: "none" }],
   [0x59, { name: "sub", operand: "none" }],
   [0x5a, { name: "mul", operand: "none" }],
   [0x5b, { name: "div", operand: "none" }],
+  [0x5c, { name: "div.un", operand: "none" }],
+  [0x5d, { name: "rem", operand: "none" }],
+  [0x5e, { name: "rem.un", operand: "none" }],
+  [0x5f, { name: "and", operand: "none" }],
+  [0x60, { name: "or", operand: "none" }],
+  [0x61, { name: "xor", operand: "none" }],
+  [0x62, { name: "shl", operand: "none" }],
+  [0x63, { name: "shr", operand: "none" }],
+  [0x64, { name: "shr.un", operand: "none" }],
+  [0x65, { name: "neg", operand: "none" }],
+  [0x66, { name: "not", operand: "none" }],
+  [0x67, { name: "conv.i1", operand: "none" }],
+  [0x68, { name: "conv.i2", operand: "none" }],
+  [0x69, { name: "conv.i4", operand: "none" }],
+  [0x6a, { name: "conv.i8", operand: "none" }],
+  [0x6b, { name: "conv.r4", operand: "none" }],
+  [0x6c, { name: "conv.r8", operand: "none" }],
+  [0x6d, { name: "conv.u4", operand: "none" }],
+  [0x6e, { name: "conv.u8", operand: "none" }],
   [0x6f, { name: "callvirt", operand: "method" }],
   [0x70, { name: "cpobj", operand: "type" }],
+  [0x71, { name: "ldobj", operand: "type" }],
   [0x72, { name: "ldstr", operand: "string" }],
   [0x73, { name: "newobj", operand: "method" }],
   [0x74, { name: "castclass", operand: "type" }],
   [0x75, { name: "isinst", operand: "type" }],
+  [0x76, { name: "conv.r.un", operand: "none" }],
+  [0x79, { name: "unbox", operand: "type" }],
+  [0x7a, { name: "throw", operand: "none" }],
   [0x7b, { name: "ldfld", operand: "field" }],
   [0x7c, { name: "ldflda", operand: "field" }],
   [0x7d, { name: "stfld", operand: "field" }],
   [0x7e, { name: "ldsfld", operand: "field" }],
   [0x7f, { name: "ldsflda", operand: "field" }],
   [0x80, { name: "stsfld", operand: "field" }],
+  [0x81, { name: "stobj", operand: "type" }],
+  [0x82, { name: "conv.ovf.i1.un", operand: "none" }],
+  [0x83, { name: "conv.ovf.i2.un", operand: "none" }],
+  [0x84, { name: "conv.ovf.i4.un", operand: "none" }],
+  [0x85, { name: "conv.ovf.i8.un", operand: "none" }],
+  [0x86, { name: "conv.ovf.u1.un", operand: "none" }],
+  [0x87, { name: "conv.ovf.u2.un", operand: "none" }],
+  [0x88, { name: "conv.ovf.u4.un", operand: "none" }],
+  [0x89, { name: "conv.ovf.u8.un", operand: "none" }],
+  [0x8a, { name: "conv.ovf.i.un", operand: "none" }],
+  [0x8b, { name: "conv.ovf.u.un", operand: "none" }],
   [0x8c, { name: "box", operand: "type" }],
   [0x8d, { name: "newarr", operand: "type" }],
+  [0x8e, { name: "ldlen", operand: "none" }],
+  [0x8f, { name: "ldelema", operand: "type" }],
+  [0x90, { name: "ldelem.i1", operand: "none" }],
+  [0x91, { name: "ldelem.u1", operand: "none" }],
+  [0x92, { name: "ldelem.i2", operand: "none" }],
+  [0x93, { name: "ldelem.u2", operand: "none" }],
+  [0x94, { name: "ldelem.i4", operand: "none" }],
+  [0x95, { name: "ldelem.u4", operand: "none" }],
+  [0x96, { name: "ldelem.i8", operand: "none" }],
+  [0x97, { name: "ldelem.i", operand: "none" }],
+  [0x98, { name: "ldelem.r4", operand: "none" }],
+  [0x99, { name: "ldelem.r8", operand: "none" }],
+  [0x9a, { name: "ldelem.ref", operand: "none" }],
+  [0x9b, { name: "stelem.i", operand: "none" }],
+  [0x9c, { name: "stelem.i1", operand: "none" }],
+  [0x9d, { name: "stelem.i2", operand: "none" }],
+  [0x9e, { name: "stelem.i4", operand: "none" }],
+  [0x9f, { name: "stelem.i8", operand: "none" }],
+  [0xa0, { name: "stelem.r4", operand: "none" }],
+  [0xa1, { name: "stelem.r8", operand: "none" }],
+  [0xa2, { name: "stelem.ref", operand: "none" }],
+  [0xa3, { name: "ldelem", operand: "type" }],
+  [0xa4, { name: "stelem", operand: "type" }],
   [0xa5, { name: "unbox.any", operand: "type" }],
+  [0xb3, { name: "conv.ovf.i1", operand: "none" }],
+  [0xb4, { name: "conv.ovf.u1", operand: "none" }],
+  [0xb5, { name: "conv.ovf.i2", operand: "none" }],
+  [0xb6, { name: "conv.ovf.u2", operand: "none" }],
+  [0xb7, { name: "conv.ovf.i4", operand: "none" }],
+  [0xb8, { name: "conv.ovf.u4", operand: "none" }],
+  [0xb9, { name: "conv.ovf.i8", operand: "none" }],
+  [0xba, { name: "conv.ovf.u8", operand: "none" }],
+  [0xc2, { name: "refanyval", operand: "type" }],
+  [0xc3, { name: "ckfinite", operand: "none" }],
+  [0xc6, { name: "mkrefany", operand: "type" }],
   [0xd0, { name: "ldtoken", operand: "token" }],
+  [0xd1, { name: "conv.u2", operand: "none" }],
+  [0xd2, { name: "conv.u1", operand: "none" }],
+  [0xd3, { name: "conv.i", operand: "none" }],
+  [0xd4, { name: "conv.ovf.i", operand: "none" }],
+  [0xd5, { name: "conv.ovf.u", operand: "none" }],
+  [0xd6, { name: "add.ovf", operand: "none" }],
+  [0xd7, { name: "add.ovf.un", operand: "none" }],
+  [0xd8, { name: "mul.ovf", operand: "none" }],
+  [0xd9, { name: "mul.ovf.un", operand: "none" }],
+  [0xda, { name: "sub.ovf", operand: "none" }],
+  [0xdb, { name: "sub.ovf.un", operand: "none" }],
+  [0xdc, { name: "endfinally", operand: "none" }],
   [0xdd, { name: "leave", operand: "branch" }],
   [0xde, { name: "leave.s", operand: "short-branch" }],
+  [0xdf, { name: "stind.i", operand: "none" }],
+  [0xe0, { name: "conv.u", operand: "none" }],
+  [0xfe00, { name: "arglist", operand: "none" }],
+  [0xfe01, { name: "ceq", operand: "none" }],
+  [0xfe02, { name: "cgt", operand: "none" }],
+  [0xfe03, { name: "cgt.un", operand: "none" }],
+  [0xfe04, { name: "clt", operand: "none" }],
+  [0xfe05, { name: "clt.un", operand: "none" }],
+  [0xfe06, { name: "ldftn", operand: "method" }],
+  [0xfe07, { name: "ldvirtftn", operand: "method" }],
   [0xfe09, { name: "ldarg", operand: "var" }],
   [0xfe0a, { name: "ldarga", operand: "var" }],
+  [0xfe0b, { name: "starg", operand: "var" }],
   [0xfe0c, { name: "ldloc", operand: "var" }],
+  [0xfe0d, { name: "ldloca", operand: "var" }],
   [0xfe0e, { name: "stloc", operand: "var" }],
+  [0xfe0f, { name: "localloc", operand: "none" }],
+  [0xfe11, { name: "endfilter", operand: "none" }],
+  [0xfe12, { name: "unaligned.", operand: "short-i" }],
+  [0xfe13, { name: "volatile.", operand: "none" }],
+  [0xfe14, { name: "tail.", operand: "none" }],
+  [0xfe15, { name: "initobj", operand: "type" }],
+  [0xfe16, { name: "constrained.", operand: "type" }],
+  [0xfe17, { name: "cpblk", operand: "none" }],
+  [0xfe18, { name: "initblk", operand: "none" }],
+  [0xfe1a, { name: "rethrow", operand: "none" }],
+  [0xfe1c, { name: "sizeof", operand: "type" }],
+  [0xfe1d, { name: "refanytype", operand: "none" }],
+  [0xfe1e, { name: "readonly.", operand: "none" }],
 ]);
 
 const tokenKind = (token: string): ManagedInstructionAnchor["operand_kind"] => {
@@ -584,78 +735,127 @@ const tokenKind = (token: string): ManagedInstructionAnchor["operand_kind"] => {
   return "token";
 };
 
+type OperandResult = {
+  readonly next: number;
+  readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
+  readonly value: string | null;
+};
+
+type OperandReader = (il: Buffer, offset: number) => OperandResult;
+
+const FIXED_OPERAND_READERS = new Map<string, OperandReader>([
+  [
+    "none",
+    (_il, offset) => ({ next: offset, anchorKind: "none", value: null }),
+  ],
+  [
+    "short-var",
+    (il, offset) => ({
+      next: offset + 1,
+      anchorKind: "variable",
+      value: String(il.readUInt8(offset)),
+    }),
+  ],
+  [
+    "var",
+    (il, offset) => ({
+      next: offset + 2,
+      anchorKind: "variable",
+      value: String(il.readUInt16LE(offset)),
+    }),
+  ],
+  [
+    "short-i",
+    (il, offset) => ({
+      next: offset + 1,
+      anchorKind: "constant",
+      value: String(il.readInt8(offset)),
+    }),
+  ],
+  [
+    "i",
+    (il, offset) => ({
+      next: offset + 4,
+      anchorKind: "constant",
+      value: String(il.readInt32LE(offset)),
+    }),
+  ],
+  [
+    "i8",
+    (il, offset) => ({
+      next: offset + 8,
+      anchorKind: "constant",
+      value: il.readBigInt64LE(offset).toString(),
+    }),
+  ],
+  [
+    "r4",
+    (il, offset) => ({
+      next: offset + 4,
+      anchorKind: "constant",
+      value: String(il.readFloatLE(offset)),
+    }),
+  ],
+  [
+    "r8",
+    (il, offset) => ({
+      next: offset + 8,
+      anchorKind: "constant",
+      value: String(il.readDoubleLE(offset)),
+    }),
+  ],
+  [
+    "short-branch",
+    (il, offset) => ({
+      next: offset + 1,
+      anchorKind: "branch",
+      value: String(offset + 1 + il.readInt8(offset)),
+    }),
+  ],
+  [
+    "branch",
+    (il, offset) => ({
+      next: offset + 4,
+      anchorKind: "branch",
+      value: String(offset + 4 + il.readInt32LE(offset)),
+    }),
+  ],
+]);
+
+const TOKEN_OPERAND_KINDS = new Map<
+  string,
+  ManagedInstructionAnchor["operand_kind"]
+>([
+  ["method", "method"],
+  ["field", "field"],
+  ["type", "type"],
+  ["string", "string"],
+  ["signature", "signature"],
+]);
+
 const readOperand = (
   il: Buffer,
   offset: number,
   kind: string,
-): {
-  readonly next: number;
-  readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
-  readonly value: string | null;
-} => {
-  switch (kind) {
-    case "none":
-      return { next: offset, anchorKind: "none", value: null };
-    case "short-var":
-      return {
-        next: offset + 1,
-        anchorKind: "variable",
-        value: String(il.readUInt8(offset)),
-      };
-    case "var":
-      return {
-        next: offset + 2,
-        anchorKind: "variable",
-        value: String(il.readUInt16LE(offset)),
-      };
-    case "short-i":
-      return {
-        next: offset + 1,
-        anchorKind: "constant",
-        value: String(il.readInt8(offset)),
-      };
-    case "i":
-      return {
-        next: offset + 4,
-        anchorKind: "constant",
-        value: String(il.readInt32LE(offset)),
-      };
-    case "short-branch":
-      return {
-        next: offset + 1,
-        anchorKind: "branch",
-        value: String(offset + 1 + il.readInt8(offset)),
-      };
-    case "branch":
-      return {
-        next: offset + 4,
-        anchorKind: "branch",
-        value: String(offset + 4 + il.readInt32LE(offset)),
-      };
-    case "switch": {
-      const count = il.readUInt32LE(offset);
-      return {
-        next: offset + 4 + count * 4,
-        anchorKind: "switch",
-        value: String(count),
-      };
-    }
-    case "method":
-    case "field":
-    case "type":
-    case "string":
-    case "token": {
-      const raw = il.readUInt32LE(offset);
-      const token = `0x${raw.toString(16).padStart(8, "0")}`;
-      return {
-        next: offset + 4,
-        anchorKind: kind === "token" ? tokenKind(token) : kind,
-        value: token,
-      };
-    }
-    default:
-      return { next: offset, anchorKind: "unknown", value: null };
+): OperandResult => {
+  const fixed = FIXED_OPERAND_READERS.get(kind);
+  if (fixed !== undefined) return fixed(il, offset);
+  if (kind === "switch") {
+    const count = il.readUInt32LE(offset);
+    return {
+      next: offset + 4 + count * 4,
+      anchorKind: "switch",
+      value: String(count),
+    };
   }
+  const raw = il.readUInt32LE(offset);
+  const token = `0x${raw.toString(16).padStart(8, "0")}`;
+  const tokenOperandKind = TOKEN_OPERAND_KINDS.get(kind);
+  if (tokenOperandKind !== undefined)
+    return { next: offset + 4, anchorKind: tokenOperandKind, value: token };
+  if (kind === "token")
+    return { next: offset + 4, anchorKind: tokenKind(token), value: token };
+  return { next: offset, anchorKind: "unknown", value: null };
 };
 
 const decodeInstructions = (
@@ -676,10 +876,11 @@ const decodeInstructions = (
       const first = il.readUInt8(offset);
       offset += 1;
       const code = first === 0xfe ? 0xfe00 + il.readUInt8(offset++) : first;
-      const descriptor = opcode(code) ?? {
-        name: `unknown.0x${code.toString(16)}`,
-        operand: "none",
-      };
+      const descriptor = opcode(code);
+      if (descriptor === undefined) {
+        issue = `Unsupported CIL opcode 0x${code.toString(16)} at IL offset ${String(start)}`;
+        break;
+      }
       const operand = readOperand(il, offset, descriptor.operand);
       if (operand.next < offset || operand.next > il.length) {
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
@@ -751,6 +952,49 @@ const parseExceptionRegions = (
   return regions;
 };
 
+interface MethodBodyHeader {
+  readonly format: "tiny" | "fat";
+  readonly size: number;
+  readonly flags: number;
+  readonly maxStack: number;
+  readonly ilSize: number;
+  readonly localSig: number;
+}
+
+const readMethodBodyHeader = (
+  bytes: Buffer,
+  offset: number,
+): MethodBodyHeader => {
+  const first = bytes.readUInt8(offset);
+  if ((first & 3) === 2)
+    return {
+      format: "tiny",
+      size: 1,
+      flags: 0,
+      maxStack: 8,
+      ilSize: first >> 2,
+      localSig: 0,
+    };
+  if ((first & 3) !== 3) throw new RangeError("Unsupported method body header");
+  if (offset > bytes.length - 12)
+    throw new RangeError("Fat method body header leaves artifact");
+  const flagsAndSize = bytes.readUInt16LE(offset);
+  const headerDwords = flagsAndSize >>> 12;
+  if (headerDwords < 3)
+    throw new RangeError("Fat method body header is smaller than 12 bytes");
+  const size = headerDwords * 4;
+  if (offset > bytes.length - size)
+    throw new RangeError("Method body header leaves artifact");
+  return {
+    format: "fat",
+    size,
+    flags: flagsAndSize & 0x0fff,
+    maxStack: bytes.readUInt16LE(offset + 2),
+    ilSize: bytes.readUInt32LE(offset + 4),
+    localSig: bytes.readUInt32LE(offset + 8),
+  };
+};
+
 const methodBody = (
   bytes: Buffer,
   pe: ManagedPeLayout,
@@ -779,26 +1023,20 @@ const methodBody = (
     };
   try {
     const offset = pe.rvaToOffset(rva, 1, "method.body");
-    const first = bytes.readUInt8(offset);
-    const tiny = (first & 3) === 2;
-    const fat = (first & 3) === 3;
-    if (!tiny && !fat) throw new RangeError("Unsupported method body header");
-    const headerSize = tiny ? 1 : (first >> 4) * 4;
-    const flags = tiny ? 0 : bytes.readUInt16LE(offset);
-    const maxStack = tiny ? 8 : bytes.readUInt16LE(offset + 2);
-    const ilSize = tiny ? first >> 2 : bytes.readUInt32LE(offset + 4);
-    const localSig = tiny ? 0 : bytes.readUInt32LE(offset + 8);
-    if (ilSize > limits.maxMethodBodyBytes)
+    const header = readMethodBodyHeader(bytes, offset);
+    if (header.ilSize > limits.maxMethodBodyBytes)
       return {
         status: "too-large",
-        header_format: tiny ? "tiny" : "fat",
+        header_format: header.format,
         rva,
         file_offset: offset,
-        max_stack: maxStack,
-        init_locals: tiny ? false : (flags & 0x10) !== 0,
+        max_stack: header.maxStack,
+        init_locals: (header.flags & 0x10) !== 0,
         local_var_sig_token:
-          localSig === 0 ? null : `0x${localSig.toString(16).padStart(8, "0")}`,
-        il_size: ilSize,
+          header.localSig === 0
+            ? null
+            : `0x${header.localSig.toString(16).padStart(8, "0")}`,
+        il_size: header.ilSize,
         il_sha256: null,
         normalized_il_sha256: null,
         instruction_count: 0,
@@ -809,10 +1047,10 @@ const methodBody = (
         exception_regions: [],
         issue: `Method body exceeds max_method_body_bytes ${String(limits.maxMethodBodyBytes)}`,
       };
-    const ilOffset = offset + headerSize;
-    if (ilOffset > bytes.length - ilSize)
+    const ilOffset = offset + header.size;
+    if (ilOffset > bytes.length - header.ilSize)
       throw new RangeError("Method IL bytes leave artifact");
-    const il = bytes.subarray(ilOffset, ilOffset + ilSize);
+    const il = bytes.subarray(ilOffset, ilOffset + header.ilSize);
     const decoded = decodeInstructions(il, limits.maxMethodInstructions);
     const opcodeCounts: Record<string, number> = {};
     for (const instruction of decoded.parsed)
@@ -838,18 +1076,20 @@ const methodBody = (
       ),
       "utf8",
     );
-    const methodEnd = ilOffset + ilSize;
+    const methodEnd = ilOffset + header.ilSize;
     const sectionOffset = (methodEnd + 3) & ~3;
     return {
       status: decoded.issue === null ? "present" : "malformed",
-      header_format: tiny ? "tiny" : "fat",
+      header_format: header.format,
       rva,
       file_offset: offset,
-      max_stack: maxStack,
-      init_locals: tiny ? false : (flags & 0x10) !== 0,
+      max_stack: header.maxStack,
+      init_locals: (header.flags & 0x10) !== 0,
       local_var_sig_token:
-        localSig === 0 ? null : `0x${localSig.toString(16).padStart(8, "0")}`,
-      il_size: ilSize,
+        header.localSig === 0
+          ? null
+          : `0x${header.localSig.toString(16).padStart(8, "0")}`,
+      il_size: header.ilSize,
       il_sha256: sha256Bytes(il),
       normalized_il_sha256: sha256Bytes(normalized),
       instruction_count: decoded.count,
@@ -858,7 +1098,7 @@ const methodBody = (
       opcode_counts: opcodeCounts,
       anchors,
       exception_regions:
-        fat && (flags & 8) !== 0
+        header.format === "fat" && (header.flags & 8) !== 0
           ? parseExceptionRegions(bytes, sectionOffset, bytes.length)
           : [],
       issue: decoded.issue,

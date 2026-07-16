@@ -7,6 +7,7 @@ import { z } from "zod";
 import { evidenceSchema, parseEvidence } from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import {
+  cliMetadataGuidSchema,
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
@@ -126,7 +127,7 @@ export const managedNativeVerificationResultSchema = z.strictObject({
     evidence_id: evidenceIdSchema,
     artifact_sha256: digestSchema,
     artifact_path: z.string().min(1),
-    mvid: z.string().uuid().nullable(),
+    mvid: cliMetadataGuidSchema.nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
     pinvoke_imports_total: z.number().int().min(0),
     native_implementations_total: z.number().int().min(0),

@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { evidenceSchema, parseEvidence } from "./evidence.js";
 import {
+  cliMetadataGuidSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
@@ -124,7 +125,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   left: z.strictObject({
     evidence_id: evidenceIdSchema,
     artifact_sha256: digestSchema,
-    mvid: z.string().uuid().nullable(),
+    mvid: cliMetadataGuidSchema.nullable(),
     module_name: z.string().nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
     methods_total: z.number().int().min(0),
@@ -133,7 +134,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   right: z.strictObject({
     evidence_id: evidenceIdSchema,
     artifact_sha256: digestSchema,
-    mvid: z.string().uuid().nullable(),
+    mvid: cliMetadataGuidSchema.nullable(),
     module_name: z.string().nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
     methods_total: z.number().int().min(0),
