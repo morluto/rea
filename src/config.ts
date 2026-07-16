@@ -33,6 +33,7 @@ export interface AppConfig {
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
+  readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperTargetPath: string | undefined;
   readonly hopperTargetKind: "executable" | "database";
@@ -83,6 +84,11 @@ const environmentSchema = z
       .string()
       .min(1)
       .refine(isAbsolute, "JAVA_HOME must be absolute")
+      .optional(),
+    REA_ILSPY_CMD_PATH: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "REA_ILSPY_CMD_PATH must be absolute")
       .optional(),
     HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
     HOPPER_TARGET_PATH: z.string().min(1).optional(),
@@ -483,6 +489,7 @@ export const parseConfig = (
     analysisProvider: parsedEnvironment.data.REA_ANALYSIS_PROVIDER,
     ghidraInstallDir: parsedEnvironment.data.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: parsedEnvironment.data.JAVA_HOME,
+    ilspyCmdPath: parsedEnvironment.data.REA_ILSPY_CMD_PATH,
     hopperLauncherPath:
       parsedEnvironment.data.HOPPER_LAUNCHER_PATH ??
       defaultHopperLauncherPath(),

@@ -66,6 +66,7 @@ export interface DoctorHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
   readonly configuredHopperPath?: string;
+  readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
@@ -80,6 +81,7 @@ export interface DoctorHost {
   installedSkillIdentity?(): Promise<InstalledSkillIdentity | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   javascriptReplayCheck?(): Promise<DoctorCheck>;
+  ilspyCmdVersion?(path: string): Promise<string | undefined>;
 }
 
 /** Parsed identity committed by an installed REA skill. */
@@ -205,6 +207,23 @@ export const runDoctor = async (
   const providerInspections = await inspectDoctorProviders(host, checks);
   const javascriptReplayCheck = await host.javascriptReplayCheck?.();
   if (javascriptReplayCheck !== undefined) checks.push(javascriptReplayCheck);
+  if (host.configuredIlspyCmdPath !== undefined) {
+    const version = await host.ilspyCmdVersion?.(host.configuredIlspyCmdPath);
+    checks.push(
+      check(
+        "ilspycmd",
+        version !== undefined,
+        version === undefined
+          ? host.configuredIlspyCmdPath
+          : `${host.configuredIlspyCmdPath} (${version})`,
+        {
+          remediation:
+            "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+          classification: "config_drift",
+        },
+      ),
+    );
+  }
   if (host.platform === "linux" && hopperPath !== undefined)
     checks.push(
       check(
@@ -342,6 +361,9 @@ export const systemDoctorHost = (
   ...(process.env.HOPPER_LAUNCHER_PATH === undefined
     ? {}
     : { configuredHopperPath: process.env.HOPPER_LAUNCHER_PATH }),
+  ...(process.env.REA_ILSPY_CMD_PATH === undefined
+    ? {}
+    : { configuredIlspyCmdPath: process.env.REA_ILSPY_CMD_PATH }),
   async macosVersion() {
     try {
       return (
@@ -422,6 +444,16 @@ export const systemDoctorHost = (
   ...(options.javascriptReplayCheck === undefined
     ? {}
     : { javascriptReplayCheck: options.javascriptReplayCheck }),
+  async ilspyCmdVersion(path) {
+    try {
+      await access(path, constants.X_OK);
+      return firstIlspyVersionLine(
+        (await execFileAsync(path, ["--version"], { timeout: 10_000 })).stdout,
+      );
+    } catch {
+      return undefined;
+    }
+  },
   async installationPaths() {
     try {
       const command = process.platform === "win32" ? "where" : "which";
@@ -487,6 +519,10 @@ const uniqueLines = (value: string): string[] => [
       .filter((line) => line.length > 0),
   ),
 ];
+
+const firstIlspyVersionLine = (value: string): string | undefined =>
+  uniqueLines(value).find((line) => line.startsWith("ilspycmd:"));
+
 const check = (
   name: string,
   ok: boolean,

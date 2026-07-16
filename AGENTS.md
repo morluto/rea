@@ -61,7 +61,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
 - `npm run verify:ghidra`: build and run the real-Ghidra verifier against `GHIDRA_INSTALL_DIR` and optional `GHIDRA_TARGET_PATH`.
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
-- `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, non-managed degradation, managed application-graph projection, and manifest-verifier self-test; set `REA_MANAGED_APP_MANIFEST_PATH` to verify an operator-local managed app manifest, including optional graph/trace assertions.
+- `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, non-managed degradation, managed application-graph projection, manifest-verifier self-test, and optional BYO ILSpy oracle checks; set `REA_MANAGED_APP_MANIFEST_PATH` to verify an operator-local managed app manifest, including optional graph/trace assertions, and set `REA_ILSPY_CMD_PATH` to an absolute `ilspycmd` path to run the real ILSpy reconstruction oracle.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
@@ -76,6 +76,7 @@ Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use
 - `REA_ANALYSIS_PROVIDER` (optional, default `auto`): require one deep-analysis provider ID for startup and one-shot commands, or use deterministic automatic selection. A request-level `provider_id`/`--provider` takes precedence.
 - `GHIDRA_INSTALL_DIR` (optional): absolute root of an extracted official Ghidra 12.1.2 distribution. The current adapter supports Linux x64 only.
 - `JAVA_HOME` (optional): absolute 64-bit full JDK 21 root used by Ghidra. When absent, doctor probes `java`/`javac` from `PATH`.
+- `REA_ILSPY_CMD_PATH` (optional): absolute path to a bring-your-own `ilspycmd`; doctor reports its configured version, and `verify:managed` can use it as a real reconstruction oracle without making ILSpy a setup-installed dependency or canonical parser.
 - `HOPPER_TARGET_PATH` (optional): absolute initial binary or `.hop` target. Target-free MCP sessions use `open_binary` instead.
 - `HOPPER_LAUNCHER_PATH` (optional): override the Hopper executable path (defaults to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper`).
 - `HOPPER_TARGET_KIND` (optional, default `executable`): startup kind for `HOPPER_TARGET_PATH`; dynamic targets are classified from their paths and headers.
