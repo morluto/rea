@@ -12,6 +12,7 @@ import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
+import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
 
 const readmes = [
@@ -29,6 +30,7 @@ const expectedToolCounts = [
   ARTIFACT_TOOL_CONTRACTS.length,
   BROWSER_TOOL_CONTRACTS.length,
   ELECTRON_TOOL_CONTRACTS.length,
+  APPLICATION_TOOL_CONTRACTS.length,
   SESSION_TOOL_CONTRACTS.length,
 ] as const;
 

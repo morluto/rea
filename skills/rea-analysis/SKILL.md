@@ -2,8 +2,8 @@
 name: rea-analysis
 description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
 metadata:
-  version: "16"
-  tool_count: 80
+  version: "17"
+  tool_count: 82
 ---
 
 # REA
@@ -59,6 +59,24 @@ mismatch, preserve ambiguity, and never call a module executed merely because
 its containing bundle was observed. Keep source-map authority separate. This
 tool maps JavaScript graph entities; `correlate_static_and_runtime` remains the
 separate workflow for explicit cross-version comparison hypotheses.
+
+Use `trace_application_feature` on authenticated static or reconciled
+application Evidence to follow one literal node ID, route, string, API, IPC
+channel, module, or native export. Choose an explicit direction and bounds.
+Preserve every graph authority in the returned subgraph. A native handoff means
+only that the exact artifact digest and requested export frontier are known;
+link Ghidra or Hopper Evidence only on exact subject digest, and never claim the
+workflow opened a provider or verified a requested export by itself.
+
+Use `compare_application_versions` after analyzing both versions independently.
+Accept only its unique digest, source-map, structural-fingerprint, or non-module
+semantic matches. Never use module ordinals or minified names as persistent
+identity, and never promote an ambiguous candidate to a match. Report added or
+removed only when opposite-side coverage is complete; otherwise report unknown.
+Use `unknown_registry_approved: true` only after approval to retain unresolved
+version matches. For local operator-provided artifacts, the packaged
+`verify:application-workflows` command reports digests and coverage without
+printing source text.
 
 ## Understand the request
 

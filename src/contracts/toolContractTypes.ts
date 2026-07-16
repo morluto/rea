@@ -24,6 +24,7 @@ export type ToolKind =
   | "artifact-provider"
   | "browser-provider"
   | "electron-provider"
+  | "application"
   | "session";
 
 /** Single source of truth for a public MCP tool. */

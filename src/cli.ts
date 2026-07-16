@@ -34,6 +34,7 @@ import { registerPolicyCommands } from "./cliPolicyCommands.js";
 import { registerBrowserCommands } from "./cliBrowserCommands.js";
 import { registerAdvancedBrowserCommands } from "./cliBrowserAdvancedCommands.js";
 import { registerElectronCommands } from "./cliElectronCommands.js";
+import { registerApplicationCommands } from "./cliApplicationCommands.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import {
   analysisProviderSelectorSchema,
@@ -89,6 +90,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerBrowserCommands(cli, logger);
   registerAdvancedBrowserCommands(cli, logger);
   registerElectronCommands(cli, logger);
+  registerApplicationCommands(cli, logger);
   return cli;
 };
 

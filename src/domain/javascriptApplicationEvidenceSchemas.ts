@@ -24,6 +24,7 @@ const applicationEvidenceAuthoritySchema = z.enum([
   "static-relationship-inference",
   "passive-cdp-runtime",
   "cross-layer-reconciliation",
+  "cross-version-comparison",
   "controlled-replay",
   "native-analysis-provider",
   "historical-reference",
@@ -268,6 +269,15 @@ const checkAuthorityState = (
       code: "custom",
       path: ["state"],
       message: "Cross-layer reconciliation authority must remain inferred",
+    });
+  if (
+    evidence.authority === "cross-version-comparison" &&
+    evidence.state !== "inferred"
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["state"],
+      message: "Cross-version comparison authority must remain inferred",
     });
   if (
     evidence.authority === "unknown" &&

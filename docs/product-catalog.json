@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "16"
+    "skill_version": "17"
   },
   "tools": {
-    "total": 80,
+    "total": 82,
     "families": [
       {
         "id": "direct",
@@ -113,6 +113,12 @@
           "list_electron_targets",
           "reconcile_javascript_runtime"
         ]
+      },
+      {
+        "id": "application",
+        "surface": "application-workflow",
+        "count": 2,
+        "tools": ["compare_application_versions", "trace_application_feature"]
       },
       {
         "id": "session",
@@ -254,6 +260,15 @@
       "capabilities": ["analyze_javascript_application"]
     },
     {
+      "id": "rea-javascript-application-workflows",
+      "name": "REA JavaScript application workflows",
+      "version": "1",
+      "capabilities": [
+        "compare_application_versions",
+        "trace_application_feature"
+      ]
+    },
+    {
       "id": "rea-javascript-runtime-reconciliation",
       "name": "REA JavaScript runtime reconciliation",
       "version": "1",
@@ -358,6 +373,14 @@
       "version": 1
     },
     {
+      "id": "javascript_application_version_comparison",
+      "version": 1
+    },
+    {
+      "id": "javascript_feature_trace",
+      "version": 1
+    },
+    {
       "id": "process_capture",
       "version": 4
     },
@@ -399,7 +422,7 @@
     }
   ],
   "cli": {
-    "primary_count": 40,
+    "primary_count": 42,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -408,6 +431,7 @@
       "capture-process",
       "capture-web-screenshot",
       "compare",
+      "compare-application-versions",
       "compare-process-captures",
       "compare-web-captures",
       "compare-web-screenshots",
@@ -438,6 +462,7 @@
       "search",
       "setup",
       "trace",
+      "trace-application-feature",
       "uninstall",
       "upgrade",
       "xrefs"
@@ -451,17 +476,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 40,
-      "mcp_tools": 80,
+      "cli_commands": 42,
+      "mcp_tools": 82,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "ea588b0a55232dc3d51a5baff7ef07d522484b0ca218abe072762498bcbbd2ee",
-      "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
+      "tools_sha256": "abf857fcc4e427f5e882e5d812ce43f03523611e28cf00665b8959ea961360b0",
+      "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "e8b9641545de9729803af17f34f2677498ca7c2e6108e50291bf4ca86c1695e6"
+      "combined_sha256": "d690c8c0fcf38fb801827bb5aef3113a19a8c363abafc2e7fa5c6f53448c1e17"
     }
   }
 }
