@@ -35,6 +35,9 @@ describe("managed artifact MCP tools", () => {
       expect(tools.tools.map(({ name }) => name)).toContain(
         "inspect_managed_artifact",
       );
+      expect(tools.tools.map(({ name }) => name)).toContain(
+        "inspect_managed_members",
+      );
 
       await client.callTool({
         name: "open_binary",
@@ -57,6 +60,25 @@ describe("managed artifact MCP tools", () => {
             runtime_family: "modern-dotnet",
           },
           references: { limit: 1 },
+        },
+      });
+
+      const members = structured(
+        await client.callTool({
+          name: "inspect_managed_members",
+          arguments: { method_limit: 1 },
+        }),
+      );
+
+      expect(members).toMatchObject({
+        operation: "inspect_managed_members",
+        provider: { id: "rea-dotnet-static" },
+        subject: { local_path: path, format: "pe" },
+        normalized_result: {
+          identity_scope: { token_identity: "build-local" },
+          methods: { total: 1, returned: 1 },
+          call_edges: { total: 1 },
+          field_accesses: { total: 1 },
         },
       });
     } finally {

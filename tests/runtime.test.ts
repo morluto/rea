@@ -10,7 +10,7 @@ const fixturePath = fileURLToPath(
 );
 
 describe("production stdio runtime", () => {
-  it("starts the built entrypoint, lists 84 tools, calls one, and shuts down", async () => {
+  it("starts the built entrypoint, lists 85 tools, calls one, and shuts down", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [mainPath],
@@ -32,7 +32,7 @@ describe("production stdio runtime", () => {
     try {
       await client.connect(transport);
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(84);
+      expect(tools.tools).toHaveLength(85);
       const result = await client.callTool({
         name: "current_document",
         arguments: {},
@@ -78,7 +78,7 @@ describe("production stdio runtime", () => {
 
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(84);
+      expect((await client.listTools()).tools).toHaveLength(85);
     } finally {
       await client.close();
       await transport.close();

@@ -7,12 +7,16 @@ import { describe, expect, it } from "vitest";
 
 import { runProviderAnalysis } from "../src/application/DirectAnalysis.js";
 import type { AnalysisExecution } from "../src/application/AnalysisProvider.js";
-import { managedArtifactInspectionSchema } from "../src/domain/managedArtifact.js";
+import {
+  managedArtifactInspectionSchema,
+  managedMemberInspectionSchema,
+} from "../src/domain/managedArtifact.js";
 import type { BinaryTarget } from "../src/domain/binaryTarget.js";
 import { parseBinaryTarget } from "../src/domain/binaryTarget.js";
 import { parseEvidence } from "../src/domain/evidence.js";
 import { ManagedStaticProvider } from "../src/dotnet/ManagedStaticProvider.js";
 import { inspectManagedArtifactBytes } from "../src/dotnet/ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "../src/dotnet/ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
   buildNativePeFixture,
@@ -28,6 +32,25 @@ const limits = {
   maxMetadataBytes: 1024 * 1024,
   maxTableRows: 1_000,
   maxHeapItemBytes: 1024 * 1024,
+};
+
+const memberLimits = {
+  typeOffset: 0,
+  typeLimit: 100,
+  methodOffset: 0,
+  methodLimit: 100,
+  fieldOffset: 0,
+  fieldLimit: 100,
+  memberRefOffset: 0,
+  memberRefLimit: 100,
+  edgeOffset: 0,
+  edgeLimit: 100,
+  instructionAnchorLimit: 100,
+  maxMetadataBytes: 1024 * 1024,
+  maxTableRows: 1_000,
+  maxHeapItemBytes: 1024 * 1024,
+  maxMethodBodyBytes: 1024 * 1024,
+  maxMethodInstructions: 1_000,
 };
 
 describe("managed PE/CLI static provider", () => {
@@ -92,6 +115,147 @@ describe("managed PE/CLI static provider", () => {
     });
     expect(result.coverage.state).toBe("partial");
     expect(result.coverage.issues).toEqual([]);
+  });
+
+  it("inspects metadata members, signatures, CIL hashes, call edges, and field anchors", () => {
+    const bytes = buildManagedPeFixture();
+    const result = inspectManagedMembersBytes(
+      bytes,
+      target(bytes),
+      memberLimits,
+    );
+
+    expect(result.identity_scope).toEqual({
+      token_identity: "build-local",
+      requires_artifact_sha256: target(bytes).sha256,
+      requires_mvid: "00112233-4455-6677-8899-aabbccddeeff",
+    });
+    expect(result.types.items).toEqual([
+      expect.objectContaining({
+        token: "0x02000001",
+        full_name: "Fixture.Program",
+        field_list: { first_row: 1, last_row: 1, count: 1 },
+        method_list: { first_row: 1, last_row: 1, count: 1 },
+      }),
+    ]);
+    expect(result.fields.items).toEqual([
+      expect.objectContaining({
+        token: "0x04000001",
+        declaring_type: "Fixture.Program",
+        name: "counter",
+        signature: expect.objectContaining({
+          kind: "field",
+          parse_status: "decoded",
+          field_type: "i4",
+        }),
+      }),
+    ]);
+    expect(result.methods.items).toEqual([
+      expect.objectContaining({
+        token: "0x06000001",
+        declaring_type: "Fixture.Program",
+        name: "Main",
+        rva: 0x2800,
+        signature: expect.objectContaining({
+          kind: "method",
+          parse_status: "decoded",
+          return_type: "void",
+          parameter_types: [],
+        }),
+        body: expect.objectContaining({
+          status: "present",
+          header_format: "tiny",
+          file_offset: 0x0a00,
+          il_size: 12,
+          instruction_count: 4,
+          decoded_instruction_count: 4,
+          truncated_instructions: 0,
+          opcode_counts: { "ldarg.0": 1, ldfld: 1, call: 1, ret: 1 },
+          anchors: [
+            {
+              il_offset: 1,
+              opcode: "ldfld",
+              operand_kind: "field",
+              operand: "0x04000001",
+            },
+            {
+              il_offset: 6,
+              opcode: "call",
+              operand_kind: "method",
+              operand: "0x0a000001",
+            },
+          ],
+        }),
+      }),
+    ]);
+    expect(result.member_refs.items).toEqual([
+      expect.objectContaining({
+        token: "0x0a000001",
+        name: ".ctor",
+        signature: expect.objectContaining({
+          kind: "method",
+          parse_status: "decoded",
+          parameter_types: ["string"],
+        }),
+      }),
+    ]);
+    expect(result.call_edges.items).toEqual([
+      {
+        caller_token: "0x06000001",
+        caller: "Fixture.Program.Main",
+        opcode: "call",
+        target_token: "0x0a000001",
+        target_kind: "member-ref",
+        target_name: ".ctor",
+      },
+    ]);
+    expect(result.field_accesses.items).toEqual([
+      {
+        method_token: "0x06000001",
+        method: "Fixture.Program.Main",
+        opcode: "ldfld",
+        field_token: "0x04000001",
+        field_name: "counter",
+      },
+    ]);
+    expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+  });
+
+  it("keeps member evidence bounded and typed for pagination and unavailable metadata", () => {
+    const bytes = buildManagedPeFixture();
+    const paged = inspectManagedMembersBytes(bytes, target(bytes), {
+      ...memberLimits,
+      methodLimit: 0 + 1,
+      instructionAnchorLimit: 1,
+    });
+    expect(paged.methods).toMatchObject({
+      total: 1,
+      returned: 1,
+      complete: true,
+    });
+    expect(paged.methods.items[0]?.body.anchors).toHaveLength(1);
+
+    const nativeBytes = buildNativePeFixture();
+    const native = inspectManagedMembersBytes(
+      nativeBytes,
+      target(nativeBytes),
+      memberLimits,
+    );
+    expect(native.metadata.status).toBe("absent");
+    expect(native.coverage.state).toBe("unavailable");
+
+    const malformedBytes = buildManagedPeFixture({
+      corruptMetadataSignature: true,
+    });
+    const malformed = inspectManagedMembersBytes(
+      malformedBytes,
+      target(malformedBytes),
+      memberLimits,
+    );
+    expect(malformed.metadata.status).toBe("malformed");
+    expect(malformed.coverage.issues).toEqual([
+      expect.objectContaining({ code: "invalid-metadata-root" }),
+    ]);
   });
 
   it("reports native PE, malformed metadata, and bounded metadata failures as typed results", () => {
@@ -160,6 +324,16 @@ describe("managed PE/CLI static provider", () => {
     expect(observed.value.provider.id).toBe("rea-dotnet-static");
     expect(observed.value.subject).toMatchObject({ path, format: "pe" });
 
+    const members = await client.execute("inspect_managed_members", {});
+    expect(members.ok).toBe(true);
+    if (!members.ok) return;
+    expect(asManagedMemberResult(members.value)).toMatchObject({
+      artifact: { path, sha256: parsed.value.sha256, format: "pe" },
+      methods: { total: 1 },
+      call_edges: { total: 1 },
+      field_accesses: { total: 1 },
+    });
+
     const cancelled = new AbortController();
     cancelled.abort();
     const cancelledResult = await client.execute(
@@ -213,6 +387,19 @@ describe("managed PE/CLI static provider", () => {
         references: { limit: 1 },
       },
     });
+
+    const memberEvidence = parseEvidence(
+      await runProviderAnalysis(path, "inspect_managed_members", {}),
+    );
+    expect(memberEvidence).toMatchObject({
+      operation: "inspect_managed_members",
+      provider: { id: "rea-dotnet-static" },
+      subject: { local_path: path, format: "pe" },
+      normalized_result: {
+        identity_scope: { token_identity: "build-local" },
+        methods: { total: 1 },
+      },
+    });
   });
 });
 
@@ -227,3 +414,6 @@ const target = (bytes: Buffer): BinaryTarget => ({
 
 const asManagedResult = (execution: AnalysisExecution) =>
   managedArtifactInspectionSchema.parse(execution.result);
+
+const asManagedMemberResult = (execution: AnalysisExecution) =>
+  managedMemberInspectionSchema.parse(execution.result);

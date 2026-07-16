@@ -358,6 +358,11 @@ const observationSchemaDefinitions = (sources) => [
     ["schema_version"],
   ],
   [
+    "managed_member_inspection",
+    sources.managedArtifact.managedMemberInspectionSchema,
+    ["schema_version"],
+  ],
+  [
     "browser_target_list",
     sources.browserObservation.browserTargetListSchema,
     ["schema_version"],
