@@ -692,10 +692,14 @@ try {
       (await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n"
     )
       throw new Error("packaged stale-skill upgrade was not isolated");
-    const alignedDoctor = json(
-      await run(cli, ["doctor", "--json"], environment),
+    const alignedDoctorExecution = await runWithStatus(
+      cli,
+      ["doctor", "--json"],
+      environment,
     );
+    const alignedDoctor = json(alignedDoctorExecution.stdout);
     if (
+      alignedDoctorExecution.status !== (alignedDoctor.healthy ? 0 : 1) ||
       alignedDoctor.identity?.skill?.state !== "aligned" ||
       alignedDoctor.identity?.skill?.installed_tool_count !==
         TOOL_CONTRACTS.length ||
