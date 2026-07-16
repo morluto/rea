@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![86 MCP tools](https://img.shields.io/badge/MCP_tools-86-5c4ee5?style=flat-square)](#86-ツールのワークベンチ)
+[![87 MCP tools](https://img.shields.io/badge/MCP_tools-87-5c4ee5?style=flat-square)](#87-ツールのワークベンチ)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [86 ツール](#86-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
+[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [87 ツール](#87-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
 
 <br />
 
@@ -147,19 +147,19 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 - Swift / Objective-C のメタデータを解析する。
 - Hopper に名前、コメント、ブックマークを残し、人間とエージェントの調査を共有する。
 
-## 86 ツールのワークベンチ
+## 87 ツールのワークベンチ
 
-| ツール群               |  数 | 例                                                                                                                  |
-| ---------------------- | --: | ------------------------------------------------------------------------------------------------------------------- |
-| バイナリ調査           |  33 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                       |
-| 合成解析               |  10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出 |
-| macOS ネイティブ       |   5 | Mach-O メタデータ、署名、plist、アーキテクチャ、Swift デマングル。Hopper 起動不要                                   |
-| アーティファクトグラフ |   2 | ディレクトリ、ZIP/APK/IPA、ASAR の決定的一覧と明示選択されたトランザクション抽出                                    |
-| Managed PE/CLI         |   3 | PE/CLI 識別、メタデータメンバー、CIL ハッシュ、構造的 token 再マッピング、バージョン比較                            |
-| ブラウザ観察           |   8 | origin 限定 CDP 取得、bundle/source map 解析、WebMCP 検出、セッション、capture diff、視覚証拠                       |
-| Electron 解析          |   4 | canonical ファイルルート内の受動観察、有界な静的アプリマッピング、Evidence に基づく静的/実行時の照合                |
-| アプリケーション       |   3 | 有界なクロスレイヤー追跡、一意限定のバージョン比較、承認済み Linux 隔離 extracted-module replay                     |
-| バイナリセッション     |  18 | `open_binary`、`binary_session`、証拠バンドル、プロセス／成果物／関数比較、残余未知レジストリ                       |
+| ツール群               |  数 | 例                                                                                                                    |
+| ---------------------- | --: | --------------------------------------------------------------------------------------------------------------------- |
+| バイナリ調査           |  33 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                         |
+| 合成解析               |  10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出   |
+| macOS ネイティブ       |   5 | Mach-O メタデータ、署名、plist、アーキテクチャ、Swift デマングル。Hopper 起動不要                                     |
+| アーティファクトグラフ |   2 | ディレクトリ、ZIP/APK/IPA、ASAR の決定的一覧と明示選択されたトランザクション抽出                                      |
+| Managed PE/CLI         |   4 | PE/CLI 識別、メタデータメンバー、CIL ハッシュ、P/Invoke/ネイティブ境界宣言、構造的 token 再マッピング、バージョン比較 |
+| ブラウザ観察           |   8 | origin 限定 CDP 取得、bundle/source map 解析、WebMCP 検出、セッション、capture diff、視覚証拠                         |
+| Electron 解析          |   4 | canonical ファイルルート内の受動観察、有界な静的アプリマッピング、Evidence に基づく静的/実行時の照合                  |
+| アプリケーション       |   3 | 有界なクロスレイヤー追跡、一意限定のバージョン比較、承認済み Linux 隔離 extracted-module replay                       |
+| バイナリセッション     |  18 | `open_binary`、`binary_session`、証拠バンドル、プロセス／成果物／関数比較、残余未知レジストリ                         |
 
 ## 他のコーディングエージェントで使う
 

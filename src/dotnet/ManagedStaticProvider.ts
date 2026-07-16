@@ -15,6 +15,7 @@ import {
   MANAGED_TOOL_CONTRACTS,
   managedArtifactInputSchema,
   managedMemberInputSchema,
+  managedNativeBoundaryInputSchema,
   type ManagedToolName,
 } from "../contracts/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -29,10 +30,12 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type {
   ManagedArtifactInspection,
   ManagedMemberInspection,
+  ManagedNativeBoundaryInspection,
 } from "../domain/managedArtifact.js";
 import { err, ok } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 
 const IDENTITY: ProviderIdentity = Object.freeze(MANAGED_STATIC_PROVIDER);
 
@@ -177,10 +180,15 @@ const limitationsFor = (operation: ManagedToolName): readonly string[] =>
           "This capability inventories PE/CLI identity only; inspect_managed_members admits bounded metadata members, signatures, and CIL anchors.",
           "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
         ]
-      : [
-          "This capability decodes bounded PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# and cross-build matching are separate future contracts.",
-          "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
-        ],
+      : operation === "inspect_managed_native_boundaries"
+        ? [
+            "This capability inventories managed declarations for native boundaries only; native exports, thunks, and addresses require separate native-provider evidence.",
+            "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
+          ]
+        : [
+            "This capability decodes bounded PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# and cross-build matching are separate future contracts.",
+            "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
+          ],
   );
 
 const maxRequestedFileBytes = (
@@ -189,6 +197,8 @@ const maxRequestedFileBytes = (
 ): number => {
   if (operation === "inspect_managed_artifact")
     return managedArtifactInputSchema.parse(parameters).max_file_bytes;
+  if (operation === "inspect_managed_native_boundaries")
+    return managedNativeBoundaryInputSchema.parse(parameters).max_file_bytes;
   return managedMemberInputSchema.parse(parameters).max_file_bytes;
 };
 
@@ -197,7 +207,10 @@ const inspectManagedOperation = (
   parameters: Readonly<Record<string, JsonValue>>,
   bytes: Buffer,
   target: BinaryTarget,
-): ManagedArtifactInspection | ManagedMemberInspection => {
+):
+  | ManagedArtifactInspection
+  | ManagedMemberInspection
+  | ManagedNativeBoundaryInspection => {
   if (operation === "inspect_managed_artifact") {
     const input = managedArtifactInputSchema.parse(parameters);
     return inspectManagedArtifactBytes(bytes, target, {
@@ -207,6 +220,20 @@ const inspectManagedOperation = (
       resourceLimit: input.resource_limit,
       attributeOffset: input.attribute_offset,
       attributeLimit: input.attribute_limit,
+      maxMetadataBytes: input.max_metadata_bytes,
+      maxTableRows: input.max_table_rows,
+      maxHeapItemBytes: input.max_heap_item_bytes,
+    });
+  }
+  if (operation === "inspect_managed_native_boundaries") {
+    const input = managedNativeBoundaryInputSchema.parse(parameters);
+    return inspectManagedNativeBoundariesBytes(bytes, target, {
+      moduleRefOffset: input.module_ref_offset,
+      moduleRefLimit: input.module_ref_limit,
+      importOffset: input.import_offset,
+      importLimit: input.import_limit,
+      implementationOffset: input.implementation_offset,
+      implementationLimit: input.implementation_limit,
       maxMetadataBytes: input.max_metadata_bytes,
       maxTableRows: input.max_table_rows,
       maxHeapItemBytes: input.max_heap_item_bytes,
@@ -234,7 +261,10 @@ const inspectManagedOperation = (
 };
 
 const managedLocations = (
-  result: ManagedArtifactInspection | ManagedMemberInspection,
+  result:
+    | ManagedArtifactInspection
+    | ManagedMemberInspection
+    | ManagedNativeBoundaryInspection,
 ): readonly EvidenceLocation[] => {
   if ("pe" in result) {
     if (result.pe.cli === null) return [{ kind: "file-offset", offset: 0 }];
@@ -252,16 +282,26 @@ const managedLocations = (
         })),
     ];
   }
+  if ("methods" in result)
+    return [
+      ...(result.module === null
+        ? [{ kind: "file-offset" as const, offset: 0 }]
+        : [{ kind: "file-offset" as const, offset: result.module.row_offset }]),
+      ...result.methods.items
+        .filter((method) => method.body.file_offset !== null)
+        .slice(0, 8)
+        .map((method) => ({
+          kind: "file-offset" as const,
+          offset: method.body.file_offset ?? 0,
+        })),
+    ];
   return [
     ...(result.module === null
       ? [{ kind: "file-offset" as const, offset: 0 }]
       : [{ kind: "file-offset" as const, offset: result.module.row_offset }]),
-    ...result.methods.items
-      .filter((method) => method.body.file_offset !== null)
-      .slice(0, 8)
-      .map((method) => ({
-        kind: "file-offset" as const,
-        offset: method.body.file_offset ?? 0,
-      })),
+    ...result.pinvoke_imports.items.slice(0, 8).map((mapping) => ({
+      kind: "file-offset" as const,
+      offset: mapping.row_offset,
+    })),
   ];
 };

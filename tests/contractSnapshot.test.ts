@@ -66,7 +66,7 @@ describe("tool contract surface", () => {
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(68);
+    expect(contracts).toHaveLength(69);
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);
@@ -164,7 +164,7 @@ describe("tool contract surface", () => {
     }
   });
 
-  it("publishes no unconstrained output-schema holes across all 86 tools", () => {
+  it("publishes no unconstrained output-schema holes across all 87 tools", () => {
     const contracts = [
       ...OFFICIAL_TOOL_CONTRACTS,
       ...ENHANCED_TOOL_CONTRACTS,
@@ -177,7 +177,7 @@ describe("tool contract surface", () => {
       ...APPLICATION_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(86);
+    expect(contracts).toHaveLength(87);
     for (const contract of contracts) {
       const schema = contractJsonSchema(contract.outputSchema);
       expect(emptySchemaPaths(schema), contract.name).toEqual([]);

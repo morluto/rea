@@ -197,6 +197,70 @@ const managedMemberReferenceSchema = z.object({
   signature: managedSignatureSchema,
 });
 
+const managedModuleReferenceSchema = z.object({
+  token: tokenSchema,
+  row_offset: offsetSchema,
+  name: z.string(),
+});
+
+const managedNativeImportSchema = z.object({
+  token: tokenSchema,
+  row_offset: offsetSchema,
+  mapping_flags: z.number().int().min(0).max(0xffff),
+  mapping_flags_hex: z.string().regex(/^0x[0-9a-f]{4}$/u),
+  member_token: tokenSchema.nullable(),
+  member_kind: z.enum(["method", "field", "unknown"]),
+  member_name: z.string().nullable(),
+  import_name: z.string(),
+  import_scope_token: tokenSchema.nullable(),
+  import_scope_name: z.string().nullable(),
+  no_mangle: z.boolean(),
+  char_set: z.enum(["not-specified", "ansi", "unicode", "auto", "unknown"]),
+  call_convention: z.enum([
+    "not-specified",
+    "winapi",
+    "cdecl",
+    "stdcall",
+    "thiscall",
+    "fastcall",
+    "unknown",
+  ]),
+  supports_last_error: z.boolean(),
+  best_fit: z.enum(["assembly-default", "enabled", "disabled", "unknown"]),
+  throw_on_unmappable_char: z.enum([
+    "assembly-default",
+    "enabled",
+    "disabled",
+    "unknown",
+  ]),
+  verification: z.literal("managed-declaration-only"),
+});
+
+const managedNativeImplementationSchema = z.object({
+  token: tokenSchema,
+  row_offset: offsetSchema,
+  name: z.string(),
+  rva: z.number().int().min(0).max(0xffff_ffff),
+  flags: z.number().int().min(0).max(0xffff),
+  impl_flags: z.number().int().min(0).max(0xffff),
+  code_type: z.enum(["il", "native", "optil", "runtime", "unknown"]),
+  managed_kind: z.enum(["managed", "unmanaged", "unknown"]),
+  pinvoke_declared: z.boolean(),
+  boundary_kind: z.enum([
+    "pinvoke",
+    "native-body",
+    "runtime-provided",
+    "unmanaged-method",
+    "mixed-or-unknown",
+  ]),
+  body_interpretation: z.enum([
+    "managed-cil",
+    "native-or-runtime",
+    "not-file-backed",
+    "unknown",
+  ]),
+});
+
 const managedCallEdgeSchema = z.object({
   caller_token: tokenSchema,
   caller: z.string().nullable(),
@@ -367,10 +431,62 @@ export const managedMemberInspectionSchema = z.object({
   limitations: z.array(z.string()),
 });
 
+/** Provider-neutral managed/native boundary observations from PE/CLI metadata. */
+export const managedNativeBoundaryInspectionSchema = z.object({
+  schema_version: z.literal(1),
+  artifact: z.object({
+    path: z.string().min(1),
+    sha256: digestSchema,
+    byte_length: z.number().int().min(0),
+    format: z.literal("pe"),
+  }),
+  module: moduleIdentitySchema.nullable(),
+  metadata: z.object({
+    status: z.enum(["absent", "complete", "partial", "malformed"]),
+    version: z.string().nullable(),
+    table_row_counts: z.record(
+      z.string(),
+      z.number().int().min(0).max(0xffff_ffff),
+    ),
+  }),
+  identity_scope: z.object({
+    token_identity: z.literal("build-local"),
+    requires_artifact_sha256: digestSchema,
+    requires_mvid: z.string().uuid().nullable(),
+  }),
+  cli_native: z.object({
+    il_only: z.boolean(),
+    requires_32bit: z.boolean(),
+    strong_name_signed: z.boolean(),
+    native_entry_point: z.boolean(),
+    ready_to_run_signature: z.boolean(),
+    managed_native_header_rva: z.number().int().min(0).max(0xffff_ffff),
+    managed_native_header_size: z.number().int().min(0).max(0xffff_ffff),
+  }),
+  module_refs: managedPage(managedModuleReferenceSchema),
+  pinvoke_imports: managedPage(managedNativeImportSchema),
+  native_implementations: managedPage(managedNativeImplementationSchema),
+  summary: z.object({
+    module_ref_count: z.number().int().min(0),
+    pinvoke_import_count: z.number().int().min(0),
+    native_implementation_count: z.number().int().min(0),
+    ready_to_run: z.boolean(),
+    mixed_mode_or_native_header: z.boolean(),
+  }),
+  coverage: z.object({
+    state: z.enum(["complete", "partial", "unavailable"]),
+    issues: z.array(managedParseIssueSchema),
+  }),
+  limitations: z.array(z.string()),
+});
+
 export type ManagedArtifactInspection = z.infer<
   typeof managedArtifactInspectionSchema
 >;
 export type ManagedMemberInspection = z.infer<
   typeof managedMemberInspectionSchema
+>;
+export type ManagedNativeBoundaryInspection = z.infer<
+  typeof managedNativeBoundaryInspectionSchema
 >;
 export type ManagedParseIssue = z.infer<typeof managedParseIssueSchema>;

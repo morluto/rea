@@ -27,7 +27,7 @@
 ## Tool Contract Impact
 
 <!-- If this PR adds, removes, or modifies MCP tools, list them here. -->
-<!-- The current inventory is 86 tools (33 direct + 10 enhanced + 5 native + 2 artifact + 3 managed + 8 browser + 4 Electron + 3 application + 18 session). Canonical facts: docs/product-catalog.json. -->
+<!-- The current inventory is 87 tools (33 direct + 10 enhanced + 5 native + 2 artifact + 4 managed + 8 browser + 4 Electron + 3 application + 18 session). Canonical facts: docs/product-catalog.json. -->
 
 ## Related Issues
 

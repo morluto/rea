@@ -44,6 +44,9 @@ describe("managed artifact MCP tools", () => {
         "inspect_managed_members",
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
+        "inspect_managed_native_boundaries",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
         "compare_managed_members",
       );
 
@@ -87,6 +90,24 @@ describe("managed artifact MCP tools", () => {
           methods: { total: 1, returned: 1 },
           call_edges: { total: 1 },
           field_accesses: { total: 1 },
+        },
+      });
+
+      const boundaries = structured(
+        await client.callTool({
+          name: "inspect_managed_native_boundaries",
+          arguments: { import_limit: 1 },
+        }),
+      );
+
+      expect(boundaries).toMatchObject({
+        operation: "inspect_managed_native_boundaries",
+        provider: { id: "rea-dotnet-static" },
+        subject: { local_path: path, format: "pe" },
+        normalized_result: {
+          identity_scope: { token_identity: "build-local" },
+          pinvoke_imports: { total: 0, limit: 1 },
+          native_implementations: { total: 0 },
         },
       });
 

@@ -131,7 +131,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
   });
 
-  it("preserves the complete 86-tool inventory with a session", async () => {
+  it("preserves the complete 87-tool inventory with a session", async () => {
     const session = new BinarySession(
       (_path) =>
         ({
@@ -154,7 +154,7 @@ describe("full MCP integration with multi-tool sequences", () => {
     await client.connect(clientTransport);
 
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(86);
+    expect(listed.tools).toHaveLength(87);
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("open_binary");
     expect(names).toContain("close_binary");

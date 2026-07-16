@@ -7,9 +7,12 @@ triage and exact identity through `inspect_managed_artifact` and
 `rea inspect-managed-artifact`, plus bounded metadata, signature, method-body
 CIL, exception-region, call-edge, and field-access inspection through
 `inspect_managed_members` and `rea inspect-managed-members`, and
-obfuscation-resistant member comparison through `compare_managed_members` and
-`rea compare-managed-members`. Decompiled C#, managed/native composition, and
-runtime correlation remain planned behavior. The current product inventory remains the one in
+declared ModuleRef/ImplMap/PInvoke and native implementation boundary inventory
+through `inspect_managed_native_boundaries` and
+`rea inspect-managed-native-boundaries`, plus obfuscation-resistant member
+comparison through `compare_managed_members` and `rea compare-managed-members`.
+Decompiled C#, verified native export/function matching, and runtime
+correlation remain planned behavior. The current product inventory remains the one in
 [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
@@ -126,7 +129,9 @@ that implement them. The underlying capability slices are:
    exact/structural/missing/ambiguous states.
 6. **Managed/native composition**: P/Invoke, unmanaged exports, COM/mixed-mode
    declarations, ReadyToRun/native bodies, single-file hosts, and authenticated
-   IL2CPP pairs linked to selected Hopper/Ghidra evidence.
+   IL2CPP pairs linked to selected Hopper/Ghidra evidence. The shipped
+   boundary inventory is declaration-only until native-provider evidence
+   verifies exports, thunks, or functions.
 
 Every list has a deterministic order and hard limits. Search exposes scanned,
 matched, returned, and dropped counts. An unresolved indirect call or a failed
