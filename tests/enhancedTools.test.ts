@@ -10,6 +10,7 @@ import {
   TOOL_CONTRACTS,
 } from "../src/contracts/toolContracts.js";
 import { enhancedInputSchemas } from "../src/contracts/enhancedInputs.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflowToolContracts.js";
 import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { err } from "../src/domain/result.js";
@@ -198,7 +199,9 @@ describe("enhanced MCP tools", () => {
     const client = await connect();
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(
-      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+      TOOL_CONTRACTS.length -
+        SESSION_TOOL_CONTRACTS.length -
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
     );
     expect(
       listed.tools

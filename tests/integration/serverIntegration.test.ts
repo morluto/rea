@@ -23,6 +23,7 @@ import {
   SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../../src/contracts/toolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../src/contracts/managedWorkflowToolContracts.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -453,7 +454,9 @@ describe("full MCP integration with multi-tool sequences", () => {
     });
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(
-      TOOL_CONTRACTS.length - SESSION_TOOL_CONTRACTS.length,
+      TOOL_CONTRACTS.length -
+        SESSION_TOOL_CONTRACTS.length -
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
     );
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("binary_overview");
