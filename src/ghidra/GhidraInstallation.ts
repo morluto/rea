@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { accessSync, readFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { posix, win32 } from "node:path";
 
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -98,7 +98,7 @@ export const inspectGhidraInstallation = (
 ): GhidraInstallationInspection => {
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
-  const coordinates = installationCoordinates(options, host);
+  const coordinates = installationCoordinates(options, platform, host);
   const checks = installationChecks({
     coordinates,
     platform,
@@ -126,23 +126,37 @@ export const inspectGhidraInstallation = (
 
 const installationCoordinates = (
   options: GhidraInstallationOptions,
+  platform: NodeJS.Platform,
   host: GhidraInstallationHost,
 ): GhidraInstallationCoordinates => {
+  const path = platform === "win32" ? win32 : posix;
   const installDir = options.installDir ?? null;
   const applicationPropertiesPath =
     installDir === null
       ? null
-      : join(installDir, "Ghidra", "application.properties");
+      : path.join(installDir, "Ghidra", "application.properties");
   const analyzeHeadlessPath =
-    installDir === null ? null : join(installDir, "support", "analyzeHeadless");
+    installDir === null
+      ? null
+      : path.join(
+          installDir,
+          "support",
+          platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
+        );
   const properties =
     applicationPropertiesPath === null
       ? undefined
       : host.readText(applicationPropertiesPath);
   const javaCommand =
     options.javaHome === undefined
-      ? "java"
-      : join(options.javaHome, "bin", "java");
+      ? platform === "win32"
+        ? "java.exe"
+        : "java"
+      : path.join(
+          options.javaHome,
+          "bin",
+          platform === "win32" ? "java.exe" : "java",
+        );
   return {
     installDir,
     applicationPropertiesPath,
@@ -153,7 +167,10 @@ const installationCoordinates = (
         ? null
         : propertyValue(properties, "application.version"),
     javaCommand,
-    java: host.probeJava(javaCommand, ghidraJavaEnvironment(options.javaHome)),
+    java: host.probeJava(
+      javaCommand,
+      ghidraJavaEnvironment(options.javaHome, process.env, platform),
+    ),
   };
 };
 
@@ -174,10 +191,11 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "platform",
-    ok: platform === "linux",
+    ok: platform === "linux" || platform === "win32",
     code: "unsupported_host",
     detail: platform,
-    remediation: "REA's Ghidra v1 adapter currently supports Linux only.",
+    remediation:
+      "Use REA's Ghidra adapter on a supported Linux or Windows x64 host.",
   }),
   installationCheck({
     name: "architecture",
@@ -185,7 +203,7 @@ const installationChecks = ({
     code: "unsupported_host",
     detail: architecture,
     remediation:
-      "Use the official Linux x86-64 Ghidra distribution on an x64 host.",
+      "Use the official x86-64 Ghidra distribution on an x64 Linux or Windows host.",
   }),
   installationCheck({
     name: "installation",
@@ -215,7 +233,7 @@ const installationChecks = ({
     code: "executable_missing",
     detail: coordinates.analyzeHeadlessPath ?? "analyzeHeadless unavailable",
     remediation:
-      "Restore the executable support/analyzeHeadless script from the official Ghidra release.",
+      "Restore support/analyzeHeadless or support/analyzeHeadless.bat from the official Ghidra release.",
   }),
   javaCheck(coordinates.java, coordinates.javaCommand, javaHome),
 ];
@@ -245,6 +263,7 @@ export const ghidraInstallationDiagnostics = (
 export const ghidraJavaEnvironment = (
   javaHome: string | undefined,
   environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv => {
   const boundedEnvironment = {
     ...environment,
@@ -258,7 +277,10 @@ export const ghidraJavaEnvironment = (
     : {
         ...boundedEnvironment,
         JAVA_HOME: javaHome,
-        PATH: `${join(javaHome, "bin")}${delimiter}${environment.PATH ?? ""}`,
+        PATH: `${(platform === "win32" ? win32 : posix).join(
+          javaHome,
+          "bin",
+        )}${platform === "win32" ? win32.delimiter : posix.delimiter}${environment.PATH ?? ""}`,
       };
 };
 
@@ -353,7 +375,13 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
       major: javaMajor(version),
       home,
       bits,
-      jdk: executablePath(join(home, "bin", "javac")),
+      jdk: executablePath(
+        (process.platform === "win32" ? win32 : posix).join(
+          home,
+          "bin",
+          process.platform === "win32" ? "javac.exe" : "javac",
+        ),
+      ),
     };
   },
 });
