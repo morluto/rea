@@ -22,10 +22,10 @@ const policy: JavaScriptReplayPolicy = {
   enabled: true,
   roots: [root],
   nodePath: process.execPath,
-  bubblewrapPath: "/usr/bin/bwrap",
-  systemdRunPath: "/usr/bin/systemd-run",
-  systemctlPath: "/usr/bin/systemctl",
-  shellPath: "/usr/bin/bash",
+  bubblewrapPath: process.execPath,
+  systemdRunPath: process.execPath,
+  systemctlPath: process.execPath,
+  shellPath: process.execPath,
 };
 
 const host: JavaScriptReplayHost = {
