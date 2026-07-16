@@ -189,21 +189,24 @@ describe("binary target I/O", () => {
     expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
   });
 
-  it("rejects an app program symlink that leaves the bundle", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
-    const app = join(directory, "Escaping.app");
-    const contents = join(app, "Contents");
-    const programs = join(contents, "MacOS");
-    const outside = join(directory, "outside");
-    await mkdir(programs, { recursive: true });
-    await writeFile(outside, thinMach(0xfeedfacf, 0x0100000c));
-    await writeFile(
-      join(contents, "Info.plist"),
-      "<plist><dict><key>CFBundleExecutable</key><string>Escaping</string></dict></plist>",
-    );
-    await symlink(outside, join(programs, "Escaping"));
-    expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
-  });
+  it.skipIf(process.platform === "win32")(
+    "rejects an app program symlink that leaves the bundle",
+    async () => {
+      directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+      const app = join(directory, "Escaping.app");
+      const contents = join(app, "Contents");
+      const programs = join(contents, "MacOS");
+      const outside = join(directory, "outside");
+      await mkdir(programs, { recursive: true });
+      await writeFile(outside, thinMach(0xfeedfacf, 0x0100000c));
+      await writeFile(
+        join(contents, "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>Escaping</string></dict></plist>",
+      );
+      await symlink(outside, join(programs, "Escaping"));
+      expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
+    },
+  );
 
   it("honors an explicit database kind without relying on the file suffix", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-target-"));

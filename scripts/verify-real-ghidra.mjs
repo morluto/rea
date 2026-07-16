@@ -200,10 +200,18 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
   try {
     const started = await client.start();
     if (!started.ok) throw started.error;
-    assertSession(started.value, profile.value.profile.digest);
+    assertSession(
+      started.value,
+      profile.value.profile.digest,
+      parsedTarget.value.sha256,
+    );
     const pinged = await client.ping();
     if (!pinged.ok) throw pinged.error;
-    assertSession(pinged.value, profile.value.profile.digest);
+    assertSession(
+      pinged.value,
+      profile.value.profile.digest,
+      parsedTarget.value.sha256,
+    );
     runtimeCoordinates = client.diagnostics();
     assertRuntimeCoordinates(runtimeCoordinates);
 
@@ -1027,11 +1035,12 @@ function symbolTail(value) {
   return value.split("::").at(-1);
 }
 
-function assertSession(session, expectedDigest) {
+function assertSession(session, expectedDigest, expectedTargetSha256) {
   if (
     session.provider.id !== "ghidra" ||
     session.provider.version !== SUPPORTED_GHIDRA_VERSION ||
     session.profile_digest !== expectedDigest ||
+    session.target.sha256 !== expectedTargetSha256 ||
     session.read_only !== true ||
     session.analysis_complete !== true ||
     session.analysis_timed_out !== false ||
@@ -1045,7 +1054,7 @@ function assertSession(session, expectedDigest) {
 }
 
 function assertRuntimeCoordinates(coordinates) {
-  for (const name of ["runtime_root", "socket_path", "project_root"])
+  for (const name of ["runtime_root", "endpoint_path", "project_root"])
     if (typeof coordinates[name] !== "string")
       throw new Error(`Ghidra verifier did not observe ${name}`);
   if (typeof coordinates.process_id !== "number")
@@ -1053,7 +1062,7 @@ function assertRuntimeCoordinates(coordinates) {
 }
 
 async function assertCleanup(coordinates) {
-  for (const name of ["runtime_root", "socket_path", "project_root"]) {
+  for (const name of ["runtime_root", "endpoint_path", "project_root"]) {
     const path = coordinates[name];
     if (typeof path === "string" && (await exists(path)))
       throw new Error(`Ghidra cleanup left ${name}: ${path}`);

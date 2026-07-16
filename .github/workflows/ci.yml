@@ -131,6 +131,48 @@ jobs:
       - run: npm run rebuild:native
       - run: npm run verify:package
 
+  windows-curated:
+    name: Windows Ghidra P0 and package lane
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - name: Record named Windows host capabilities
+        run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
+      - name: Validate Windows host capability report
+        run: >-
+          node -e "const report = JSON.parse(require('node:fs').readFileSync('windows-capabilities.json', 'utf8'));
+          if (report.platform !== 'win32' || report.architecture !== 'x64')
+          throw new Error('expected a Windows x64 capability report');"
+      - name: Run curated Windows P0 tests
+        run: >-
+          npx vitest run --coverage.enabled=false
+          tests/binaryTarget.test.ts
+          tests/windowsCapabilities.test.ts
+          tests/ghidraWindowsFixture.test.ts
+          tests/ghidraInstallation.test.ts
+          tests/ghidraProvider.test.ts
+          tests/ghidraTransport.test.ts
+          tests/ghidraTargetSnapshot.test.ts
+          tests/ghidraClient.test.ts
+          tests/ghidraLauncher.test.ts
+          tests/processOwnership.test.ts
+          tests/realGhidraWindowsWorkflow.test.ts
+      - run: npm run verify:package:windows
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-capabilities
+          path: windows-capabilities.json
+          retention-days: 30
+
   docs:
     name: Docs Generation
     runs-on: ubuntu-latest
