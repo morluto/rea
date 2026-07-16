@@ -2,9 +2,10 @@
 
 - Status: Accepted
 - Date: 2026-07-16
-- Implementation status: Design only. REA does not yet expose managed-code
-  operations. PRs that implement this decision must retain the shipped 83-tool
-  inventory until their caller-visible contracts are deliberately admitted.
+- Implementation status: Read-only PE/CLI triage and exact identity are shipped
+  through `inspect_managed_artifact` / `rea inspect-managed-artifact`. Metadata
+  signatures, method bodies, normalized CIL, decompilation, cross-build matching,
+  and managed/native composition remain future contracts.
 
 ## Context
 
@@ -374,7 +375,7 @@ or development-only oracles.
 
 ## Rollout gates
 
-1. Add read-only triage and identity with malformed-input bounds.
+1. Add read-only triage and identity with malformed-input bounds. Shipped.
 2. Add metadata, signatures, method bodies, normalized CIL, and exact Evidence.
 3. Add obfuscation-resistant slices and cross-build match states.
 4. Compose explicit managed/native boundaries with Hopper/Ghidra.

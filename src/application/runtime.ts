@@ -4,6 +4,7 @@ import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { NativeMacOSProvider } from "../native/NativeMacOSProvider.js";
 import { ArtifactProvider } from "../artifacts/ArtifactProvider.js";
+import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
@@ -28,6 +29,7 @@ export const createBinarySession = (
           config.artifactIntegrityContinueEnabled,
         ),
         new NativeMacOSProvider(),
+        new ManagedStaticProvider(),
       ],
     ),
   );

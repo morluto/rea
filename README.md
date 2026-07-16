@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![83 MCP tools](https://img.shields.io/badge/MCP_tools-83-5c4ee5?style=flat-square)](#83-tools-for-investigation)
+[![84 MCP tools](https://img.shields.io/badge/MCP_tools-84-5c4ee5?style=flat-square)](#84-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [83 tools](#83-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [84 tools](#84-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -30,7 +30,7 @@
 
 See a feature in an app that you want in your own product? Give the app to your agent—even without its source code. With REA, the agent can investigate the feature, explain how it works, show its evidence, and build a version adapted to your stack and requirements.
 
-REA gives agents one consistent way to investigate software. Today that includes deep native analysis and function dossiers through Hopper or bring-your-own Ghidra on Linux, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, bounded JavaScript/source-map reconstruction, and a versioned domain graph for connecting JavaScript application layers without confusing static inference with runtime observation. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
+REA gives agents one consistent way to investigate software. Today that includes deep native analysis and function dossiers through Hopper or bring-your-own Ghidra on Linux, execution-free managed PE/CLI triage, reproducible Evidence v2 records, controlled process capture, passive website and Electron observation, bounded JavaScript/source-map reconstruction, and a versioned domain graph for connecting JavaScript application layers without confusing static inference with runtime observation. The longer-term toolkit extends the same agent workflow to APIs, protocols, mobile artifacts, firmware, richer runtime behavior, and differences between versions.
 
 Reverse engineering normally makes the operator choose a tool, learn its API, move evidence between programs, and decide what to inspect next. REA gives that work to the agent through commands, skills, structured results, and repeatable investigation workflows.
 
@@ -320,7 +320,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 83 tools for investigation
+## 84 tools for investigation
 
 | Tool family               | Count | Examples                                                                                                                         |
 | ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -328,6 +328,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery          |
 | Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                    |
 | Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree               |
+| Managed PE/CLI            |     1 | read-only PE/CLI classification plus assembly/module identity, target frameworks, references, resources, and attributes          |
 | Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence |
 | Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation         |
 | Application workflows     |     3 | bounded cross-layer traces, unique-only version matching, and approved Linux-isolated extracted-module replay                    |
@@ -347,6 +348,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Reconstruct bounded static package, entrypoint, Webpack/Rspack module, import, worker, endpoint, storage, source-map, BrowserWindow, preload, contextBridge, IPC, utility-process, and native-add-on structure from an approved local directory or ASAR through `analyze_javascript_application` or `rea analyze-javascript-application`. The AST-only [application service](docs/javascript-artifact-reconstruction.md) never executes bootstrap code, pairs only unique exact literal IPC channels, and reports dynamic or ambiguous channels as unresolved.
 - Reconcile that static graph with existing passive web or Electron Evidence through `reconcile_javascript_runtime` or `rea reconcile-javascript-runtime`. Exact captured bytes outrank caller-declared file/URL mappings; target, frame, script, worker, cache, and asset ambiguity stays explicit, source-map authority stays separate, and a module resident in an observed bundle is never reported as executed. See [JavaScript static/runtime reconciliation](docs/javascript-runtime-reconciliation.md).
 - Trace a literal route, string, API, IPC channel, module, or native export through authenticated application Evidence with explicit traversal bounds, then hand exact native artifact digests and requested exports to retained Ghidra or Hopper Evidence without automatic provider switching. Compare application versions using unique-only digest, source-map, structural, and semantic tiers; duplicate, incomplete, and truncated matches stay unknown. See [cross-layer JavaScript application workflows](docs/javascript-application-workflows.md).
+- Classify PE/CLI managed artifacts with `inspect_managed_artifact` or `rea inspect-managed-artifact`, reporting exact module, assembly, target framework, reference, resource, and custom-attribute evidence without loading the assembly, resolving CLR dependencies, or executing target code. Method signatures, CIL, decompilation, and managed/native composition remain future managed-code contracts.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
@@ -397,7 +399,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser or Electron interaction remains a different future authority.
 2. **Broader application graph evidence** — extend authenticated cross-layer traces with additional static extractors and separately approved runtime authorities.
-3. **Professional managed-code analysis** — add execution-free PE/CLI metadata and CIL evidence, obfuscation-resistant comparisons, and explicit managed/native composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
+3. **Professional managed-code analysis** — extend shipped PE/CLI triage into CIL evidence, obfuscation-resistant comparisons, and explicit managed/native composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
 4. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later
@@ -408,7 +410,7 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; the [controlled replay guide](docs/controlled-javascript-replay.md) plus [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the shipped JavaScript replay boundary; and [ADR-0003](docs/adr/0003-managed-code-evidence-and-provider-boundary.md) for the planned managed-code evidence and provider design.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; the [controlled replay guide](docs/controlled-javascript-replay.md) plus [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the shipped JavaScript replay boundary; and [ADR-0003](docs/adr/0003-managed-code-evidence-and-provider-boundary.md) for the managed-code evidence and provider design.
 
 ## Using REA with other agents
 

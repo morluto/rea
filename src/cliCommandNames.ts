@@ -16,6 +16,7 @@ export const CLI_COMMANDS = Object.freeze({
   importReferenceSource: "import-reference-source",
   inventoryArtifact: "inventory-artifact",
   extractArtifact: "extract-artifact",
+  inspectManagedArtifact: "inspect-managed-artifact",
   inspectMacho: "inspect-macho",
   inspectSignature: "inspect-signature",
   listArchitectures: "list-architectures",

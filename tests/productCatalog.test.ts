@@ -12,6 +12,7 @@ import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+  MANAGED_STATIC_PROVIDER,
 } from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../src/browser/CdpElectronProvider.js";
@@ -69,6 +70,7 @@ describe("canonical product catalog", () => {
         GHIDRA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
+        MANAGED_STATIC_PROVIDER,
         CDP_BROWSER_PROVIDER_IDENTITY,
         CDP_ELECTRON_PROVIDER_IDENTITY,
         JAVASCRIPT_APPLICATION_PROVIDER,

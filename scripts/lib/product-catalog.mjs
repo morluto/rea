@@ -97,6 +97,7 @@ const SOURCE_PATHS = {
   toolContracts: "dist/contracts/toolContracts.js",
   nativeContracts: "dist/contracts/nativeToolContracts.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
+  managedContracts: "dist/contracts/managedToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
   electronContracts: "dist/contracts/electronToolContracts.js",
   applicationContracts: "dist/contracts/applicationToolContracts.js",
@@ -118,6 +119,7 @@ const SOURCE_PATHS = {
   electronObservation: "dist/domain/electronObservation.js",
   webBundleAnalysis: "dist/domain/webBundleAnalysis.js",
   webCaptureDiff: "dist/domain/webCaptureDiff.js",
+  managedArtifact: "dist/domain/managedArtifact.js",
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
@@ -161,6 +163,11 @@ const toolFamilyCatalog = (sources) => {
       id: "artifact",
       surface: "artifact-provider",
       contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+    },
+    {
+      id: "managed",
+      surface: "managed-provider",
+      contracts: sources.managedContracts.MANAGED_TOOL_CONTRACTS,
     },
     {
       id: "browser",
@@ -237,6 +244,10 @@ const providerCatalog = (sources) => {
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,
       contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.MANAGED_STATIC_PROVIDER,
+      contracts: sources.managedContracts.MANAGED_TOOL_CONTRACTS,
     },
     {
       identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,
@@ -341,6 +352,11 @@ const durableSchemaDefinitions = (sources) => [
 ];
 
 const observationSchemaDefinitions = (sources) => [
+  [
+    "managed_artifact_inspection",
+    sources.managedArtifact.managedArtifactInspectionSchema,
+    ["schema_version"],
+  ],
   [
     "browser_target_list",
     sources.browserObservation.browserTargetListSchema,

@@ -3,6 +3,7 @@ import type { OfficialToolName } from "../contracts/toolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
+import type { ManagedToolName } from "../contracts/managedToolContracts.js";
 import type { AnalysisError } from "../domain/errors.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -24,6 +25,7 @@ export type AnalysisOperation =
   | EnhancedToolName
   | NativeToolName
   | ArtifactToolName
+  | ManagedToolName
   | "health";
 
 /** Atomic successful provider observation with exact producing provenance. */

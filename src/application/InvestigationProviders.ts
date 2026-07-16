@@ -25,6 +25,13 @@ export const ARTIFACT_GRAPH_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for execution-free managed PE/CLI analysis. */
+export const MANAGED_STATIC_PROVIDER = {
+  id: "rea-dotnet-static",
+  name: "REA managed static analysis provider",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic static JavaScript application analysis. */
 export const JAVASCRIPT_APPLICATION_PROVIDER = {
   id: "rea-javascript-application",

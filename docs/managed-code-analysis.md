@@ -2,9 +2,11 @@
 
 This document turns
 [ADR-0003](adr/0003-managed-code-evidence-and-provider-boundary.md) into an
-implementation and verification plan. It describes planned behavior, not
-shipped tools. The current product inventory remains the one in
-[`product-catalog.json`](product-catalog.json).
+implementation and verification plan. REA currently ships only read-only PE/CLI
+triage and exact identity through `inspect_managed_artifact` and
+`rea inspect-managed-artifact`; CIL, method bodies, decompilation, cross-build
+matching, and managed/native composition remain planned behavior. The current
+product inventory remains the one in [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
 
@@ -287,7 +289,7 @@ them.
 The managed-code track advances as reviewable pull requests:
 
 1. accepted evidence/provider boundary (this document and ADR);
-2. read-only artifact triage and exact identity;
+2. read-only artifact triage and exact identity (shipped);
 3. bounded metadata, signatures, method bodies, and normalized CIL;
 4. obfuscation-resistant slices and cross-version comparison;
 5. managed/native composition and truthful deployment degradation;
