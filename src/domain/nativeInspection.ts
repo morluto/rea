@@ -156,4 +156,5 @@ export const demangleSwiftSchema = z.object({
 export type NativeCommandInvocation = z.infer<
   typeof nativeCommandInvocationSchema
 >;
+export type InspectMacho = z.infer<typeof inspectMachoSchema>;
 export type InspectSignature = z.infer<typeof inspectSignatureSchema>;

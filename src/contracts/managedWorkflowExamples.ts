@@ -1,9 +1,19 @@
 import { createEvidence } from "../domain/evidence.js";
-import type { ManagedMemberInspection } from "../domain/managedArtifact.js";
+import type {
+  ManagedMemberInspection,
+  ManagedNativeBoundaryInspection,
+} from "../domain/managedArtifact.js";
+import type { InspectMacho } from "../domain/nativeInspection.js";
 
 const MANAGED_STATIC_EXAMPLE_PROVIDER = {
   id: "rea-dotnet-static",
   name: "REA managed static analysis provider",
+  version: "1",
+} as const;
+
+const NATIVE_EXAMPLE_PROVIDER = {
+  id: "native-macos",
+  name: "REA native macOS provider",
   version: "1",
 } as const;
 
@@ -142,6 +152,159 @@ export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
 
 const runtimeExampleEvidence = evidence(runtimeMembers());
 
+const boundaryEvidence = () => {
+  const result: ManagedNativeBoundaryInspection = {
+    schema_version: 1,
+    artifact: {
+      path: "/examples/ManagedInterop.exe",
+      sha256: "6".repeat(64),
+      byte_length: 8192,
+      format: "pe",
+    },
+    module: {
+      name: "ManagedInterop.exe",
+      generation: 0,
+      mvid: "00112233-4455-4677-8899-aabbccddeeff",
+      enc_id: null,
+      enc_base_id: null,
+      token: "0x00000001",
+      row_offset: 0,
+    },
+    metadata: {
+      status: "complete",
+      version: "v4.0.30319",
+      table_row_counts: {},
+    },
+    identity_scope: {
+      token_identity: "build-local",
+      requires_artifact_sha256: "6".repeat(64),
+      requires_mvid: "00112233-4455-4677-8899-aabbccddeeff",
+    },
+    cli_native: {
+      il_only: true,
+      requires_32bit: false,
+      strong_name_signed: false,
+      native_entry_point: false,
+      ready_to_run_signature: false,
+      managed_native_header_rva: 0,
+      managed_native_header_size: 0,
+    },
+    module_refs: {
+      items: [
+        {
+          token: "0x1a000001",
+          row_offset: 256,
+          name: "nativehelper.dll",
+        },
+      ],
+      offset: 0,
+      limit: 100,
+      total: 1,
+      returned: 1,
+      dropped: 0,
+      complete: true,
+    },
+    pinvoke_imports: {
+      items: [
+        {
+          token: "0x1c000001",
+          row_offset: 288,
+          mapping_flags: 0,
+          mapping_flags_hex: "0x0000",
+          member_token: "0x06000001",
+          member_kind: "method",
+          member_name: "OpenNative",
+          import_name: "open_native",
+          import_scope_token: "0x1a000001",
+          import_scope_name: "nativehelper.dll",
+          no_mangle: true,
+          char_set: "not-specified",
+          call_convention: "cdecl",
+          supports_last_error: false,
+          best_fit: "assembly-default",
+          throw_on_unmappable_char: "assembly-default",
+          verification: "managed-declaration-only",
+        },
+      ],
+      offset: 0,
+      limit: 100,
+      total: 1,
+      returned: 1,
+      dropped: 0,
+      complete: true,
+    },
+    native_implementations: emptyPage(100),
+    summary: {
+      module_ref_count: 1,
+      pinvoke_import_count: 1,
+      native_implementation_count: 0,
+      ready_to_run: false,
+      mixed_mode_or_native_header: false,
+    },
+    coverage: { state: "complete", issues: [] },
+    limitations: [],
+  };
+  return createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {
+    operation: "inspect_managed_native_boundaries",
+    parameters: {},
+    result,
+    rawResult: null,
+    limitations: result.limitations,
+  });
+};
+
+const nativeExportEvidence = () => {
+  const result: InspectMacho = {
+    format: "mach-o",
+    endian: "little",
+    word_size: 64,
+    file_type: "dylib",
+    flags: [],
+    uuid: null,
+    entrypoints: coverage([]),
+    architectures: coverage([]),
+    build_metadata: coverage([]),
+    load_commands: coverage([]),
+    dependencies: coverage([]),
+    imports: coverage([]),
+    exports: coverage([
+      {
+        name: "open_native",
+        address: "0x1000",
+        weak: false,
+        reexport: false,
+        source: "nm",
+      },
+    ]),
+    segments: coverage([]),
+    provenance: [],
+    limitations: [],
+  };
+  return createEvidence(
+    {
+      path: "/examples/nativehelper.dll",
+      sha256: "7".repeat(64),
+      format: "mach-o",
+      architecture: "x86_64",
+    },
+    NATIVE_EXAMPLE_PROVIDER,
+    {
+      operation: "inspect_macho",
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations,
+    },
+  );
+};
+
+const coverage = <Item>(items: readonly Item[]) => ({
+  items: [...items],
+  total: items.length,
+  exhaustive: true,
+  limitations: [],
+});
+
 /** Minimal valid managed decompiler reconstruction import request. */
 export const MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE = {
   static_members: runtimeExampleEvidence,
@@ -170,6 +333,16 @@ export const MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE = {
   notes: [
     "Synthetic example only; decompiler output is imported as inference.",
   ],
+};
+
+/** Minimal valid managed/native verification request. */
+export const MANAGED_NATIVE_VERIFICATION_EXAMPLE = {
+  managed_boundaries: boundaryEvidence(),
+  native_observations: [nativeExportEvidence()],
+  limits: {
+    max_native_observations: 20,
+    max_candidates_per_import: 25,
+  },
 };
 
 /** Minimal valid managed runtime-correlation planning request. */

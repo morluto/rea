@@ -24,11 +24,11 @@ describe("server and catalog identity", () => {
     });
     expect(PRODUCT_IDENTITY.packageVersion).toBe(packageJson.version);
     expect(SDK_IDENTITY.server).toBe("2.0.0-beta.4");
-    expect(CLI_COMMAND_NAMES).toHaveLength(49);
-    expect(new Set(CLI_COMMAND_NAMES).size).toBe(49);
+    expect(CLI_COMMAND_NAMES).toHaveLength(50);
+    expect(new Set(CLI_COMMAND_NAMES).size).toBe(50);
     expect(CATALOG_IDENTITY.counts).toEqual({
-      cli_commands: 49,
-      mcp_tools: 89,
+      cli_commands: 50,
+      mcp_tools: 90,
       mcp_prompts: 6,
       mcp_resources: 2,
       mcp_resource_templates: 7,
@@ -162,7 +162,7 @@ describe("server and catalog identity", () => {
       expect(status.structuredContent).toMatchObject({
         result: {
           server_identity: {
-            catalog: { counts: { mcp_tools: 89, cli_commands: 49 } },
+            catalog: { counts: { mcp_tools: 90, cli_commands: 50 } },
             alignment: { state: "mcp_server_restart_required" },
           },
           tool_availability: expect.arrayContaining([

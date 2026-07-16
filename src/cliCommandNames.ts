@@ -20,6 +20,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectManagedMembers: "inspect-managed-members",
   inspectManagedNativeBoundaries: "inspect-managed-native-boundaries",
   compareManagedMembers: "compare-managed-members",
+  verifyManagedNativeBoundaries: "verify-managed-native-boundaries",
   importManagedReconstruction: "import-managed-reconstruction",
   planManagedRuntimeCorrelation: "plan-managed-runtime-correlation",
   inspectMacho: "inspect-macho",
