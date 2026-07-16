@@ -6,8 +6,10 @@
   through `inspect_managed_artifact` / `rea inspect-managed-artifact`. Bounded
   metadata, signatures, method bodies, normalized CIL, exception regions, call
   edges, and field-access anchors are shipped through `inspect_managed_members`
-  / `rea inspect-managed-members`. Decompiled C#, cross-build matching, and
-  managed/native composition remain future contracts.
+  / `rea inspect-managed-members`. Static member comparison and build-local
+  token remapping are shipped through `compare_managed_members` /
+  `rea compare-managed-members`. Decompiled C#, managed/native composition, and
+  runtime correlation remain future contracts.
 
 ## Context
 

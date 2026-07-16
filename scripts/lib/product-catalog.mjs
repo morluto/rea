@@ -98,6 +98,7 @@ const SOURCE_PATHS = {
   nativeContracts: "dist/contracts/nativeToolContracts.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   managedContracts: "dist/contracts/managedToolContracts.js",
+  managedWorkflowContracts: "dist/contracts/managedWorkflowToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
   electronContracts: "dist/contracts/electronToolContracts.js",
   applicationContracts: "dist/contracts/applicationToolContracts.js",
@@ -120,6 +121,7 @@ const SOURCE_PATHS = {
   webBundleAnalysis: "dist/domain/webBundleAnalysis.js",
   webCaptureDiff: "dist/domain/webCaptureDiff.js",
   managedArtifact: "dist/domain/managedArtifact.js",
+  managedComparison: "dist/domain/managedMemberComparison.js",
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
@@ -166,8 +168,11 @@ const toolFamilyCatalog = (sources) => {
     },
     {
       id: "managed",
-      surface: "managed-provider",
-      contracts: sources.managedContracts.MANAGED_TOOL_CONTRACTS,
+      surface: "managed",
+      contracts: [
+        ...sources.managedContracts.MANAGED_TOOL_CONTRACTS,
+        ...sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
+      ],
     },
     {
       id: "browser",
@@ -248,6 +253,11 @@ const providerCatalog = (sources) => {
     {
       identity: sources.artifactProviders.MANAGED_STATIC_PROVIDER,
       contracts: sources.managedContracts.MANAGED_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.MANAGED_WORKFLOW_PROVIDER,
+      contracts:
+        sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
     },
     {
       identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,
@@ -360,6 +370,11 @@ const observationSchemaDefinitions = (sources) => [
   [
     "managed_member_inspection",
     sources.managedArtifact.managedMemberInspectionSchema,
+    ["schema_version"],
+  ],
+  [
+    "managed_member_comparison",
+    sources.managedComparison.managedMemberComparisonResultSchema,
     ["schema_version"],
   ],
   [

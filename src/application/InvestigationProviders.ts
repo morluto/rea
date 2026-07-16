@@ -32,6 +32,13 @@ export const MANAGED_STATIC_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for deterministic managed-code comparison workflows. */
+export const MANAGED_WORKFLOW_PROVIDER = {
+  id: "rea-dotnet-workflows",
+  name: "REA managed-code workflows",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic static JavaScript application analysis. */
 export const JAVASCRIPT_APPLICATION_PROVIDER = {
   id: "rea-javascript-application",

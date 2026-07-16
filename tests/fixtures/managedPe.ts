@@ -1,11 +1,17 @@
 interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
+  readonly fieldName?: string;
+  readonly ilBody?: Buffer;
   readonly metadataValidMaskExtra?: bigint;
+  readonly methodName?: string;
+  readonly mvid?: Buffer;
   readonly readyToRun?: boolean;
   readonly references?: readonly string[];
   readonly resourceData?: Buffer;
   readonly targetFramework?: string;
+  readonly typeName?: string;
+  readonly typeNamespace?: string;
 }
 
 const textEncoder = new TextEncoder();
@@ -51,11 +57,16 @@ class BlobHeap {
   }
 }
 
-const guidHeap = (): Buffer =>
-  Buffer.from([
-    0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb,
-    0xcc, 0xdd, 0xee, 0xff,
-  ]);
+const DEFAULT_MVID = Buffer.from([
+  0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+  0xdd, 0xee, 0xff,
+]);
+
+const guidHeap = (mvid: Buffer = DEFAULT_MVID): Buffer => {
+  if (mvid.length !== 16)
+    throw new RangeError("Managed PE fixture MVID must be 16 bytes");
+  return Buffer.from(mvid);
+};
 
 const u16 = (value: number): Buffer => {
   const bytes = Buffer.alloc(2);
@@ -238,10 +249,10 @@ export const buildManagedPeFixture = (
   const attributeName = strings.add("TargetFrameworkAttribute");
   const attributeNamespace = strings.add("System.Runtime.Versioning");
   const constructorName = strings.add(".ctor");
-  const typeName = strings.add("Program");
-  const typeNamespace = strings.add("Fixture");
-  const fieldName = strings.add("counter");
-  const methodName = strings.add("Main");
+  const typeName = strings.add(options.typeName ?? "Program");
+  const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
+  const fieldName = strings.add(options.fieldName ?? "counter");
+  const methodName = strings.add(options.methodName ?? "Main");
   const resourceName = strings.add("Fixture.resources");
   const referenceNames = options.references ?? ["System.Runtime"];
   const referenceStringIndexes = referenceNames.map((name) =>
@@ -271,7 +282,7 @@ export const buildManagedPeFixture = (
   const metadata = metadataRoot(
     tablesStream(rows, options.metadataValidMaskExtra ?? 0n),
     strings.toBuffer(),
-    guidHeap(),
+    guidHeap(options.mvid),
     blobs.toBuffer(),
   );
   if (options.corruptMetadataSignature === true) metadata.writeUInt32LE(0, 0);
@@ -322,10 +333,13 @@ export const buildManagedPeFixture = (
     image.writeUInt32LE(4, cli + 68);
     image.write("RTR\0", 0x0900, "ascii");
   }
-  Buffer.from([
-    0x32, 0x02, 0x7b, 0x01, 0x00, 0x00, 0x04, 0x28, 0x01, 0x00, 0x00, 0x0a,
-    0x2a,
-  ]).copy(image, 0x0a00);
+  (
+    options.ilBody ??
+    Buffer.from([
+      0x32, 0x02, 0x7b, 0x01, 0x00, 0x00, 0x04, 0x28, 0x01, 0x00, 0x00, 0x0a,
+      0x2a,
+    ])
+  ).copy(image, 0x0a00);
   metadata.copy(image, 0x0300);
   resourceDirectory.copy(image, 0x0800);
   return image;

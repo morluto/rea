@@ -6,9 +6,10 @@ implementation and verification plan. REA currently ships read-only PE/CLI
 triage and exact identity through `inspect_managed_artifact` and
 `rea inspect-managed-artifact`, plus bounded metadata, signature, method-body
 CIL, exception-region, call-edge, and field-access inspection through
-`inspect_managed_members` and `rea inspect-managed-members`. Decompiled C#,
-cross-build matching, managed/native composition, and runtime correlation remain
-planned behavior. The current product inventory remains the one in
+`inspect_managed_members` and `rea inspect-managed-members`, and
+obfuscation-resistant member comparison through `compare_managed_members` and
+`rea compare-managed-members`. Decompiled C#, managed/native composition, and
+runtime correlation remain planned behavior. The current product inventory remains the one in
 [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
@@ -294,7 +295,8 @@ The managed-code track advances as reviewable pull requests:
 1. accepted evidence/provider boundary (this document and ADR);
 2. read-only artifact triage and exact identity (shipped);
 3. bounded metadata, signatures, method bodies, and normalized CIL (shipped);
-4. obfuscation-resistant slices and cross-version comparison;
+4. obfuscation-resistant slices and cross-version comparison (shipped for
+   static member observations);
 5. managed/native composition and truthful deployment degradation;
 6. source-built, pinned real-tool, package, CLI, and MCP conformance; and
 7. separately authorized runtime correlation.

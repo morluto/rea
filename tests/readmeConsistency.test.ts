@@ -11,6 +11,7 @@ import {
 import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "../src/contracts/managedToolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflowToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
@@ -29,7 +30,7 @@ const expectedToolCounts = [
   ENHANCED_TOOL_CONTRACTS.length,
   NATIVE_TOOL_CONTRACTS.length,
   ARTIFACT_TOOL_CONTRACTS.length,
-  MANAGED_TOOL_CONTRACTS.length,
+  MANAGED_TOOL_CONTRACTS.length + MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
   BROWSER_TOOL_CONTRACTS.length,
   ELECTRON_TOOL_CONTRACTS.length,
   APPLICATION_TOOL_CONTRACTS.length,

@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![85 MCP tools](https://img.shields.io/badge/MCP_tools-85-5c4ee5?style=flat-square)](#85-tools-for-investigation)
+[![86 MCP tools](https://img.shields.io/badge/MCP_tools-86-5c4ee5?style=flat-square)](#86-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [85 tools](#85-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [86 tools](#86-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -320,7 +320,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 85 tools for investigation
+## 86 tools for investigation
 
 | Tool family               | Count | Examples                                                                                                                         |
 | ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -328,7 +328,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery          |
 | Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                    |
 | Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree               |
-| Managed PE/CLI            |     2 | PE/CLI identity, metadata members, signatures, method-body CIL hashes, call edges, and field-access anchors                      |
+| Managed PE/CLI            |     3 | PE/CLI identity, metadata members, CIL hashes, structural token remapping, and cross-version comparison                          |
 | Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence |
 | Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation         |
 | Application workflows     |     3 | bounded cross-layer traces, unique-only version matching, and approved Linux-isolated extracted-module replay                    |
@@ -348,7 +348,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Reconstruct bounded static package, entrypoint, Webpack/Rspack module, import, worker, endpoint, storage, source-map, BrowserWindow, preload, contextBridge, IPC, utility-process, and native-add-on structure from an approved local directory or ASAR through `analyze_javascript_application` or `rea analyze-javascript-application`. The AST-only [application service](docs/javascript-artifact-reconstruction.md) never executes bootstrap code, pairs only unique exact literal IPC channels, and reports dynamic or ambiguous channels as unresolved.
 - Reconcile that static graph with existing passive web or Electron Evidence through `reconcile_javascript_runtime` or `rea reconcile-javascript-runtime`. Exact captured bytes outrank caller-declared file/URL mappings; target, frame, script, worker, cache, and asset ambiguity stays explicit, source-map authority stays separate, and a module resident in an observed bundle is never reported as executed. See [JavaScript static/runtime reconciliation](docs/javascript-runtime-reconciliation.md).
 - Trace a literal route, string, API, IPC channel, module, or native export through authenticated application Evidence with explicit traversal bounds, then hand exact native artifact digests and requested exports to retained Ghidra or Hopper Evidence without automatic provider switching. Compare application versions using unique-only digest, source-map, structural, and semantic tiers; duplicate, incomplete, and truncated matches stay unknown. See [cross-layer JavaScript application workflows](docs/javascript-application-workflows.md).
-- Classify PE/CLI managed artifacts with `inspect_managed_artifact` / `rea inspect-managed-artifact`, then inspect bounded metadata members, signatures, method-body CIL hashes, exception regions, call edges, and field-access anchors with `inspect_managed_members` / `rea inspect-managed-members`. Both paths are static and never load the assembly, resolve CLR dependencies, or execute target code; decompiled C#, cross-build matching, and managed/native composition remain future managed-code contracts.
+- Classify PE/CLI managed artifacts with `inspect_managed_artifact` / `rea inspect-managed-artifact`, inspect bounded metadata members, signatures, method-body CIL hashes, exception regions, call edges, and field-access anchors with `inspect_managed_members` / `rea inspect-managed-members`, then compare two authenticated member observations with `compare_managed_members` / `rea compare-managed-members`. The comparison remaps build-local tokens using unique CIL/signature and structural method-shape tiers, never names alone. These paths are static and never load the assembly, resolve CLR dependencies, or execute target code; decompiled C#, managed/native composition, and runtime correlation remain future managed-code contracts.
 - Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
