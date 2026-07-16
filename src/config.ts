@@ -60,6 +60,11 @@ export interface AppConfig {
     readonly systemctlPath: string;
     readonly shellPath: string;
   };
+  readonly managedRuntimePolicy: {
+    readonly enabled: boolean;
+    readonly roots: readonly string[];
+    readonly executablePath: string;
+  };
   readonly permissionCeilings: readonly PermissionCeiling[];
   readonly administratorPermissionGrants: readonly PermissionGrant[];
   readonly permissionProjectRoot: string | undefined;
@@ -145,6 +150,16 @@ const environmentSchema = z
       .min(1)
       .refine(isAbsolute, "REA_JAVASCRIPT_REPLAY_SHELL_PATH must be absolute")
       .default("/usr/bin/bash"),
+    REA_MANAGED_RUNTIME_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_MANAGED_RUNTIME_ROOTS_JSON: z.string().default("[]"),
+    REA_MANAGED_RUNTIME_EXECUTABLE_PATH: z
+      .string()
+      .min(1)
+      .refine(
+        isAbsolute,
+        "REA_MANAGED_RUNTIME_EXECUTABLE_PATH must be absolute",
+      )
+      .default("/usr/bin/dotnet"),
     REA_PERMISSION_PROJECT_ROOT: z.string().min(1).optional(),
     REA_PERMISSION_PROJECT_STORE: z.string().min(1).optional(),
   })
@@ -385,6 +400,17 @@ export const parseConfig = (
         "REA_JAVASCRIPT_REPLAY_ROOTS_JSON must encode absolute roots",
       ),
     );
+  const managedRuntimeRoots = parseStringArray(
+    parsedEnvironment.data.REA_MANAGED_RUNTIME_ROOTS_JSON,
+    "REA_MANAGED_RUNTIME_ROOTS_JSON",
+  );
+  if (!managedRuntimeRoots.ok) return managedRuntimeRoots;
+  if (managedRuntimeRoots.value.some((root) => !isAbsolute(root)))
+    return err(
+      new ConfigurationError(
+        "REA_MANAGED_RUNTIME_ROOTS_JSON must encode absolute roots",
+      ),
+    );
   const permissionCeilings = [
     ...(parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true"
       ? [
@@ -442,6 +468,16 @@ export const parseConfig = (
           }),
         ]
       : []),
+    ...(parsedEnvironment.data.REA_MANAGED_RUNTIME_ENABLED === "true"
+      ? [
+          permissionScope("managed_runtime", managedRuntimeRoots.value, {
+            executables: [
+              parsedEnvironment.data.REA_MANAGED_RUNTIME_EXECUTABLE_PATH,
+            ],
+            network: "none",
+          }),
+        ]
+      : []),
   ] satisfies readonly PermissionCeiling[];
   return ok({
     analysisProvider: parsedEnvironment.data.REA_ANALYSIS_PROVIDER,
@@ -495,6 +531,12 @@ export const parseConfig = (
       systemctlPath:
         parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
       shellPath: parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
+    },
+    managedRuntimePolicy: {
+      enabled: parsedEnvironment.data.REA_MANAGED_RUNTIME_ENABLED === "true",
+      roots: managedRuntimeRoots.value,
+      executablePath:
+        parsedEnvironment.data.REA_MANAGED_RUNTIME_EXECUTABLE_PATH,
     },
     permissionCeilings,
     administratorPermissionGrants: administratorGrants(permissionCeilings),

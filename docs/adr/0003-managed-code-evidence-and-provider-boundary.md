@@ -11,8 +11,12 @@
   `rea compare-managed-members`. Declaration-only managed/native boundary
   inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL
   method flags is shipped through `inspect_managed_native_boundaries` /
-  `rea inspect-managed-native-boundaries`. Decompiled C#, verified native
-  export/function matching, and runtime correlation remain future contracts.
+  `rea inspect-managed-native-boundaries`. Default-disabled runtime-correlation
+  admission planning is shipped through `plan_managed_runtime_correlation` /
+  `rea plan-managed-runtime-correlation`; it does not attach, load, debug,
+  reflect, instrument, invoke, or execute target code. Decompiled C#, verified
+  native export/function matching, and an actual runtime executor remain future
+  contracts.
 
 ## Context
 
@@ -315,10 +319,12 @@ manifest, or derived dump is committed to REA.
 ### 8. Keep runtime correlation a different, default-disabled authority
 
 Static managed support grants no permission to attach, load, debug, reflect,
-instrument, invoke, or execute. A future runtime capability must distinguish
-those effects, remain disabled by default, require explicit administrator and
-per-call approval, and bind to the exact artifact SHA-256, MVID, method
-signature, and CIL/body shape observed by the static path.
+instrument, invoke, or execute. The shipped runtime-correlation planning
+capability distinguishes those effects, remains disabled by default, requires
+explicit administrator and per-call approval, and binds to the exact artifact
+SHA-256, MVID, method signature, and CIL/body shape observed by the static
+path. It records an admission plan only; a future executor must pass a separate
+threat model before any effect can occur.
 
 Runtime admission must additionally validate host OS, CLR family, architecture,
 and supported build/tool versions; bound time, threads, outputs, UI and network
@@ -326,7 +332,7 @@ effects; avoid real services and accounts; and own all created processes and
 artifacts through complete cleanup. Reflection-only loading is still a CLR load
 and is not a substitute for the static byte parser.
 
-Runtime implementation is intentionally outside the initial static PRs and
+Runtime execution is intentionally outside the current managed-code track and
 requires its own threat model and admission decision.
 
 ## Public contract consequences
@@ -388,8 +394,10 @@ or development-only oracles.
 4. Compose explicit managed/native boundaries with Hopper/Ghidra. Declaration
    inventory shipped; native-provider matching remains planned.
 5. Add source-built, pinned real-tool, package, CLI, and MCP conformance.
-6. Consider separately authorized runtime correlation only after the static
-   foundation and its authority model are stable.
+   Source-owned conformance is shipped; pinned external real-tool checks remain
+   planned.
+6. Add separately authorized runtime-correlation admission planning. Shipped;
+   runtime execution remains planned.
 
 Every gate must keep unsupported ReadyToRun, NativeAOT, IL2CPP, mixed-mode, or
 bundle cases explicit rather than broadening claims to make a fixture pass.

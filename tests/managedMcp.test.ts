@@ -9,7 +9,9 @@ import { z } from "zod";
 
 import { AnalysisProviderRegistry } from "../src/application/AnalysisProviderRegistry.js";
 import { BinarySession } from "../src/application/BinarySession.js";
+import { createPermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { SessionProviderRouter } from "../src/application/SessionProviderRouter.js";
+import type { PermissionCeiling } from "../src/domain/permissionPolicy.js";
 import { ManagedStaticProvider } from "../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../src/server/createServer.js";
 import { buildManagedPeFixture } from "./fixtures/managedPe.js";
@@ -19,7 +21,9 @@ describe("managed artifact MCP tools", () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-managed-mcp-"));
     const path = join(directory, "fixture.exe");
     const rightPath = join(directory, "fixture-renamed.exe");
+    const runtimePath = join(directory, "dotnet");
     await writeFile(path, buildManagedPeFixture());
+    await writeFile(runtimePath, "#!/bin/sh\n");
     await writeFile(
       rightPath,
       buildManagedPeFixture({ methodName: "Renamed" }),
@@ -29,7 +33,43 @@ describe("managed artifact MCP tools", () => {
         new ManagedStaticProvider(),
       ]),
     );
-    const server = createServer(session, session);
+    const runtimeCeiling: PermissionCeiling = {
+      capability: "managed_runtime",
+      roots: [directory],
+      executables: [runtimePath],
+      environment_names: [],
+      network: "none",
+      mount: false,
+    };
+    const authority = await createPermissionAuthority(
+      [runtimeCeiling],
+      [
+        {
+          ...runtimeCeiling,
+          grant_id: "administrator:managed_runtime",
+          lifetime: "administrator",
+          operation_identity: null,
+          expires_at: null,
+        },
+      ],
+    );
+    if (!authority.ok) throw authority.error;
+    const server = createServer(session, session, {
+      permissionAuthority: authority.value,
+      managedRuntimePolicy: {
+        enabled: true,
+        roots: [directory],
+        executablePath: runtimePath,
+      },
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        evidenceFileRoots: 0,
+        browserObservationEnabled: false,
+        electronObservationEnabled: false,
+        javascriptReplayEnabled: false,
+        managedRuntimeEnabled: true,
+      }),
+    });
     const client = new Client({ name: "managed-mcp-test", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -48,6 +88,9 @@ describe("managed artifact MCP tools", () => {
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
         "compare_managed_members",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
+        "plan_managed_runtime_correlation",
       );
 
       await client.callTool({
@@ -143,6 +186,61 @@ describe("managed artifact MCP tools", () => {
         normalized_result: {
           algorithm: { name_matching: "not-used" },
           matching: { exact_il_signature: 1 },
+        },
+      });
+
+      const method = z
+        .record(z.string(), z.unknown())
+        .parse(members.normalized_result).methods;
+      const methodItem = z
+        .object({
+          items: z.array(
+            z.object({
+              token: z.string(),
+              signature: z.object({ raw_sha256: z.string() }),
+              body: z.object({ normalized_il_sha256: z.string().nullable() }),
+            }),
+          ),
+        })
+        .parse(method).items[0];
+      expect(methodItem).toBeDefined();
+      if (methodItem === undefined) return;
+      const planned = structured(
+        await client.callTool({
+          name: "plan_managed_runtime_correlation",
+          arguments: {
+            static_members: members,
+            method: {
+              token: methodItem.token,
+              signature_sha256: methodItem.signature.raw_sha256,
+              normalized_il_sha256: methodItem.body.normalized_il_sha256,
+            },
+            requested_effect: "attach",
+            host: {
+              os: "linux",
+              clr_family: "dotnet",
+              architecture: "x86_64",
+            },
+            bounds: {
+              timeout_ms: 5000,
+              max_threads: 32,
+              max_output_bytes: 65536,
+              allow_network: false,
+              allow_ui: false,
+            },
+          },
+        }),
+      );
+
+      expect(planned).toMatchObject({
+        operation: "plan_managed_runtime_correlation",
+        provider: { id: "rea-dotnet-workflows" },
+        confidence: "derived",
+        normalized_result: {
+          executed: false,
+          authority_model: { capability: "managed_runtime" },
+          requested_runtime: { effect: "attach", network: "none" },
+          effect_taxonomy: { attaches_process: true },
         },
       });
     } finally {

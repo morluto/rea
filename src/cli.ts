@@ -9,6 +9,7 @@ import {
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
 import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
+import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
 import {
   runSetup,
   systemSetupHost,
@@ -37,6 +38,7 @@ import { registerAdvancedBrowserCommands } from "./cliBrowserAdvancedCommands.js
 import { registerElectronCommands } from "./cliElectronCommands.js";
 import { registerApplicationCommands } from "./cliApplicationCommands.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import {
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
@@ -889,6 +891,35 @@ const registerManagedCommands = (
               error: "Managed member comparison failed",
               ...projectAnalysisError(result.error),
             };
+      }),
+  });
+  cli.command(CLI_COMMANDS.planManagedRuntimeCorrelation, {
+    description:
+      "Plan a separately authorized managed runtime-correlation experiment without executing target code",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline managed runtime-correlation JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "plan-managed-runtime-correlation", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "plan-managed-runtime-correlation",
+        );
+        if (!input.ok) return input.error;
+        const config = parseConfig(process.env);
+        if (!config.ok) return projectAnalysisError(config.error);
+        const authority = await loadConfiguredPermissionAuthority(config.value);
+        if (!authority.ok) return projectAnalysisError(authority.error);
+        const result = await planManagedRuntimeCorrelationEvidence(
+          {
+            policy: config.value.managedRuntimePolicy,
+            authority: authority.value,
+          },
+          input.value,
+        );
+        return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
 };

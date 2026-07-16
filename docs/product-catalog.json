@@ -11,7 +11,7 @@
     "skill_version": "20"
   },
   "tools": {
-    "total": 87,
+    "total": 88,
     "families": [
       {
         "id": "direct",
@@ -91,12 +91,13 @@
       {
         "id": "managed",
         "surface": "managed",
-        "count": 4,
+        "count": 5,
         "tools": [
           "compare_managed_members",
           "inspect_managed_artifact",
           "inspect_managed_members",
-          "inspect_managed_native_boundaries"
+          "inspect_managed_native_boundaries",
+          "plan_managed_runtime_correlation"
         ]
       },
       {
@@ -282,7 +283,10 @@
       "id": "rea-dotnet-workflows",
       "name": "REA managed-code workflows",
       "version": "1",
-      "capabilities": ["compare_managed_members"]
+      "capabilities": [
+        "compare_managed_members",
+        "plan_managed_runtime_correlation"
+      ]
     },
     {
       "id": "rea-javascript-application",
@@ -470,7 +474,7 @@
     }
   ],
   "cli": {
-    "primary_count": 47,
+    "primary_count": 48,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -508,6 +512,7 @@
       "list-browser-targets",
       "list-electron-targets",
       "observe-web-session",
+      "plan-managed-runtime-correlation",
       "policy",
       "providers",
       "reconcile-javascript-runtime",
@@ -529,17 +534,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 47,
-      "mcp_tools": 87,
+      "cli_commands": 48,
+      "mcp_tools": 88,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "64566ea70551ba0ed3816cf33d8f10b35211951cbbab8d6949eb13e206ae6633",
+      "tools_sha256": "f4740c8f0f8f24c18ee479070e7e808b1613bcc85d13d5abca953f5d55ed0b08",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "499d935ee20c1b0d8010afe9ce6f0ec00e9843b20349df9ed6ebc3471f777d01"
+      "combined_sha256": "3b64168cc24829a9a77321791a956811df69327269fa9aca5866a70b13d406e5"
     }
   }
 }

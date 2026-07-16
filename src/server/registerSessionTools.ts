@@ -439,6 +439,8 @@ interface LifecycleToolRegistration {
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   };
   readonly permissionAuthority?: PermissionAuthority;
 }
@@ -606,6 +608,8 @@ export interface SessionToolOptions {
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   };
 }
 
@@ -654,6 +658,8 @@ export const registerSessionTools = (
         evidenceFileRoots: evidenceFilePolicy.roots.length,
         browserObservationEnabled: false,
         electronObservationEnabled: false,
+        javascriptReplayEnabled: false,
+        managedRuntimeEnabled: false,
       })),
     ...(options.permissionAuthority === undefined
       ? {}

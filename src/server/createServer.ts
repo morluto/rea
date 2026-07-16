@@ -27,6 +27,7 @@ import type {
   JavaScriptReplayPolicy,
   JavaScriptReplayRunner,
 } from "../application/JavaScriptReplayPlanning.js";
+import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
 import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
 
@@ -43,12 +44,14 @@ export interface CreateServerOptions {
   readonly javascriptReplayPolicy?: JavaScriptReplayPolicy;
   readonly javascriptReplayHost?: JavaScriptReplayHost;
   readonly javascriptReplayRunner?: JavaScriptReplayRunner;
+  readonly managedRuntimePolicy?: ManagedRuntimePolicy;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
     readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   };
 }
 
@@ -180,6 +183,14 @@ export const createServer = (
     logger: toolLogger,
     recordEvidence,
     recordEvidenceWithUnknown,
+    runtime: {
+      policy: options.managedRuntimePolicy ?? {
+        enabled: false,
+        roots: [],
+        executablePath: "/usr/bin/dotnet",
+      },
+      authority: options.permissionAuthority,
+    },
   });
   registerBrowserTools(server, {
     logger: toolLogger,

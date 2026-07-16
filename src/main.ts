@@ -131,6 +131,10 @@ export const run = async (
     ...config.value.javascriptReplayPolicy,
     roots: [...config.value.javascriptReplayPolicy.roots],
   };
+  const runtimeManagedRuntimePolicy = {
+    ...config.value.managedRuntimePolicy,
+    roots: [...config.value.managedRuntimePolicy.roots],
+  };
   const liveServers = new Set<ReturnType<typeof createServer>>();
   let handle: StdioServerHandle;
   try {
@@ -151,6 +155,7 @@ export const run = async (
             artifactIntegrityContinueEnabled: () =>
               currentConfig.artifactIntegrityContinueEnabled,
             javascriptReplayPolicy: runtimeJavascriptReplayPolicy,
+            managedRuntimePolicy: runtimeManagedRuntimePolicy,
             availabilityPolicy: () => ({
               processCaptureEnabled:
                 currentConfig.processExecutionPolicy.enabled,
@@ -165,6 +170,7 @@ export const run = async (
                 currentConfig.electronFileRoots.length > 0,
               javascriptReplayEnabled:
                 currentConfig.javascriptReplayPolicy.enabled,
+              managedRuntimeEnabled: currentConfig.managedRuntimePolicy.enabled,
             }),
           },
         );
@@ -243,6 +249,10 @@ export const run = async (
         Object.assign(
           runtimeJavascriptReplayPolicy,
           refreshed.value.javascriptReplayPolicy,
+        );
+        Object.assign(
+          runtimeManagedRuntimePolicy,
+          refreshed.value.managedRuntimePolicy,
         );
         for (const server of liveServers) server.sendToolListChanged();
       });

@@ -117,7 +117,7 @@ describe("canonical product catalog", () => {
     expect(
       catalog.providers.find(({ id }) => id === MANAGED_WORKFLOW_PROVIDER.id)
         ?.capabilities,
-    ).toEqual(["compare_managed_members"]);
+    ).toEqual(["compare_managed_members", "plan_managed_runtime_correlation"]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({

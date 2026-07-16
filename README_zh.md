@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![87 MCP tools](https://img.shields.io/badge/MCP_tools-87-5c4ee5?style=flat-square)](#87-个工具组成的工作台)
+[![88 MCP tools](https://img.shields.io/badge/MCP_tools-88-5c4ee5?style=flat-square)](#88-个工具组成的工作台)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [87 个工具](#87-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
+[快速开始](#快速开始) · [从二进制到行为](#从二进制到行为) · [88 个工具](#88-个工具组成的工作台) · [工作原理](#工作原理) · [常见问题](#常见问题)
 
 <br />
 
@@ -147,7 +147,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 - 分析 Swift 和 Objective-C 元数据。
 - 在 Hopper 中留下名称、注释与书签，使人与智能体的分析互相增强。
 
-## 87 个工具组成的工作台
+## 88 个工具组成的工作台
 
 | 工具类别       | 数量 | 示例                                                                                                                 |
 | -------------- | ---: | -------------------------------------------------------------------------------------------------------------------- |
@@ -155,7 +155,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 | 组合分析       |   10 | `binary_overview`, `analyze_function`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`、Swift 与 ObjC 发现 |
 | macOS 原生工具 |    5 | Mach-O 元数据、代码签名、plist、架构与 Swift 符号还原，无需启动 Hopper                                               |
 | 制品图谱       |    2 | 确定性目录、ZIP/APK/IPA 与 ASAR 清单，以及显式选择的事务式提取                                                       |
-| Managed PE/CLI |    4 | PE/CLI 身份、元数据成员、CIL 哈希、P/Invoke/原生边界声明、结构化 token 重映射与跨版本比较                            |
+| Managed PE/CLI |    5 | PE/CLI 身份、元数据成员、CIL 哈希、P/Invoke/原生边界声明、结构化 token 重映射、运行时关联计划与跨版本比较            |
 | 浏览器观察     |    8 | 精确来源 CDP 抓取、bundle/source map 分析、WebMCP 发现、会话时间线、capture diff 与视觉证据                          |
 | Electron 分析  |    4 | 限定 canonical 文件根的被动观察、有界静态应用映射，以及基于 Evidence 的静态/运行时对账                               |
 | 应用工作流     |    3 | 有界跨层追踪、唯一匹配跨版本图比较，以及经批准的 Linux 隔离 extracted-module replay                                  |

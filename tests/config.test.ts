@@ -39,6 +39,11 @@ describe("runtime configuration", () => {
         enabled: false,
         roots: [],
       });
+      expect(result.value.managedRuntimePolicy).toMatchObject({
+        enabled: false,
+        roots: [],
+        executablePath: "/usr/bin/dotnet",
+      });
     }
   });
 
@@ -129,6 +134,45 @@ describe("runtime configuration", () => {
     ).toBe(false);
     expect(
       parseConfig({ REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" }).ok,
+    ).toBe(false);
+  });
+
+  it("builds a no-network managed runtime ceiling only when enabled", () => {
+    const result = parseConfig({
+      REA_MANAGED_RUNTIME_ENABLED: "true",
+      REA_MANAGED_RUNTIME_ROOTS_JSON: '["/tmp/managed-targets"]',
+      REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/opt/dotnet/dotnet",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.managedRuntimePolicy).toEqual({
+      enabled: true,
+      roots: ["/tmp/managed-targets"],
+      executablePath: "/opt/dotnet/dotnet",
+    });
+    expect(result.value.permissionCeilings).toContainEqual({
+      capability: "managed_runtime",
+      roots: ["/tmp/managed-targets"],
+      executables: ["/opt/dotnet/dotnet"],
+      environment_names: [],
+      network: "none",
+      mount: false,
+    });
+    expect(result.value.administratorPermissionGrants).toContainEqual(
+      expect.objectContaining({
+        capability: "managed_runtime",
+        lifetime: "administrator",
+      }),
+    );
+  });
+
+  it("rejects relative managed runtime roots and executables", () => {
+    expect(
+      parseConfig({ REA_MANAGED_RUNTIME_ROOTS_JSON: '["relative/assembly"]' })
+        .ok,
+    ).toBe(false);
+    expect(
+      parseConfig({ REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "relative/dotnet" })
+        .ok,
     ).toBe(false);
   });
 

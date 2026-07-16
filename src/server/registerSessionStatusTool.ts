@@ -21,6 +21,8 @@ export const registerSessionStatusTool = (
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
+    readonly managedRuntimeEnabled?: boolean;
   },
 ): void => {
   server.registerTool(
