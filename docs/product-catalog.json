@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "17"
+    "skill_version": "18"
   },
   "tools": {
-    "total": 82,
+    "total": 83,
     "families": [
       {
         "id": "direct",
@@ -117,8 +117,12 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 2,
-        "tools": ["compare_application_versions", "trace_application_feature"]
+        "count": 3,
+        "tools": [
+          "compare_application_versions",
+          "run_controlled_replay",
+          "trace_application_feature"
+        ]
       },
       {
         "id": "session",
@@ -265,6 +269,7 @@
       "version": "1",
       "capabilities": [
         "compare_application_versions",
+        "run_controlled_replay",
         "trace_application_feature"
       ]
     },
@@ -422,7 +427,7 @@
     }
   ],
   "cli": {
-    "primary_count": 42,
+    "primary_count": 43,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -459,6 +464,7 @@
       "policy",
       "providers",
       "reconcile-javascript-runtime",
+      "run-controlled-replay",
       "search",
       "setup",
       "trace",
@@ -476,17 +482,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 42,
-      "mcp_tools": 82,
+      "cli_commands": 43,
+      "mcp_tools": 83,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "abf857fcc4e427f5e882e5d812ce43f03523611e28cf00665b8959ea961360b0",
+      "tools_sha256": "8798744673a3ef80a1305b05acd892731de46c53a35d31baf3ba887e540965b6",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "d690c8c0fcf38fb801827bb5aef3113a19a8c363abafc2e7fa5c6f53448c1e17"
+      "combined_sha256": "0024676f75e585b976e336735db5da3ce5f920f63693ace354b4a20027c86b85"
     }
   }
 }

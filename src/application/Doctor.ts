@@ -78,6 +78,7 @@ export interface DoctorHost {
   installationPaths?(): Promise<readonly string[]>;
   installedSkillVersion?(): Promise<string | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
+  javascriptReplayCheck?(): Promise<DoctorCheck>;
 }
 
 /**
@@ -192,6 +193,8 @@ export const runDoctor = async (
       ),
     );
   const providerInspections = await inspectDoctorProviders(host, checks);
+  const javascriptReplayCheck = await host.javascriptReplayCheck?.();
+  if (javascriptReplayCheck !== undefined) checks.push(javascriptReplayCheck);
   if (host.platform === "linux" && hopperPath !== undefined)
     checks.push(
       check(
@@ -287,6 +290,7 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: () => Promise<
     readonly DoctorProviderInspection[]
   >;
+  readonly javascriptReplayCheck?: () => Promise<DoctorCheck>;
 }
 
 /** Create diagnostics backed by the current process and host commands. */
@@ -375,6 +379,9 @@ export const systemDoctorHost = (
   ...(options.providerInspections === undefined
     ? {}
     : { providerInspections: options.providerInspections }),
+  ...(options.javascriptReplayCheck === undefined
+    ? {}
+    : { javascriptReplayCheck: options.javascriptReplayCheck }),
   async installationPaths() {
     try {
       const command = process.platform === "win32" ? "where" : "which";

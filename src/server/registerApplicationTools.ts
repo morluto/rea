@@ -5,15 +5,24 @@ import {
   compareApplicationVersionsEvidence,
   traceApplicationFeatureEvidence,
 } from "../application/JavaScriptApplicationWorkflowService.js";
+import {
+  runControlledReplay,
+  type JavaScriptReplayDependencies,
+} from "../application/JavaScriptReplayService.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
-import type { Evidence } from "../domain/evidence.js";
+import { parseEvidence, type Evidence } from "../domain/evidence.js";
 import type { Logger } from "../logger.js";
+import {
+  controlledReplayInputSchema,
+  controlledReplayOutputSchema,
+} from "../domain/javascriptReplay.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
 
 interface ApplicationToolRegistration {
   readonly logger: Logger;
@@ -21,6 +30,7 @@ interface ApplicationToolRegistration {
   readonly recordEvidenceWithUnknown:
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
+  readonly replay: JavaScriptReplayDependencies;
 }
 
 /** Register provider-neutral JavaScript application graph workflows. */
@@ -28,7 +38,8 @@ export const registerApplicationTools = (
   server: McpServer,
   options: ApplicationToolRegistration,
 ): void => {
-  const [traceContract, compareContract] = APPLICATION_TOOL_CONTRACTS;
+  const [traceContract, compareContract, replayContract] =
+    APPLICATION_TOOL_CONTRACTS;
   server.registerTool(
     traceContract.name,
     toolRegistrationOptions(traceContract),
@@ -75,6 +86,41 @@ export const registerApplicationTools = (
         result.value,
         parsed.unknown_registry_approved === true && unknown,
       );
+    },
+  );
+  server.registerTool(
+    replayContract.name,
+    toolRegistrationOptions(replayContract),
+    async (input, context) => {
+      const parsed = controlledReplayInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        replayContract.name,
+        () =>
+          runControlledReplay(options.replay, parsed, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
+      );
+      if (!result.ok) return toCallToolResult(result, replayContract);
+      const output = controlledReplayOutputSchema.parse(result.value);
+      if (output.evidence !== null) {
+        const sourcesRecorded = recordSources(
+          options.recordEvidence,
+          output.source_evidence.map((item) => parseEvidence(item)),
+        );
+        if (!sourcesRecorded.ok)
+          return toCallToolResult(sourcesRecorded, replayContract);
+        const recorded = options.recordEvidence?.(
+          parseEvidence(output.evidence),
+        );
+        if (recorded !== undefined && !recorded.ok)
+          return toCallToolResult(recorded, replayContract);
+      }
+      return toCallToolResult(result, replayContract, {
+        evidenceResourcesAvailable:
+          output.evidence !== null && options.recordEvidence !== undefined,
+      });
     },
   );
 };

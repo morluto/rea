@@ -124,7 +124,13 @@ export class PermissionAuthority {
       readonly restartRequired?: boolean;
     } = {},
   ): Promise<
-    Result<PermissionDecision, PermissionPathError | PermissionRequiredError>
+    Result<
+      PermissionDecision & {
+        readonly allowed: true;
+        readonly request: PermissionRequest;
+      },
+      PermissionPathError | PermissionRequiredError
+    >
   > {
     const evaluated = await this.explain(request, access, options);
     if (!evaluated.ok) return evaluated;
@@ -143,7 +149,10 @@ export class PermissionAuthority {
     } = {},
   ): Promise<
     Result<
-      PermissionDecision & { readonly allowed: true },
+      PermissionDecision & {
+        readonly allowed: true;
+        readonly request: PermissionRequest;
+      },
       PermissionPathError | PermissionRequiredError
     >
   > {
@@ -160,7 +169,7 @@ export class PermissionAuthority {
           options.restartRequired ?? false,
         ),
       );
-    return ok(decision);
+    return ok({ ...decision, request: canonical.value });
   }
 
   /** Add authority beneath the administrator ceiling. */

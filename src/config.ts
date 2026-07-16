@@ -51,6 +51,15 @@ export interface AppConfig {
   readonly electronObservationEnabled: boolean;
   readonly electronCdpEndpoints: readonly string[];
   readonly electronFileRoots: readonly string[];
+  readonly javascriptReplayPolicy: {
+    readonly enabled: boolean;
+    readonly roots: readonly string[];
+    readonly nodePath: string;
+    readonly bubblewrapPath: string;
+    readonly systemdRunPath: string;
+    readonly systemctlPath: string;
+    readonly shellPath: string;
+  };
   readonly permissionCeilings: readonly PermissionCeiling[];
   readonly administratorPermissionGrants: readonly PermissionGrant[];
   readonly permissionProjectRoot: string | undefined;
@@ -103,6 +112,39 @@ const environmentSchema = z
     REA_ELECTRON_OBSERVE_ENABLED: z.enum(["true", "false"]).default("false"),
     REA_ELECTRON_CDP_ENDPOINTS_JSON: z.string().default("[]"),
     REA_ELECTRON_FILE_ROOTS_JSON: z.string().default("[]"),
+    REA_JAVASCRIPT_REPLAY_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_JAVASCRIPT_REPLAY_ROOTS_JSON: z.string().default("[]"),
+    REA_JAVASCRIPT_REPLAY_NODE_PATH: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "REA_JAVASCRIPT_REPLAY_NODE_PATH must be absolute")
+      .default(process.execPath),
+    REA_JAVASCRIPT_REPLAY_BWRAP_PATH: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "REA_JAVASCRIPT_REPLAY_BWRAP_PATH must be absolute")
+      .default("/usr/bin/bwrap"),
+    REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH: z
+      .string()
+      .min(1)
+      .refine(
+        isAbsolute,
+        "REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH must be absolute",
+      )
+      .default("/usr/bin/systemd-run"),
+    REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH: z
+      .string()
+      .min(1)
+      .refine(
+        isAbsolute,
+        "REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH must be absolute",
+      )
+      .default("/usr/bin/systemctl"),
+    REA_JAVASCRIPT_REPLAY_SHELL_PATH: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, "REA_JAVASCRIPT_REPLAY_SHELL_PATH must be absolute")
+      .default("/usr/bin/bash"),
     REA_PERMISSION_PROJECT_ROOT: z.string().min(1).optional(),
     REA_PERMISSION_PROJECT_STORE: z.string().min(1).optional(),
   })
@@ -332,6 +374,17 @@ export const parseConfig = (
     parsedEnvironment.data.REA_ELECTRON_FILE_ROOTS_JSON,
   );
   if (!electronFileRoots.ok) return electronFileRoots;
+  const javascriptReplayRoots = parseStringArray(
+    parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_ROOTS_JSON,
+    "REA_JAVASCRIPT_REPLAY_ROOTS_JSON",
+  );
+  if (!javascriptReplayRoots.ok) return javascriptReplayRoots;
+  if (javascriptReplayRoots.value.some((root) => !isAbsolute(root)))
+    return err(
+      new ConfigurationError(
+        "REA_JAVASCRIPT_REPLAY_ROOTS_JSON must encode absolute roots",
+      ),
+    );
   const permissionCeilings = [
     ...(parsedEnvironment.data.REA_PROCESS_CAPTURE_ENABLED === "true"
       ? [
@@ -373,6 +426,21 @@ export const parseConfig = (
       : []),
     ...(parsedEnvironment.data.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true"
       ? [permissionScope("native_mount", [], { mount: true })]
+      : []),
+    ...(parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_ENABLED === "true"
+      ? [
+          permissionScope("javascript_replay", javascriptReplayRoots.value, {
+            executables: [
+              parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_NODE_PATH,
+              parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_BWRAP_PATH,
+              parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH,
+              parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
+              parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
+            ],
+            network: "none",
+            mount: true,
+          }),
+        ]
       : []),
   ] satisfies readonly PermissionCeiling[];
   return ok({
@@ -417,6 +485,17 @@ export const parseConfig = (
       parsedEnvironment.data.REA_ELECTRON_OBSERVE_ENABLED === "true",
     electronCdpEndpoints: electronEndpoints.value,
     electronFileRoots: electronFileRoots.value,
+    javascriptReplayPolicy: {
+      enabled: parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_ENABLED === "true",
+      roots: javascriptReplayRoots.value,
+      nodePath: parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_NODE_PATH,
+      bubblewrapPath: parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_BWRAP_PATH,
+      systemdRunPath:
+        parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH,
+      systemctlPath:
+        parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
+      shellPath: parsedEnvironment.data.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
+    },
     permissionCeilings,
     administratorPermissionGrants: administratorGrants(permissionCeilings),
     permissionProjectRoot: parsedEnvironment.data.REA_PERMISSION_PROJECT_ROOT,

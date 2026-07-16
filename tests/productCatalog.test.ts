@@ -105,7 +105,11 @@ describe("canonical product catalog", () => {
       catalog.providers.find(
         ({ id }) => id === JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER.id,
       )?.capabilities,
-    ).toEqual(["compare_application_versions", "trace_application_feature"]);
+    ).toEqual([
+      "compare_application_versions",
+      "run_controlled_replay",
+      "trace_application_feature",
+    ]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({

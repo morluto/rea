@@ -2,8 +2,8 @@
 name: rea-analysis
 description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
 metadata:
-  version: "17"
-  tool_count: 82
+  version: "18"
+  tool_count: 83
 ---
 
 # REA
@@ -77,6 +77,18 @@ Use `unknown_registry_approved: true` only after approval to retain unresolved
 version matches. For local operator-provided artifacts, the packaged
 `verify:application-workflows` command reports digests and coverage without
 printing source text.
+
+Use `run_controlled_replay` only for operator-selected extracted JavaScript
+modules when the separate `javascript_replay` policy is enabled. First call
+`mode: plan`; review the exact module, stub, runtime, sandbox, case, limit, and
+policy commitments. Execute only with `approved: true` and that exact
+`plan_digest`. Prefer explicit cases plus the parser, sanitizer, or clipboard
+boundary generator. A right manifest produces a derived differential result.
+Treat return values, exceptions, denials, limits, and crashes as observations
+of the isolated experiment with `controlled-replay` authority—not facts about
+the real application. Never substitute passive browser/Electron permission,
+Process Capture, or an in-process `vm` run. Reproducer export requires its own
+literal approval and `evidence_write` authority after sandbox cleanup.
 
 ## Understand the request
 

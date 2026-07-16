@@ -34,6 +34,7 @@ const grantSchema = z.object({
     "artifact_extract",
     "native_mount",
     "reference_read",
+    "javascript_replay",
   ]),
   roots: z.array(z.string()),
   executables: z.array(z.string()),

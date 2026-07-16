@@ -1,0 +1,33 @@
+name: Real JavaScript replay verification
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/real-javascript-replay.yml"
+      - "scripts/verify-real-javascript-replay.mjs"
+      - "src/replay/**"
+      - "src/application/JavaScriptReplay*"
+      - "src/domain/javascriptReplay.ts"
+      - "tests/fixtures/replay/**"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: npm run verify:replay
+        env:
+          REA_REPLAY_ALLOW_UNAVAILABLE: "true"

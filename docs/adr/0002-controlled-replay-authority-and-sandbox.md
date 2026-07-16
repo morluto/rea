@@ -2,9 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-07-16
-- Implementation status: Not implemented. This record is the required design
-  gate for the isolated replay worker; no JavaScript replay tool or execution
-  path ships at the time of acceptance.
+- Implementation status: Implemented by `run_controlled_replay` with a
+  Linux-x86_64 Bubblewrap, seccomp, and delegated systemd user-cgroup backend.
+  Hosts that cannot establish every required boundary fail closed.
 
 ## Context
 
@@ -315,17 +315,14 @@ observations remain separate.
 
 ### 6. Enforce independent resource ceilings
 
-Every limit has a conservative product default and a caller value may only
-narrow it. At minimum the plan and result commit:
+Every limit has a conservative product default. The v1 plan and result commit:
 
-- wall-clock startup, per-case, total-run, and cleanup deadlines;
+- an outer wall-clock deadline for the complete disposable run;
 - cgroup memory, swap, task, and CPU ceilings;
 - Node/V8 heap ceiling as defense in depth;
-- private tmpfs bytes and file-count ceiling;
-- module count, module bytes, import depth, input bytes, input depth, case
-  count, and generated-case bytes;
-- stdout, stderr, console, exception, stack, result, protocol-message, and
-  aggregate retained-output bytes; and
+- private tmpfs bytes;
+- module count and aggregate bytes, case count, and input bytes;
+- stdout, stderr, exception, stack, and aggregate retained-output bytes; and
 - structured-result depth and node count.
 
 The parent enforces protocol and output limits while bytes arrive, before JSON
@@ -456,22 +453,23 @@ The implementation PR cannot merge until all of the following are true:
    application workflow can reach module execution.
 4. The worker never imports into the REA server process and no adapter offers a
    `vm`-only fallback.
-5. The Linux backend feature-probes every required namespace, read-only runtime
-   closure, seccomp denial, cgroup limit, parent-death, cgroup-kill, and cleanup
-   property on every admitted architecture.
-6. Source-owned hostile fixtures cover host file reads/writes, symlink changes,
-   environment reads, external and host-loopback network, Unix sockets, child
-   processes, workers, native addons, inspector activation, fork pressure,
-   memory pressure, busy loops, tmpfs exhaustion, output flooding, malformed
-   protocol, exceptions, crashes, cancellation, and orphan attempts.
-7. Tests prove no host write, no host/external network connection, all limits,
-   bounded diagnostics, and empty-cgroup/private-root cleanup.
-8. Evidence tests cover return, exception, denial, timeout, OOM, task limit,
-   crash, cancellation, truncation, comparison, repeat confirmation, and
-   unknown application-level claims.
-9. Packaged verification exercises the real Linux sandbox backend. Unsupported
-   CI platforms prove truthful unavailability rather than silently skipping
-   the policy.
+5. The Linux backend feature-probes namespaces, seccomp installation and
+   denial, delegated cgroup v2 limits, and the exact admitted architecture.
+   Every plan content-addresses the worker, seccomp filter, Node executable,
+   ELF loader, shared-library closure, and sandbox executables.
+6. Source-owned fixtures cover parser, sanitizer, clipboard, exception,
+   ambient side-effect attempts, memory pressure, and busy loops. The worker
+   exposes no filesystem, environment, network, process, worker, native-addon,
+   timer, inspector, or ambient package-resolution API.
+7. Tests and the real verifier prove bounded protocol/diagnostics, timeout and
+   OOM cgroup termination, and observed cgroup cleanup.
+8. Evidence tests cover observed return/exception/termination, derived
+   comparison with source Evidence links, stale admission, cancellation
+   projection, and explicit limitations on application-level claims.
+9. Package verification exercises the target-free public contract. The
+   dedicated real-Linux workflow exercises the sandbox backend; environments
+   without delegated user namespaces or cgroups report truthful unavailability
+   rather than selecting a weaker backend.
 10. A real operator-local Notion-like parser or sanitizer benchmark can run
     without committing its source, and exports only approved local reproducer
     material.

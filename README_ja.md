@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![82 MCP tools](https://img.shields.io/badge/MCP_tools-82-5c4ee5?style=flat-square)](#82-ツールのワークベンチ)
+[![83 MCP tools](https://img.shields.io/badge/MCP_tools-83-5c4ee5?style=flat-square)](#83-ツールのワークベンチ)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [82 ツール](#82-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
+[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [83 ツール](#83-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
 
 <br />
 
@@ -147,7 +147,7 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 - Swift / Objective-C のメタデータを解析する。
 - Hopper に名前、コメント、ブックマークを残し、人間とエージェントの調査を共有する。
 
-## 82 ツールのワークベンチ
+## 83 ツールのワークベンチ
 
 | ツール群               |  数 | 例                                                                                                                  |
 | ---------------------- | --: | ------------------------------------------------------------------------------------------------------------------- |
@@ -157,7 +157,7 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 | アーティファクトグラフ |   2 | ディレクトリ、ZIP/APK/IPA、ASAR の決定的一覧と明示選択されたトランザクション抽出                                    |
 | ブラウザ観察           |   8 | origin 限定 CDP 取得、bundle/source map 解析、WebMCP 検出、セッション、capture diff、視覚証拠                       |
 | Electron 解析          |   4 | canonical ファイルルート内の受動観察、有界な静的アプリマッピング、Evidence に基づく静的/実行時の照合                |
-| アプリケーション       |   2 | 有界なクロスレイヤー機能追跡と、ネイティブ解析への引き継ぎを含む一意限定のバージョン比較                            |
+| アプリケーション       |   3 | 有界なクロスレイヤー追跡、一意限定のバージョン比較、承認済み Linux 隔離 extracted-module replay                     |
 | バイナリセッション     |  18 | `open_binary`、`binary_session`、証拠バンドル、プロセス／成果物／関数比較、残余未知レジストリ                       |
 
 ## 他のコーディングエージェントで使う

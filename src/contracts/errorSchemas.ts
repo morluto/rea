@@ -99,6 +99,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("configuration_invalid"),
   generic("target_unavailable"),
   generic("execution_failure"),
+  generic("plan_stale"),
 ]);
 
 /** JSON Schema document used by generated API documentation and clients. */

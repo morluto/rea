@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![82 MCP tools](https://img.shields.io/badge/MCP_tools-82-5c4ee5?style=flat-square)](#82-tools-for-investigation)
+[![83 MCP tools](https://img.shields.io/badge/MCP_tools-83-5c4ee5?style=flat-square)](#83-tools-for-investigation)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [82 tools](#82-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
+[Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [83 tools](#83-tools-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <br />
 
@@ -320,7 +320,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-## 82 tools for investigation
+## 83 tools for investigation
 
 | Tool family               | Count | Examples                                                                                                                         |
 | ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -330,7 +330,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree               |
 | Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence |
 | Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation         |
-| Application workflows     |     2 | bounded cross-layer feature traces and unique-only cross-version graph matching with native provider handoffs                    |
+| Application workflows     |     3 | bounded cross-layer traces, unique-only version matching, and approved Linux-isolated extracted-module replay                    |
 | Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle          |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
@@ -395,19 +395,19 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 ### Next
 
-1. **Deeper JavaScript and source recovery** — add historical-source matching on top of the shipped AST-only reconstruction, exact static/runtime reconciliation, and rechunked/minified cross-version matching.
+1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser or Electron interaction remains a different future authority.
 2. **Broader application graph evidence** — extend authenticated cross-layer traces with additional static extractors and separately approved runtime authorities.
 3. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later
 
-1. **Controlled interaction and replay** — implement extracted-module JavaScript execution and fuzzing behind the separately approved, Linux OS-sandboxed boundary fixed by [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md); browser or Electron interaction remains a different future authority.
+1. **Controlled application interaction** — evaluate separately authorized full-application driving without widening passive browser, Electron, or extracted-module replay authority.
 2. **Native runtime observation** — approval-gated LLDB, Frida, system logs, process/filesystem observers, and native API tracing.
 3. **Additional providers and targets** — evaluate IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, Windows-native providers, mobile artifacts, firmware, document formats, and other software-defined systems.
 
 New providers must produce the same evidence and safety metadata as existing capabilities before they become part of the public workflow. Once REA has multiple optional toolchains, setup can become capability-selective; the consent rules for that future work are recorded in the [installation roadmap](docs/roadmap.md).
 
-See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; and [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the accepted but not-yet-implemented JavaScript replay security boundary.
+See the [static-analysis provider evaluation](docs/provider-evaluation.md) for the shipped Ghidra function-analysis boundary, remaining admission gates, and provider comparison matrix; [ADR-0001](docs/adr/0001-provider-selection-and-analysis-profiles.md) for binding, selection, profile, snapshot, and compatibility decisions; and the [controlled replay guide](docs/controlled-javascript-replay.md) plus [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md) for the shipped JavaScript replay boundary.
 
 ## Using REA with other agents
 
@@ -587,7 +587,7 @@ unpacked; REA does not silently accept the mismatched artifact.
 
 ## Security model
 
-REA does not provide a hosted analysis service. Hopper and Ghidra bridge communication uses authenticated private local sockets. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. Shipped providers, passive observers, and Process Capture are not security sandboxes: providers and launched targets run with the current user's permissions, and each capability reports its side effects and limitations. No JavaScript replay execution path ships today; its future implementation must satisfy the mandatory OS-sandbox and fail-closed policy in [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md). Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+REA does not provide a hosted analysis service. Hopper and Ghidra bridge communication uses authenticated private local sockets. Dynamic capabilities are disabled by default and require both operator policy and explicit per-call approval. Shipped providers, passive observers, and Process Capture are not security sandboxes: providers and launched targets run with the current user's permissions. Extracted JavaScript replay is a distinct Linux-only capability that fails closed unless Bubblewrap namespaces, architecture-checked seccomp, private runtime mounts, and delegated cgroup limits are available; it never inherits browser, Electron, or Process Capture authority. See [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md). Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 

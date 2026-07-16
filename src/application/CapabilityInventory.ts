@@ -56,6 +56,7 @@ export const buildCapabilityInventory = (
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
   },
 ) => {
   const status = statusSchema.parse(sessionStatus);
@@ -101,6 +102,7 @@ const availabilityFor = (
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
+    readonly javascriptReplayEnabled?: boolean;
   },
 ): {
   readonly reason: ToolAvailabilityReason;
@@ -112,6 +114,15 @@ const availabilityFor = (
       remediation:
         "Enable or grant process_capture within the administrator ceiling.",
     };
+  if (name === "run_controlled_replay" && !policy.javascriptReplayEnabled)
+    return {
+      reason: "policy_disabled",
+      remediation:
+        "Enable javascript_replay with exact source roots and sandbox executables.",
+    };
+  if (name === "run_controlled_replay")
+    return { reason: "available", remediation: null };
+  if (kind === "application") return { reason: "available", remediation: null };
   if (name === "import_evidence_bundle" && policy.evidenceFileRoots === 0)
     return {
       reason: "policy_disabled",
