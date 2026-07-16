@@ -20,7 +20,9 @@ describe("real Windows Ghidra workflow trust boundary", () => {
     expect(workflow).not.toMatch(
       /\$\{\{\s*(?:inputs|github\.event\.(?:inputs|client_payload))\b/u,
     );
+    expect(workflow).toContain("REA_ANALYSIS_PROVIDER: ghidra");
     expect(workflow).not.toContain("cache: npm");
+    expect(workflow).not.toContain("npm run rebuild:native");
     expect(workflow).toContain("npm run verify:ghidra:windows");
     expect(workflow).toContain("windows-ghidra-proof.log");
   });
