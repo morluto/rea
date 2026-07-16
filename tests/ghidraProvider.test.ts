@@ -144,6 +144,17 @@ describe("Ghidra provider", () => {
         managed: false,
       },
     });
+    expect(ghidra.capabilities()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "list_procedures",
+          limitations: expect.arrayContaining([
+            expect.stringContaining("bounded taskkill termination"),
+            expect.stringContaining("private DACL enforcement"),
+          ]),
+        }),
+      ]),
+    );
     expect(
       ghidra.inspectTargetSupport({
         ...nativeApplication,

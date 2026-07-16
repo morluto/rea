@@ -187,6 +187,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       bridgeScriptPath: fileURLToPath(
         new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
+      platform: installation.platform,
     }),
     targetPath: parsedTarget.value.path,
     targetSha256: parsedTarget.value.sha256,
