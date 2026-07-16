@@ -39,7 +39,15 @@ describe("Electron MCP tools", () => {
     const root = await mkdtemp(join(tmpdir(), "rea-electron-mcp-"));
     temporary.push(root);
     await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
-    await writeFile(join(root, "app.js"), "export const app = true;");
+    await writeFile(
+      join(root, "app.js"),
+      "export const observed = 'source-secret';",
+    );
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "runtime-fixture", renderer: "index.html" }),
+    );
+    await writeFile(join(root, "worker.js"), "self.onmessage = () => {};\n");
     const browser = await startFakeCdpBrowser({
       electronFileUrl: pathToFileURL(join(root, "index.html")).href,
     });
@@ -48,6 +56,7 @@ describe("Electron MCP tools", () => {
       REA_ELECTRON_OBSERVE_ENABLED: "true",
       REA_ELECTRON_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
       REA_ELECTRON_FILE_ROOTS_JSON: JSON.stringify([root]),
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
     });
     if (!config.ok) throw config.error;
     const authority = await loadConfiguredPermissionAuthority(config.value);
@@ -96,6 +105,31 @@ describe("Electron MCP tools", () => {
         target_id: "electron-page",
         approved: true,
         observation_ms: 0,
+        include_script_sources: true,
+        source_capture_approved: true,
+      },
+    });
+    const analyzed = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: root, approved: true },
+    });
+    expect(analyzed.isError).not.toBe(true);
+    const reconciled = await client.callTool({
+      name: "reconcile_javascript_runtime",
+      arguments: {
+        static_layers: [
+          { role: "application", analysis: analyzed.structuredContent },
+        ],
+        runtime_observations: [inspected.structuredContent],
+      },
+    });
+    expect(reconciled.isError).not.toBe(true);
+    expect(reconciled.structuredContent).toMatchObject({
+      operation: "reconcile_javascript_runtime",
+      provider: { id: "rea-javascript-runtime-reconciliation" },
+      normalized_result: {
+        summary: { runtime_scripts: 1, matched: expect.any(Number) },
+        source_map_authority: { used_for_primary_matching: false },
       },
     });
     expect(inspected.isError).not.toBe(true);
@@ -104,8 +138,20 @@ describe("Electron MCP tools", () => {
       normalized_result: {
         target: { file_path: join(root, "index.html") },
         scripts: {
-          items: [expect.objectContaining({ file_path: join(root, "app.js") })],
+          items: [
+            expect.objectContaining({
+              frame_id: "frame-main",
+              file_path: join(root, "app.js"),
+            }),
+          ],
         },
+        workers: [
+          expect.objectContaining({
+            target_id: "electron-worker",
+            opener_target_id: "electron-page",
+            file_path: join(root, "worker.js"),
+          }),
+        ],
       },
     });
     const outside = join(root, "..", `outside-${Date.now().toString(16)}`);

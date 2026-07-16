@@ -10,6 +10,7 @@ import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClient
 import {
   ARTIFACT_GRAPH_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
+  JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
 } from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../src/browser/CdpElectronProvider.js";
@@ -70,6 +71,7 @@ describe("canonical product catalog", () => {
         CDP_BROWSER_PROVIDER_IDENTITY,
         CDP_ELECTRON_PROVIDER_IDENTITY,
         JAVASCRIPT_APPLICATION_PROVIDER,
+        JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
       ]
         .map(({ id }) => id)
         .sort(),
@@ -92,6 +94,11 @@ describe("canonical product catalog", () => {
         ({ id }) => id === JAVASCRIPT_APPLICATION_PROVIDER.id,
       )?.capabilities,
     ).toEqual(["analyze_javascript_application"]);
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER.id,
+      )?.capabilities,
+    ).toEqual(["reconcile_javascript_runtime"]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({
@@ -161,7 +168,11 @@ describe("canonical product catalog", () => {
       ),
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues.some((issue) => issue.includes("80-tool"))).toBe(true);
+    expect(
+      issues.some((issue) =>
+        issue.includes(`${String(catalog.tools.total + 1)}-tool`),
+      ),
+    ).toBe(true);
     expect(issues.some((issue) => issue.includes("Future Client"))).toBe(true);
     expect(issues.some((issue) => issue.includes("Process Capture v5"))).toBe(
       true,

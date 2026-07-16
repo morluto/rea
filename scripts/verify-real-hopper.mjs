@@ -362,7 +362,7 @@ try {
   const expectedNames = TOOL_CONTRACTS.map(({ name }) => name).sort();
   const actualNames = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
-    throw new Error("The real server did not expose the intended 79 tools");
+    throw new Error("The real server did not expose the intended 80 tools");
   }
 
   const options = { timeout };

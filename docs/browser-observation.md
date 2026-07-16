@@ -16,6 +16,9 @@ REA can attach to a user-owned Chrome-family browser through the Chrome DevTools
 - MCP session results are retained as `rea://evidence/{evidenceId}` resources. One-shot CLI output is not retained by a long-lived REA session.
 
 Electron `file://` pages use a separate provider, permission capability, and root model; see [electron-observation.md](electron-observation.md).
+Existing static application Evidence and passive web/Electron captures can be
+combined later through
+[JavaScript static/runtime reconciliation](javascript-runtime-reconciliation.md).
 
 ## Start a browser
 
@@ -139,9 +142,12 @@ REA removes sensitive values before normalized event data is retained:
 - Console observations with an approved stack source retain call type, argument types, timestamp, and redacted source location. With independent approval, only already-delivered primitive values are retained after credential redaction and byte bounds; objects, getters, and remote properties are never expanded.
 - WebSocket observations retain direction, opcode, and payload byte length. With independent approval, bounded text frames are classified as text or value-free JSON shape; binary bytes, hashes, prefixes, and raw frames are never retained.
 - Storage observations always redact values. Key names, IndexedDB names, and cache names are omitted unless explicitly requested.
-- Script metadata is included only when CDP supplies a URL on an allowed origin. Stable keys exclude transient CDP script IDs, and exact transient raw URLs are used only during script/resource reconciliation. URL-less scripts are excluded because their origin cannot be established. Source content is omitted unless explicitly requested and becomes a self-verifying `rea://web-content/sha256/...` artifact subject to per-script and aggregate byte limits.
+- Script metadata is included only when CDP supplies a URL on an allowed origin. Stable keys exclude transient CDP script IDs, and exact transient raw URLs are used only during script/resource reconciliation. URL-less scripts are excluded because their origin cannot be established. When CDP supplies an execution-context association, the accepted script retains its authorized frame ID for later attribution. Source content is omitted unless explicitly requested and becomes a self-verifying `rea://web-content/sha256/...` artifact subject to per-script and aggregate byte limits.
 
 Cross-origin frames, resources, scripts, events, and workers are excluded unless their exact origins are also approved. Excluded target details are counted without being exposed.
+Retained workers include bounded opener-target and parent-frame IDs when CDP
+provides them; these relationships do not expand the exact-origin boundary or
+prove static module ownership.
 
 ## Completeness and limits
 

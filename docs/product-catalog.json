@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "15"
+    "skill_version": "16"
   },
   "tools": {
-    "total": 79,
+    "total": 80,
     "families": [
       {
         "id": "direct",
@@ -106,11 +106,12 @@
       {
         "id": "electron",
         "surface": "electron-provider",
-        "count": 3,
+        "count": 4,
         "tools": [
           "analyze_javascript_application",
           "inspect_electron_page",
-          "list_electron_targets"
+          "list_electron_targets",
+          "reconcile_javascript_runtime"
         ]
       },
       {
@@ -251,6 +252,12 @@
       "name": "REA JavaScript application analyzer",
       "version": "1",
       "capabilities": ["analyze_javascript_application"]
+    },
+    {
+      "id": "rea-javascript-runtime-reconciliation",
+      "name": "REA JavaScript runtime reconciliation",
+      "version": "1",
+      "capabilities": ["reconcile_javascript_runtime"]
     }
   ],
   "setup_clients": [
@@ -392,7 +399,7 @@
     }
   ],
   "cli": {
-    "primary_count": 39,
+    "primary_count": 40,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -427,6 +434,7 @@
       "observe-web-session",
       "policy",
       "providers",
+      "reconcile-javascript-runtime",
       "search",
       "setup",
       "trace",
@@ -443,17 +451,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 39,
-      "mcp_tools": 79,
+      "cli_commands": 40,
+      "mcp_tools": 80,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "b16aa88111d6694ee2c7bd5f78dca14bfe6c1b83bfe408fd3fd90a785b007986",
+      "tools_sha256": "ea588b0a55232dc3d51a5baff7ef07d522484b0ca218abe072762498bcbbd2ee",
       "prompts_sha256": "cb1a0316708d1bdb5f4325c2000e466211b16070af8c927bc201340301f194c4",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "1c73b546f56e292552a444acb9ea2163b9d649f8ffed6824dd9afaca76e99c28"
+      "combined_sha256": "e8b9641545de9729803af17f34f2677498ca7c2e6108e50291bf4ca86c1695e6"
     }
   }
 }

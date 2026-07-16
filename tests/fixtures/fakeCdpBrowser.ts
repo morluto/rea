@@ -322,6 +322,14 @@ const targets = (
                 webSocketDebuggerUrl: `ws://localhost:${String(port)}/devtools/page/electron-page`,
               }),
         },
+        {
+          id: "electron-worker",
+          type: "worker",
+          title: "Electron worker",
+          url: new URL("worker.js", options.electronFileUrl).href,
+          attached: false,
+          openerId: "electron-page",
+        },
       ]),
 ];
 
@@ -652,6 +660,7 @@ const emitEvents = (
       hash: "cdp-hash",
       length: 40,
       isModule: true,
+      executionContextId: 1,
       scriptLanguage: "JavaScript",
       sourceMapURL: "/app.js.map?token=map-secret",
     });
@@ -665,6 +674,7 @@ const emitEvents = (
         hash: "cdp-hash",
         length: 40,
         isModule: true,
+        executionContextId: 1,
         scriptLanguage: "JavaScript",
       });
     event(socket, "Debugger.scriptParsed", command.sessionId, {
@@ -785,6 +795,16 @@ const emitEvents = (
       });
   }
   if (command.method === "Runtime.enable") {
+    event(socket, "Runtime.executionContextCreated", command.sessionId, {
+      context: {
+        id: 1,
+        origin:
+          options.electronFileUrl === undefined
+            ? `http://127.0.0.1:${String(port)}`
+            : "file://",
+        auxData: { frameId: "frame-main", isDefault: true },
+      },
+    });
     event(socket, "Runtime.consoleAPICalled", command.sessionId, {
       type: "log",
       timestamp: 123,

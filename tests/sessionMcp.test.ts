@@ -142,7 +142,7 @@ describe("target-free MCP lifecycle", () => {
     expect(text(before)).toBe(
       "No app is open. Ask the user which app to investigate, then call open_binary with its local path.",
     );
-    expect((await mcp.listTools()).tools).toHaveLength(79);
+    expect((await mcp.listTools()).tools).toHaveLength(80);
     const deniedCapture = await mcp.callTool({
       name: "capture_process_scenario",
       arguments: {

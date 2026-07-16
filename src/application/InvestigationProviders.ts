@@ -32,6 +32,13 @@ export const JAVASCRIPT_APPLICATION_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for static/passive-runtime JavaScript reconciliation. */
+export const JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER = {
+  id: "rea-javascript-runtime-reconciliation",
+  name: "REA JavaScript runtime reconciliation",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic cross-artifact comparisons. */
 export const ARTIFACT_COMPARISON_PROVIDER = {
   id: "rea-artifact-comparison",

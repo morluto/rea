@@ -29,6 +29,7 @@ export interface CapturedScript {
   readonly language: string | null;
   readonly sourceMapUrl: string | null;
   readonly sourceMapRawUrl: string | null;
+  readonly executionContextKey: string | null;
 }
 
 type NetworkState = WebPageInspection["network"]["requests"][number];
@@ -36,6 +37,7 @@ type NetworkState = WebPageInspection["network"]["requests"][number];
 /** Bounded event accumulator that drops payload values at ingestion time. */
 export class CdpCaptureEvents {
   readonly scripts = new Map<string, CapturedScript>();
+  readonly executionContextFrames = new Map<string, string>();
   readonly network = new Map<string, NetworkState>();
   readonly allowedWebSockets = new Set<string>();
   readonly console: WebPageInspection["console"]["events"] = [];
@@ -66,6 +68,7 @@ export class CdpCaptureEvents {
     this.originViolation = false;
     this.navigationDuringCapture = false;
     this.scripts.clear();
+    this.executionContextFrames.clear();
     this.network.clear();
     this.allowedWebSockets.clear();
     this.console.length = 0;
@@ -93,6 +96,15 @@ export class CdpCaptureEvents {
     const params = recordValue(event.params);
     if (params === undefined) return;
     switch (event.method) {
+      case "Runtime.executionContextCreated":
+        this.#executionContext(params);
+        break;
+      case "Runtime.executionContextDestroyed":
+        this.#destroyExecutionContext(params);
+        break;
+      case "Runtime.executionContextsCleared":
+        this.executionContextFrames.clear();
+        break;
       case "Debugger.scriptParsed":
         this.#script(params);
         break;
@@ -121,6 +133,45 @@ export class CdpCaptureEvents {
         this.#websocket(params, "received");
         break;
     }
+  }
+
+  /** Resolve a transient execution context to one already authorized frame. */
+  frameForScript(
+    script: CapturedScript,
+    allowedFrameIds: ReadonlySet<string>,
+  ): string | null {
+    if (script.executionContextKey === null) return null;
+    const frameId = this.executionContextFrames.get(script.executionContextKey);
+    return frameId !== undefined && allowedFrameIds.has(frameId)
+      ? frameId
+      : null;
+  }
+
+  #executionContext(params: UnknownRecord): void {
+    const context = recordValue(params.context);
+    const identifier = numberValue(context?.id);
+    const frameId = stringValue(recordValue(context?.auxData)?.frameId);
+    if (
+      identifier === undefined ||
+      !Number.isSafeInteger(identifier) ||
+      frameId === undefined ||
+      frameId.length > 256
+    )
+      return;
+    const key = String(identifier);
+    if (
+      this.executionContextFrames.size >= this.input.limits.max_scripts &&
+      !this.executionContextFrames.has(key)
+    ) {
+      this.completeness.truncate("scripts");
+      return;
+    }
+    this.executionContextFrames.set(key, frameId);
+  }
+
+  #destroyExecutionContext(params: UnknownRecord): void {
+    const key = executionContextKey(params.executionContextId);
+    if (key !== null) this.executionContextFrames.delete(key);
   }
 
   #script(params: UnknownRecord): void {
@@ -160,6 +211,7 @@ export class CdpCaptureEvents {
       language: boundedText(params.scriptLanguage, 100),
       sourceMapUrl: sourceMap.sanitized,
       sourceMapRawUrl: sourceMap.raw,
+      executionContextKey: executionContextKey(params.executionContextId),
     });
   }
 
@@ -622,6 +674,13 @@ const exclusionReasonForUrl = (
 const integerOrNull = (value: unknown): number | null => {
   const number = numberValue(value);
   return number === undefined ? null : Math.max(0, Math.trunc(number));
+};
+
+const executionContextKey = (value: unknown): string | null => {
+  const identifier = numberValue(value);
+  return identifier !== undefined && Number.isSafeInteger(identifier)
+    ? String(identifier)
+    : null;
 };
 
 const isJsonContentType = (headers: UnknownRecord | undefined): boolean => {

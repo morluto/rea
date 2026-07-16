@@ -12,7 +12,7 @@ import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 
 describe("tool contract inventory", () => {
-  it("publishes 61 analysis contracts and eighteen session tools", () => {
+  it("publishes 62 analysis contracts and eighteen session tools", () => {
     expect(OFFICIAL_TOOL_CONTRACTS).toHaveLength(33);
     expect(ENHANCED_TOOL_CONTRACTS).toHaveLength(10);
     expect(NATIVE_TOOL_CONTRACTS).toHaveLength(5);
@@ -31,6 +31,7 @@ describe("tool contract inventory", () => {
       "list_electron_targets",
       "inspect_electron_page",
       "analyze_javascript_application",
+      "reconcile_javascript_runtime",
     ]);
     expect(SESSION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "open_binary",
@@ -52,8 +53,8 @@ describe("tool contract inventory", () => {
       "update_unknown",
       "verify_unknown_resolution",
     ]);
-    expect(TOOL_CONTRACTS).toHaveLength(79);
-    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(79);
+    expect(TOOL_CONTRACTS).toHaveLength(80);
+    expect(new Set(TOOL_CONTRACTS.map(({ name }) => name)).size).toBe(80);
   });
 
   it("retains documented enhanced-tool limits at the input boundary", () => {

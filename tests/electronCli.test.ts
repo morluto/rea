@@ -12,6 +12,7 @@ import {
   type FakeCdpBrowser,
 } from "./fixtures/fakeCdpBrowser.js";
 import { writeElectronBoundaryFixture } from "./fixtures/electronBoundaryApplication.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../src/contracts/javascriptRuntimeReconciliationExample.js";
 
 const execute = promisify(execFile);
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
@@ -111,6 +112,44 @@ describe("Electron CLI parity", () => {
             ipc: { paired_renderer_transmissions: 4 },
           },
         },
+      });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "reads a file and returns the derived static/runtime reconciliation contract",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "rea-runtime-cli-"));
+      const inputPath = join(root, "reconciliation.json");
+      temporary.push(root);
+      await writeFile(
+        inputPath,
+        JSON.stringify(JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE),
+      );
+      const reconciled = await runCli(
+        ["reconcile-javascript-runtime", inputPath, "--json"],
+        process.env,
+      );
+
+      expect(reconciled).toMatchObject({
+        operation: "reconcile_javascript_runtime",
+        provider: { id: "rea-javascript-runtime-reconciliation" },
+        normalized_result: {
+          schema_version: 1,
+          summary: { runtime_scripts: 1, matched: 1 },
+          source_map_authority: { used_for_primary_matching: false },
+        },
+      });
+      const missingPath = join(root, "missing.json");
+      const missing = await runCli(
+        ["reconcile-javascript-runtime", missingPath, "--json"],
+        process.env,
+      );
+      expect(missing).toMatchObject({
+        input_path: missingPath,
+        input_reason: "read-failed",
+        maximum_input_bytes: 64 * 1_024 * 1_024,
       });
     },
     INTEGRATION_TEST_TIMEOUT_MS,

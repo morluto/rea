@@ -20,7 +20,8 @@ import {
   type JavaScriptApplicationGraphInput,
 } from "./javascriptApplicationGraphSchemas.js";
 
-const compareCodePoints = (left: string, right: string): number =>
+/** Compare strings by Unicode code point for canonical graph ordering. */
+export const compareCodePoints = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
 const canonicalJson = (value: unknown): string => {
