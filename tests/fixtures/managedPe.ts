@@ -75,8 +75,33 @@ const moduleRow = (name: number): Buffer =>
 const typeRefRow = (name: number, namespace: number): Buffer =>
   Buffer.concat([u16(0), u16(name), u16(namespace)]);
 
-const methodDefRow = (name: number, signature: number): Buffer =>
-  Buffer.concat([u32(0), u16(0), u16(0), u16(name), u16(signature), u16(0)]);
+const typeDefRow = (
+  name: number,
+  namespace: number,
+  fieldList: number,
+  methodList: number,
+): Buffer =>
+  Buffer.concat([
+    u32(0x0010_0001),
+    u16(name),
+    u16(namespace),
+    u16((1 << 2) | 1),
+    u16(fieldList),
+    u16(methodList),
+  ]);
+
+const fieldRow = (name: number, signature: number): Buffer =>
+  Buffer.concat([u16(0x0001), u16(name), u16(signature)]);
+
+const methodDefRow = (name: number, signature: number, rva = 0): Buffer =>
+  Buffer.concat([
+    u32(rva),
+    u16(0),
+    u16(0x0016),
+    u16(name),
+    u16(signature),
+    u16(0),
+  ]);
 
 const memberRefRow = (name: number, signature: number): Buffer =>
   Buffer.concat([u16((1 << 3) | 1), u16(name), u16(signature)]);
@@ -213,6 +238,9 @@ export const buildManagedPeFixture = (
   const attributeName = strings.add("TargetFrameworkAttribute");
   const attributeNamespace = strings.add("System.Runtime.Versioning");
   const constructorName = strings.add(".ctor");
+  const typeName = strings.add("Program");
+  const typeNamespace = strings.add("Fixture");
+  const fieldName = strings.add("counter");
   const methodName = strings.add("Main");
   const resourceName = strings.add("Fixture.resources");
   const referenceNames = options.references ?? ["System.Runtime"];
@@ -220,8 +248,9 @@ export const buildManagedPeFixture = (
     strings.add(name),
   );
   const tokenBlob = blobs.add(Buffer.from("b77a5c561934e089", "hex"));
-  const methodSignature = blobs.add(Buffer.from([0x00, 0x00]));
-  const constructorSignature = blobs.add(Buffer.from([0x20, 0x01, 0x01]));
+  const fieldSignature = blobs.add(Buffer.from([0x06, 0x08]));
+  const methodSignature = blobs.add(Buffer.from([0x00, 0x00, 0x01]));
+  const constructorSignature = blobs.add(Buffer.from([0x20, 0x01, 0x01, 0x0e]));
   const attributeBlob = blobs.add(
     fixedStringAttributeBlob(
       options.targetFramework ?? ".NETCoreApp,Version=v8.0",
@@ -230,7 +259,9 @@ export const buildManagedPeFixture = (
   const rows = new Map<number, readonly Buffer[]>([
     [0, [moduleRow(moduleName)]],
     [1, [typeRefRow(attributeName, attributeNamespace)]],
-    [6, [methodDefRow(methodName, methodSignature)]],
+    [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
+    [4, [fieldRow(fieldName, fieldSignature)]],
+    [6, [methodDefRow(methodName, methodSignature, 0x2800)]],
     [10, [memberRefRow(constructorName, constructorSignature)]],
     [12, [customAttributeRow(attributeBlob)]],
     [32, [assemblyRow(assemblyName)]],
@@ -291,6 +322,10 @@ export const buildManagedPeFixture = (
     image.writeUInt32LE(4, cli + 68);
     image.write("RTR\0", 0x0900, "ascii");
   }
+  Buffer.from([
+    0x32, 0x02, 0x7b, 0x01, 0x00, 0x00, 0x04, 0x28, 0x01, 0x00, 0x00, 0x0a,
+    0x2a,
+  ]).copy(image, 0x0a00);
   metadata.copy(image, 0x0300);
   resourceDirectory.copy(image, 0x0800);
   return image;

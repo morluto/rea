@@ -14,6 +14,7 @@ import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.j
 import {
   MANAGED_TOOL_CONTRACTS,
   managedArtifactInputSchema,
+  managedMemberInputSchema,
   type ManagedToolName,
 } from "../contracts/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -23,9 +24,15 @@ import {
   EvidenceIntegrityError,
   ProviderAdapterError,
 } from "../domain/errors.js";
+import type { EvidenceLocation } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type {
+  ManagedArtifactInspection,
+  ManagedMemberInspection,
+} from "../domain/managedArtifact.js";
 import { err, ok } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 
 const IDENTITY: ProviderIdentity = Object.freeze(MANAGED_STATIC_PROVIDER);
 
@@ -56,10 +63,7 @@ export class ManagedStaticProvider implements AnalysisProvider {
           maxPayloadBytes: 4 * 1024 * 1024,
           timeoutMs: null,
         }),
-        limitations: Object.freeze([
-          "This capability inventories PE/CLI identity only; method signatures and CIL are admitted by a later contract.",
-          "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
-        ]),
+        limitations: limitationsFor(contract.name),
       }),
     ),
   );
@@ -104,28 +108,28 @@ class ManagedStaticClient implements AnalysisClient {
         ),
       );
     try {
-      const input = managedArtifactInputSchema.parse(parameters);
       if (options?.signal?.aborted === true)
         return err(new AnalysisCancelledError(operation));
+      const maxFileBytes = maxRequestedFileBytes(operation, parameters);
       const metadata = await stat(this.target.path);
-      if (metadata.size > input.max_file_bytes)
+      if (metadata.size > maxFileBytes)
         return err(
           new AnalysisCapabilityUnavailableError(
             IDENTITY.id,
             operation,
-            `Artifact size ${String(metadata.size)} exceeds max_file_bytes ${String(input.max_file_bytes)}.`,
+            `Artifact size ${String(metadata.size)} exceeds max_file_bytes ${String(maxFileBytes)}.`,
           ),
         );
       const bytes = await readFile(
         this.target.path,
         options?.signal === undefined ? undefined : { signal: options.signal },
       );
-      if (bytes.length > input.max_file_bytes)
+      if (bytes.length > maxFileBytes)
         return err(
           new AnalysisCapabilityUnavailableError(
             IDENTITY.id,
             operation,
-            `Artifact grew beyond max_file_bytes ${String(input.max_file_bytes)} while it was read.`,
+            `Artifact grew beyond max_file_bytes ${String(maxFileBytes)} while it was read.`,
           ),
         );
       const observedDigest = createHash("sha256").update(bytes).digest("hex");
@@ -135,39 +139,18 @@ class ManagedStaticClient implements AnalysisClient {
             `Managed artifact digest changed after open: expected ${this.target.sha256}, observed ${observedDigest} at ${this.target.path}`,
           ),
         );
-      const result = inspectManagedArtifactBytes(bytes, this.target, {
-        referenceOffset: input.reference_offset,
-        referenceLimit: input.reference_limit,
-        resourceOffset: input.resource_offset,
-        resourceLimit: input.resource_limit,
-        attributeOffset: input.attribute_offset,
-        attributeLimit: input.attribute_limit,
-        maxMetadataBytes: input.max_metadata_bytes,
-        maxTableRows: input.max_table_rows,
-        maxHeapItemBytes: input.max_heap_item_bytes,
-      });
+      const result = inspectManagedOperation(
+        operation,
+        parameters,
+        bytes,
+        this.target,
+      );
       return ok(
         createAnalysisExecution(result, IDENTITY, {
           rawResult: null,
           limitations: result.limitations,
           subject: this.target,
-          locations:
-            result.pe.cli === null
-              ? [{ kind: "file-offset" as const, offset: 0 }]
-              : [
-                  {
-                    kind: "file-offset-range" as const,
-                    start: result.pe.cli.header_offset,
-                    end:
-                      result.pe.cli.header_offset + result.pe.cli.header_size,
-                  },
-                  ...[result.module, result.assembly]
-                    .filter((value) => value !== null)
-                    .map((value) => ({
-                      kind: "file-offset" as const,
-                      offset: value.row_offset,
-                    })),
-                ],
+          locations: managedLocations(result),
         }),
       );
     } catch (cause: unknown) {
@@ -186,3 +169,99 @@ const isManagedOperation = (
   operation: AnalysisOperation,
 ): operation is ManagedToolName =>
   MANAGED_TOOL_CONTRACTS.some(({ name }) => name === operation);
+
+const limitationsFor = (operation: ManagedToolName): readonly string[] =>
+  Object.freeze(
+    operation === "inspect_managed_artifact"
+      ? [
+          "This capability inventories PE/CLI identity only; inspect_managed_members admits bounded metadata members, signatures, and CIL anchors.",
+          "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
+        ]
+      : [
+          "This capability decodes bounded PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# and cross-build matching are separate future contracts.",
+          "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
+        ],
+  );
+
+const maxRequestedFileBytes = (
+  operation: ManagedToolName,
+  parameters: Readonly<Record<string, JsonValue>>,
+): number => {
+  if (operation === "inspect_managed_artifact")
+    return managedArtifactInputSchema.parse(parameters).max_file_bytes;
+  return managedMemberInputSchema.parse(parameters).max_file_bytes;
+};
+
+const inspectManagedOperation = (
+  operation: ManagedToolName,
+  parameters: Readonly<Record<string, JsonValue>>,
+  bytes: Buffer,
+  target: BinaryTarget,
+): ManagedArtifactInspection | ManagedMemberInspection => {
+  if (operation === "inspect_managed_artifact") {
+    const input = managedArtifactInputSchema.parse(parameters);
+    return inspectManagedArtifactBytes(bytes, target, {
+      referenceOffset: input.reference_offset,
+      referenceLimit: input.reference_limit,
+      resourceOffset: input.resource_offset,
+      resourceLimit: input.resource_limit,
+      attributeOffset: input.attribute_offset,
+      attributeLimit: input.attribute_limit,
+      maxMetadataBytes: input.max_metadata_bytes,
+      maxTableRows: input.max_table_rows,
+      maxHeapItemBytes: input.max_heap_item_bytes,
+    });
+  }
+  const input = managedMemberInputSchema.parse(parameters);
+  return inspectManagedMembersBytes(bytes, target, {
+    typeOffset: input.type_offset,
+    typeLimit: input.type_limit,
+    methodOffset: input.method_offset,
+    methodLimit: input.method_limit,
+    fieldOffset: input.field_offset,
+    fieldLimit: input.field_limit,
+    memberRefOffset: input.member_ref_offset,
+    memberRefLimit: input.member_ref_limit,
+    edgeOffset: input.edge_offset,
+    edgeLimit: input.edge_limit,
+    instructionAnchorLimit: input.instruction_anchor_limit,
+    maxMetadataBytes: input.max_metadata_bytes,
+    maxTableRows: input.max_table_rows,
+    maxHeapItemBytes: input.max_heap_item_bytes,
+    maxMethodBodyBytes: input.max_method_body_bytes,
+    maxMethodInstructions: input.max_method_instructions,
+  });
+};
+
+const managedLocations = (
+  result: ManagedArtifactInspection | ManagedMemberInspection,
+): readonly EvidenceLocation[] => {
+  if ("pe" in result) {
+    if (result.pe.cli === null) return [{ kind: "file-offset", offset: 0 }];
+    return [
+      {
+        kind: "file-offset-range",
+        start: result.pe.cli.header_offset,
+        end: result.pe.cli.header_offset + result.pe.cli.header_size,
+      },
+      ...[result.module, result.assembly]
+        .filter((value) => value !== null)
+        .map((value) => ({
+          kind: "file-offset" as const,
+          offset: value.row_offset,
+        })),
+    ];
+  }
+  return [
+    ...(result.module === null
+      ? [{ kind: "file-offset" as const, offset: 0 }]
+      : [{ kind: "file-offset" as const, offset: result.module.row_offset }]),
+    ...result.methods.items
+      .filter((method) => method.body.file_offset !== null)
+      .slice(0, 8)
+      .map((method) => ({
+        kind: "file-offset" as const,
+        offset: method.body.file_offset ?? 0,
+      })),
+  ];
+};

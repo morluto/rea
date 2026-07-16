@@ -24,7 +24,10 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../domain/artifactGraph.js";
-import { managedArtifactInspectionSchema } from "../domain/managedArtifact.js";
+import {
+  managedArtifactInspectionSchema,
+  managedMemberInspectionSchema,
+} from "../domain/managedArtifact.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
 import { functionComparisonResultSchema } from "../domain/functionComparison.js";
 import { bundleComparisonResultSchema } from "../domain/bundleComparison.js";
@@ -533,6 +536,7 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 /** Exact Evidence v2 schema for execution-free managed static analysis. */
 export const managedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_managed_artifact: resultOf(managedArtifactInspectionSchema),
+  inspect_managed_members: resultOf(managedMemberInspectionSchema),
 };
 
 /** Exact structured-content schemas for target lifecycle operations. */

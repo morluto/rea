@@ -578,7 +578,7 @@ const registerManagedCommands = (
         .min(256)
         .max(268_435_456)
         .default(67_108_864),
-      maxTableRows: z.number().int().min(1).max(10_000_000).default(1_000_000),
+      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
       maxHeapItemBytes: z
         .number()
         .int()
@@ -614,6 +614,103 @@ const registerManagedCommands = (
             max_metadata_bytes: options.maxMetadataBytes,
             max_table_rows: options.maxTableRows,
             max_heap_item_bytes: options.maxHeapItemBytes,
+          },
+          logger,
+        ),
+      ),
+  });
+  cli.command(CLI_COMMANDS.inspectManagedMembers, {
+    description:
+      "Inspect PE/CLI metadata members, signatures, and CIL anchors without loading target code",
+    args: z.object({
+      path: z.string().describe("Managed PE executable or assembly path"),
+    }),
+    options: z.object({
+      typeOffset: z.number().int().min(0).default(0),
+      typeLimit: z.number().int().min(1).max(500).default(100),
+      methodOffset: z.number().int().min(0).default(0),
+      methodLimit: z.number().int().min(1).max(500).default(100),
+      fieldOffset: z.number().int().min(0).default(0),
+      fieldLimit: z.number().int().min(1).max(500).default(100),
+      memberRefOffset: z.number().int().min(0).default(0),
+      memberRefLimit: z.number().int().min(1).max(500).default(100),
+      edgeOffset: z.number().int().min(0).default(0),
+      edgeLimit: z.number().int().min(1).max(1_000).default(250),
+      instructionAnchorLimit: z.number().int().min(0).max(500).default(100),
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(4_096)
+        .max(1_073_741_824)
+        .default(268_435_456),
+      maxMetadataBytes: z
+        .number()
+        .int()
+        .min(256)
+        .max(268_435_456)
+        .default(67_108_864),
+      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
+      maxHeapItemBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+      maxMethodBodyBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+      maxMethodInstructions: z
+        .number()
+        .int()
+        .min(1)
+        .max(100_000)
+        .default(10_000),
+    }),
+    alias: {
+      typeOffset: "type-offset",
+      typeLimit: "type-limit",
+      methodOffset: "method-offset",
+      methodLimit: "method-limit",
+      fieldOffset: "field-offset",
+      fieldLimit: "field-limit",
+      memberRefOffset: "member-ref-offset",
+      memberRefLimit: "member-ref-limit",
+      edgeOffset: "edge-offset",
+      edgeLimit: "edge-limit",
+      instructionAnchorLimit: "instruction-anchor-limit",
+      maxFileBytes: "max-file-bytes",
+      maxMetadataBytes: "max-metadata-bytes",
+      maxTableRows: "max-table-rows",
+      maxHeapItemBytes: "max-heap-item-bytes",
+      maxMethodBodyBytes: "max-method-body-bytes",
+      maxMethodInstructions: "max-method-instructions",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect-managed-members", () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_members",
+          {
+            type_offset: options.typeOffset,
+            type_limit: options.typeLimit,
+            method_offset: options.methodOffset,
+            method_limit: options.methodLimit,
+            field_offset: options.fieldOffset,
+            field_limit: options.fieldLimit,
+            member_ref_offset: options.memberRefOffset,
+            member_ref_limit: options.memberRefLimit,
+            edge_offset: options.edgeOffset,
+            edge_limit: options.edgeLimit,
+            instruction_anchor_limit: options.instructionAnchorLimit,
+            max_file_bytes: options.maxFileBytes,
+            max_metadata_bytes: options.maxMetadataBytes,
+            max_table_rows: options.maxTableRows,
+            max_heap_item_bytes: options.maxHeapItemBytes,
+            max_method_body_bytes: options.maxMethodBodyBytes,
+            max_method_instructions: options.maxMethodInstructions,
           },
           logger,
         ),

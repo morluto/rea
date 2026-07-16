@@ -32,9 +32,53 @@ export const managedArtifactInputSchema = z.object({
     .default(1_048_576),
 });
 
+/** Exact caller boundary for execution-free metadata/signature/IL inspection. */
+export const managedMemberInputSchema = z.object({
+  type_offset: z.number().int().min(0).default(0),
+  type_limit: z.number().int().min(1).max(500).default(100),
+  method_offset: z.number().int().min(0).default(0),
+  method_limit: z.number().int().min(1).max(500).default(100),
+  field_offset: z.number().int().min(0).default(0),
+  field_limit: z.number().int().min(1).max(500).default(100),
+  member_ref_offset: z.number().int().min(0).default(0),
+  member_ref_limit: z.number().int().min(1).max(500).default(100),
+  edge_offset: z.number().int().min(0).default(0),
+  edge_limit: z.number().int().min(1).max(1_000).default(250),
+  instruction_anchor_limit: z.number().int().min(0).max(500).default(100),
+  max_file_bytes: z
+    .number()
+    .int()
+    .min(4_096)
+    .max(1_073_741_824)
+    .default(268_435_456),
+  max_metadata_bytes: z
+    .number()
+    .int()
+    .min(256)
+    .max(268_435_456)
+    .default(67_108_864),
+  max_table_rows: z.number().int().min(1).max(1_000_000).default(100_000),
+  max_heap_item_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16_777_216)
+    .default(1_048_576),
+  max_method_body_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16_777_216)
+    .default(1_048_576),
+  max_method_instructions: z.number().int().min(1).max(100_000).default(10_000),
+});
+
 const outputSchema = managedOutputSchemas.inspect_managed_artifact;
 if (outputSchema === undefined)
   throw new Error("Missing managed output schema for inspect_managed_artifact");
+const memberOutputSchema = managedOutputSchemas.inspect_managed_members;
+if (memberOutputSchema === undefined)
+  throw new Error("Missing managed output schema for inspect_managed_members");
 
 /** Read-only managed artifact contracts. */
 export const MANAGED_TOOL_CONTRACTS = [
@@ -55,6 +99,26 @@ export const MANAGED_TOOL_CONTRACTS = [
       {
         title: "Example inspect managed artifact request",
         input: {},
+      },
+    ],
+  },
+  {
+    name: "inspect_managed_members",
+    description:
+      "Inspect bounded PE/CLI metadata members, signatures, method body IL hashes, exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID.",
+    kind: "managed-provider",
+    inputSchema: managedMemberInputSchema,
+    outputSchema: memberOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    examples: [
+      {
+        title: "Example inspect managed members request",
+        input: { method_limit: 25, edge_limit: 100 },
       },
     ],
   },
