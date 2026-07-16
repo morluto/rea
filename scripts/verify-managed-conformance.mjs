@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 
 import { parseBinaryTarget } from "../dist/domain/binaryTarget.js";
@@ -62,6 +62,27 @@ const nativeBoundaryLimits = {
   maxMetadataBytes: 1024 * 1024,
   maxTableRows: 1_000,
   maxHeapItemBytes: 1024 * 1024,
+};
+
+const appManifestInspectionLimits = {
+  ...inspectionLimits,
+  maxMetadataBytes: 64 * 1024 * 1024,
+  maxTableRows: 250_000,
+  maxHeapItemBytes: 16 * 1024 * 1024,
+};
+
+const appManifestMemberLimits = {
+  ...memberLimits,
+  typeLimit: 1,
+  methodLimit: 1,
+  fieldLimit: 1,
+  memberRefLimit: 1,
+  edgeLimit: 1,
+  maxMetadataBytes: 64 * 1024 * 1024,
+  maxTableRows: 250_000,
+  maxHeapItemBytes: 16 * 1024 * 1024,
+  maxMethodBodyBytes: 4 * 1024 * 1024,
+  maxMethodInstructions: 20_000,
 };
 
 const comparisonLimits = {
@@ -389,9 +410,12 @@ try {
   );
   assert.equal(malformedResult.classification.status, "malformed");
 
+  const manifestSelfTest = await runManagedAppManifestSelfTest();
+  const operatorManifest = await runOptionalManagedAppManifest();
+
   process.stdout.write(
     `${JSON.stringify({
-      verified: 10,
+      verified: 11 + (operatorManifest === null ? 0 : 1),
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
@@ -412,7 +436,13 @@ try {
         "mvid-and-token-drift",
         "not-managed",
         "malformed-metadata",
+        "operator-local-managed-manifest",
       ],
+      managedAppManifest: {
+        env: "REA_MANAGED_APP_MANIFEST_PATH",
+        selfTest: manifestSelfTest,
+        operator: operatorManifest ?? { configured: false },
+      },
     })}\n`,
   );
 } finally {
@@ -433,6 +463,326 @@ async function fixtureBytes(name, bytes) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function runManagedAppManifestSelfTest() {
+  const sample = await fixture("manifest-self-test.exe", {
+    methodName: "PinnedSemanticSlice",
+    ilBody: defaultIlBody,
+  });
+  const artifact = inspectManagedArtifactBytes(
+    sample.bytes,
+    sample.target,
+    inspectionLimits,
+  );
+  const members = inspectManagedMembersBytes(
+    sample.bytes,
+    sample.target,
+    memberLimits,
+  );
+  const method = members.methods.items[0];
+  assert.ok(method);
+  const summary = await verifyManagedAppManifest(
+    {
+      schema_version: 1,
+      label: "source-owned manifest verifier self-test",
+      target: {
+        path: sample.path,
+        sha256: sample.target.sha256,
+        mvid: artifact.module?.mvid,
+        assembly_name: artifact.assembly?.name,
+        runtime_family: artifact.classification.runtime_family,
+        managed_architecture: artifact.classification.managed_architecture,
+      },
+      methods: [
+        {
+          label: "pinned-semantic-slice",
+          token: method.token,
+          signature_sha256: method.signature.raw_sha256,
+          il_size: method.body.il_size,
+          normalized_il_sha256: method.body.normalized_il_sha256,
+        },
+      ],
+    },
+    join(workspace, "source-owned-managed-app-manifest.json"),
+  );
+  return {
+    verified: true,
+    assertions: summary.assertions,
+    methods: summary.methods.length,
+    target: summary.target,
+  };
+}
+
+async function runOptionalManagedAppManifest() {
+  const manifestPath = process.env.REA_MANAGED_APP_MANIFEST_PATH;
+  if (manifestPath === undefined) return null;
+  if (manifestPath.trim().length === 0)
+    throw new Error("REA_MANAGED_APP_MANIFEST_PATH is set but empty");
+  const resolvedManifestPath = resolve(process.cwd(), manifestPath);
+  const text = await readFile(resolvedManifestPath, "utf8");
+  let manifest;
+  try {
+    manifest = JSON.parse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `managed app manifest ${resolvedManifestPath} is not valid JSON: ${message}`,
+    );
+  }
+  return {
+    configured: true,
+    ...(await verifyManagedAppManifest(manifest, resolvedManifestPath)),
+  };
+}
+
+async function verifyManagedAppManifest(rawManifest, manifestPath) {
+  const manifest = parseManagedAppManifest(rawManifest);
+  const targetPath = isAbsolute(manifest.target.path)
+    ? manifest.target.path
+    : resolve(dirname(manifestPath), manifest.target.path);
+  const parsedTarget = await parseBinaryTarget(targetPath);
+  ensure(
+    parsedTarget.ok,
+    `target ${targetPath} could not be parsed as a binary target`,
+  );
+  const target = parsedTarget.value;
+  ensure(
+    target.sha256 === manifest.target.sha256,
+    `target sha256 mismatch: expected ${manifest.target.sha256}, observed ${target.sha256}`,
+  );
+  const bytes = await readFile(targetPath);
+  const artifact = inspectManagedArtifactBytes(
+    bytes,
+    target,
+    appManifestInspectionLimits,
+  );
+  ensure(
+    artifact.classification.status === "managed",
+    `target is ${artifact.classification.status}, expected managed`,
+  );
+  if (manifest.target.mvid !== undefined)
+    ensure(
+      artifact.module?.mvid === manifest.target.mvid,
+      `target MVID mismatch: expected ${manifest.target.mvid}, observed ${artifact.module?.mvid ?? "null"}`,
+    );
+  if (manifest.target.assembly_name !== undefined)
+    ensure(
+      artifact.assembly?.name === manifest.target.assembly_name,
+      `assembly name mismatch: expected ${manifest.target.assembly_name}, observed ${artifact.assembly?.name ?? "null"}`,
+    );
+  if (manifest.target.runtime_family !== undefined)
+    ensure(
+      artifact.classification.runtime_family === manifest.target.runtime_family,
+      `runtime family mismatch: expected ${manifest.target.runtime_family}, observed ${artifact.classification.runtime_family}`,
+    );
+  if (manifest.target.managed_architecture !== undefined)
+    ensure(
+      artifact.classification.managed_architecture ===
+        manifest.target.managed_architecture,
+      `managed architecture mismatch: expected ${manifest.target.managed_architecture}, observed ${artifact.classification.managed_architecture}`,
+    );
+
+  const methods = [];
+  let assertions = 1;
+  for (const expectedMethod of manifest.methods) {
+    const method = inspectManagedMethodByToken(bytes, target, expectedMethod);
+    ensure(
+      method.signature.raw_sha256 === expectedMethod.signature_sha256,
+      `method ${expectedMethod.token} signature sha256 mismatch: expected ${expectedMethod.signature_sha256}, observed ${method.signature.raw_sha256}`,
+    );
+    ensure(
+      method.body.il_size === expectedMethod.il_size,
+      `method ${expectedMethod.token} IL size mismatch: expected ${String(expectedMethod.il_size)}, observed ${String(method.body.il_size)}`,
+    );
+    ensure(
+      method.body.normalized_il_sha256 === expectedMethod.normalized_il_sha256,
+      `method ${expectedMethod.token} normalized IL sha256 mismatch: expected ${expectedMethod.normalized_il_sha256}, observed ${method.body.normalized_il_sha256 ?? "null"}`,
+    );
+    assertions += 4;
+    methods.push({
+      label: expectedMethod.label ?? null,
+      token: method.token,
+      declaring_type: method.declaring_type,
+      name: method.name,
+      signature_sha256: method.signature.raw_sha256,
+      il_size: method.body.il_size,
+      normalized_il_sha256: method.body.normalized_il_sha256,
+    });
+  }
+  return {
+    label: manifest.label ?? null,
+    assertions,
+    target: {
+      file_name: basename(targetPath),
+      sha256: target.sha256,
+      mvid: artifact.module?.mvid ?? null,
+      assembly_name: artifact.assembly?.name ?? null,
+      runtime_family: artifact.classification.runtime_family,
+      managed_architecture: artifact.classification.managed_architecture,
+    },
+    methods,
+  };
+}
+
+function inspectManagedMethodByToken(bytes, target, expectedMethod) {
+  const row = methodTokenRow(expectedMethod.token);
+  const members = inspectManagedMembersBytes(bytes, target, {
+    ...appManifestMemberLimits,
+    methodOffset: row - 1,
+  });
+  const method = members.methods.items.find(
+    ({ token }) => token === expectedMethod.token,
+  );
+  ensure(
+    method !== undefined,
+    `method ${expectedMethod.token} was not returned by the member inspector`,
+  );
+  ensure(
+    method.body.status === "present",
+    `method ${expectedMethod.token} body status is ${method.body.status}, expected present`,
+  );
+  return method;
+}
+
+function parseManagedAppManifest(rawManifest) {
+  const manifest = object(rawManifest, "manifest");
+  ensure(
+    manifest.schema_version === 1,
+    "manifest.schema_version must be exactly 1",
+  );
+  const target = object(manifest.target, "manifest.target");
+  const methods = array(manifest.methods, "manifest.methods");
+  ensure(manifest.methods.length > 0, "manifest.methods must not be empty");
+  return {
+    schema_version: 1,
+    label: optionalString(manifest.label, "manifest.label"),
+    target: {
+      path: string(target.path, "manifest.target.path"),
+      sha256: digest(target.sha256, "manifest.target.sha256"),
+      mvid: optionalUuid(target.mvid, "manifest.target.mvid"),
+      assembly_name: optionalString(
+        target.assembly_name,
+        "manifest.target.assembly_name",
+      ),
+      runtime_family: optionalString(
+        target.runtime_family,
+        "manifest.target.runtime_family",
+      ),
+      managed_architecture: optionalString(
+        target.managed_architecture,
+        "manifest.target.managed_architecture",
+      ),
+    },
+    methods: methods.map((method, index) =>
+      parseManagedAppManifestMethod(method, index),
+    ),
+  };
+}
+
+function parseManagedAppManifestMethod(rawMethod, index) {
+  const prefix = `manifest.methods[${String(index)}]`;
+  const method = object(rawMethod, prefix);
+  const token = metadataToken(method.token, `${prefix}.token`);
+  ensure(
+    token.startsWith("0x06"),
+    `${prefix}.token must be a MethodDef token beginning with 0x06`,
+  );
+  return {
+    label: optionalString(method.label, `${prefix}.label`),
+    token,
+    signature_sha256: digest(
+      method.signature_sha256,
+      `${prefix}.signature_sha256`,
+    ),
+    il_size: ilSize(method, prefix),
+    normalized_il_sha256: digest(
+      method.normalized_il_sha256,
+      `${prefix}.normalized_il_sha256`,
+    ),
+  };
+}
+
+function ilSize(method, prefix) {
+  const hasIlSize = method.il_size !== undefined;
+  const hasIlLength = method.il_length !== undefined;
+  ensure(
+    hasIlSize || hasIlLength,
+    `${prefix}.il_size is required; il_length is accepted as a legacy alias`,
+  );
+  if (hasIlSize && hasIlLength)
+    ensure(
+      method.il_size === method.il_length,
+      `${prefix}.il_size and ${prefix}.il_length disagree`,
+    );
+  const value = hasIlSize ? method.il_size : method.il_length;
+  ensure(
+    Number.isInteger(value) && value >= 0,
+    `${prefix}.il_size must be a non-negative integer`,
+  );
+  return value;
+}
+
+function object(value, name) {
+  ensure(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+    `${name} must be an object`,
+  );
+  return value;
+}
+
+function array(value, name) {
+  ensure(Array.isArray(value), `${name} must be an array`);
+  return value;
+}
+
+function string(value, name) {
+  ensure(
+    typeof value === "string" && value.length > 0,
+    `${name} must be a non-empty string`,
+  );
+  return value;
+}
+
+function optionalString(value, name) {
+  if (value === undefined) return undefined;
+  return string(value, name);
+}
+
+function digest(value, name) {
+  const text = string(value, name);
+  ensure(/^[a-f0-9]{64}$/u.test(text), `${name} must be a lowercase sha256`);
+  return text;
+}
+
+function optionalUuid(value, name) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const text = string(value, name);
+  ensure(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(
+      text,
+    ),
+    `${name} must be a lowercase GUID`,
+  );
+  return text;
+}
+
+function metadataToken(value, name) {
+  const text = string(value, name);
+  ensure(/^0x[0-9a-f]{8}$/u.test(text), `${name} must be a metadata token`);
+  return text;
+}
+
+function methodTokenRow(token) {
+  const row = Number.parseInt(token.slice(4), 16);
+  ensure(row > 0, `method token ${token} has an invalid row id`);
+  return row;
+}
+
+function ensure(condition, message) {
+  if (!condition)
+    throw new Error(`managed app manifest verification failed: ${message}`);
 }
 
 function functionDossier(name) {
