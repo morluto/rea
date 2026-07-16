@@ -8,10 +8,10 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "18"
+    "skill_version": "19"
   },
   "tools": {
-    "total": 85,
+    "total": 86,
     "families": [
       {
         "id": "direct",
@@ -90,9 +90,13 @@
       },
       {
         "id": "managed",
-        "surface": "managed-provider",
-        "count": 2,
-        "tools": ["inspect_managed_artifact", "inspect_managed_members"]
+        "surface": "managed",
+        "count": 3,
+        "tools": [
+          "compare_managed_members",
+          "inspect_managed_artifact",
+          "inspect_managed_members"
+        ]
       },
       {
         "id": "browser",
@@ -270,6 +274,12 @@
       "capabilities": ["inspect_managed_artifact", "inspect_managed_members"]
     },
     {
+      "id": "rea-dotnet-workflows",
+      "name": "REA managed-code workflows",
+      "version": "1",
+      "capabilities": ["compare_managed_members"]
+    },
+    {
       "id": "rea-javascript-application",
       "name": "REA JavaScript application analyzer",
       "version": "1",
@@ -402,6 +412,10 @@
       "version": 1
     },
     {
+      "id": "managed_member_comparison",
+      "version": 1
+    },
+    {
       "id": "managed_member_inspection",
       "version": 1
     },
@@ -447,7 +461,7 @@
     }
   ],
   "cli": {
-    "primary_count": 45,
+    "primary_count": 46,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -457,6 +471,7 @@
       "capture-web-screenshot",
       "compare",
       "compare-application-versions",
+      "compare-managed-members",
       "compare-process-captures",
       "compare-web-captures",
       "compare-web-screenshots",
@@ -504,17 +519,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 45,
-      "mcp_tools": 85,
+      "cli_commands": 46,
+      "mcp_tools": 86,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "927650897b4662c965fa102945c7f69a0851ab2b13bc3ba34e28f314388946a1",
+      "tools_sha256": "accea09cad0d0baaffa0adb8e500446d8ab722fddd369b0e02032d0bac2c585a",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "0a8f2ea1cf96585b79ee1d12796202d4bc78a2734893fd881971ada26dba338f"
+      "combined_sha256": "f63bae31a611d889d92908fa5d79021fac7237f7d5f85c88b04e10d970bd61b8"
     }
   }
 }

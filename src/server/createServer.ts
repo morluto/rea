@@ -9,6 +9,7 @@ import { registerSessionTools } from "./registerSessionTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
+import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
@@ -174,6 +175,11 @@ export const createServer = (
     logger: toolLogger,
     activeTarget,
     recordEvidence,
+  });
+  registerManagedWorkflowTools(server, {
+    logger: toolLogger,
+    recordEvidence,
+    recordEvidenceWithUnknown,
   });
   registerBrowserTools(server, {
     logger: toolLogger,

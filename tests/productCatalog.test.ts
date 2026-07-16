@@ -13,6 +13,7 @@ import {
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_STATIC_PROVIDER,
+  MANAGED_WORKFLOW_PROVIDER,
 } from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../src/browser/CdpElectronProvider.js";
@@ -71,6 +72,7 @@ describe("canonical product catalog", () => {
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         MANAGED_STATIC_PROVIDER,
+        MANAGED_WORKFLOW_PROVIDER,
         CDP_BROWSER_PROVIDER_IDENTITY,
         CDP_ELECTRON_PROVIDER_IDENTITY,
         JAVASCRIPT_APPLICATION_PROVIDER,
@@ -112,6 +114,10 @@ describe("canonical product catalog", () => {
       "run_controlled_replay",
       "trace_application_feature",
     ]);
+    expect(
+      catalog.providers.find(({ id }) => id === MANAGED_WORKFLOW_PROVIDER.id)
+        ?.capabilities,
+    ).toEqual(["compare_managed_members"]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,
     ).toMatchObject({

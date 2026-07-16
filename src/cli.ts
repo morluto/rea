@@ -8,6 +8,7 @@ import {
   runProviderAnalysis,
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
+import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
 import {
   runSetup,
   systemSetupHost,
@@ -715,6 +716,114 @@ const registerManagedCommands = (
           logger,
         ),
       ),
+  });
+  cli.command(CLI_COMMANDS.compareManagedMembers, {
+    description:
+      "Compare two managed PE/CLI member inventories without name-based matching",
+    args: z.object({
+      leftPath: z
+        .string()
+        .describe("Baseline managed PE executable or assembly"),
+      rightPath: z
+        .string()
+        .describe("Candidate managed PE executable or assembly"),
+    }),
+    options: z.object({
+      maxMethodMatches: z.number().int().min(1).max(50_000).default(10_000),
+      maxFieldMatches: z.number().int().min(0).max(50_000).default(5_000),
+      maxCandidates: z.number().int().min(1).max(500).default(50),
+      typeLimit: z.number().int().min(1).max(500).default(500),
+      methodLimit: z.number().int().min(1).max(500).default(500),
+      fieldLimit: z.number().int().min(1).max(500).default(500),
+      memberRefLimit: z.number().int().min(1).max(500).default(500),
+      edgeLimit: z.number().int().min(1).max(1_000).default(1_000),
+      instructionAnchorLimit: z.number().int().min(0).max(500).default(500),
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(4_096)
+        .max(1_073_741_824)
+        .default(268_435_456),
+      maxMetadataBytes: z
+        .number()
+        .int()
+        .min(256)
+        .max(268_435_456)
+        .default(67_108_864),
+      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
+      maxHeapItemBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+      maxMethodBodyBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+      maxMethodInstructions: z
+        .number()
+        .int()
+        .min(1)
+        .max(100_000)
+        .default(100_000),
+    }),
+    alias: {
+      maxMethodMatches: "max-method-matches",
+      maxFieldMatches: "max-field-matches",
+      maxCandidates: "max-candidates",
+      typeLimit: "type-limit",
+      methodLimit: "method-limit",
+      fieldLimit: "field-limit",
+      memberRefLimit: "member-ref-limit",
+      edgeLimit: "edge-limit",
+      instructionAnchorLimit: "instruction-anchor-limit",
+      maxFileBytes: "max-file-bytes",
+      maxMetadataBytes: "max-metadata-bytes",
+      maxTableRows: "max-table-rows",
+      maxHeapItemBytes: "max-heap-item-bytes",
+      maxMethodBodyBytes: "max-method-body-bytes",
+      maxMethodInstructions: "max-method-instructions",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "compare-managed-members", async () => {
+        const result = await compareManagedMemberPaths({
+          leftPath: args.leftPath,
+          rightPath: args.rightPath,
+          comparisonLimits: {
+            max_method_matches: options.maxMethodMatches,
+            max_field_matches: options.maxFieldMatches,
+            max_candidates: options.maxCandidates,
+          },
+          memberLimits: {
+            maxFileBytes: options.maxFileBytes,
+            typeOffset: 0,
+            typeLimit: options.typeLimit,
+            methodOffset: 0,
+            methodLimit: options.methodLimit,
+            fieldOffset: 0,
+            fieldLimit: options.fieldLimit,
+            memberRefOffset: 0,
+            memberRefLimit: options.memberRefLimit,
+            edgeOffset: 0,
+            edgeLimit: options.edgeLimit,
+            instructionAnchorLimit: options.instructionAnchorLimit,
+            maxMetadataBytes: options.maxMetadataBytes,
+            maxTableRows: options.maxTableRows,
+            maxHeapItemBytes: options.maxHeapItemBytes,
+            maxMethodBodyBytes: options.maxMethodBodyBytes,
+            maxMethodInstructions: options.maxMethodInstructions,
+          },
+        });
+        return result.ok
+          ? result.value
+          : {
+              error: "Managed member comparison failed",
+              ...projectAnalysisError(result.error),
+            };
+      }),
   });
 };
 

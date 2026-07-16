@@ -18,7 +18,12 @@ describe("managed artifact MCP tools", () => {
   it("opens a managed PE and executes the managed static provider through MCP", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-managed-mcp-"));
     const path = join(directory, "fixture.exe");
+    const rightPath = join(directory, "fixture-renamed.exe");
     await writeFile(path, buildManagedPeFixture());
+    await writeFile(
+      rightPath,
+      buildManagedPeFixture({ methodName: "Renamed" }),
+    );
     const session = new BinarySession(
       SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
         new ManagedStaticProvider(),
@@ -37,6 +42,9 @@ describe("managed artifact MCP tools", () => {
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
         "inspect_managed_members",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
+        "compare_managed_members",
       );
 
       await client.callTool({
@@ -79,6 +87,41 @@ describe("managed artifact MCP tools", () => {
           methods: { total: 1, returned: 1 },
           call_edges: { total: 1 },
           field_accesses: { total: 1 },
+        },
+      });
+
+      await client.callTool({
+        name: "open_binary",
+        arguments: { path: rightPath },
+      });
+      const rightMembers = structured(
+        await client.callTool({
+          name: "inspect_managed_members",
+          arguments: { method_limit: 1 },
+        }),
+      );
+      const compared = structured(
+        await client.callTool({
+          name: "compare_managed_members",
+          arguments: {
+            left: members,
+            right: rightMembers,
+            limits: {
+              max_method_matches: 100,
+              max_field_matches: 100,
+              max_candidates: 10,
+            },
+          },
+        }),
+      );
+
+      expect(compared).toMatchObject({
+        operation: "compare_managed_members",
+        provider: { id: "rea-dotnet-workflows" },
+        confidence: "inferred",
+        normalized_result: {
+          algorithm: { name_matching: "not-used" },
+          matching: { exact_il_signature: 1 },
         },
       });
     } finally {
