@@ -15,11 +15,8 @@ import {
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import type { Evidence } from "../domain/evidence.js";
-import {
-  EvidenceIntegrityError,
-  EvidenceReferenceError,
-} from "../domain/errors.js";
-import { err, type Result } from "../domain/result.js";
+import type { EvidenceIntegrityError } from "../domain/errors.js";
+import type { Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -34,7 +31,7 @@ interface ManagedWorkflowToolRegistration {
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
   readonly runtime: ManagedRuntimeCorrelationDependencies;
-  readonly session: BinarySessionPort | undefined;
+  readonly session: BinarySessionPort;
 }
 
 /** Register provider-neutral managed-code workflows. */
@@ -198,24 +195,13 @@ const contract = (
 };
 
 const resolveManagedEvidence = (
-  session: BinarySessionPort | undefined,
+  session: BinarySessionPort,
   evidenceIds: readonly string[],
-): Result<Evidence[], EvidenceIntegrityError> => {
-  const firstId = evidenceIds[0] ?? "ev_missing";
-  return session === undefined
-    ? err(
-        new EvidenceReferenceError(
-          firstId,
-          "missing",
-          "inspect_managed_members",
-          null,
-        ),
-      )
-    : resolveSessionEvidenceIds(session, evidenceIds, {
-        operation: "inspect_managed_members",
-        predicate: "rea.analysis/v2",
-       });
-};
+): Result<Evidence[], EvidenceIntegrityError> =>
+  resolveSessionEvidenceIds(session, evidenceIds, {
+    operation: "inspect_managed_members",
+    predicate: "rea.analysis/v2",
+  });
 
 const recordSources = (
   recordEvidence: ManagedWorkflowToolRegistration["recordEvidence"],

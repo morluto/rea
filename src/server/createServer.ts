@@ -179,20 +179,21 @@ export const createServer = (
     activeTarget,
     recordEvidence,
   });
-  registerManagedWorkflowTools(server, {
-    logger: toolLogger,
-    recordEvidence,
-    recordEvidenceWithUnknown,
-    session,
-    runtime: {
-      policy: options.managedRuntimePolicy ?? {
-        enabled: false,
-        roots: [],
-        executablePath: "/usr/bin/dotnet",
+  if (session !== undefined)
+    registerManagedWorkflowTools(server, {
+      logger: toolLogger,
+      recordEvidence,
+      recordEvidenceWithUnknown,
+      session,
+      runtime: {
+        policy: options.managedRuntimePolicy ?? {
+          enabled: false,
+          roots: [],
+          executablePath: "/usr/bin/dotnet",
+        },
+        authority: options.permissionAuthority,
       },
-      authority: options.permissionAuthority,
-    },
-  });
+    });
   registerBrowserTools(server, {
     logger: toolLogger,
     browser: options.browserObservation,
