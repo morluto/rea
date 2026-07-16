@@ -9,6 +9,7 @@ import {
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
 import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
+import { projectManagedApplicationGraphEvidence } from "./application/ManagedApplicationGraphService.js";
 import { verifyManagedNativeBoundariesEvidence } from "./application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "./application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
@@ -959,6 +960,25 @@ const registerManagedCommands = (
           },
           input.value,
         );
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
+  cli.command(CLI_COMMANDS.projectManagedApplicationGraph, {
+    description:
+      "Project authenticated managed static Evidence into an application graph",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline managed application graph JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "project-managed-application-graph", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "project-managed-application-graph",
+        );
+        if (!input.ok) return input.error;
+        const result = projectManagedApplicationGraphEvidence(input.value);
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });

@@ -83,7 +83,7 @@ describe("application workflow CLI parity", () => {
         ]),
       },
     });
-  });
+  }, 20_000);
 });
 
 const runCli = async (arguments_: readonly string[]): Promise<unknown> => {

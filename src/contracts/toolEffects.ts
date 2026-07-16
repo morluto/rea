@@ -101,6 +101,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   verify_managed_native_boundaries: sessionEvidence,
   import_managed_reconstruction: sessionEvidence,
   plan_managed_runtime_correlation: sessionEvidence,
+  project_managed_application_graph: sessionEvidence,
   list_browser_targets: browserEvidence,
   inspect_web_page: browserEvidence,
   analyze_web_bundle: browserEvidence,

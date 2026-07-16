@@ -16,9 +16,11 @@ managed/native export or function Evidence matching through
 decompiler reconstruction import through `import_managed_reconstruction` and
 `rea import-managed-reconstruction`, and default-disabled runtime-correlation
 admission planning through `plan_managed_runtime_correlation` and
-`rea plan-managed-runtime-correlation`. Native-body bridge mapping and runtime
-execution remain planned behavior. The current product inventory remains the one in
-[`product-catalog.json`](product-catalog.json).
+`rea plan-managed-runtime-correlation`, plus static managed graph projection
+through `project_managed_application_graph` and
+`rea project-managed-application-graph`. Native-body bridge mapping and runtime
+execution remain planned behavior. The current product inventory remains the
+one in [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
 
@@ -138,6 +140,10 @@ that implement them. The underlying capability slices are:
    verification workflow checks P/Invoke declarations against supplied native
    export or function Evidence; native-body, thunk, and token-to-address bridge
    mapping remain unavailable without explicit provider-supported evidence.
+7. **Application graph projection**: managed assembly/module/type/method/field,
+   P/Invoke, and native-implementation declarations enter the same
+   Evidence-backed application graph vocabulary as JavaScript/Electron
+   findings while preserving managed static-analysis authority.
 
 Every list has a deterministic order and hard limits. Search exposes scanned,
 matched, returned, and dropped counts. An unresolved indirect call or a failed
@@ -338,7 +344,8 @@ The managed-code track advances as reviewable pull requests:
    PE/CLI corpus shipped through `npm run verify:managed`; pinned external
    ILSpy/dnSpy/Windows checks remain planned); and
 8. separately authorized runtime-correlation admission planning (shipped; no
-   runtime execution).
+   runtime execution);
+9. managed static Evidence projection into the application graph (shipped).
 
 Each implementation PR updates generated product facts only for behavior it
 actually ships and states which real-tool checks were performed.

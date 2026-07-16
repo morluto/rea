@@ -1,6 +1,7 @@
 import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+  MANAGED_WORKFLOW_PROVIDER,
 } from "./InvestigationProviders.js";
 import { parseEvidence, type Evidence } from "../domain/evidence.js";
 import {
@@ -10,12 +11,16 @@ import {
 } from "../domain/javascriptApplicationAnalysis.js";
 import type { JavaScriptApplicationGraph } from "../domain/javascriptApplicationGraph.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
+import { managedApplicationGraphResultSchema } from "../domain/managedApplicationGraph.js";
 
 /** Supported immutable source for an application-level graph workflow. */
 export interface ApplicationGraphEvidenceSource {
   readonly evidence: Evidence;
   readonly graph: JavaScriptApplicationGraph;
-  readonly kind: "static-application" | "static-runtime-reconciliation";
+  readonly kind:
+    | "static-application"
+    | "static-runtime-reconciliation"
+    | "managed-application";
   readonly rootArtifactSha256: string;
 }
 
@@ -36,8 +41,14 @@ export const parseApplicationGraphEvidence = (
     providerMatches(evidence, JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER)
   )
     return staticRuntimeSource(evidence);
+  if (
+    evidence.operation === "project_managed_application_graph" &&
+    evidence.predicate_type === "rea.managed-application-graph/v1" &&
+    providerMatches(evidence, MANAGED_WORKFLOW_PROVIDER)
+  )
+    return managedApplicationSource(evidence);
   throw new TypeError(
-    "Application workflow requires authenticated analyze_javascript_application or reconcile_javascript_runtime Evidence",
+    "Application workflow requires authenticated analyze_javascript_application, reconcile_javascript_runtime, or project_managed_application_graph Evidence",
   );
 };
 
@@ -98,6 +109,35 @@ const staticRuntimeSource = (
     graph: result.graph,
     kind: "static-runtime-reconciliation",
     rootArtifactSha256: applicationLayer.root_artifact_sha256,
+  };
+};
+
+const managedApplicationSource = (
+  evidence: Evidence,
+): ApplicationGraphEvidenceSource => {
+  if (
+    evidence.authority !== "analyst-inference" ||
+    evidence.confidence !== "inferred"
+  )
+    throw new TypeError(
+      "Managed application graph Evidence authority or confidence is invalid",
+    );
+  const result = managedApplicationGraphResultSchema.parse(
+    evidence.normalized_result,
+  );
+  if (
+    result.evidence_links.some(
+      (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+    )
+  )
+    throw new TypeError(
+      "Managed application graph result references Evidence outside its envelope",
+    );
+  return {
+    evidence,
+    graph: result.graph,
+    kind: "managed-application",
+    rootArtifactSha256: result.root_artifact_sha256,
   };
 };
 

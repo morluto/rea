@@ -121,6 +121,7 @@ describe("canonical product catalog", () => {
       "compare_managed_members",
       "import_managed_reconstruction",
       "plan_managed_runtime_correlation",
+      "project_managed_application_graph",
       "verify_managed_native_boundaries",
     ]);
     expect(

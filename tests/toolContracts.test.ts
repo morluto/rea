@@ -30,6 +30,7 @@ describe("tool contract inventory", () => {
       "verify_managed_native_boundaries",
       "import_managed_reconstruction",
       "plan_managed_runtime_correlation",
+      "project_managed_application_graph",
     ]);
     expect(BROWSER_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "list_browser_targets",

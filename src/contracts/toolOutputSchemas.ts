@@ -32,6 +32,7 @@ import { managedMemberComparisonResultSchema } from "../domain/managedMemberComp
 import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportResultSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationResultSchema } from "../domain/managedRuntimeCorrelation.js";
+import { managedApplicationGraphResultSchema } from "../domain/managedApplicationGraph.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
 import { functionComparisonResultSchema } from "../domain/functionComparison.js";
 import { bundleComparisonResultSchema } from "../domain/bundleComparison.js";
@@ -573,6 +574,9 @@ export const managedWorkflowOutputSchemas: Readonly<
   ),
   plan_managed_runtime_correlation: resultOf(
     managedRuntimeCorrelationResultSchema,
+  ),
+  project_managed_application_graph: resultOf(
+    managedApplicationGraphResultSchema,
   ),
 };
 

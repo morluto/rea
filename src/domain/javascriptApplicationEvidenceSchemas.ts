@@ -27,6 +27,7 @@ const applicationEvidenceAuthoritySchema = z.enum([
   "cross-version-comparison",
   "controlled-replay",
   "native-analysis-provider",
+  "managed-static-analysis",
   "historical-reference",
   "user-assertion",
   "unknown",
@@ -362,6 +363,7 @@ const checkArtifactBacking = (
     "ast-static-analysis",
     "controlled-replay",
     "native-analysis-provider",
+    "managed-static-analysis",
   ].includes(evidence.authority);
   if (
     artifactBacked &&
