@@ -221,7 +221,13 @@ export const ghidraHeadlessCommand = (options: {
 };
 
 const quoteWindowsBatchToken = (value: string): string => {
-  if (value.length === 0 || /[\u0000\r\n"%^!&|<>]/u.test(value))
+  if (
+    value.length === 0 ||
+    value.includes("\0") ||
+    value.includes("\r") ||
+    value.includes("\n") ||
+    /["%^!&|<>]/u.test(value)
+  )
     throw new GhidraLaunchError(
       "Windows Ghidra P0 paths cannot contain command-interpreter metacharacters",
     );
