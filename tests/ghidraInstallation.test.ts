@@ -12,6 +12,9 @@ import {
 const INSTALL = "/opt/ghidra";
 const PROPERTIES = `${INSTALL}/Ghidra/application.properties`;
 const HEADLESS = `${INSTALL}/support/analyzeHeadless`;
+const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.2_PUBLIC";
+const WINDOWS_PROPERTIES = `${WINDOWS_INSTALL}\\Ghidra\\application.properties`;
+const WINDOWS_HEADLESS = `${WINDOWS_INSTALL}\\support\\analyzeHeadless.bat`;
 const JAVA: GhidraJavaObservation = {
   version: "21.0.11",
   major: SUPPORTED_GHIDRA_JAVA_MAJOR,
@@ -63,6 +66,46 @@ describe("Ghidra installation inspection", () => {
       providerVersion: SUPPORTED_GHIDRA_VERSION,
       analyzeHeadlessPath: HEADLESS,
       javaVersion: "21.0.11",
+      rejectionCode: null,
+    });
+  });
+
+  it("accepts the exact Windows x64 batch launcher and JDK commitment", () => {
+    const windowsHost: GhidraInstallationHost = {
+      platform: "win32",
+      architecture: "x64",
+      readText: (path) =>
+        path === WINDOWS_PROPERTIES
+          ? `application.version=${SUPPORTED_GHIDRA_VERSION}\n`
+          : undefined,
+      executable: (path) => path === WINDOWS_HEADLESS,
+      probeJava: (command, environment) => {
+        expect(command).toBe("C:\\Java\\jdk-21\\bin\\java.exe");
+        expect(environment.PATH).toMatch(/^C:\\Java\\jdk-21\\bin;/u);
+        return {
+          ...JAVA,
+          home: "C:\\Java\\jdk-21",
+        };
+      },
+    };
+
+    expect(
+      inspectGhidraInstallation(
+        {
+          installDir: WINDOWS_INSTALL,
+          javaHome: "C:\\Java\\jdk-21",
+          platform: "win32",
+          architecture: "x64",
+        },
+        windowsHost,
+      ),
+    ).toMatchObject({
+      available: true,
+      platform: "win32",
+      architecture: "x64",
+      analyzeHeadlessPath: WINDOWS_HEADLESS,
+      javaCommand: "C:\\Java\\jdk-21\\bin\\java.exe",
+      providerVersion: SUPPORTED_GHIDRA_VERSION,
       rejectionCode: null,
     });
   });
