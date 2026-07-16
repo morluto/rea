@@ -64,6 +64,7 @@ export interface DoctorProviderInspection {
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
   readonly nodeVersion: string;
   readonly configuredHopperPath?: string;
   readonly configuredIlspyCmdPath?: string;
@@ -141,18 +142,19 @@ export const runDoctor = async (
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
   const supportedHost =
     (host.platform === "darwin" && macosMajor >= 12) ||
-    (host.platform === "linux" && linuxDistribution?.supported === true);
+    (host.platform === "linux" && linuxDistribution?.supported === true) ||
+    (host.platform === "win32" && host.architecture === "x64");
   checks.push(
     check(
       "host",
       supportedHost,
       macosVersion ??
         (linuxDistribution === undefined
-          ? host.platform
+          ? `${host.platform} ${host.architecture}`
           : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`),
       {
         remediation:
-          "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.",
+          "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and the experimental Windows x64 Ghidra P0 boundary.",
         classification: "unsupported_host",
       },
     ),
@@ -357,6 +359,7 @@ export const systemDoctorHost = (
   options: SystemDoctorHostOptions = {},
 ): DoctorHost => ({
   platform: process.platform,
+  architecture: process.arch,
   nodeVersion: process.versions.node,
   ...(process.env.HOPPER_LAUNCHER_PATH === undefined
     ? {}

@@ -5,6 +5,7 @@ import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   platform: "darwin",
+  architecture: "x64",
   nodeVersion: "24.18.0",
   macosVersion: () => Promise.resolve("12.0"),
   linuxDistribution: () => Promise.resolve(undefined),
@@ -40,7 +41,7 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: "Install Node.js 22.19+ or 24.11+.",
-      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux.",
+      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and the experimental Windows x64 Ghidra P0 boundary.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       target: "Supply a readable local app or program path.",
     });
@@ -56,6 +57,36 @@ describe("doctor", () => {
       expect(result.checks.find(({ name }) => name === "host")?.ok).toBe(false);
     },
   );
+
+  it("admits only the experimental Windows x64 host boundary", async () => {
+    const windows = await runDoctor(
+      undefined,
+      host({
+        platform: "win32",
+        architecture: "x64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    const arm = await runDoctor(
+      undefined,
+      host({
+        platform: "win32",
+        architecture: "arm64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+
+    expect(windows.checks.find(({ name }) => name === "host")).toMatchObject({
+      ok: true,
+      detail: "win32 x64",
+    });
+    expect(arm.checks.find(({ name }) => name === "host")).toMatchObject({
+      ok: false,
+      detail: "win32 arm64",
+    });
+  });
   it("detects a manual configured Hopper before Homebrew", async () => {
     const result = await runDoctor(
       undefined,
