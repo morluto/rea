@@ -6,6 +6,13 @@ const isMissing = (cause) =>
   "code" in cause &&
   cause.code === "ENOENT";
 
+const normalizeLineEndings = (value) => value.replaceAll("\r\n", "\n");
+
+const preserveLineEndings = (source, existing) =>
+  existing?.includes("\r\n") === true
+    ? normalizeLineEndings(source).replaceAll("\n", "\r\n")
+    : source;
+
 /** Compare or update one generated text artifact with actionable diagnostics. */
 export const ensureGeneratedFile = async ({
   path,
@@ -19,11 +26,15 @@ export const ensureGeneratedFile = async ({
   } catch (cause) {
     if (!isMissing(cause)) throw cause;
   }
-  if (existing === source) return { changed: false };
+  if (
+    existing !== undefined &&
+    normalizeLineEndings(existing) === normalizeLineEndings(source)
+  )
+    return { changed: false };
   if (check)
     throw new Error(
       `${path} is missing or stale. Run \`${generateCommand}\` and commit the result.`,
     );
-  await writeFile(path, source, "utf8");
+  await writeFile(path, preserveLineEndings(source, existing), "utf8");
   return { changed: true };
 };

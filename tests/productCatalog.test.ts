@@ -234,4 +234,29 @@ describe("canonical product catalog", () => {
     ).resolves.toEqual({ changed: true });
     expect(await readFile(path, "utf8")).toBe("current\n");
   });
+
+  it("accepts and preserves native generated-file line endings", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-generated-eol-"));
+    temporaryRoots.push(directory);
+    const path = join(directory, "catalog.json");
+    await writeFile(path, "current\r\n", "utf8");
+    await expect(
+      ensureGeneratedFile({
+        path,
+        source: "current\n",
+        check: true,
+        generateCommand: "npm run docs:generate",
+      }),
+    ).resolves.toEqual({ changed: false });
+    expect(await readFile(path, "utf8")).toBe("current\r\n");
+    await expect(
+      ensureGeneratedFile({
+        path,
+        source: "updated\n",
+        check: false,
+        generateCommand: "npm run docs:generate",
+      }),
+    ).resolves.toEqual({ changed: true });
+    expect(await readFile(path, "utf8")).toBe("updated\r\n");
+  });
 });
