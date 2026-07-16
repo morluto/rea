@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
@@ -41,11 +43,12 @@ export const createGhidraDiagnostics = (
       ? {}
       : {
           runtime_root: options.runtimeRoot,
-          endpoint_path: `${options.runtimeRoot}/${
+          endpoint_path: join(
+            options.runtimeRoot,
             options.transport === "unix-socket"
               ? "bridge.sock"
-              : "bridge-endpoint.json"
-          }`,
+              : "bridge-endpoint.json",
+          ),
         }),
     ...(options.launch === undefined
       ? {}
