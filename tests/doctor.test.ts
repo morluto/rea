@@ -68,6 +68,45 @@ describe("doctor", () => {
     expect(result.healthy).toBe(true);
   });
 
+  it("reports optional BYO ilspycmd diagnostics only when configured", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredIlspyCmdPath: "/tools/ilspycmd",
+        ilspyCmdVersion: (path) =>
+          Promise.resolve(
+            path === "/tools/ilspycmd" ? "ilspycmd: 9.1.0.7988" : undefined,
+          ),
+      }),
+    );
+    expect(result.healthy).toBe(true);
+    expect(result.checks).toContainEqual({
+      name: "ilspycmd",
+      ok: true,
+      classification: "healthy",
+      detail: "/tools/ilspycmd (ilspycmd: 9.1.0.7988)",
+    });
+  });
+
+  it("reports configured ilspycmd drift without installing it", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredIlspyCmdPath: "/missing/ilspycmd",
+        ilspyCmdVersion: () => Promise.resolve(undefined),
+      }),
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.checks).toContainEqual({
+      name: "ilspycmd",
+      ok: false,
+      classification: "config_drift",
+      detail: "/missing/ilspycmd",
+      remediation:
+        "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+    });
+  });
+
   it("does not fall back when the configured Hopper launcher is invalid", async () => {
     const configuredPath = "/invalid/custom/hopper";
     const result = await runDoctor(

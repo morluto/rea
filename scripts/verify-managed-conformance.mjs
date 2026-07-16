@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { constants } from "node:fs";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import assert from "node:assert/strict";
+import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../dist/domain/binaryTarget.js";
 import { inspectManagedArtifactBytes } from "../dist/dotnet/ManagedArtifactInspector.js";
@@ -106,6 +109,7 @@ const defaultIlBody = Buffer.from([
 ]);
 
 const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
+const execFileAsync = promisify(execFile);
 
 try {
   const modern = await fixture("modern-anycpu.exe", {
@@ -497,10 +501,14 @@ try {
 
   const manifestSelfTest = await runManagedAppManifestSelfTest();
   const operatorManifest = await runOptionalManagedAppManifest();
+  const ilspyOracle = await runOptionalIlspyOracle();
 
   process.stdout.write(
     `${JSON.stringify({
-      verified: 12 + (operatorManifest === null ? 0 : 1),
+      verified:
+        12 +
+        (operatorManifest === null ? 0 : 1) +
+        (ilspyOracle === null ? 0 : 1),
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
@@ -524,11 +532,16 @@ try {
         "not-managed",
         "malformed-metadata",
         "operator-local-managed-manifest",
+        ...(ilspyOracle === null ? [] : ["ilspy-reconstruction-oracle"]),
       ],
       managedAppManifest: {
         env: "REA_MANAGED_APP_MANIFEST_PATH",
         selfTest: manifestSelfTest,
         operator: operatorManifest ?? { configured: false },
+      },
+      ilspyOracle: ilspyOracle ?? {
+        env: "REA_ILSPY_CMD_PATH",
+        configured: false,
       },
     })}\n`,
   );
@@ -640,6 +653,175 @@ async function runOptionalManagedAppManifest() {
     configured: true,
     ...(await verifyManagedAppManifest(manifest, resolvedManifestPath)),
   };
+}
+
+async function runOptionalIlspyOracle() {
+  const ilspyPath = process.env.REA_ILSPY_CMD_PATH;
+  if (ilspyPath === undefined) return null;
+  ensureIlspy(
+    ilspyPath.trim().length > 0,
+    "REA_ILSPY_CMD_PATH is set but empty",
+  );
+  ensureIlspy(
+    isAbsolute(ilspyPath),
+    "REA_ILSPY_CMD_PATH must be an absolute path",
+  );
+  await ensureExecutable(ilspyPath);
+  const versionOutput = await runIlspy(ilspyPath, ["--version"], 64 * 1024);
+  const version = ilspyVersion(versionOutput);
+  const executableSha256 = sha256(await readFile(ilspyPath));
+  const sample = await fixture("ilspy-oracle.exe", {
+    methodName: "PinnedSemanticSlice",
+  });
+  const artifact = inspectManagedArtifactBytes(
+    sample.bytes,
+    sample.target,
+    inspectionLimits,
+  );
+  const members = inspectManagedMembersBytes(
+    sample.bytes,
+    sample.target,
+    memberLimits,
+  );
+  const method = members.methods.items[0];
+  ensureIlspy(method !== undefined, "source-owned fixture has no method");
+  const listOutput = await runIlspy(
+    ilspyPath,
+    ["--disable-updatecheck", "-l", "c", sample.path],
+    256 * 1024,
+  );
+  ensureIlspy(
+    listOutput.includes("Class Fixture.Program"),
+    "ilspycmd class listing did not include Fixture.Program",
+  );
+  const csharp = await runIlspy(
+    ilspyPath,
+    ["--disable-updatecheck", "--type", "Fixture.Program", sample.path],
+    256 * 1024,
+  );
+  ensureIlspy(
+    csharp.includes("PinnedSemanticSlice"),
+    "ilspycmd C# output did not include the pinned method name",
+  );
+  ensureIlspy(
+    csharp.length <= 65_536,
+    "ilspycmd C# output exceeded the managed reconstruction import bound",
+  );
+  const memberEvidence = createEvidence(
+    sample.target,
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: memberLimits,
+      result: members,
+      rawResult: null,
+      limitations: members.limitations,
+      locations: [{ kind: "artifact-path", path: sample.target.path }],
+    },
+  );
+  const reconstructionImport = importManagedReconstructionEvidence({
+    static_members: memberEvidence,
+    decompiler: {
+      name: "ilspycmd",
+      version,
+      family: "ilspy",
+      executable_sha256: executableSha256,
+      options: ["--disable-updatecheck", "--type", "Fixture.Program"],
+    },
+    methods: [
+      {
+        token: method.token,
+        signature_sha256: method.signature.raw_sha256,
+        normalized_il_sha256: method.body.normalized_il_sha256,
+        reconstruction: {
+          kind: "decompiled-csharp",
+          language: "csharp",
+          text: csharp,
+        },
+      },
+    ],
+    notes: [
+      "source-owned real ilspycmd oracle; output is imported as reconstruction inference",
+    ],
+  });
+  ensureIlspy(reconstructionImport.ok, "managed reconstruction import failed");
+  const imported = reconstructionImport.value.normalized_result;
+  ensureIlspy(
+    imported.summary.decompiled_csharp_methods === 1,
+    "managed reconstruction import did not record one decompiled C# method",
+  );
+  return {
+    env: "REA_ILSPY_CMD_PATH",
+    configured: true,
+    version,
+    executable_sha256: executableSha256,
+    fixture: {
+      file_name: basename(sample.path),
+      sha256: sample.target.sha256,
+      mvid: artifact.module?.mvid ?? null,
+      assembly_name: artifact.assembly?.name ?? null,
+      method: {
+        token: method.token,
+        declaring_type: method.declaring_type,
+        name: method.name,
+        signature_sha256: method.signature.raw_sha256,
+        il_size: method.body.il_size,
+        normalized_il_sha256: method.body.normalized_il_sha256,
+      },
+    },
+    output: {
+      class_listing_sha256: sha256(Buffer.from(listOutput)),
+      decompiled_csharp_sha256: sha256(Buffer.from(csharp)),
+      decompiled_csharp_bytes: Buffer.byteLength(csharp),
+      imported_evidence_id: reconstructionImport.value.evidence_id,
+      reconstruction_id: imported.reconstruction_id,
+      canonical_observation:
+        imported.methods[0]?.validation.canonical_observation ?? null,
+      confidence_floor:
+        imported.methods[0]?.validation.confidence_floor ?? null,
+    },
+  };
+}
+
+async function ensureExecutable(path) {
+  try {
+    await access(path, constants.X_OK);
+  } catch {
+    throw new Error(`managed ILSpy oracle failed: ${path} is not executable`);
+  }
+}
+
+async function runIlspy(path, args, maxBuffer) {
+  try {
+    const { stdout } = await execFileAsync(path, args, {
+      timeout: 30_000,
+      maxBuffer,
+      env: {
+        ...process.env,
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1",
+      },
+    });
+    return stdout;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`managed ILSpy oracle failed: ${message}`);
+  }
+}
+
+function ilspyVersion(output) {
+  const version = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("ilspycmd:"));
+  ensureIlspy(
+    version !== undefined,
+    "ilspycmd --version did not identify ilspycmd",
+  );
+  return version;
+}
+
+function ensureIlspy(condition, message) {
+  if (!condition) throw new Error(`managed ILSpy oracle failed: ${message}`);
 }
 
 async function verifyManagedAppManifest(rawManifest, manifestPath) {

@@ -79,6 +79,20 @@ describe("runtime configuration", () => {
     expect(parseConfig({ JAVA_HOME: "relative/jdk" }).ok).toBe(false);
   });
 
+  it("parses an optional absolute BYO ilspycmd path", () => {
+    expect(
+      parseConfig({ REA_ILSPY_CMD_PATH: "/home/user/.dotnet/tools/ilspycmd" }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        ilspyCmdPath: "/home/user/.dotnet/tools/ilspycmd",
+      },
+    });
+    expect(parseConfig({ REA_ILSPY_CMD_PATH: "relative/ilspycmd" }).ok).toBe(
+      false,
+    );
+  });
+
   it("builds a separate Electron endpoint and file-root ceiling", () => {
     const result = parseConfig({
       REA_ELECTRON_OBSERVE_ENABLED: "true",

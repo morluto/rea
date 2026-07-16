@@ -206,7 +206,10 @@ oracles but has no runtime dependency on them.
 - `System.Reflection.Metadata` is the primary independent metadata/CIL oracle.
 - `ICSharpCode.Decompiler` and `ilspycmd` are reconstruction and differential
   oracles. An admitted BYO reconstruction operation records its exact version
-  and remains non-canonical.
+  and remains non-canonical. When `REA_ILSPY_CMD_PATH` points to an absolute
+  runnable `ilspycmd`, `verify:managed` runs a source-owned real ILSpy oracle
+  and imports its C# output as reconstruction inference against exact static
+  member Evidence.
 - dnlib and Mono.Cecil may increase differential coverage. Their mutation APIs
   are not exposed or included in the production parsing boundary.
 - The package contains no .NET runtime, SDK, ILSpy installation, proprietary
@@ -261,6 +264,15 @@ REA_MANAGED_APP_MANIFEST_PATH=/absolute/managed-app-manifest.json npm run verify
 ```
 
 `verify:managed` always runs a source-owned manifest-verifier self-test first.
+If `REA_ILSPY_CMD_PATH` is set to an absolute `ilspycmd` path, it also runs a
+source-owned ILSpy oracle: version discovery, class listing, bounded C# output
+for a pinned fixture type, and import through `import_managed_reconstruction`.
+The verifier prints only command/version, executable and output digests,
+Evidence IDs, method locks, and compact fixture identity; it does not print
+decompiled C# text. A failing ILSpy oracle fails the verifier because it is an
+explicit real-tool claim, but leaving `REA_ILSPY_CMD_PATH` unset keeps the
+oracle disabled.
+
 When `REA_MANAGED_APP_MANIFEST_PATH` is set, the manifest's target path may be
 absolute or relative to the manifest file. A compact manifest contains:
 
@@ -369,8 +381,9 @@ The managed-code track advances as reviewable pull requests:
    inventory and native export/function Evidence matching shipped; native-body
    bridge mapping remains planned);
 7. source-built managed conformance and package/CLI verification (source-owned
-   PE/CLI corpus shipped through `npm run verify:managed`; pinned external
-   ILSpy/dnSpy/Windows checks remain planned); and
+   PE/CLI corpus shipped through `npm run verify:managed`; optional BYO
+   `ilspycmd` real-tool oracle shipped through `REA_ILSPY_CMD_PATH`; dnSpy and
+   pinned Windows checks remain planned); and
 8. separately authorized runtime-correlation admission planning (shipped; no
    runtime execution);
 9. managed static Evidence projection into the application graph (shipped).
