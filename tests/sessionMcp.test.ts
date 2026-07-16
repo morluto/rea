@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { BinarySession } from "../src/application/BinarySession.js";
+import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { probeProcessCaptureCapability } from "../src/application/ProcessHarness.js";
 import { observed as ok } from "./fixtures/analysisExecution.js";
@@ -141,7 +142,7 @@ describe("target-free MCP lifecycle", () => {
     });
     expect(before.isError).toBe(true);
     expect(text(before)).toBe(JSON.stringify(before.structuredContent));
-    expect((await mcp.listTools()).tools).toHaveLength(89);
+    expect((await mcp.listTools()).tools).toHaveLength(TOOL_CONTRACTS.length);
     const deniedCapture = await mcp.callTool({
       name: "capture_process_scenario",
       arguments: {

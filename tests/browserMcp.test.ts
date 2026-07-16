@@ -6,6 +6,7 @@ import { loadConfiguredPermissionAuthority } from "../src/application/Permission
 import { CdpBrowserProvider } from "../src/browser/CdpBrowserProvider.js";
 import { parseConfig } from "../src/config.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../src/contracts/javascriptRuntimeReconciliationExample.js";
+import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 import {
@@ -37,7 +38,7 @@ describe("browser MCP tools", () => {
       const connected = await connectBrowser(browser);
 
       const tools = await connected.client.listTools();
-      expect(tools.tools).toHaveLength(89);
+      expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
       expect(tools.tools.map(({ name }) => name)).toEqual(
         expect.arrayContaining([
           "list_browser_targets",

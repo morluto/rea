@@ -9,6 +9,7 @@ import { inspectManagedArtifactBytes } from "../dist/dotnet/ManagedArtifactInspe
 import { inspectManagedMembersBytes } from "../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../dist/dotnet/ManagedNativeBoundaryInspector.js";
 import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesEvidence } from "../dist/application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
 import { createPermissionAuthority } from "../dist/application/PermissionAuthority.js";
@@ -133,6 +134,49 @@ try {
     frameworkBoundaries.pinvoke_imports.items[0]?.call_convention,
     "stdcall",
   );
+  const frameworkBoundaryEvidence = createEvidence(
+    framework.target,
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_native_boundaries",
+      parameters: nativeBoundaryLimits,
+      result: frameworkBoundaries,
+      rawResult: null,
+      limitations: frameworkBoundaries.limitations,
+      locations: [{ kind: "artifact-path", path: framework.target.path }],
+    },
+  );
+  const nativeFunctionEvidence = createEvidence(
+    {
+      path: "/system/user32.dll",
+      sha256: "9".repeat(64),
+      format: "pe",
+      architecture: "x86",
+    },
+    {
+      id: "ghidra",
+      name: "Ghidra",
+      version: "12.1.2",
+    },
+    {
+      operation: "analyze_function",
+      parameters: { procedure: "MessageBoxW" },
+      result: functionDossier("MessageBoxW"),
+      rawResult: null,
+      limitations: [],
+      locations: [{ kind: "address", address: "0x401000" }],
+    },
+  );
+  const nativeVerification = verifyManagedNativeBoundariesEvidence({
+    managed_boundaries: frameworkBoundaryEvidence,
+    native_observations: [nativeFunctionEvidence],
+    limits: {
+      max_native_observations: 20,
+      max_candidates_per_import: 25,
+    },
+  });
+  assert.equal(nativeVerification.ok, true);
+  assert.equal(nativeVerification.value.normalized_result.summary.verified, 1);
 
   const readyToRun = await fixture("r2r-x64.exe", {
     machine: 0x8664,
@@ -347,12 +391,13 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
-      verified: 9,
+      verified: 10,
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
         "inspect_managed_native_boundaries",
         "compare_managed_members",
+        "verify_managed_native_boundaries",
         "import_managed_reconstruction",
         "plan_managed_runtime_correlation",
       ],
@@ -360,6 +405,7 @@ try {
         "modern-dotnet-anycpu",
         "dotnet-framework-x86-pinvoke",
         "x64-ready-to-run-native-body",
+        "managed-native-verification",
         "unicode-obfuscated-identifiers",
         "decompiler-reconstruction-import",
         "runtime-correlation-admission-plan",
@@ -387,4 +433,46 @@ async function fixtureBytes(name, bytes) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function functionDossier(name) {
+  const emptyPage = {
+    items: [],
+    total: 0,
+    returned: 0,
+    truncated: false,
+    next_offset: null,
+  };
+  return {
+    procedure: {
+      address: "0x401000",
+      name,
+      classification: {
+        external: false,
+        thunk: false,
+        thunk_target: null,
+        provenance: "synthetic-provider",
+      },
+      signature: null,
+      locals: [],
+    },
+    pseudocode: {
+      text: "",
+      total_chars: 0,
+      returned_chars: 0,
+      truncated: false,
+      next_offset: null,
+    },
+    assembly: emptyPage,
+    comments: emptyPage,
+    callers: emptyPage,
+    callees: emptyPage,
+    incoming_references: emptyPage,
+    outgoing_references: emptyPage,
+    referenced_strings: emptyPage,
+    referenced_names: emptyPage,
+    basic_blocks: emptyPage,
+    instruction_scan: { scanned: 0, truncated: false },
+    limitations: [],
+  };
 }

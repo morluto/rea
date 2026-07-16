@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { BinarySession } from "../src/application/BinarySession.js";
 import { PROMPT_CONTRACTS } from "../src/contracts/promptContracts.js";
+import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import { createEvidence } from "../src/domain/evidence.js";
 import { createServer } from "../src/server/createServer.js";
 import { registerGuidedPrompts } from "../src/server/registerPrompts.js";
@@ -54,7 +55,9 @@ describe("guided prompts over MCP", () => {
         ),
       );
     }
-    expect((await client.listTools()).tools).toHaveLength(89);
+    expect((await client.listTools()).tools).toHaveLength(
+      TOOL_CONTRACTS.length,
+    );
     const result = await client.getPrompt({
       name: "investigate_feature",
       arguments: {

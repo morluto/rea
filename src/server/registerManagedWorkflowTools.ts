@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { compareManagedMembersEvidenceValidated } from "../application/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidenceValidated } from "../application/ManagedReconstructionService.js";
 import {
   planManagedRuntimeCorrelationEvidenceValidated,
@@ -9,11 +10,13 @@ import {
 } from "../application/ManagedRuntimeCorrelationService.js";
 import {
   compareManagedMembersReferenceInputSchema,
+  managedNativeVerificationReferenceInputSchema,
   managedReconstructionReferenceInputSchema,
   managedRuntimeCorrelationReferenceInputSchema,
   MANAGED_WORKFLOW_TOOL_CONTRACTS,
 } from "../contracts/managedWorkflowToolContracts.js";
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
+import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceIntegrityError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
@@ -40,6 +43,9 @@ export const registerManagedWorkflowTools = (
   options: ManagedWorkflowToolRegistration,
 ): void => {
   const compareContract = contract("compare_managed_members");
+  const nativeVerificationContract = contract(
+    "verify_managed_native_boundaries",
+  );
   const reconstructionContract = contract("import_managed_reconstruction");
   const runtimeContract = contract("plan_managed_runtime_correlation");
   server.registerTool(
@@ -114,6 +120,97 @@ export const registerManagedWorkflowTools = (
           evidenceResourcesAvailable: output !== undefined,
         },
       );
+    },
+  );
+  server.registerTool(
+    nativeVerificationContract.name,
+    toolRegistrationOptions(nativeVerificationContract),
+    async (input) => {
+      const parsedInput = safeParseToolInput(
+        managedNativeVerificationReferenceInputSchema,
+        input,
+        nativeVerificationContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, nativeVerificationContract);
+      const managedBoundaries = resolveManagedBoundaryEvidence(
+        options.session,
+        parsedInput.value.managed_boundaries_evidence_id,
+      );
+      if (!managedBoundaries.ok)
+        return toCallToolResult(managedBoundaries, nativeVerificationContract);
+      const nativeObservations = resolveNativeEvidence(
+        options.session,
+        parsedInput.value.native_observation_evidence_ids,
+      );
+      if (!nativeObservations.ok)
+        return toCallToolResult(nativeObservations, nativeVerificationContract);
+      const managedBoundary = managedBoundaries.value[0];
+      if (managedBoundary === undefined)
+        throw new TypeError("Managed boundary Evidence resolution failed");
+      const {
+        managed_boundaries_evidence_id: _managedBoundariesEvidenceId,
+        native_observation_evidence_ids: _nativeObservationEvidenceIds,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = {
+        ...referencedInput,
+        managed_boundaries: managedBoundary,
+        native_observations: nativeObservations.value,
+      };
+      const result = await logToolExecution(
+        options.logger,
+        nativeVerificationContract.name,
+        () => Promise.resolve(verifyManagedNativeBoundariesEvidence(parsed)),
+      );
+      if (!result.ok)
+        return toCallToolResult(result, nativeVerificationContract);
+      const recordedSources = recordSources(options.recordEvidence, [
+        parsed.managed_boundaries,
+        ...parsed.native_observations,
+      ]);
+      if (!recordedSources.ok)
+        return toCallToolResult(recordedSources, nativeVerificationContract);
+      const verification = managedNativeVerificationResultSchema.parse(
+        result.value.normalized_result,
+      );
+      const unknown =
+        verification.summary.unresolved > 0 ||
+        verification.summary.contradicted > 0 ||
+        verification.summary.native_body_unresolved > 0;
+      const output =
+        parsed.unknown_registry_approved === true && unknown
+          ? options.recordEvidenceWithUnknown?.(result.value, {
+              approved: true,
+              question:
+                "Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence?",
+              severity: "medium",
+              domain: "managed-native-verification",
+              supporting_evidence_ids: [result.value.evidence_id],
+              contradicting_evidence_ids: [],
+              required_authority: "shipped-artifact",
+              required_confidence: "observed",
+              required_environment: null,
+              recommended_probes: [
+                {
+                  operation: "inspect_managed_native_boundaries",
+                  rationale:
+                    "Repeat managed boundary inspection with complete ModuleRef, ImplMap, and native implementation pages.",
+                },
+                {
+                  operation: "analyze_function",
+                  rationale:
+                    "Analyze the provider-resolved native function candidate for the declared export.",
+                },
+              ],
+              relationships: [],
+            })
+          : options.recordEvidence?.(result.value);
+      if (output !== undefined && !output.ok)
+        return toCallToolResult(output, nativeVerificationContract);
+      return toCallToolResult(result, nativeVerificationContract, {
+        evidenceResourcesAvailable: output !== undefined,
+      });
     },
   );
   server.registerTool(
@@ -224,6 +321,36 @@ const resolveManagedEvidence = (
     operation: "inspect_managed_members",
     predicate: "rea.analysis/v2",
   });
+
+const resolveManagedBoundaryEvidence = (
+  session: BinarySessionPort,
+  evidenceId: string,
+): Result<Evidence[], EvidenceIntegrityError> =>
+  resolveSessionEvidenceIds(session, [evidenceId], {
+    operation: "inspect_managed_native_boundaries",
+    predicate: "rea.analysis/v2",
+  });
+
+const resolveNativeEvidence = (
+  session: BinarySessionPort,
+  evidenceIds: readonly string[],
+): Result<Evidence[], EvidenceIntegrityError> => {
+  const records: Evidence[] = [];
+  for (const evidenceId of evidenceIds) {
+    const operation = session.evidenceById(evidenceId)?.operation;
+    const expectedOperation =
+      operation === "inspect_macho" || operation === "analyze_function"
+        ? operation
+        : "inspect_macho or analyze_function";
+    const resolved = resolveSessionEvidenceIds(session, [evidenceId], {
+      operation: expectedOperation,
+      predicate: "rea.analysis/v2",
+    });
+    if (!resolved.ok) return resolved;
+    records.push(...resolved.value);
+  }
+  return { ok: true, value: records };
+};
 
 const recordSources = (
   recordEvidence: ManagedWorkflowToolRegistration["recordEvidence"],

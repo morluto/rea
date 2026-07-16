@@ -122,6 +122,7 @@ const SOURCE_PATHS = {
   webCaptureDiff: "dist/domain/webCaptureDiff.js",
   managedArtifact: "dist/domain/managedArtifact.js",
   managedComparison: "dist/domain/managedMemberComparison.js",
+  managedNativeVerification: "dist/domain/managedNativeVerification.js",
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
@@ -380,6 +381,11 @@ const observationSchemaDefinitions = (sources) => [
   [
     "managed_member_comparison",
     sources.managedComparison.managedMemberComparisonResultSchema,
+    ["schema_version"],
+  ],
+  [
+    "managed_native_verification",
+    sources.managedNativeVerification.managedNativeVerificationResultSchema,
     ["schema_version"],
   ],
   [

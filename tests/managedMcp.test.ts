@@ -11,6 +11,7 @@ import { AnalysisProviderRegistry } from "../src/application/AnalysisProviderReg
 import { BinarySession } from "../src/application/BinarySession.js";
 import { createPermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { SessionProviderRouter } from "../src/application/SessionProviderRouter.js";
+import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../src/contracts/managedWorkflowExamples.js";
 import type { PermissionCeiling } from "../src/domain/permissionPolicy.js";
 import { ManagedStaticProvider } from "../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../src/server/createServer.js";
@@ -93,8 +94,65 @@ describe("managed artifact MCP tools", () => {
         "import_managed_reconstruction",
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
+        "verify_managed_native_boundaries",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
         "plan_managed_runtime_correlation",
       );
+      for (const evidence of [
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries,
+        ...MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations,
+      ])
+        expect(session.recordEvidence(evidence)).toMatchObject({ ok: true });
+      const verifiedNative = structured(
+        await client.callTool({
+          name: "verify_managed_native_boundaries",
+          arguments: {
+            managed_boundaries_evidence_id:
+              MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries
+                .evidence_id,
+            native_observation_evidence_ids:
+              MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations.map(
+                ({ evidence_id: evidenceId }) => evidenceId,
+              ),
+            limits: MANAGED_NATIVE_VERIFICATION_EXAMPLE.limits,
+          },
+        }),
+      );
+
+      expect(verifiedNative).toMatchObject({
+        evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
+        evidence_uri: expect.stringMatching(/^rea:\/\/evidence\/ev_/u),
+        result: {
+          summary: { verified: 1 },
+          algorithm: { token_to_address_mapping: "not-inferred" },
+        },
+      });
+      const nativeEvidence =
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
+      if (nativeEvidence === undefined)
+        throw new Error("missing native Evidence");
+      const wrongManagedReference = await client.callTool({
+        name: "verify_managed_native_boundaries",
+        arguments: {
+          managed_boundaries_evidence_id: nativeEvidence.evidence_id,
+          native_observation_evidence_ids: [
+            MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries.evidence_id,
+          ],
+        },
+      });
+      expect(wrongManagedReference).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "evidence_integrity_mismatch",
+            details: {
+              reason: "wrong_operation",
+              actual: "inspect_macho",
+            },
+          },
+        },
+      });
 
       await client.callTool({
         name: "open_binary",

@@ -11,11 +11,13 @@ declared ModuleRef/ImplMap/PInvoke and native implementation boundary inventory
 through `inspect_managed_native_boundaries` and
 `rea inspect-managed-native-boundaries`, plus obfuscation-resistant member
 comparison through `compare_managed_members` and `rea compare-managed-members`,
+managed/native export or function Evidence matching through
+`verify_managed_native_boundaries` and `rea verify-managed-native-boundaries`,
 decompiler reconstruction import through `import_managed_reconstruction` and
 `rea import-managed-reconstruction`, and default-disabled runtime-correlation
 admission planning through `plan_managed_runtime_correlation` and
-`rea plan-managed-runtime-correlation`. Verified native export/function
-matching and runtime execution remain planned behavior. The current product inventory remains the one in
+`rea plan-managed-runtime-correlation`. Native-body bridge mapping and runtime
+execution remain planned behavior. The current product inventory remains the one in
 [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
@@ -133,8 +135,9 @@ that implement them. The underlying capability slices are:
 6. **Managed/native composition**: P/Invoke, unmanaged exports, COM/mixed-mode
    declarations, ReadyToRun/native bodies, single-file hosts, and authenticated
    IL2CPP pairs linked to selected Hopper/Ghidra evidence. The shipped
-   boundary inventory is declaration-only until native-provider evidence
-   verifies exports, thunks, or functions.
+   verification workflow checks P/Invoke declarations against supplied native
+   export or function Evidence; native-body, thunk, and token-to-address bridge
+   mapping remain unavailable without explicit provider-supported evidence.
 
 Every list has a deterministic order and hard limits. Search exposes scanned,
 matched, returned, and dropped counts. An unresolved indirect call or a failed
@@ -310,7 +313,8 @@ The managed-code track advances as reviewable pull requests:
 5. decompiler reconstruction import (shipped as analyst inference; REA does
    not run ILSpy/dnSpy, and metadata/CIL remain canonical);
 6. managed/native composition and truthful deployment degradation (declaration
-   inventory shipped; verified native-provider matching remains planned);
+   inventory and native export/function Evidence matching shipped; native-body
+   bridge mapping remains planned);
 7. source-built managed conformance and package/CLI verification (source-owned
    PE/CLI corpus shipped through `npm run verify:managed`; pinned external
    ILSpy/dnSpy/Windows checks remain planned); and

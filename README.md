@@ -322,17 +322,17 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 
 ## Tool catalog for investigation
 
-| Tool family               | Count | Examples                                                                                                                                                                                   |
-| ------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                                                                           |
-| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery                                                                    |
-| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                                                                              |
-| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                                                                         |
-| Managed PE/CLI            |     6 | PE/CLI identity, metadata members, CIL hashes, P/Invoke/native-boundary declarations, decompiler reconstruction import, token remapping, runtime-correlation plans, and version comparison |
-| Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence                                                           |
-| Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation                                                                   |
-| Application workflows     |     3 | bounded cross-layer traces, unique-only version matching, and approved Linux-isolated extracted-module replay                                                                              |
-| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                                                                    |
+| Tool family               | Count | Examples                                                                                                                                                                                                    |
+| ------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                                                                                            |
+| Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery                                                                                     |
+| Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                                                                                               |
+| Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                                                                                          |
+| Managed PE/CLI            |     7 | PE/CLI identity, metadata members, CIL hashes, P/Invoke/native-boundary declarations and verification, decompiler reconstruction import, token remapping, runtime-correlation plans, and version comparison |
+| Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence                                                                            |
+| Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation                                                                                    |
+| Application workflows     |     3 | bounded cross-layer traces, unique-only version matching, and approved Linux-isolated extracted-module replay                                                                                               |
+| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                                                                                     |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 

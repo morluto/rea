@@ -1,19 +1,29 @@
+import { z } from "zod";
+
 import { compareManagedMembersInputSchema } from "../domain/managedMemberComparison.js";
+import { managedNativeVerificationInputSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { ToolContract } from "./toolContracts.js";
 import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
 import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
+  MANAGED_NATIVE_VERIFICATION_EXAMPLE,
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 import { toolContractMetadata } from "./toolEffects.js";
 
-const managedEvidenceIdSchema = z
-  .string()
-  .regex(/^ev_[a-f0-9]{64}$/u)
-  .describe("Session-owned inspect_managed_members Evidence ID");
+const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const managedEvidenceIdSchema = evidenceIdSchema.describe(
+  "Session-owned inspect_managed_members Evidence ID",
+);
+const managedBoundaryEvidenceIdSchema = evidenceIdSchema.describe(
+  "Session-owned inspect_managed_native_boundaries Evidence ID",
+);
+const nativeObservationEvidenceIdSchema = evidenceIdSchema.describe(
+  "Session-owned inspect_macho or analyze_function Evidence ID",
+);
 
 /** MCP references for comparing two session-owned managed observations. */
 export const compareManagedMembersReferenceInputSchema = z
@@ -45,6 +55,42 @@ export const managedReconstructionReferenceInputSchema =
     .omit({ static_members: true })
     .extend({ static_members_evidence_id: managedEvidenceIdSchema });
 
+/** MCP references for managed/native verification from session Evidence. */
+export const managedNativeVerificationReferenceInputSchema = z
+  .strictObject({
+    managed_boundaries_evidence_id: managedBoundaryEvidenceIdSchema,
+    native_observation_evidence_ids: z
+      .array(nativeObservationEvidenceIdSchema)
+      .min(1)
+      .max(50)
+      .describe("Unique session-owned native observation Evidence IDs"),
+    limits: managedNativeVerificationInputSchema.shape.limits,
+    unknown_registry_approved:
+      managedNativeVerificationInputSchema.shape.unknown_registry_approved,
+  })
+  .superRefine((input, context) => {
+    const ids = new Set<string>();
+    for (const [
+      index,
+      evidenceId,
+    ] of input.native_observation_evidence_ids.entries()) {
+      if (evidenceId === input.managed_boundaries_evidence_id)
+        context.addIssue({
+          code: "custom",
+          path: ["native_observation_evidence_ids", index],
+          message:
+            "Native observation Evidence must be distinct from managed boundary Evidence",
+        });
+      if (ids.has(evidenceId))
+        context.addIssue({
+          code: "custom",
+          path: ["native_observation_evidence_ids", index],
+          message: "Native observation Evidence IDs must be unique",
+        });
+      ids.add(evidenceId);
+    }
+  });
+
 const comparisonOutputSchema =
   managedWorkflowOutputSchemas.compare_managed_members;
 if (comparisonOutputSchema === undefined)
@@ -62,6 +108,12 @@ const reconstructionOutputSchema =
 if (reconstructionOutputSchema === undefined)
   throw new Error(
     "Missing managed workflow output schema for import_managed_reconstruction",
+  );
+const nativeVerificationOutputSchema =
+  managedWorkflowOutputSchemas.verify_managed_native_boundaries;
+if (nativeVerificationOutputSchema === undefined)
+  throw new Error(
+    "Missing managed workflow output schema for verify_managed_native_boundaries",
   );
 
 /** Provider-neutral managed-code workflow contracts. */
@@ -82,6 +134,29 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
           right_evidence_id:
             MANAGED_MEMBER_COMPARISON_EXAMPLE.right.evidence_id,
           limits: MANAGED_MEMBER_COMPARISON_EXAMPLE.limits,
+        },
+      },
+    ],
+  },
+  {
+    name: "verify_managed_native_boundaries",
+    ...toolContractMetadata("verify_managed_native_boundaries"),
+    description:
+      "Verify managed P/Invoke/native-boundary declarations against authenticated native export or function Evidence without executing managed code or translating managed metadata tokens into native addresses. The workflow preserves declaration-only, verified, inferred, contradicted, and unresolved states.",
+    kind: "application",
+    inputSchema: managedNativeVerificationReferenceInputSchema,
+    outputSchema: nativeVerificationOutputSchema,
+    examples: [
+      {
+        title: "Verify a managed P/Invoke declaration against native Evidence",
+        input: {
+          managed_boundaries_evidence_id:
+            MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries.evidence_id,
+          native_observation_evidence_ids:
+            MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations.map(
+              ({ evidence_id: evidenceId }) => evidenceId,
+            ),
+          limits: MANAGED_NATIVE_VERIFICATION_EXAMPLE.limits,
         },
       },
     ],
@@ -131,4 +206,3 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     ],
   },
 ] as const satisfies readonly ToolContract[];
-import { z } from "zod";

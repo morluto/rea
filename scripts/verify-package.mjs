@@ -17,6 +17,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { createEvidence } from "../dist/domain/evidence.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { verifyPackagedInvestigation } from "./verify-package-investigation.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
@@ -371,6 +372,56 @@ try {
       ?.verification !== "managed-declaration-only"
   )
     throw new Error("packaged managed native-boundary CLI failed");
+  const managedNativeVerificationInput = {
+    managed_boundaries: managedBoundaries,
+    native_observations: [
+      createEvidence(
+        {
+          path: "/system/user32.dll",
+          sha256: "9".repeat(64),
+          format: "pe",
+          architecture: "x86",
+        },
+        {
+          id: "ghidra",
+          name: "Ghidra",
+          version: "12.1.2",
+        },
+        {
+          operation: "analyze_function",
+          parameters: { procedure: "MessageBoxW" },
+          result: functionDossier("MessageBoxW"),
+          rawResult: null,
+          limitations: [],
+          locations: [{ kind: "address", address: "0x401000" }],
+        },
+      ),
+    ],
+    limits: {
+      max_native_observations: 20,
+      max_candidates_per_import: 25,
+    },
+  };
+  const managedNativeVerification = json(
+    await run(
+      cli,
+      [
+        "verify-managed-native-boundaries",
+        JSON.stringify(managedNativeVerificationInput),
+        "--json",
+      ],
+      environment,
+    ),
+  );
+  if (
+    managedNativeVerification.operation !==
+      "verify_managed_native_boundaries" ||
+    managedNativeVerification.provider?.id !== "rea-dotnet-workflows" ||
+    managedNativeVerification.normalized_result?.summary?.verified !== 1 ||
+    managedNativeVerification.normalized_result?.algorithm
+      ?.token_to_address_mapping !== "not-inferred"
+  )
+    throw new Error("packaged managed/native verification CLI failed");
   const managedComparison = json(
     await run(
       cli,
@@ -528,9 +579,6 @@ try {
     JSON.stringify(referenceImport).includes("PACKAGE_SECRET_SENTINEL")
   )
     throw new Error("packaged historical reference import CLI failed");
-  const { createEvidence } = await import(
-    new URL("../dist/domain/evidence.js", import.meta.url)
-  );
   const { createEvidenceBundle, serializeEvidenceBundle } = await import(
     new URL("../dist/domain/evidenceBundle.js", import.meta.url)
   );
@@ -953,7 +1001,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });
@@ -979,6 +1027,47 @@ async function runWithStatus(command, args, env) {
 }
 function json(text) {
   return JSON.parse(text);
+}
+function functionDossier(name) {
+  const emptyPage = {
+    items: [],
+    total: 0,
+    returned: 0,
+    truncated: false,
+    next_offset: null,
+  };
+  return {
+    procedure: {
+      address: "0x401000",
+      name,
+      classification: {
+        external: false,
+        thunk: false,
+        thunk_target: null,
+        provenance: "synthetic-provider",
+      },
+      signature: null,
+      locals: [],
+    },
+    pseudocode: {
+      text: "",
+      total_chars: 0,
+      returned_chars: 0,
+      truncated: false,
+      next_offset: null,
+    },
+    assembly: emptyPage,
+    comments: emptyPage,
+    callers: emptyPage,
+    callees: emptyPage,
+    incoming_references: emptyPage,
+    outgoing_references: emptyPage,
+    referenced_strings: emptyPage,
+    referenced_names: emptyPage,
+    basic_blocks: emptyPage,
+    instruction_scan: { scanned: 0, truncated: false },
+    limitations: [],
+  };
 }
 async function pathExists(path) {
   try {
