@@ -52,6 +52,14 @@ SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
 status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
 directory are supported.
 
+If an ASAR declares an unpacked companion entry but the corresponding
+`<archive>.unpacked` file is absent from the operator-supplied artifact set, REA
+keeps the ASAR occurrence with `hash_status: unavailable`, records an explicit
+limitation, and does not create a content-addressed child artifact for those
+missing bytes. This allows static JavaScript/Electron reconstruction to proceed
+for the embedded files while preserving the missing native/resource bytes as an
+unknown instead of silently treating them as absent or verified.
+
 Selected bounded text is then parsed as inert data to recover:
 
 - `package.json` metadata and declared main or renderer entrypoints;
@@ -153,13 +161,14 @@ knowable, `omitted_count` is `null` rather than a guessed value.
 ## Verification boundary
 
 The source-owned fixture covers an extracted directory, a direct ASAR with an
-unpacked native add-on, and an ASAR nested beneath a directory. Tests also cover
-deterministic reruns, parse-not-execute behavior, source-map approval, global
-source-map limits, malformed structured data, invalid containers, traversal,
-symlink escape, oversized text, cancellation, AST truncation, and repeated
-content identities. A separate synthetic Electron fixture covers explicit safe
-and unsafe preference values, preload and contextBridge surfaces, literal,
-dynamic, paired, ambiguous, and unpaired IPC, validation candidates, utility
-processes, and native binding requests. These fixtures establish parser and
-artifact-reader claims; they do not replace the later operator-supplied
-real-application benchmark.
+unpacked native add-on, a direct ASAR whose unpacked native companion is
+missing, and an ASAR nested beneath a directory. Tests also cover deterministic
+reruns, parse-not-execute behavior, source-map approval, global source-map
+limits, malformed structured data, invalid containers, traversal, symlink
+escape, oversized text, cancellation, AST truncation, and repeated content
+identities. A separate synthetic Electron fixture covers explicit safe and
+unsafe preference values, preload and contextBridge surfaces, literal, dynamic,
+paired, ambiguous, and unpaired IPC, validation candidates, utility processes,
+and native binding requests. These fixtures establish parser and artifact-reader
+claims; they do not replace the later operator-supplied real-application
+benchmark.

@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,6 +168,49 @@ describe("JavaScript artifact reconstruction", () => {
           resolved_path: "native/addon.node",
         }),
       }),
+    );
+  });
+
+  it("keeps ASAR analysis usable when unpacked native companion bytes are absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-javascript-asar-missing-"));
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeJavaScriptArtifactFixture(source);
+    const archive = join(root, "app.asar");
+    await createPackageWithOptions(source, archive, { unpack: "**/*.node" });
+    await rm(join(`${archive}.unpacked`, "native", "addon.node"));
+
+    const snapshot = await scanArtifactInventory(archive, {
+      maxEntries: 8_000,
+      maxTotalBytes: 512 * 1024 * 1024,
+      maxEntryBytes: 128 * 1024 * 1024,
+      maxCompressionRatio: 1_000,
+      maxDepth: 64,
+      maxPathBytes: 4_096,
+    });
+    const missingNative = snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "native/addon.node",
+    );
+
+    expect(missingNative).toMatchObject({
+      artifact_id: null,
+      hash_status: "unavailable",
+      limitations: expect.arrayContaining([
+        "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.",
+      ]),
+    });
+
+    const result = await reconstructJavaScriptArtifact({
+      input_path: archive,
+      format: "asar",
+      source_map_read_approved: true,
+    });
+
+    expect(result.statistics.parsed_javascript_files).toBeGreaterThan(0);
+    expect(result.graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "javascript-asset" }),
+      ]),
     );
   });
 

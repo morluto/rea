@@ -375,6 +375,9 @@ const emptyScan = (): {
   readonly pendingContradictions: PendingIntegrityContradiction[];
 } => ({ nodes: new Map(), occurrences: [], pendingContradictions: [] });
 
+const UNAVAILABLE_UNPACKED_LIMITATION =
+  "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.";
+
 interface PendingIntegrityContradiction {
   readonly logicalPath: string;
   readonly declaredSha256: string;
@@ -497,7 +500,16 @@ const scanReader = async (
         logicalPath,
         parent?.occurrence_id ?? null,
       );
-      const digested = await digestEntry(currentReader, entry, logicalPath);
+      let digested:
+        | { readonly node: ArtifactNode; readonly mismatched: boolean }
+        | undefined;
+      try {
+        digested = await digestEntry(currentReader, entry, logicalPath);
+      } catch (cause: unknown) {
+        if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
+        occurrence.hash_status = "unavailable";
+        occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
+      }
       if (digested !== undefined) {
         nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
@@ -518,6 +530,14 @@ const scanReader = async (
   await visit(reader, "");
   return { nodes, occurrences, pendingContradictions };
 };
+
+const isUnavailableUnpackedEntry = (
+  cause: unknown,
+  entry: ArtifactEntry,
+): boolean =>
+  entry.unpacked &&
+  cause instanceof ArtifactReaderFailure &&
+  cause.reason === "unavailable";
 
 const classifyRoot = async (
   path: string,
