@@ -26,6 +26,8 @@ export const PROVIDER_REJECTION_CODES = [
   "target_kind_unsupported",
   "target_format_unsupported",
   "architecture_unsupported",
+  "target_role_unsupported",
+  "managed_target_unsupported",
   "open_options_invalid",
   "version_unresolved",
 ] as const;

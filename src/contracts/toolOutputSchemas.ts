@@ -155,6 +155,8 @@ const providerTargetSupport = z.discriminatedUnion("status", [
       "target_kind_unsupported",
       "target_format_unsupported",
       "architecture_unsupported",
+      "target_role_unsupported",
+      "managed_target_unsupported",
     ]),
     reason: z.string().min(1),
     diagnostics: providerDiagnostics,

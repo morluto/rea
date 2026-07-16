@@ -148,18 +148,20 @@ Candidate output is sorted by provider ID for determinism. Sort order is not
 selection priority. Availability and support use stable codes plus a human
 diagnostic:
 
-| Code                        | Meaning                                                        |
-| --------------------------- | -------------------------------------------------------------- |
-| `not_configured`            | Required provider location or configuration is absent          |
-| `executable_missing`        | The configured provider entry point is missing or not runnable |
-| `runtime_missing`           | A required provider runtime, such as Java, is unavailable      |
-| `unsupported_host`          | The host platform or architecture is unsupported               |
-| `unsupported_version`       | The discovered provider or runtime version is unsupported      |
-| `target_kind_unsupported`   | The provider does not accept this target kind                  |
-| `target_format_unsupported` | The provider does not accept this target format                |
-| `architecture_unsupported`  | The selected target architecture is unsupported                |
-| `open_options_invalid`      | The selected adapter rejected its open options                 |
-| `version_unresolved`        | A concrete analysis-engine version could not be committed      |
+| Code                         | Meaning                                                         |
+| ---------------------------- | --------------------------------------------------------------- |
+| `not_configured`             | Required provider location or configuration is absent           |
+| `executable_missing`         | The configured provider entry point is missing or not runnable  |
+| `runtime_missing`            | A required provider runtime, such as Java, is unavailable       |
+| `unsupported_host`           | The host platform or architecture is unsupported                |
+| `unsupported_version`        | The discovered provider or runtime version is unsupported       |
+| `target_kind_unsupported`    | The provider does not accept this target kind                   |
+| `target_format_unsupported`  | The provider does not accept this target format                 |
+| `architecture_unsupported`   | The selected target architecture is unsupported                 |
+| `target_role_unsupported`    | The provider rejects this executable image role                 |
+| `managed_target_unsupported` | The provider does not admit managed code through this deep path |
+| `open_options_invalid`       | The selected adapter rejected its open options                  |
+| `version_unresolved`         | A concrete analysis-engine version could not be committed       |
 
 Diagnostics retain useful local paths, observed versions, architectures, and
 mismatch details. Credentials, authorization headers, license secrets, and

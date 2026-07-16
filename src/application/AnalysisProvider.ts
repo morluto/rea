@@ -175,7 +175,9 @@ export type ProviderTargetSupport =
       readonly code:
         | "target_kind_unsupported"
         | "target_format_unsupported"
-        | "architecture_unsupported";
+        | "architecture_unsupported"
+        | "target_role_unsupported"
+        | "managed_target_unsupported";
       readonly reason: string;
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
