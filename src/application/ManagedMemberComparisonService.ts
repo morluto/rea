@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import {
   compareManagedMembers,
-  compareManagedMembersInputSchema,
   managedMemberComparisonResultSchema,
   parseManagedMemberEvidence,
   type CompareManagedMembersInput,
@@ -21,16 +20,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js";
 import { MANAGED_STATIC_PROVIDER } from "./InvestigationProviders.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
-
-/** Authenticate two managed member Evidence records and compare token remaps. */
-export const compareManagedMembersEvidence = (
-  rawInput: unknown,
-): Result<Evidence, AnalysisError> => {
-  const operation = "compare_managed_members";
-  const parsed = compareManagedMembersInputSchema.safeParse(rawInput);
-  if (!parsed.success) return err(new AnalysisInputError(operation));
-  return compareManagedMembersEvidenceValidated(parsed.data);
-};
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (
