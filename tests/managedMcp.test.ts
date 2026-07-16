@@ -90,6 +90,9 @@ describe("managed artifact MCP tools", () => {
         "compare_managed_members",
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
+        "import_managed_reconstruction",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
         "plan_managed_runtime_correlation",
       );
 
@@ -205,6 +208,50 @@ describe("managed artifact MCP tools", () => {
         .parse(method).items[0];
       expect(methodItem).toBeDefined();
       if (methodItem === undefined) return;
+      const imported = structured(
+        await client.callTool({
+          name: "import_managed_reconstruction",
+          arguments: {
+            static_members: members,
+            decompiler: {
+              name: "ilspycmd",
+              version: "9.1.0.7988",
+              family: "ilspy",
+              executable_sha256: null,
+              options: ["--type", "Example.Program"],
+            },
+            methods: [
+              {
+                token: methodItem.token,
+                signature_sha256: methodItem.signature.raw_sha256,
+                normalized_il_sha256: methodItem.body.normalized_il_sha256,
+                reconstruction: {
+                  kind: "decompiled-csharp",
+                  language: "csharp",
+                  text: "internal static void Main() { }",
+                },
+              },
+            ],
+            notes: ["synthetic MCP import"],
+          },
+        }),
+      );
+
+      expect(imported).toMatchObject({
+        operation: "import_managed_reconstruction",
+        provider: { id: "rea-dotnet-workflows" },
+        confidence: "inferred",
+        normalized_result: {
+          executed: false,
+          summary: { imported_methods: 1, decompiled_csharp_methods: 1 },
+          methods: [
+            {
+              token: methodItem.token,
+              validation: { canonical_observation: false },
+            },
+          ],
+        },
+      });
       const planned = structured(
         await client.callTool({
           name: "plan_managed_runtime_correlation",

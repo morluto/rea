@@ -9,6 +9,7 @@ import { inspectManagedArtifactBytes } from "../dist/dotnet/ManagedArtifactInspe
 import { inspectManagedMembersBytes } from "../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../dist/dotnet/ManagedNativeBoundaryInspector.js";
 import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComparisonService.js";
+import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
 import { createPermissionAuthority } from "../dist/application/PermissionAuthority.js";
 import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
@@ -207,6 +208,47 @@ try {
   assert.equal(runtimeAuthority.ok, true);
   const runtimeMethod = obfuscatedMembers.methods.items[0];
   assert.ok(runtimeMethod);
+  const obfuscatedMembersEvidence = createEvidence(
+    undefined,
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: { path: obfuscated.path },
+      result: obfuscatedMembers,
+      rawResult: null,
+      limitations: obfuscatedMembers.limitations,
+    },
+  );
+  const reconstructionImport = importManagedReconstructionEvidence({
+    static_members: obfuscatedMembersEvidence,
+    decompiler: {
+      name: "ilspycmd",
+      version: "9.1.0.7988",
+      family: "ilspy",
+      executable_sha256: null,
+      options: ["--type", "Fixture.ꙮType"],
+    },
+    methods: [
+      {
+        token: runtimeMethod.token,
+        signature_sha256: runtimeMethod.signature.raw_sha256,
+        normalized_il_sha256: runtimeMethod.body.normalized_il_sha256,
+        reconstruction: {
+          kind: "decompiled-csharp",
+          language: "csharp",
+          text: "internal static void λ⛧() { /* synthetic fixture */ }",
+        },
+      },
+    ],
+    notes: ["source-owned synthetic decompiler reconstruction"],
+  });
+  assert.equal(reconstructionImport.ok, true);
+  assert.equal(
+    reconstructionImport.value.normalized_result.methods[0].validation
+      .canonical_observation,
+    false,
+  );
+  assert.equal(reconstructionImport.value.confidence, "inferred");
   const runtimePlan = await planManagedRuntimeCorrelationEvidence(
     {
       policy: {
@@ -217,13 +259,7 @@ try {
       authority: runtimeAuthority.value,
     },
     {
-      static_members: createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
-        operation: "inspect_managed_members",
-        parameters: { path: obfuscated.path },
-        result: obfuscatedMembers,
-        rawResult: null,
-        limitations: obfuscatedMembers.limitations,
-      }),
+      static_members: obfuscatedMembersEvidence,
       method: {
         token: runtimeMethod.token,
         signature_sha256: runtimeMethod.signature.raw_sha256,
@@ -311,12 +347,13 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
-      verified: 8,
+      verified: 9,
       managedSurfaces: [
         "inspect_managed_artifact",
         "inspect_managed_members",
         "inspect_managed_native_boundaries",
         "compare_managed_members",
+        "import_managed_reconstruction",
         "plan_managed_runtime_correlation",
       ],
       coverage: [
@@ -324,6 +361,7 @@ try {
         "dotnet-framework-x86-pinvoke",
         "x64-ready-to-run-native-body",
         "unicode-obfuscated-identifiers",
+        "decompiler-reconstruction-import",
         "runtime-correlation-admission-plan",
         "mvid-and-token-drift",
         "not-managed",

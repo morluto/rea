@@ -37,7 +37,7 @@ describe("browser MCP tools", () => {
       const connected = await connectBrowser(browser);
 
       const tools = await connected.client.listTools();
-      expect(tools.tools).toHaveLength(88);
+      expect(tools.tools).toHaveLength(89);
       expect(tools.tools.map(({ name }) => name)).toEqual(
         expect.arrayContaining([
           "list_browser_targets",

@@ -69,7 +69,7 @@ const evidence = (result: ManagedMemberInspection) =>
 const runtimeMembers = (): ManagedMemberInspection => {
   const result = emptyManagedMembers(
     "2".repeat(64),
-    "11112222-3333-4444-5555-666677778888",
+    "11112222-3333-4444-9555-666677778888",
   );
   return {
     ...result,
@@ -131,7 +131,7 @@ export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
     emptyManagedMembers("0".repeat(64), "00112233-4455-6677-8899-aabbccddeeff"),
   ),
   right: evidence(
-    emptyManagedMembers("1".repeat(64), "ffeeddcc-bbaa-9988-7766-554433221100"),
+    emptyManagedMembers("1".repeat(64), "ffeeddcc-bbaa-4988-9766-554433221100"),
   ),
   limits: {
     max_method_matches: 100,
@@ -141,6 +141,36 @@ export const MANAGED_MEMBER_COMPARISON_EXAMPLE = {
 };
 
 const runtimeExampleEvidence = evidence(runtimeMembers());
+
+/** Minimal valid managed decompiler reconstruction import request. */
+export const MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE = {
+  static_members: runtimeExampleEvidence,
+  decompiler: {
+    name: "ilspycmd",
+    version: "9.1.0.7988",
+    family: "ilspy",
+    executable_sha256: null,
+    options: ["--disable-updatecheck", "--type", "Example.Program"],
+  },
+  methods: [
+    {
+      token: "0x06000001",
+      signature_sha256: "3".repeat(64),
+      normalized_il_sha256: "5".repeat(64),
+      reconstruction: {
+        kind: "decompiled-csharp",
+        language: "csharp",
+        text: "internal static void Main() { }",
+        source_path: "/examples/Example.Program.cs",
+        start_line: 1,
+        end_line: 1,
+      },
+    },
+  ],
+  notes: [
+    "Synthetic example only; decompiler output is imported as inference.",
+  ],
+};
 
 /** Minimal valid managed runtime-correlation planning request. */
 export const MANAGED_RUNTIME_CORRELATION_EXAMPLE = {

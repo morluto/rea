@@ -1,9 +1,11 @@
 import { compareManagedMembersInputSchema } from "../domain/managedMemberComparison.js";
+import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { ToolContract } from "./toolContracts.js";
 import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
 import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
+  MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 
@@ -18,6 +20,12 @@ const runtimeOutputSchema =
 if (runtimeOutputSchema === undefined)
   throw new Error(
     "Missing managed workflow output schema for plan_managed_runtime_correlation",
+  );
+const reconstructionOutputSchema =
+  managedWorkflowOutputSchemas.import_managed_reconstruction;
+if (reconstructionOutputSchema === undefined)
+  throw new Error(
+    "Missing managed workflow output schema for import_managed_reconstruction",
   );
 
 /** Provider-neutral managed-code workflow contracts. */
@@ -39,6 +47,26 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
       {
         title: "Compare two managed member observations",
         input: MANAGED_MEMBER_COMPARISON_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "import_managed_reconstruction",
+    description:
+      "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and normalized IL hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
+    kind: "application",
+    inputSchema: managedReconstructionImportInputSchema,
+    outputSchema: reconstructionOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    examples: [
+      {
+        title: "Import a decompiler reconstruction for one managed method",
+        input: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
       },
     ],
   },

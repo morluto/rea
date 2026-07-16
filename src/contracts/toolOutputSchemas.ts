@@ -30,6 +30,7 @@ import {
   managedNativeBoundaryInspectionSchema,
 } from "../domain/managedArtifact.js";
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
+import { managedReconstructionImportResultSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationResultSchema } from "../domain/managedRuntimeCorrelation.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
 import { functionComparisonResultSchema } from "../domain/functionComparison.js";
@@ -550,6 +551,9 @@ export const managedWorkflowOutputSchemas: Readonly<
   Record<string, z.ZodObject>
 > = {
   compare_managed_members: resultOf(managedMemberComparisonResultSchema),
+  import_managed_reconstruction: resultOf(
+    managedReconstructionImportResultSchema,
+  ),
   plan_managed_runtime_correlation: resultOf(
     managedRuntimeCorrelationResultSchema,
   ),

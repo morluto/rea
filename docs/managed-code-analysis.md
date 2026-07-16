@@ -11,10 +11,11 @@ declared ModuleRef/ImplMap/PInvoke and native implementation boundary inventory
 through `inspect_managed_native_boundaries` and
 `rea inspect-managed-native-boundaries`, plus obfuscation-resistant member
 comparison through `compare_managed_members` and `rea compare-managed-members`,
-and default-disabled runtime-correlation admission planning through
-`plan_managed_runtime_correlation` and
-`rea plan-managed-runtime-correlation`. Decompiled C#, verified native
-export/function matching, and runtime execution remain planned behavior. The current product inventory remains the one in
+decompiler reconstruction import through `import_managed_reconstruction` and
+`rea import-managed-reconstruction`, and default-disabled runtime-correlation
+admission planning through `plan_managed_runtime_correlation` and
+`rea plan-managed-runtime-correlation`. Verified native export/function
+matching and runtime execution remain planned behavior. The current product inventory remains the one in
 [`product-catalog.json`](product-catalog.json).
 
 ## Analysis objective
@@ -306,12 +307,14 @@ The managed-code track advances as reviewable pull requests:
 3. bounded metadata, signatures, method bodies, and normalized CIL (shipped);
 4. obfuscation-resistant slices and cross-version comparison (shipped for
    static member observations);
-5. managed/native composition and truthful deployment degradation (declaration
+5. decompiler reconstruction import (shipped as analyst inference; REA does
+   not run ILSpy/dnSpy, and metadata/CIL remain canonical);
+6. managed/native composition and truthful deployment degradation (declaration
    inventory shipped; verified native-provider matching remains planned);
-6. source-built managed conformance and package/CLI verification (source-owned
+7. source-built managed conformance and package/CLI verification (source-owned
    PE/CLI corpus shipped through `npm run verify:managed`; pinned external
    ILSpy/dnSpy/Windows checks remain planned); and
-7. separately authorized runtime-correlation admission planning (shipped; no
+8. separately authorized runtime-correlation admission planning (shipped; no
    runtime execution).
 
 Each implementation PR updates generated product facts only for behavior it
