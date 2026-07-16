@@ -284,7 +284,26 @@ absolute or relative to the manifest file. A compact manifest contains:
       "il_size": 0,
       "normalized_il_sha256": "<digest>"
     }
-  ]
+  ],
+  "application_graph": {
+    "expected_node_kinds": [
+      "artifact",
+      "managed-assembly",
+      "managed-module",
+      "managed-type",
+      "managed-method"
+    ],
+    "feature_traces": [
+      {
+        "label": "operator-local feature label",
+        "method_token": "0x06000000",
+        "seed": "<method name, API name, string, or digest to trace>",
+        "match": "exact",
+        "case_sensitive": true,
+        "min_matched_seeds": 1
+      }
+    ]
+  }
 }
 ```
 
@@ -295,12 +314,21 @@ directly by row, so selected methods do not need to appear in the first member
 page of a large application. `il_length` remains accepted as a legacy alias for
 `il_size`.
 
+The optional `application_graph` block reuses those exact-build method
+commitments. For each referenced MethodDef token, the verifier builds a bounded
+managed application-graph projection from the authenticated artifact and the
+single selected member page, then checks requested node kinds and feature-trace
+seed matches. This proves only that the selected static facts enter REA's graph
+and tracing vocabulary for that exact local build; it does not execute the
+application, inspect arbitrary unlisted methods, or infer runtime behavior.
+
 Output contains assertion status and compact identities only: file name,
 target SHA-256, MVID, assembly name, runtime-family, managed architecture,
-method tokens, method names, signature digests, IL sizes, and normalized IL
-digests. It does not print method bodies, reconstructed C#, application data,
-runtime telemetry, account/service details, full filesystem inventories, or
-the target's absolute path. The manifest and target remain outside git.
+method tokens, method names, signature digests, IL sizes, normalized IL
+digests, graph Evidence IDs, node-kind summaries, and trace seed hit counts. It
+does not print method bodies, reconstructed C#, application data, runtime
+telemetry, account/service details, full filesystem inventories, or the
+target's absolute path. The manifest and target remain outside git.
 
 The benchmark may prove that REA reproduces selected facts for that exact local
 build. It cannot establish general support on its own; source-built conformance
