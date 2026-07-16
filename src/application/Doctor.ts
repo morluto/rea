@@ -77,8 +77,16 @@ export interface DoctorHost {
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
   installationPaths?(): Promise<readonly string[]>;
   installedSkillVersion?(): Promise<string | undefined>;
+  installedSkillIdentity?(): Promise<InstalledSkillIdentity | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   javascriptReplayCheck?(): Promise<DoctorCheck>;
+}
+
+/** Parsed identity committed by an installed REA skill. */
+interface InstalledSkillIdentity {
+  readonly version: string | null;
+  readonly toolCount: number | null;
+  readonly catalogDigest: string | null;
 }
 
 /**
@@ -109,7 +117,9 @@ export const runDoctor = async (
     };
     readonly skill: {
       readonly installed_version: string | null;
-      readonly state: "aligned" | "stale" | "unknown";
+      readonly installed_tool_count: number | null;
+      readonly installed_catalog_digest: string | null;
+      readonly state: "aligned" | "stale" | "missing";
       readonly remediation: string | null;
     };
     readonly registrations: readonly ClientRegistrationStatus[];
@@ -216,7 +226,37 @@ export const runDoctor = async (
       }),
     );
   const installationPaths = (await host.installationPaths?.()) ?? [];
-  const installedSkillVersion = await host.installedSkillVersion?.();
+  const observedSkillIdentity = await host.installedSkillIdentity?.();
+  const legacySkillVersion =
+    observedSkillIdentity === undefined
+      ? await host.installedSkillVersion?.()
+      : undefined;
+  const installedSkillIdentity =
+    observedSkillIdentity ??
+    (legacySkillVersion === undefined
+      ? undefined
+      : {
+          version: legacySkillVersion,
+          toolCount: null,
+          catalogDigest: null,
+        });
+  const installedSkillVersion = installedSkillIdentity?.version ?? undefined;
+  const skillAligned =
+    installedSkillIdentity?.version === PRODUCT_IDENTITY.skillVersion &&
+    installedSkillIdentity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
+    installedSkillIdentity.catalogDigest ===
+      CATALOG_IDENTITY.digests.combined_sha256;
+  if (!skillAligned)
+    checks.push({
+      name: "skill:identity",
+      ok: false,
+      classification: "config_drift",
+      detail:
+        installedSkillIdentity === undefined
+          ? "Installed REA skill identity is missing."
+          : "Installed REA skill identity is stale.",
+      remediation: "Run rea setup to update the installed REA skill.",
+    });
   const registrations = (await host.clientRegistrations?.()) ?? [];
   for (const registration of registrations)
     if (registration.state !== "aligned")
@@ -263,17 +303,17 @@ export const runDoctor = async (
       },
       skill: {
         installed_version: installedSkillVersion ?? null,
+        installed_tool_count: installedSkillIdentity?.toolCount ?? null,
+        installed_catalog_digest: installedSkillIdentity?.catalogDigest ?? null,
         state:
-          installedSkillVersion === undefined
-            ? "unknown"
-            : installedSkillVersion === PRODUCT_IDENTITY.skillVersion
+          installedSkillIdentity === undefined
+            ? "missing"
+            : skillAligned
               ? "aligned"
               : "stale",
-        remediation:
-          installedSkillVersion === undefined ||
-          installedSkillVersion === PRODUCT_IDENTITY.skillVersion
-            ? null
-            : "Run rea setup to update the installed REA skill.",
+        remediation: skillAligned
+          ? null
+          : "Run rea setup to update the installed REA skill.",
       },
       registrations,
     },
@@ -403,6 +443,33 @@ export const systemDoctorHost = (
         "utf8",
       );
       return /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1];
+    } catch {
+      return undefined;
+    }
+  },
+  async installedSkillIdentity() {
+    try {
+      const content = await readFile(
+        join(
+          homedir(),
+          ".agents/skills",
+          PRODUCT_IDENTITY.skillName,
+          "SKILL.md",
+        ),
+        "utf8",
+      );
+      const version =
+        /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null;
+      const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
+      const catalogDigest =
+        /^\s{2}catalog_digest:\s*"([a-f0-9]{64})"\s*$/mu.exec(content)?.[1] ??
+        null;
+      return {
+        version,
+        toolCount:
+          countText === undefined ? null : Number.parseInt(countText, 10),
+        catalogDigest,
+      };
     } catch {
       return undefined;
     }

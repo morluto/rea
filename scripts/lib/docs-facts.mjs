@@ -10,26 +10,20 @@ const README_PATHS = [
 ];
 const familyLabel = (id) => (id === "electron" ? "Electron" : id);
 
-const tableCounts = (content, path, total) => {
+const tableCounts = (content, path, expectedCounts) => {
   const lines = content.split(/\r?\n/u);
-  const headingIndex = lines.findIndex(
-    (line) => line.startsWith("## ") && line.includes(String(total)),
-  );
-  if (headingIndex === -1) {
-    throw new Error(`Missing ${total}-tool heading in ${path}`);
-  }
-  const counts = [];
-  for (const line of lines.slice(headingIndex + 1)) {
-    if (line.startsWith("## ")) break;
-    if (!line.trim().startsWith("|") || /^\|\s*-/u.test(line)) continue;
-    const count = Number(line.split("|")[2]?.trim());
-    if (!Number.isInteger(count)) {
-      if (counts.length === 0) continue;
-      throw new Error(`Non-numeric tool count in ${path}`);
+  for (const [index, line] of lines.entries()) {
+    if (!/^\|\s*-/u.test(line)) continue;
+    const counts = [];
+    for (const row of lines.slice(index + 1)) {
+      if (!row.trim().startsWith("|")) break;
+      const count = Number(row.split("|")[2]?.trim());
+      if (!Number.isInteger(count)) break;
+      counts.push(count);
     }
-    counts.push(count);
+    if (counts.length === expectedCounts.length) return counts;
   }
-  return counts;
+  throw new Error(`Missing tool-family inventory table in ${path}`);
 };
 
 const requireText = (issues, path, content, expected) => {
@@ -42,16 +36,11 @@ export const documentationFactIssues = async (root, catalog) => {
   const expectedCounts = catalog.tools.families.map(({ count }) => count);
   for (const path of README_PATHS) {
     const content = await readFile(join(root, path), "utf8");
-    requireText(
-      issues,
-      path,
-      content,
-      `MCP_tools-${String(catalog.tools.total)}`,
-    );
+    requireText(issues, path, content, "MCP-tool_catalog");
     for (const client of catalog.setup_clients)
       requireText(issues, path, content, client.display_name);
     try {
-      const actualCounts = tableCounts(content, path, catalog.tools.total);
+      const actualCounts = tableCounts(content, path, expectedCounts);
       if (JSON.stringify(actualCounts) !== JSON.stringify(expectedCounts))
         issues.push(
           `${path}: tool family counts ${JSON.stringify(actualCounts)} do not match ${JSON.stringify(expectedCounts)}`,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runDoctor, type DoctorHost } from "../src/application/Doctor.js";
+import { CATALOG_IDENTITY } from "../src/catalogIdentity.js";
+import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   platform: "darwin",
@@ -12,6 +14,12 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   linuxDemoRuntimeReady: () => Promise.resolve(true),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
+  installedSkillIdentity: () =>
+    Promise.resolve({
+      version: PRODUCT_IDENTITY.skillVersion,
+      toolCount: CATALOG_IDENTITY.counts.mcp_tools,
+      catalogDigest: CATALOG_IDENTITY.digests.combined_sha256,
+    }),
   ...overrides,
 });
 
@@ -85,7 +93,12 @@ describe("doctor", () => {
       host({
         installationPaths: () =>
           Promise.resolve(["/usr/local/bin/rea", "/home/user/bin/rea"]),
-        installedSkillVersion: () => Promise.resolve("10"),
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: "10",
+            toolCount: null,
+            catalogDigest: null,
+          }),
       }),
     );
 
@@ -97,6 +110,25 @@ describe("doctor", () => {
         state: "stale",
         remediation: "Run rea setup to update the installed REA skill.",
       },
+    });
+  });
+  it("reports a missing installed skill as unhealthy", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({ installedSkillIdentity: () => Promise.resolve(undefined) }),
+    );
+
+    expect(result.healthy).toBe(false);
+    expect(result.identity?.skill).toMatchObject({
+      state: "missing",
+      remediation: "Run rea setup to update the installed REA skill.",
+    });
+    expect(result.checks).toContainEqual({
+      name: "skill:identity",
+      ok: false,
+      classification: "config_drift",
+      detail: "Installed REA skill identity is missing.",
+      remediation: "Run rea setup to update the installed REA skill.",
     });
   });
   it("reports stale client registration paths without claiming live state", async () => {

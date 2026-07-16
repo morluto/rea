@@ -10,11 +10,11 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![89 MCP tools](https://img.shields.io/badge/MCP_tools-89-5c4ee5?style=flat-square)](#89-ツールのワークベンチ)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](#調査ツールカタログ)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 
-[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [89 ツール](#89-ツールのワークベンチ) · [仕組み](#仕組み) · [FAQ](#faq)
+[クイックスタート](#クイックスタート) · [バイナリから動作へ](#バイナリから動作へ) · [ツールカタログ](#調査ツールカタログ) · [仕組み](#仕組み) · [FAQ](#faq)
 
 <br />
 
@@ -147,7 +147,7 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 - Swift / Objective-C のメタデータを解析する。
 - Hopper に名前、コメント、ブックマークを残し、人間とエージェントの調査を共有する。
 
-## 89 ツールのワークベンチ
+## 調査ツールカタログ
 
 | ツール群               |  数 | 例                                                                                                                                                                      |
 | ---------------------- | --: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
