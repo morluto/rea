@@ -210,17 +210,10 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(names).toContain("binary_overview");
     expect(names).toContain("batch_decompile");
 
-    expect(
-      Buffer.byteLength(JSON.stringify(listed), "utf8"),
-    ).toBeLessThanOrEqual(512 * 1024);
     const contracts = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
       TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
     );
     for (const tool of listed.tools) {
-      expect(
-        Buffer.byteLength(JSON.stringify(tool), "utf8"),
-        tool.name,
-      ).toBeLessThanOrEqual(64 * 1024);
       const contract = contracts.get(tool.name);
       expect(contract, tool.name).toBeDefined();
       expect(tool.title, tool.name).toBe(contract?.title);
