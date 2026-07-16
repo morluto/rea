@@ -30,12 +30,13 @@ const inspection = (
   options: {
     readonly installDir?: string;
     readonly architecture?: NodeJS.Architecture;
+    readonly platform?: NodeJS.Platform;
   } = { installDir: INSTALL },
   overrides: Partial<GhidraInstallationHost> = {},
 ): GhidraInstallationInspection =>
   inspectGhidraInstallation(
     {
-      platform: "linux",
+      platform: options.platform ?? "linux",
       architecture: options.architecture ?? "x64",
       ...(options.installDir === undefined
         ? {}
@@ -49,6 +50,7 @@ const doctorHost = (
   hopperAvailable = false,
 ): DoctorHost => ({
   platform: "linux",
+  architecture: "x64",
   nodeVersion: "24.18.0",
   macosVersion: () => Promise.resolve(undefined),
   linuxDistribution: () =>
@@ -95,6 +97,28 @@ describe("Ghidra doctor integration", () => {
     ).toMatchObject({
       ok: true,
       detail: expect.stringContaining("21.0.11"),
+    });
+  });
+
+  it("accepts the experimental Windows x64 Ghidra provider boundary", async () => {
+    const ghidra = inspection({
+      installDir: "C:\\tools\\ghidra_12.1.2_PUBLIC",
+      platform: "win32",
+    });
+    const result = await runDoctor(undefined, {
+      ...doctorHost(ghidra),
+      platform: "win32",
+      architecture: "x64",
+      linuxDistribution: () => Promise.resolve(undefined),
+    });
+
+    expect(result.healthy).toBe(true);
+    expect(result.checks.find(({ name }) => name === "host")).toMatchObject({
+      ok: true,
+      detail: "win32 x64",
+    });
+    expect(result.checks.find(({ name }) => name === "ghidra")).toMatchObject({
+      ok: true,
     });
   });
 
