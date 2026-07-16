@@ -28,6 +28,8 @@ const PROVIDER_VERSION = "12.1.2";
 const TARGET_SHA256 = createHash("sha256")
   .update(readFileSync(fixturePath))
   .digest("hex");
+const HOST_TRANSPORT: GhidraTransportKind =
+  process.platform === "win32" ? "authenticated-loopback-tcp" : "unix-socket";
 
 type FixtureMode =
   | "success"
@@ -99,9 +101,7 @@ const clientFor = (
     launcher,
     targetPath: fixturePath,
     targetSha256: TARGET_SHA256,
-    ...(options.transport === undefined
-      ? {}
-      : { transport: options.transport }),
+    transport: options.transport ?? HOST_TRANSPORT,
     providerVersion: PROVIDER_VERSION,
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
@@ -138,9 +138,11 @@ describe("GhidraClient", () => {
         },
       },
     });
-    expect(Buffer.byteLength(launcher.endpointPaths[0] ?? "")).toBeLessThan(
-      108,
-    );
+    if (HOST_TRANSPORT === "unix-socket")
+      expect(Buffer.byteLength(launcher.endpointPaths[0] ?? "")).toBeLessThan(
+        108,
+      );
+    else expect(launcher.endpointPaths[0]).toMatch(/bridge-endpoint\.json$/u);
   });
 
   it("completes the same authenticated handshake over loopback TCP", async () => {
@@ -393,7 +395,7 @@ describe("GhidraClient", () => {
 
     expect(client.diagnostics()).toMatchObject({
       runtime_root: launcher.runtimeRoots[0],
-      transport: "unix-socket",
+      transport: HOST_TRANSPORT,
       endpoint_path: launcher.endpointPaths[0],
       project_root: join(launcher.runtimeRoots[0] ?? "", "project"),
       process_id: expect.any(Number),
@@ -414,7 +416,7 @@ describe("GhidraClient", () => {
     if (result.ok) return;
 
     const encoded = JSON.stringify(result.error.diagnostics);
-    expect(encoded).toContain(fixturePath);
+    expect(result.error.diagnostics.target_path).toBe(fixturePath);
     expect(encoded).toContain(PROFILE_DIGEST);
     expect(encoded).not.toContain(launcher.tokens[0] ?? "missing-token");
     expect(events).toContainEqual(
