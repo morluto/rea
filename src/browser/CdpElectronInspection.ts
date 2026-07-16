@@ -8,12 +8,10 @@ import type {
   InspectElectronPageInput,
 } from "../domain/electronObservation.js";
 import { BrowserObservationError } from "../domain/errors.js";
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
-  boundedText,
   delayWithCancellation,
   numberValue,
   recordValue,
@@ -22,6 +20,12 @@ import {
   stringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import {
+  ingestElectronScriptEvent,
+  type ElectronScriptDraft,
+} from "./CdpElectronScriptEvents.js";
+import { captureElectronScripts } from "./CdpElectronScripts.js";
+import { captureElectronWorkers } from "./CdpElectronWorkers.js";
 import {
   authorizedElectronFile,
   canonicalElectronRoots,
@@ -37,122 +41,197 @@ interface ElectronContext {
   readonly progress?: ProgressReporter;
 }
 
-interface ScriptDraft {
-  readonly scriptId: string;
-  readonly rawUrl: string;
-  readonly hash: string;
-  readonly length: number;
-  readonly isModule: boolean;
-  readonly language: string | null;
+interface ElectronInspectionState {
+  readonly roots: readonly string[];
+  readonly completeness: CdpCaptureCompleteness;
+  readonly scripts: ElectronScriptDraft[];
+  readonly executionContextFrames: Map<string, string>;
+  readonly limitations: string[];
+  mainFrameId: string | undefined;
+  navigationDuringCapture: boolean;
 }
 
 /** Passively inspect one root-confined Electron file page. */
 export const inspectCdpElectronPage = async (
   context: ElectronContext,
 ): Promise<ElectronPageInspection> => {
-  const roots = await canonicalElectronRoots(context.input.allowed_file_roots);
-  const completeness = new CdpCaptureCompleteness();
-  const scripts: ScriptDraft[] = [];
-  let mainFrameId: string | undefined;
-  let navigationDuringCapture = false;
+  const state: ElectronInspectionState = {
+    roots: await canonicalElectronRoots(context.input.allowed_file_roots),
+    completeness: new CdpCaptureCompleteness(),
+    scripts: [],
+    executionContextFrames: new Map(),
+    limitations: [
+      "Only canonical file paths contained by an approved root are retained.",
+      "REA does not evaluate renderer JavaScript, invoke Electron APIs, navigate, click, or close the page.",
+      "Script contents require separate source-capture approval and remain byte bounded.",
+    ],
+    mainFrameId: undefined,
+    navigationDuringCapture: false,
+  };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
-    ingestScript(event, scripts, completeness);
-    if (mainFrameId !== undefined && navigatedFrameId(event) === mainFrameId)
-      navigationDuringCapture = true;
+    ingestElectronScriptEvent({
+      event,
+      scripts: state.scripts,
+      executionContextFrames: state.executionContextFrames,
+      completeness: state.completeness,
+    });
+    if (
+      state.mainFrameId !== undefined &&
+      navigatedFrameId(event) === state.mainFrameId
+    )
+      state.navigationDuringCapture = true;
   });
-  const startedAt = new Date().toISOString();
   try {
-    await report(context.progress, 1, "Authorizing Electron file frames");
-    await context.connection.send(
-      "Page.enable",
-      {},
-      context.sessionId,
-      context.signal,
-    );
-    const before = await context.connection.send(
-      "Page.getFrameTree",
-      {},
-      context.sessionId,
-      context.signal,
-    );
-    const frames = await captureFrames(
-      before,
-      roots,
-      context.input.limits.max_frames,
-      completeness,
-    );
-    const main = frames[0];
-    if (main === undefined)
-      throw new BrowserObservationError(
-        "inspect_web_page",
-        "target_not_allowed",
-      );
-    mainFrameId = main.frame_id;
-    await context.connection.send(
-      "Debugger.enable",
-      { maxScriptsCacheSize: 4 * 1_024 * 1_024 },
-      context.sessionId,
-      context.signal,
-    );
-    await delayWithCancellation(
-      context.input.observation_ms,
-      "inspect_electron_page",
-      context.signal,
-    );
-    await report(context.progress, 2, "Capturing Electron structure");
-    const resources = await captureResources(context, roots, completeness);
-    const dom = await captureDom(context, roots, completeness);
-    const normalizedScripts = await captureScripts(
+    return await runElectronInspection(
       context,
-      roots,
-      scripts,
-      completeness,
+      state,
+      new Date().toISOString(),
     );
-    const after = await context.connection.send(
-      "Page.getFrameTree",
-      {},
-      context.sessionId,
-      context.signal,
-    );
-    const afterMain = await mainFilePath(after, roots);
-    if (afterMain === undefined)
-      throw new BrowserObservationError(
-        "inspect_web_page",
-        "target_not_allowed",
-      );
-    if (navigationDuringCapture || afterMain !== main.file_path)
-      throw new BrowserObservationError("inspect_web_page", "target_changed");
-    await report(context.progress, 3, "Electron inspection complete");
-    return {
-      schema_version: 1,
-      browser: context.discovery.version,
-      target: {
-        target_id: context.target.id,
-        type: context.target.type,
-        title: context.target.title.slice(0, 16_384),
-        file_path: main.file_path,
-        attached: context.target.attached,
-      },
-      capture_window: {
-        started_at: startedAt,
-        ended_at: new Date().toISOString(),
-        observation_ms: context.input.observation_ms,
-      },
-      completeness: completeness.snapshot(),
-      frames,
-      dom,
-      scripts: normalizedScripts,
-      resources,
-      limitations: [
-        "Only canonical file paths contained by an approved root are retained.",
-        "REA does not evaluate renderer JavaScript, invoke Electron APIs, navigate, click, or close the page.",
-        "Script contents require separate source-capture approval and remain byte bounded.",
-      ],
-    };
   } finally {
     removeListener();
   }
+};
+
+const runElectronInspection = async (
+  context: ElectronContext,
+  state: ElectronInspectionState,
+  startedAt: string,
+): Promise<ElectronPageInspection> => {
+  const frames = await authorizeInitialFrames(context, state);
+  const main = frames[0]!;
+  state.mainFrameId = main.frame_id;
+  await enableElectronCapture(context);
+  await delayWithCancellation(
+    context.input.observation_ms,
+    "inspect_electron_page",
+    context.signal,
+  );
+  const captured = await captureElectronContent(context, state, frames);
+  await assertStableMainFrame(context, state, main.file_path);
+  await report(context.progress, 3, "Electron inspection complete");
+  return {
+    schema_version: 1,
+    browser: context.discovery.version,
+    target: {
+      target_id: context.target.id,
+      type: context.target.type,
+      title: context.target.title.slice(0, 16_384),
+      file_path: main.file_path,
+      attached: context.target.attached,
+    },
+    capture_window: {
+      started_at: startedAt,
+      ended_at: new Date().toISOString(),
+      observation_ms: context.input.observation_ms,
+    },
+    completeness: state.completeness.snapshot(),
+    frames,
+    ...captured,
+    limitations: state.limitations,
+  };
+};
+
+const authorizeInitialFrames = async (
+  context: ElectronContext,
+  state: ElectronInspectionState,
+): Promise<ElectronPageInspection["frames"]> => {
+  await report(context.progress, 1, "Authorizing Electron file frames");
+  await context.connection.send(
+    "Page.enable",
+    {},
+    context.sessionId,
+    context.signal,
+  );
+  const result = await context.connection.send(
+    "Page.getFrameTree",
+    {},
+    context.sessionId,
+    context.signal,
+  );
+  const frames = await captureFrames(
+    result,
+    state.roots,
+    context.input.limits.max_frames,
+    state.completeness,
+  );
+  if (frames[0] === undefined)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  return frames;
+};
+
+const enableElectronCapture = async (
+  context: ElectronContext,
+): Promise<void> => {
+  await context.connection.send(
+    "Runtime.enable",
+    {},
+    context.sessionId,
+    context.signal,
+  );
+  await context.connection.send(
+    "Debugger.enable",
+    { maxScriptsCacheSize: 4 * 1_024 * 1_024 },
+    context.sessionId,
+    context.signal,
+  );
+};
+
+const captureElectronContent = async (
+  context: ElectronContext,
+  state: ElectronInspectionState,
+  frames: ElectronPageInspection["frames"],
+): Promise<
+  Pick<ElectronPageInspection, "dom" | "scripts" | "resources" | "workers">
+> => {
+  await report(context.progress, 2, "Capturing Electron structure");
+  const frameIds = new Set(frames.map((frame) => frame.frame_id));
+  const resources = await captureResources(
+    context,
+    state.roots,
+    state.completeness,
+  );
+  const dom = await captureDom(context, state.roots, state.completeness);
+  const scripts = await captureElectronScripts({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+    request: context.input,
+    roots: state.roots,
+    scripts: state.scripts,
+    executionContextFrames: state.executionContextFrames,
+    frameIds,
+    completeness: state.completeness,
+  });
+  const workers = await captureElectronWorkers({
+    connection: context.connection,
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+    target: context.target,
+    request: context.input,
+    roots: state.roots,
+    frameIds,
+    completeness: state.completeness,
+    limitations: state.limitations,
+  });
+  return { dom, scripts, resources, workers };
+};
+
+const assertStableMainFrame = async (
+  context: ElectronContext,
+  state: ElectronInspectionState,
+  expectedPath: string,
+): Promise<void> => {
+  const result = await context.connection.send(
+    "Page.getFrameTree",
+    {},
+    context.sessionId,
+    context.signal,
+  );
+  const afterPath = await mainFilePath(result, state.roots);
+  if (afterPath === undefined)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (state.navigationDuringCapture || afterPath !== expectedPath)
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
 };
 
 const navigatedFrameId = (event: CdpEvent): string | undefined => {
@@ -163,37 +242,6 @@ const navigatedFrameId = (event: CdpEvent): string | undefined => {
   if (event.method === "Page.navigatedWithinDocument")
     return stringValue(params.frameId);
   return undefined;
-};
-
-const ingestScript = (
-  event: CdpEvent,
-  scripts: ScriptDraft[],
-  completeness: CdpCaptureCompleteness,
-): void => {
-  if (event.method !== "Debugger.scriptParsed") return;
-  const value = recordValue(event.params);
-  const scriptId = stringValue(value?.scriptId);
-  const rawUrl = stringValue(value?.url);
-  if (scriptId === undefined || scriptId.length > 256) {
-    completeness.exclude("scripts", "invalid_protocol_value");
-    return;
-  }
-  if (rawUrl === undefined || rawUrl === "") {
-    completeness.exclude("scripts", "unattributed_origin");
-    return;
-  }
-  if (scripts.length >= 2_000) {
-    completeness.drop("scripts");
-    return;
-  }
-  scripts.push({
-    scriptId,
-    rawUrl,
-    hash: (stringValue(value?.hash) ?? "").slice(0, 512),
-    length: nonnegativeInteger(value?.length),
-    isModule: value?.isModule === true,
-    language: boundedText(value?.scriptLanguage, 100),
-  });
 };
 
 const captureFrames = async (
@@ -350,98 +398,6 @@ const captureDom = async (
   return { total_nodes: total, nodes };
 };
 
-const captureScripts = async (
-  context: ElectronContext,
-  roots: readonly string[],
-  scripts: readonly ScriptDraft[],
-  completeness: CdpCaptureCompleteness,
-): Promise<ElectronPageInspection["scripts"]> => {
-  let total = 0;
-  let sourceBytes = 0;
-  const items: ElectronPageInspection["scripts"]["items"] = [];
-  const seen = new Set<string>();
-  for (const script of scripts) {
-    const path = await authorizedElectronFile(script.rawUrl, roots);
-    if (path === undefined) {
-      completeness.exclude("scripts", "out_of_target_scope");
-      continue;
-    }
-    const identity = {
-      file_path: path,
-      cdp_hash: script.hash,
-      length: script.length,
-      is_module: script.isModule,
-      language: script.language,
-    };
-    const scriptKey = `electron_script_${digest(identity)}`;
-    if (seen.has(scriptKey)) continue;
-    seen.add(scriptKey);
-    total += 1;
-    if (items.length >= context.input.limits.max_scripts) {
-      completeness.drop("scripts");
-      continue;
-    }
-    let source: ElectronPageInspection["scripts"]["items"][number]["source"] = {
-      included: false,
-      reason: "source capture was not approved",
-    };
-    if (context.input.include_script_sources) {
-      if (
-        script.length > context.input.limits.max_script_source_bytes ||
-        sourceBytes + script.length >
-          context.input.limits.max_total_script_source_bytes
-      ) {
-        source = {
-          included: false,
-          reason: "script source byte limit reached",
-        };
-        completeness.truncate("script_sources");
-      } else {
-        const result = requiredRecord(
-          await context.connection.send(
-            "Debugger.getScriptSource",
-            { scriptId: script.scriptId },
-            context.sessionId,
-            context.signal,
-          ),
-        );
-        const text = stringValue(result.scriptSource) ?? "";
-        const bytes = Buffer.byteLength(text);
-        if (
-          bytes > context.input.limits.max_script_source_bytes ||
-          sourceBytes + bytes >
-            context.input.limits.max_total_script_source_bytes
-        ) {
-          source = {
-            included: false,
-            reason: "script source byte limit reached",
-          };
-          completeness.truncate("script_sources");
-        } else {
-          source = {
-            included: true,
-            artifact: createWebTextArtifact(text, "text/javascript"),
-          };
-          sourceBytes += bytes;
-        }
-      }
-    }
-    items.push({
-      script_key: scriptKey,
-      ...identity,
-      source,
-    });
-  }
-  if (!context.input.include_script_sources)
-    completeness.exclude("script_sources", "not_approved", total);
-  return {
-    total,
-    items: items.sort((left, right) =>
-      left.script_key.localeCompare(right.script_key),
-    ),
-  };
-};
-
 const mainFilePath = async (
   result: unknown,
   roots: readonly string[],
@@ -461,9 +417,6 @@ const integer = (value: unknown, fallback: number): number => {
   const number = numberValue(value);
   return number === undefined ? fallback : Math.trunc(number);
 };
-
-const nonnegativeInteger = (value: unknown): number =>
-  Math.max(0, integer(value, 0));
 
 const digest = (value: unknown): string => {
   const encoded = canonicalize(value);

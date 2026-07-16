@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { listBrowserTargets } from "../src/application/BrowserObservationService.js";
 import { createPermissionAuthority } from "../src/application/PermissionAuthority.js";
+import { CdpCaptureCompleteness } from "../src/browser/CdpCaptureCompleteness.js";
+import { CdpCaptureEvents } from "../src/browser/CdpCaptureEvents.js";
+import { ingestElectronScriptEvent } from "../src/browser/CdpElectronScriptEvents.js";
 import {
   browserEndpointSchema,
   browserOriginSchema,
@@ -186,6 +189,58 @@ describe("browser observation contracts", () => {
         screenshot_approved: true,
       }).success,
     ).toBe(true);
+  });
+
+  it("removes stale frame attribution when CDP destroys execution contexts", () => {
+    const request = inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: ["https://app.example.test"],
+      target_id: "page-1",
+      approved: true,
+    });
+    const browser = new CdpCaptureEvents(
+      request,
+      new Set(["https://app.example.test"]),
+    );
+    browser.beginAuthorizedFrame("frame-old");
+    browser.ingest({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
+    });
+    browser.ingest({
+      method: "Runtime.executionContextDestroyed",
+      params: { executionContextId: 7 },
+    });
+    browser.ingest({
+      method: "Debugger.scriptParsed",
+      params: {
+        scriptId: "script-1",
+        url: "https://app.example.test/app.js",
+        executionContextId: 7,
+      },
+    });
+    const script = browser.scripts.get("script-1");
+    if (script === undefined) throw new TypeError("Expected captured script");
+    expect(browser.frameForScript(script, new Set(["frame-old"]))).toBeNull();
+
+    const electronFrames = new Map<string, string>();
+    const completeness = new CdpCaptureCompleteness();
+    ingestElectronScriptEvent({
+      event: {
+        method: "Runtime.executionContextCreated",
+        params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
+      },
+      scripts: [],
+      executionContextFrames: electronFrames,
+      completeness,
+    });
+    ingestElectronScriptEvent({
+      event: { method: "Runtime.executionContextsCleared", params: {} },
+      scripts: [],
+      executionContextFrames: electronFrames,
+      completeness,
+    });
+    expect(electronFrames.size).toBe(0);
   });
 
   it("removes credentials, query values, and fragments from observed URLs", () => {

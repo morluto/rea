@@ -275,6 +275,7 @@ describe("CdpBrowserProvider", () => {
     expect(result.value.scripts.items[0]?.script_key).toMatch(
       /^scr_[a-f0-9]{64}$/u,
     );
+    expect(result.value.scripts.items[0]?.frame_id).toBe("frame-main");
     expect(result.value.scripts.items[0]?.source_map_url).toBe(
       `${browser.allowedOrigin}/app.js.map?token=%5BREDACTED%5D`,
     );
@@ -312,6 +313,10 @@ describe("CdpBrowserProvider", () => {
     ]);
     expect(result.value.console.events[0]?.argument_types).toEqual(["string"]);
     expect(result.value.workers).toHaveLength(1);
+    expect(result.value.workers[0]).toMatchObject({
+      opener_target_id: "allowed-page",
+      parent_frame_id: null,
+    });
     expect(result.value.metadata).toMatchObject({
       headers_allowlisted: true,
       responses: [

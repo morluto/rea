@@ -1,9 +1,9 @@
 ---
 name: rea-analysis
-description: Reverse engineer apps and websites with REA. Explore how features work, then build a version tailored to your project.
+description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
 metadata:
-  version: "15"
-  tool_count: 79
+  version: "16"
+  tool_count: 80
 ---
 
 # REA
@@ -46,6 +46,19 @@ literal IPC channel match as an inferred pairing; keep dynamic and ambiguous
 channels unresolved. A requested `.node` member is not a verified binary export.
 Never claim that this workflow executed application code or observed runtime
 registration, reachability, defaults, or policy enforcement.
+
+When static application Evidence and passive `inspect_web_page` or
+`inspect_electron_page` Evidence already exist, use
+`reconcile_javascript_runtime` to map capture-scoped targets, frames, scripts,
+and workers onto the static graph. Supply exactly one `application` layer and
+add separately analyzed `cache` or `assets` layers only when relevant. Use
+explicit file-root or URL-prefix mappings for relocated runtime paths; mappings
+are inference inputs and never broaden CDP or filesystem authority. Prefer
+approved captured-source digest identity, report path/digest disagreement as a
+mismatch, preserve ambiguity, and never call a module executed merely because
+its containing bundle was observed. Keep source-map authority separate. This
+tool maps JavaScript graph entities; `correlate_static_and_runtime` remains the
+separate workflow for explicit cross-version comparison hypotheses.
 
 ## Understand the request
 

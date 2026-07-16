@@ -1,3 +1,5 @@
+import { readFile, stat } from "node:fs/promises";
+
 import { Cli, z } from "incur";
 
 import {
@@ -5,6 +7,7 @@ import {
   listElectronTargets,
 } from "./application/ElectronObservationService.js";
 import { analyzeJavaScriptApplication } from "./application/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "./application/JavaScriptRuntimeReconciliationService.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -18,6 +21,8 @@ import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
+
+const MAX_RECONCILIATION_INPUT_BYTES = 64 * 1_024 * 1_024;
 
 const scopeOptions = {
   allowedFileRoots: z
@@ -34,6 +39,35 @@ export const registerElectronCommands = (
 ): void => {
   registerElectronObservationCommands(cli, logger);
   registerJavaScriptApplicationCommand(cli, logger);
+  registerJavaScriptRuntimeReconciliationCommand(cli, logger);
+};
+
+const registerJavaScriptRuntimeReconciliationCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.reconcileJavaScriptRuntime, {
+    description:
+      "Reconcile static application and passive runtime Evidence JSON",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe(
+          "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
+        ),
+    }),
+    run: ({ args }) =>
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.reconcileJavaScriptRuntime,
+        async () => {
+          const input = await parseJsonInput(args.inputJson);
+          if (!input.ok) return input.error;
+          const result = reconcileJavaScriptRuntimeEvidence(input.value);
+          return result.ok ? result.value : cliError(result.error);
+        },
+      ),
+  });
 };
 
 const registerElectronObservationCommands = (
@@ -81,6 +115,7 @@ const registerElectronObservationCommands = (
       maxDomNodes: z.number().int().min(1).max(10_000).default(2_000),
       maxScripts: z.number().int().min(1).max(2_000).default(500),
       maxResources: z.number().int().min(1).max(10_000).default(2_000),
+      maxWorkers: z.number().int().min(1).max(5_000).default(500),
       maxScriptSourceBytes: z
         .number()
         .int()
@@ -112,6 +147,7 @@ const registerElectronObservationCommands = (
             max_dom_nodes: options.maxDomNodes,
             max_scripts: options.maxScripts,
             max_resources: options.maxResources,
+            max_workers: options.maxWorkers,
             max_script_source_bytes: options.maxScriptSourceBytes,
             max_total_script_source_bytes: options.maxTotalScriptSourceBytes,
           },
@@ -229,6 +265,60 @@ const electronContext = async () => {
 
 const inputError = (operation: string): JsonValue =>
   cliError(new AnalysisInputError(operation));
+
+const parseJson = (value: string): unknown => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+};
+
+const parseJsonInput = async (
+  value: string,
+): Promise<
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly error: JsonValue }
+> => {
+  const inline = parseJson(value);
+  if (inline !== undefined) return { ok: true, value: inline };
+  if (["{", "["].includes(value.trimStart()[0] ?? ""))
+    return {
+      ok: false,
+      error: inputError("reconcile_javascript_runtime"),
+    };
+  try {
+    const metadata = await stat(value);
+    if (!metadata.isFile()) return jsonFileError(value, "not-file");
+    if (metadata.size > MAX_RECONCILIATION_INPUT_BYTES)
+      return jsonFileError(value, "too-large");
+    const bytes = await readFile(value);
+    if (bytes.byteLength > MAX_RECONCILIATION_INPUT_BYTES)
+      return jsonFileError(value, "too-large");
+    const parsed = parseJson(bytes.toString("utf8"));
+    return parsed === undefined
+      ? jsonFileError(value, "invalid-json")
+      : { ok: true, value: parsed };
+  } catch {
+    return jsonFileError(value, "read-failed");
+  }
+};
+
+const jsonFileError = (
+  path: string,
+  reason: "not-file" | "too-large" | "invalid-json" | "read-failed",
+) => ({
+  ok: false as const,
+  error: {
+    error: "Electron analysis failed",
+    ...projectAnalysisError(
+      new AnalysisInputError("reconcile_javascript_runtime"),
+    ),
+    input_path: path,
+    input_reason: reason,
+    maximum_input_bytes: MAX_RECONCILIATION_INPUT_BYTES,
+  },
+});
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],

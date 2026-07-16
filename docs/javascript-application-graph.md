@@ -23,11 +23,14 @@ The graph complements existing REA models instead of replacing them:
 | JavaScript Application Graph | Cross-layer entity identity, evidence-bearing relationships, and canonical commitments | Preserves the combined application model                   |
 
 The shipped [JavaScript artifact reconstruction](javascript-artifact-reconstruction.md)
-service now projects bounded directory/ASAR, package, bundle, source-map,
+service projects bounded directory/ASAR, package, bundle, source-map,
 BrowserWindow, preload, contextBridge, IPC, utility-process, and JavaScript-side
-native binding facts into this graph. Passive runtime reconciliation and native
-binary export verification remain separate later layers. The domain module
-itself never reaches outward to obtain any of those facts.
+native binding facts into this graph. The separate
+[static/runtime reconciliation](javascript-runtime-reconciliation.md) service
+adds capture-scoped targets, frames, scripts, workers, and inferred
+`observed_as` edges from already-produced Evidence. Native binary export
+verification remains a separate later layer. The domain graph itself never
+reaches outward to obtain any of those facts.
 
 ## Versioned record
 
@@ -86,16 +89,17 @@ resolved native add-on exposes requested binding (not a verified binary export)
 ```
 
 The `loads`, `exposes`, `invokes`, `handles`, and `imports` relationships remain
-static inferences. Dynamic or ambiguous IPC is retained without a pairing edge,
-and runtime correspondence remains a separately identified passive observation.
+static inferences. Dynamic or ambiguous IPC is retained without a pairing edge.
+Runtime entities retain passive-CDP authority, while a successful static/runtime
+correspondence is a separately identified cross-layer inference.
 
 ## Evidence and authority
 
 Every observation and edge carries all of the following:
 
 - an authority, such as artifact bytes, AST analysis, static relationship
-  inference, passive CDP runtime, controlled replay, native analysis,
-  historical reference, or user assertion;
+  inference, passive CDP runtime, cross-layer reconciliation, controlled replay,
+  native analysis, historical reference, or user assertion;
 - an epistemic state: `observed`, `inferred`, `unknown`, or `unavailable`;
 - confidence independently bounded as exact, high, medium, low, or unknown;
 - an explicit content-addressed artifact reference or an unavailable reason;
@@ -111,6 +115,8 @@ become a runtime fact, and a passive runtime fact does not prove which static
 module produced it. In particular:
 
 - `static-relationship-inference` can only produce `inferred` facts;
+- `cross-layer-reconciliation` can only produce `inferred` facts and must link
+  both static and runtime Evidence;
 - unknown or unavailable facts require unknown confidence and a limitation;
 - inferred facts require an explicit limitation;
 - exact confidence is reserved for observations;
@@ -137,7 +143,7 @@ necessarily changing the node ID.
 | `canonical-path`          | One artifact version             | ASAR entries and assets at exact normalized paths                 |
 | `artifact-local-key`      | One artifact version             | IPC channels, handlers, exports, and other named entities         |
 | `structural-fingerprint`  | Explicit cross-version inference | Modules whose relationship is hypothesized from bounded structure |
-| `runtime-instance`        | One capture only                 | Targets, frames, and runtime scripts                              |
+| `runtime-instance`        | One capture only                 | Targets, frames, runtime scripts, and workers                     |
 | `observation-fingerprint` | One observation scope            | Facts with no stronger justified identity                         |
 
 Every strategy states its stability scope. Runtime identities commit the

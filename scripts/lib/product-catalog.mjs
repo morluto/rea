@@ -196,11 +196,21 @@ const providerCatalog = (sources) => {
     sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
       ({ name }) => name === "analyze_javascript_application",
     );
+  const reconciliationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "reconcile_javascript_runtime",
+    );
   const observationContracts =
     sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
-      ({ name }) => name !== "analyze_javascript_application",
+      ({ name }) =>
+        name !== "analyze_javascript_application" &&
+        name !== "reconcile_javascript_runtime",
     );
-  if (applicationContracts.length !== 1 || observationContracts.length !== 2)
+  if (
+    applicationContracts.length !== 1 ||
+    reconciliationContracts.length !== 1 ||
+    observationContracts.length !== 2
+  )
     throw new Error("Electron provider capability ownership drifted");
   return [
     {
@@ -230,6 +240,11 @@ const providerCatalog = (sources) => {
     {
       identity: sources.artifactProviders.JAVASCRIPT_APPLICATION_PROVIDER,
       contracts: applicationContracts,
+    },
+    {
+      identity:
+        sources.artifactProviders.JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+      contracts: reconciliationContracts,
     },
   ]
     .map(({ identity, contracts }) => ({

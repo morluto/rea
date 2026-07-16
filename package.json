@@ -74,6 +74,7 @@
     "verify:hopper": "npm run build && node scripts/verify-real-hopper.mjs",
     "verify:ghidra": "npm run build && node scripts/verify-real-ghidra.mjs",
     "verify:browser": "npm run build && node scripts/verify-real-browser.mjs",
+    "verify:javascript-runtime": "npm run build && node scripts/verify-local-javascript-runtime.mjs",
     "verify:hopper:linux": "npm run build && node scripts/verify-real-hopper-linux.mjs",
     "verify:setup:linux": "npm run build && node scripts/verify-linux-setup-e2e.mjs",
     "build:fixtures": "node scripts/build-conformance-fixtures.mjs",

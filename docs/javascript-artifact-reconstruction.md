@@ -8,6 +8,12 @@ without executing application code. The target-free
 service and return an Evidence v2 envelope containing the graph and an Electron
 boundary summary.
 
+The resulting Evidence can be combined with passive web or Electron capture
+Evidence through
+[`reconcile_javascript_runtime`](javascript-runtime-reconciliation.md). That
+second operation does not rerun static analysis or contact CDP; it preserves
+separate static, runtime, and cross-layer inference authorities.
+
 ## Public workflow
 
 The administrator first grants a canonical input root. Every request still

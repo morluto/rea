@@ -5,6 +5,7 @@ import { BinarySession } from "../src/application/BinarySession.js";
 import { loadConfiguredPermissionAuthority } from "../src/application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "../src/browser/CdpBrowserProvider.js";
 import { parseConfig } from "../src/config.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../src/contracts/javascriptRuntimeReconciliationExample.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 import {
@@ -36,7 +37,7 @@ describe("browser MCP tools", () => {
       const connected = await connectBrowser(browser);
 
       const tools = await connected.client.listTools();
-      expect(tools.tools).toHaveLength(79);
+      expect(tools.tools).toHaveLength(80);
       expect(tools.tools.map(({ name }) => name)).toEqual(
         expect.arrayContaining([
           "list_browser_targets",
@@ -99,6 +100,7 @@ describe("browser MCP tools", () => {
           json_body_schema_approved: true,
           include_websocket_shapes: true,
           websocket_shape_approved: true,
+          include_script_sources: true,
         },
       });
       expect(inspected.isError).not.toBe(true);
@@ -117,6 +119,23 @@ describe("browser MCP tools", () => {
           },
         },
       });
+      const reconciled = await connected.client.callTool({
+        name: "reconcile_javascript_runtime",
+        arguments: {
+          static_layers:
+            JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+          runtime_observations: [inspected.structuredContent],
+        },
+      });
+      expect(reconciled.isError).not.toBe(true);
+      expect(reconciled.structuredContent).toMatchObject({
+        operation: "reconcile_javascript_runtime",
+        provider: { id: "rea-javascript-runtime-reconciliation" },
+        normalized_result: { summary: { runtime_scripts: 1 } },
+      });
+      expect(JSON.stringify(reconciled.structuredContent)).not.toContain(
+        "source-secret",
+      );
       const analyzed = await connected.client.callTool({
         name: "analyze_web_bundle",
         arguments: {

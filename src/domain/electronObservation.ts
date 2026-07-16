@@ -49,6 +49,7 @@ export const inspectElectronPageInputSchema = z
         max_dom_nodes: z.number().int().min(1).max(10_000).default(2_000),
         max_scripts: z.number().int().min(1).max(2_000).default(500),
         max_resources: z.number().int().min(1).max(10_000).default(2_000),
+        max_workers: z.number().int().min(1).max(5_000).default(500),
         max_script_source_bytes: z
           .number()
           .int()
@@ -67,6 +68,7 @@ export const inspectElectronPageInputSchema = z
         max_dom_nodes: 2_000,
         max_scripts: 500,
         max_resources: 2_000,
+        max_workers: 500,
         max_script_source_bytes: 1_024 * 1_024,
         max_total_script_source_bytes: 4 * 1_024 * 1_024,
       }),
@@ -169,6 +171,7 @@ export const electronPageInspectionSchema = z.object({
     items: z.array(
       z.object({
         script_key: z.string().regex(/^electron_script_[a-f0-9]{64}$/u),
+        frame_id: z.string().nullable().default(null),
         file_path: z.string(),
         cdp_hash: z.string(),
         length: z.number().int().min(0),
@@ -187,6 +190,18 @@ export const electronPageInspectionSchema = z.object({
       content_size: z.number().min(0).nullable(),
     }),
   ),
+  workers: z
+    .array(
+      z.object({
+        target_id: z.string().min(1).max(256),
+        type: z.string().min(1).max(100),
+        file_path: z.string(),
+        attached: z.boolean(),
+        opener_target_id: z.string().min(1).max(256).nullable(),
+        parent_frame_id: z.string().min(1).max(256).nullable(),
+      }),
+    )
+    .default([]),
   limitations: z.array(z.string()),
 });
 export type ElectronPageInspection = z.infer<

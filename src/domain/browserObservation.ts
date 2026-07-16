@@ -428,6 +428,7 @@ const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
 ]);
 const browserScriptSchema = z.object({
   script_key: z.string().regex(/^scr_[a-f0-9]{64}(?:_[0-9]+)?$/u),
+  frame_id: z.string().nullable().default(null),
   url: z.string(),
   origin: z.string().nullable(),
   cdp_hash: z.string(),
@@ -512,6 +513,8 @@ const browserWorkerSchema = z.object({
   url: z.string(),
   origin: z.string().nullable(),
   attached: z.boolean(),
+  opener_target_id: z.string().nullable().default(null),
+  parent_frame_id: z.string().nullable().default(null),
 });
 const browserCspSourceSchema = z.object({
   kind: z.enum([

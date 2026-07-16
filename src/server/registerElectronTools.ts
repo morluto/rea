@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
 import {
   inspectElectronPage,
   listElectronTargets,
@@ -14,6 +15,7 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../domain/javascriptApplicationAnalysis.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -32,7 +34,7 @@ export const registerElectronTools = (
   server: McpServer,
   options: ElectronToolRegistration,
 ): void => {
-  const [listContract, inspectContract, analyzeContract] =
+  const [listContract, inspectContract, analyzeContract, reconcileContract] =
     ELECTRON_TOOL_CONTRACTS;
   server.registerTool(
     listContract.name,
@@ -93,6 +95,28 @@ export const registerElectronTools = (
       );
       if (!result.ok) return toCallToolResult(result, analyzeContract);
       return evidenceResult(options, analyzeContract, result.value);
+    },
+  );
+  server.registerTool(
+    reconcileContract.name,
+    toolRegistrationOptions(reconcileContract),
+    async (input) => {
+      const parsed = reconcileJavaScriptRuntimeInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        reconcileContract.name,
+        () => Promise.resolve(reconcileJavaScriptRuntimeEvidence(parsed)),
+      );
+      if (!result.ok) return toCallToolResult(result, reconcileContract);
+      for (const source of [
+        ...parsed.static_layers.map(({ analysis }) => analysis),
+        ...parsed.runtime_observations,
+      ]) {
+        const recorded = options.recordEvidence?.(source);
+        if (recorded !== undefined && !recorded.ok)
+          return toCallToolResult(recorded, reconcileContract);
+      }
+      return evidenceResult(options, reconcileContract, result.value);
     },
   );
 };

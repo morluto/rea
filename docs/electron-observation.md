@@ -7,6 +7,9 @@ This passive runtime surface is distinct from the target-free static
 workflow. Static analysis reads an approved ASAR or extracted directory under
 `REA_INVESTIGATION_INPUT_ROOTS_JSON`; it does not attach to CDP. Runtime
 observations and static inferences are never silently treated as the same fact.
+Use the separate
+[`reconcile_javascript_runtime`](javascript-runtime-reconciliation.md) workflow
+when both Evidence sets already exist.
 
 ## Configure authority
 
@@ -38,4 +41,19 @@ rea inspect-electron-page http://127.0.0.1:9223 TARGET_ID \
   --json
 ```
 
-The normalized result contains canonical local paths, bounded frame and DOM structure, resource metadata, stable script/resource identities, explicit completeness, and content-addressed approved source artifacts. It does not retain DOM values, execute renderer code, navigate, click, invoke Electron IPC, close a target, or terminate the application.
+The normalized result contains canonical local paths, bounded frame and DOM
+structure, resource metadata, stable script/resource identities, explicit
+completeness, and content-addressed approved source artifacts. Script metadata
+retains its execution-context frame ID when CDP supplies one. The capture also
+inventories authorized worker, service-worker, and shared-worker targets with
+bounded opener-target and parent-frame IDs. Worker discovery uses passive
+target metadata; REA does not attach to or execute code in those targets.
+
+The default worker limit is 500 and the caller-visible maximum is 5,000. Like
+every target, frame, script, and resource, a worker URL must resolve beneath an
+approved canonical root before it is retained. Relationship IDs improve
+attribution but do not prove which static module started a worker or that its
+work completed.
+
+Inspection does not retain DOM values, execute renderer code, navigate, click,
+invoke Electron IPC, close a target, or terminate the application.

@@ -27,6 +27,7 @@ import {
 } from "./CdpCaptureDocuments.js";
 import {
   allowedSanitizedUrl,
+  boundedText,
   delayWithCancellation,
   isHttpUrl,
   recordValue,
@@ -153,6 +154,7 @@ const captureAuthorizedPage = async (
     state.events,
     resourceCapture.items,
     resources,
+    new Set(frames.map((frame) => frame.frame_id)),
   );
   const workerCapture = await captureWorkers(
     state,
@@ -406,6 +408,7 @@ const captureScripts = async (
   events: CdpCaptureEvents,
   rawResources: readonly CapturedResource[],
   resources: WebPageInspection["resources"],
+  frameIds: ReadonlySet<string>,
 ): Promise<CapturedScripts> => {
   let totalSourceBytes = 0;
   const drafts: {
@@ -457,6 +460,7 @@ const captureScripts = async (
       }
     }
     const inventoryScript = {
+      frame_id: events.frameForScript(script, frameIds),
       url: script.url,
       cdp_hash: script.hash,
       length: script.length,
@@ -493,7 +497,8 @@ const captureScripts = async (
       left.base.localeCompare(right.base) ||
       sourceDigest(left.item.source).localeCompare(
         sourceDigest(right.item.source),
-      ),
+      ) ||
+      (left.item.frame_id ?? "").localeCompare(right.item.frame_id ?? ""),
   );
   const totals = new Map<string, number>();
   for (const { base } of keyed) totals.set(base, (totals.get(base) ?? 0) + 1);
@@ -587,6 +592,8 @@ const captureWorkers = async (
       url: url.url,
       origin: url.origin,
       attached: target.attached === true,
+      opener_target_id: boundedText(target.openerId, 256) ?? null,
+      parent_frame_id: boundedText(target.parentFrameId, 256) ?? null,
     });
   }
   return {

@@ -56,7 +56,7 @@ describe("CdpElectronProvider", () => {
     expect(listed.value.excluded).toEqual({
       outside_root: 0,
       unsupported_url: 3,
-      non_page: 1,
+      non_page: 2,
     });
 
     const inspected = await provider.inspectPage(

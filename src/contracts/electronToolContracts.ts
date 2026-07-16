@@ -10,6 +10,11 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
 } from "../domain/javascriptApplicationAnalysis.js";
+import {
+  javascriptRuntimeReconciliationResultSchema,
+  reconcileJavaScriptRuntimeInputSchema,
+} from "../domain/javascriptRuntimeReconciliationSchemas.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeReconciliationExample.js";
 
 const listOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
@@ -20,6 +25,9 @@ const inspectionOutputSchema = evidenceEnvelopeSchema
 const applicationOutputSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: javascriptApplicationAnalysisResultSchema });
+const reconciliationOutputSchema = evidenceEnvelopeSchema
+  .omit({ normalized_result: true })
+  .extend({ normalized_result: javascriptRuntimeReconciliationResultSchema });
 
 const endpoint = "http://127.0.0.1:9223";
 const root = "/Applications/Example.app/Contents/Resources";
@@ -81,6 +89,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
             max_dom_nodes: 2_000,
             max_scripts: 500,
             max_resources: 2_000,
+            max_workers: 500,
             max_script_source_bytes: 1_048_576,
             max_total_script_source_bytes: 4_194_304,
           },
@@ -110,6 +119,26 @@ export const ELECTRON_TOOL_CONTRACTS = [
           approved: true,
           source_map_read_approved: false,
         },
+      },
+    ],
+  },
+  {
+    name: "reconcile_javascript_runtime",
+    description:
+      "Reconcile verified static JavaScript application graphs with existing passive web or Electron CDP Evidence. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
+    kind: "electron-provider",
+    inputSchema: reconcileJavaScriptRuntimeInputSchema,
+    outputSchema: reconciliationOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    examples: [
+      {
+        title: "Reconcile one passive Electron capture",
+        input: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
       },
     ],
   },
