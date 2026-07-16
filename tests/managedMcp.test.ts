@@ -11,6 +11,7 @@ import { AnalysisProviderRegistry } from "../src/application/AnalysisProviderReg
 import { BinarySession } from "../src/application/BinarySession.js";
 import { createPermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { SessionProviderRouter } from "../src/application/SessionProviderRouter.js";
+import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../src/contracts/managedWorkflowExamples.js";
 import type { PermissionCeiling } from "../src/domain/permissionPolicy.js";
 import { ManagedStaticProvider } from "../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../src/server/createServer.js";
@@ -93,8 +94,27 @@ describe("managed artifact MCP tools", () => {
         "import_managed_reconstruction",
       );
       expect(tools.tools.map(({ name }) => name)).toContain(
+        "verify_managed_native_boundaries",
+      );
+      expect(tools.tools.map(({ name }) => name)).toContain(
         "plan_managed_runtime_correlation",
       );
+      const verifiedNative = structured(
+        await client.callTool({
+          name: "verify_managed_native_boundaries",
+          arguments: MANAGED_NATIVE_VERIFICATION_EXAMPLE,
+        }),
+      );
+
+      expect(verifiedNative).toMatchObject({
+        operation: "verify_managed_native_boundaries",
+        provider: { id: "rea-dotnet-workflows" },
+        confidence: "inferred",
+        normalized_result: {
+          summary: { verified: 1 },
+          algorithm: { token_to_address_mapping: "not-inferred" },
+        },
+      });
 
       await client.callTool({
         name: "open_binary",

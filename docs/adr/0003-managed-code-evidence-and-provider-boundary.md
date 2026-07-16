@@ -11,15 +11,19 @@
   `rea compare-managed-members`. Declaration-only managed/native boundary
   inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL
   method flags is shipped through `inspect_managed_native_boundaries` /
-  `rea inspect-managed-native-boundaries`. Decompiler reconstruction import is
+  `rea inspect-managed-native-boundaries`. Managed/native export or function
+  Evidence matching is shipped through `verify_managed_native_boundaries` /
+  `rea verify-managed-native-boundaries`; it verifies only supplied P/Invoke
+  export/function observations and does not map managed tokens to native
+  addresses. Decompiler reconstruction import is
   shipped through `import_managed_reconstruction` /
   `rea import-managed-reconstruction`; it records user-supplied C#/IL/pseudocode
   as analyst inference only after exact static member locks match. Default-disabled
   runtime-correlation admission planning is shipped through
   `plan_managed_runtime_correlation` / `rea plan-managed-runtime-correlation`;
   it does not attach, load, debug, reflect, instrument, invoke, or execute
-  target code. Verified native export/function matching and an actual runtime
-  executor remain future contracts.
+  target code. Native-body bridge mapping and an actual runtime executor remain
+  future contracts.
 
 ## Context
 
@@ -395,7 +399,8 @@ or development-only oracles.
 2. Add metadata, signatures, method bodies, normalized CIL, and exact Evidence. Shipped.
 3. Add obfuscation-resistant slices and cross-build match states. Shipped.
 4. Compose explicit managed/native boundaries with Hopper/Ghidra. Declaration
-   inventory shipped; native-provider matching remains planned.
+   inventory and native export/function Evidence matching shipped; native-body
+   bridge mapping remains planned.
 5. Add source-built, pinned real-tool, package, CLI, and MCP conformance.
    Source-owned conformance is shipped; pinned external real-tool checks remain
    planned.

@@ -1,10 +1,12 @@
 import { compareManagedMembersInputSchema } from "../domain/managedMemberComparison.js";
+import { managedNativeVerificationInputSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { ToolContract } from "./toolContracts.js";
 import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
 import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
+  MANAGED_NATIVE_VERIFICATION_EXAMPLE,
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
@@ -27,6 +29,12 @@ if (reconstructionOutputSchema === undefined)
   throw new Error(
     "Missing managed workflow output schema for import_managed_reconstruction",
   );
+const nativeVerificationOutputSchema =
+  managedWorkflowOutputSchemas.verify_managed_native_boundaries;
+if (nativeVerificationOutputSchema === undefined)
+  throw new Error(
+    "Missing managed workflow output schema for verify_managed_native_boundaries",
+  );
 
 /** Provider-neutral managed-code workflow contracts. */
 export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
@@ -47,6 +55,26 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
       {
         title: "Compare two managed member observations",
         input: MANAGED_MEMBER_COMPARISON_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "verify_managed_native_boundaries",
+    description:
+      "Verify managed P/Invoke/native-boundary declarations against authenticated native export or function Evidence without executing managed code or translating managed metadata tokens into native addresses. The workflow preserves declaration-only, verified, inferred, contradicted, and unresolved states.",
+    kind: "application",
+    inputSchema: managedNativeVerificationInputSchema,
+    outputSchema: nativeVerificationOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    examples: [
+      {
+        title: "Verify a managed P/Invoke declaration against native Evidence",
+        input: MANAGED_NATIVE_VERIFICATION_EXAMPLE,
       },
     ],
   },

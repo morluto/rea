@@ -121,6 +121,7 @@ describe("canonical product catalog", () => {
       "compare_managed_members",
       "import_managed_reconstruction",
       "plan_managed_runtime_correlation",
+      "verify_managed_native_boundaries",
     ]);
     expect(
       z.toJSONSchema(analysisSnapshotSchema).properties?.snapshot_version,

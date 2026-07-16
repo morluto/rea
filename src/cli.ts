@@ -9,6 +9,7 @@ import {
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
 import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesEvidence } from "./application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "./application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
 import {
@@ -910,6 +911,25 @@ const registerManagedCommands = (
         );
         if (!input.ok) return input.error;
         const result = importManagedReconstructionEvidence(input.value);
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
+  cli.command(CLI_COMMANDS.verifyManagedNativeBoundaries, {
+    description:
+      "Verify managed P/Invoke declarations against authenticated native Evidence",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline managed/native verification JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "verify-managed-native-boundaries", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "verify-managed-native-boundaries",
+        );
+        if (!input.ok) return input.error;
+        const result = verifyManagedNativeBoundariesEvidence(input.value);
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });

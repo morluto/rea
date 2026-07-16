@@ -54,7 +54,7 @@ describe("guided prompts over MCP", () => {
         ),
       );
     }
-    expect((await client.listTools()).tools).toHaveLength(89);
+    expect((await client.listTools()).tools).toHaveLength(90);
     const result = await client.getPrompt({
       name: "investigate_feature",
       arguments: {
