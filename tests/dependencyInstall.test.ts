@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -78,5 +78,21 @@ describe("dependency install freshness", () => {
       "beta: missing from the installed dependency lockfile",
     );
     expect(result.stderr.match(/npm ci/gu)).toHaveLength(1);
+  });
+
+  it("runs from a script path containing URL-escaped characters", async () => {
+    const root = await fixture("0.9.0");
+    const scriptDirectory = join(root, "path with spaces");
+    const copiedScript = join(scriptDirectory, "check-dependency-install.mjs");
+    await mkdir(scriptDirectory);
+    await copyFile(script, copiedScript);
+
+    const result = spawnSync(process.execPath, [copiedScript], {
+      cwd: root,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("alpha: installed 0.9.0, expected 1.0.0");
   });
 });
