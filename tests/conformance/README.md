@@ -13,6 +13,12 @@ stripped variants by `npm run verify:ghidra`. It fixes local functions, external
 `puts` linkage, defined strings, and writable/executable memory needed to prove
 the read-only Ghidra inventory contracts without committing a binary.
 
+`scripts/create-ghidra-windows-fixture.mjs` separately emits a deterministic,
+ignored native x86-64 PE application for the controlled Windows Ghidra P0 lane.
+The generator and fixed SHA-256 are versioned; the `.exe` is never committed or
+executed. `npm run verify:ghidra:windows` uses it to prove all 18 operations,
+digest linkage, transport, and cleanup on the self-hosted real-Ghidra runner.
+
 The C fixture fixes a known call chain and strings. The version pair fixes an
 added symbol, changed string, and changed call relationship. The generated
 large fixture contains 1,205 uniquely named functions and strings so provider
