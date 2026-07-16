@@ -22,6 +22,7 @@ export type ToolKind =
   | "enhanced"
   | "native-provider"
   | "artifact-provider"
+  | "managed-provider"
   | "browser-provider"
   | "electron-provider"
   | "application"

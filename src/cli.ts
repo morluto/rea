@@ -82,6 +82,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
   registerArtifactCommands(cli, logger);
+  registerManagedCommands(cli, logger);
   registerInvestigationCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
   registerReferenceSourceCommand(cli, logger);
@@ -542,6 +543,77 @@ const registerArtifactCommands = (
             approved: true,
             output_root: args.outputRoot,
             occurrence_ids: args.occurrenceIds,
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerManagedCommands = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.inspectManagedArtifact, {
+    description: "Inspect PE/CLI identity without loading target code",
+    args: z.object({
+      path: z.string().describe("Managed PE executable or assembly path"),
+    }),
+    options: z.object({
+      referenceOffset: z.number().int().min(0).default(0),
+      referenceLimit: z.number().int().min(1).max(500).default(100),
+      resourceOffset: z.number().int().min(0).default(0),
+      resourceLimit: z.number().int().min(1).max(500).default(100),
+      attributeOffset: z.number().int().min(0).default(0),
+      attributeLimit: z.number().int().min(1).max(500).default(100),
+      maxFileBytes: z
+        .number()
+        .int()
+        .min(4_096)
+        .max(1_073_741_824)
+        .default(268_435_456),
+      maxMetadataBytes: z
+        .number()
+        .int()
+        .min(256)
+        .max(268_435_456)
+        .default(67_108_864),
+      maxTableRows: z.number().int().min(1).max(10_000_000).default(1_000_000),
+      maxHeapItemBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(16_777_216)
+        .default(1_048_576),
+    }),
+    alias: {
+      referenceOffset: "reference-offset",
+      referenceLimit: "reference-limit",
+      resourceOffset: "resource-offset",
+      resourceLimit: "resource-limit",
+      attributeOffset: "attribute-offset",
+      attributeLimit: "attribute-limit",
+      maxFileBytes: "max-file-bytes",
+      maxMetadataBytes: "max-metadata-bytes",
+      maxTableRows: "max-table-rows",
+      maxHeapItemBytes: "max-heap-item-bytes",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "inspect-managed-artifact", () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_artifact",
+          {
+            reference_offset: options.referenceOffset,
+            reference_limit: options.referenceLimit,
+            resource_offset: options.resourceOffset,
+            resource_limit: options.resourceLimit,
+            attribute_offset: options.attributeOffset,
+            attribute_limit: options.attributeLimit,
+            max_file_bytes: options.maxFileBytes,
+            max_metadata_bytes: options.maxMetadataBytes,
+            max_table_rows: options.maxTableRows,
+            max_heap_item_bytes: options.maxHeapItemBytes,
           },
           logger,
         ),

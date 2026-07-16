@@ -8,6 +8,7 @@ import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
+import { registerManagedTools } from "./registerManagedTools.js";
 import { silentLogger, type Logger } from "../logger.js";
 import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
@@ -168,6 +169,11 @@ export const createServer = (
     ...(options.permissionAuthority === undefined
       ? {}
       : { permissionAuthority: options.permissionAuthority }),
+  });
+  registerManagedTools(server, analysis, {
+    logger: toolLogger,
+    activeTarget,
+    recordEvidence,
   });
   registerBrowserTools(server, {
     logger: toolLogger,

@@ -8,11 +8,13 @@ import {
 } from "../src/contracts/toolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../src/contracts/managedToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
 import {
   enhancedOutputSchemas,
+  managedOutputSchemas,
   officialOutputSchemas,
   sessionOutputSchemas,
 } from "../src/contracts/toolOutputSchemas.js";
@@ -56,11 +58,12 @@ describe("tool contract surface", () => {
       ...ENHANCED_TOOL_CONTRACTS,
       ...NATIVE_TOOL_CONTRACTS,
       ...ARTIFACT_TOOL_CONTRACTS,
+      ...MANAGED_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(65);
+    expect(contracts).toHaveLength(66);
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);
@@ -137,10 +140,14 @@ describe("tool contract surface", () => {
     expect(Object.keys(sessionOutputSchemas).sort()).toEqual(
       SESSION_TOOL_CONTRACTS.map(({ name }) => name).sort(),
     );
+    expect(Object.keys(managedOutputSchemas).sort()).toEqual(
+      MANAGED_TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
 
     for (const contract of [
       ...OFFICIAL_TOOL_CONTRACTS,
       ...ENHANCED_TOOL_CONTRACTS,
+      ...MANAGED_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ]) {
       const schema = contractJsonSchema(contract.outputSchema);
@@ -150,18 +157,19 @@ describe("tool contract surface", () => {
     }
   });
 
-  it("publishes no unconstrained output-schema holes across all 83 tools", () => {
+  it("publishes no unconstrained output-schema holes across all 84 tools", () => {
     const contracts = [
       ...OFFICIAL_TOOL_CONTRACTS,
       ...ENHANCED_TOOL_CONTRACTS,
       ...NATIVE_TOOL_CONTRACTS,
       ...ARTIFACT_TOOL_CONTRACTS,
+      ...MANAGED_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(83);
+    expect(contracts).toHaveLength(84);
     for (const contract of contracts) {
       const schema = contractJsonSchema(contract.outputSchema);
       expect(emptySchemaPaths(schema), contract.name).toEqual([]);

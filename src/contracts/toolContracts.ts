@@ -26,6 +26,7 @@ import {
 import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
@@ -525,6 +526,7 @@ export const TOOL_CONTRACTS = [
   ...ENHANCED_TOOL_CONTRACTS,
   ...NATIVE_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
+  ...MANAGED_TOOL_CONTRACTS,
   ...BROWSER_TOOL_CONTRACTS,
   ...ELECTRON_TOOL_CONTRACTS,
   ...APPLICATION_TOOL_CONTRACTS,

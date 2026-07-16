@@ -9,6 +9,7 @@ import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
+import type { ManagedToolName } from "../contracts/managedToolContracts.js";
 import {
   EvidenceIntegrityError,
   AnalysisProtocolError,
@@ -84,7 +85,7 @@ export const runDirectAnalysis = async (
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
   path: string,
-  tool: NativeToolName | ArtifactToolName,
+  tool: NativeToolName | ArtifactToolName | ManagedToolName,
   arguments_: Readonly<Record<string, JsonValue>>,
   logger: Logger = silentLogger,
   signal?: AbortSignal,
@@ -118,7 +119,11 @@ export const runSessionStatus = async (
 
 const authorizeAnalysis = async (
   authority: PermissionAuthority,
-  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
 ): Promise<Result<null, AnalysisError>> => {
   const requests = [];
@@ -188,7 +193,11 @@ const permissionAuthorityFor = (
 
 const authorizeSnapshotAccess = async (
   authority: PermissionAuthority,
-  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool,
   snapshotPath: string | undefined,
 ): Promise<
   Result<DeferredFileWriteAuthorization | undefined, AnalysisError>
@@ -210,7 +219,11 @@ const authorizeDeferredWrite = (
 const authorizeAnalysisRun = async (input: {
   readonly config: AppConfig;
   readonly suppliedAuthority: PermissionAuthority | undefined;
-  readonly tool: NativeToolName | ArtifactToolName | DirectAnalysisTool;
+  readonly tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly snapshotPath: string | undefined;
 }): Promise<
@@ -236,7 +249,11 @@ const authorizeAnalysisRun = async (input: {
 
 const runAnalysis = async (
   path: string,
-  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
   options: {
     readonly logger: Logger;
@@ -405,7 +422,11 @@ const prepareSnapshot = async (options: {
 
 const replayProviderFor = (
   session: ReturnType<typeof createBinarySession>,
-  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool,
 ) =>
   tool === "binary_overview" || tool === "trace_feature"
     ? REA_WORKFLOW_PROVIDER
@@ -413,7 +434,11 @@ const replayProviderFor = (
 
 const analysisProfileForEvidence = (
   session: ReturnType<typeof createBinarySession>,
-  tool: NativeToolName | ArtifactToolName | DirectAnalysisTool,
+  tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   if (tool !== "binary_overview" && tool !== "trace_feature")
     return session.analysisProfile(tool);
