@@ -39,6 +39,12 @@ export const managedRuntimeCorrelationReferenceInputSchema =
     .omit({ static_members: true })
     .extend({ static_members_evidence_id: managedEvidenceIdSchema });
 
+/** MCP reference for importing reconstruction against session Evidence. */
+export const managedReconstructionReferenceInputSchema =
+  managedReconstructionImportInputSchema
+    .omit({ static_members: true })
+    .extend({ static_members_evidence_id: managedEvidenceIdSchema });
+
 const comparisonOutputSchema =
   managedWorkflowOutputSchemas.compare_managed_members;
 if (comparisonOutputSchema === undefined)
@@ -82,21 +88,22 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
   },
   {
     name: "import_managed_reconstruction",
+    ...toolContractMetadata("import_managed_reconstruction"),
     description:
       "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and normalized IL hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
     kind: "application",
-    inputSchema: managedReconstructionImportInputSchema,
+    inputSchema: managedReconstructionReferenceInputSchema,
     outputSchema: reconstructionOutputSchema,
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
     examples: [
       {
         title: "Import a decompiler reconstruction for one managed method",
-        input: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+        input: {
+          static_members_evidence_id:
+            MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.evidence_id,
+          decompiler: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.decompiler,
+          methods: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.methods,
+          notes: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.notes,
+        },
       },
     ],
   },

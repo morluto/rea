@@ -209,7 +209,7 @@ describe("managed artifact MCP tools", () => {
         await client.callTool({
           name: "import_managed_reconstruction",
           arguments: {
-            static_members: members,
+            static_members_evidence_id: members.evidence_id,
             decompiler: {
               name: "ilspycmd",
               version: "9.1.0.7988",

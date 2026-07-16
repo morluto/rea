@@ -2,18 +2,18 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { compareManagedMembersEvidenceValidated } from "../application/ManagedMemberComparisonService.js";
-import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
+import { importManagedReconstructionEvidenceValidated } from "../application/ManagedReconstructionService.js";
 import {
   planManagedRuntimeCorrelationEvidenceValidated,
   type ManagedRuntimeCorrelationDependencies,
 } from "../application/ManagedRuntimeCorrelationService.js";
 import {
   compareManagedMembersReferenceInputSchema,
+  managedReconstructionReferenceInputSchema,
   managedRuntimeCorrelationReferenceInputSchema,
   MANAGED_WORKFLOW_TOOL_CONTRACTS,
 } from "../contracts/managedWorkflowToolContracts.js";
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
-import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceIntegrityError } from "../domain/errors.js";
 import type { Result } from "../domain/result.js";
@@ -120,11 +120,33 @@ export const registerManagedWorkflowTools = (
     reconstructionContract.name,
     toolRegistrationOptions(reconstructionContract),
     async (input) => {
-      const parsed = managedReconstructionImportInputSchema.parse(input);
+      const parsedInput = safeParseToolInput(
+        managedReconstructionReferenceInputSchema,
+        input,
+        reconstructionContract.name,
+      );
+      if (!parsedInput.ok)
+        return toCallToolResult(parsedInput, reconstructionContract);
+      const resolved = resolveManagedEvidence(options.session, [
+        parsedInput.value.static_members_evidence_id,
+      ]);
+      if (!resolved.ok)
+        return toCallToolResult(resolved, reconstructionContract);
+      const staticMembers = resolved.value[0];
+      if (staticMembers === undefined)
+        throw new TypeError(
+          "Managed reconstruction Evidence resolution failed",
+        );
+      const {
+        static_members_evidence_id: _staticMembersEvidenceId,
+        ...referencedInput
+      } = parsedInput.value;
+      const parsed = { ...referencedInput, static_members: staticMembers };
       const result = await logToolExecution(
         options.logger,
         reconstructionContract.name,
-        () => Promise.resolve(importManagedReconstructionEvidence(parsed)),
+        () =>
+          Promise.resolve(importManagedReconstructionEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, reconstructionContract);
       const recordedSource = options.recordEvidence?.(parsed.static_members);
