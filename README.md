@@ -586,7 +586,11 @@ C++ toolchain. Compatible packaged binaries do not require this rebuild.
 ASAR inventory verifies Electron integrity metadata for both archive entries
 and `.asar.unpacked` companion files. Integrity failures identify the logical
 path, declared and calculated SHA-256 values, and whether the entry was
-unpacked; REA does not silently accept the mismatched artifact.
+unpacked; REA does not silently accept the mismatched artifact. If a supplied
+ASAR declares unpacked companion bytes that are absent from the local artifact
+set, REA keeps that occurrence as `unavailable` and continues analyzing the
+embedded JavaScript instead of treating the missing native/resource bytes as
+verified or absent.
 
 ## Security model
 

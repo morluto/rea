@@ -82,6 +82,20 @@ export class AsarArtifactReader implements ArtifactReader {
         Readable.from(extractFile(this.path, entry.adapterKey, false)),
       );
     } catch (cause: unknown) {
+      if (entry.unpacked && isMissingFile(cause))
+        return Promise.reject(
+          new ArtifactReaderFailure(
+            "unavailable",
+            `ASAR unpacked entry bytes are unavailable: ${entry.path}`,
+            { cause },
+            {
+              logicalPath: entry.path,
+              declaredSha256: entry.declaredSha256,
+              calculatedSha256: null,
+              unpacked: true,
+            },
+          ),
+        );
       return Promise.reject(
         asarFailure(this.path, `read ${entry.path}`, cause),
       );
@@ -114,3 +128,9 @@ const asarFailure = (
         `Malformed or unreadable ASAR during ${operation}: ${path}`,
         { cause },
       );
+
+const isMissingFile = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  cause.code === "ENOENT";
