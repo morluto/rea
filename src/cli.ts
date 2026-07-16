@@ -9,6 +9,7 @@ import {
   runSessionStatus,
 } from "./application/DirectAnalysis.js";
 import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
+import { importManagedReconstructionEvidence } from "./application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
 import {
   runSetup,
@@ -891,6 +892,25 @@ const registerManagedCommands = (
               error: "Managed member comparison failed",
               ...projectAnalysisError(result.error),
             };
+      }),
+  });
+  cli.command(CLI_COMMANDS.importManagedReconstruction, {
+    description:
+      "Import decompiler-produced managed reconstruction against exact static member evidence",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline managed reconstruction JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "import-managed-reconstruction", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "import-managed-reconstruction",
+        );
+        if (!input.ok) return input.error;
+        const result = importManagedReconstructionEvidence(input.value);
+        return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
   cli.command(CLI_COMMANDS.planManagedRuntimeCorrelation, {

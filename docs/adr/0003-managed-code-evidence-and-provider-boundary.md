@@ -11,12 +11,15 @@
   `rea compare-managed-members`. Declaration-only managed/native boundary
   inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL
   method flags is shipped through `inspect_managed_native_boundaries` /
-  `rea inspect-managed-native-boundaries`. Default-disabled runtime-correlation
-  admission planning is shipped through `plan_managed_runtime_correlation` /
-  `rea plan-managed-runtime-correlation`; it does not attach, load, debug,
-  reflect, instrument, invoke, or execute target code. Decompiled C#, verified
-  native export/function matching, and an actual runtime executor remain future
-  contracts.
+  `rea inspect-managed-native-boundaries`. Decompiler reconstruction import is
+  shipped through `import_managed_reconstruction` /
+  `rea import-managed-reconstruction`; it records user-supplied C#/IL/pseudocode
+  as analyst inference only after exact static member locks match. Default-disabled
+  runtime-correlation admission planning is shipped through
+  `plan_managed_runtime_correlation` / `rea plan-managed-runtime-correlation`;
+  it does not attach, load, debug, reflect, instrument, invoke, or execute
+  target code. Verified native export/function matching and an actual runtime
+  executor remain future contracts.
 
 ## Context
 

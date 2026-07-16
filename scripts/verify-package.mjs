@@ -266,6 +266,48 @@ try {
   )
     throw new Error("packaged managed member CLI failed");
   const managedMethod = managedMembers.normalized_result.methods.items[0];
+  const managedReconstructionInput = {
+    static_members: managedMembers,
+    decompiler: {
+      name: "ilspycmd",
+      version: "9.1.0.7988",
+      family: "ilspy",
+      executable_sha256: null,
+      options: ["--type", "Fixture.Program"],
+    },
+    methods: [
+      {
+        token: managedMethod.token,
+        signature_sha256: managedMethod.signature.raw_sha256,
+        normalized_il_sha256: managedMethod.body.normalized_il_sha256,
+        reconstruction: {
+          kind: "decompiled-csharp",
+          language: "csharp",
+          text: "internal static void Main() { }",
+        },
+      },
+    ],
+    notes: ["packaged synthetic reconstruction import"],
+  };
+  const managedReconstruction = json(
+    await run(
+      cli,
+      [
+        "import-managed-reconstruction",
+        JSON.stringify(managedReconstructionInput),
+        "--json",
+      ],
+      environment,
+    ),
+  );
+  if (
+    managedReconstruction.operation !== "import_managed_reconstruction" ||
+    managedReconstruction.provider?.id !== "rea-dotnet-workflows" ||
+    managedReconstruction.normalized_result?.executed !== false ||
+    managedReconstruction.normalized_result?.methods?.[0]?.validation
+      ?.canonical_observation !== false
+  )
+    throw new Error("packaged managed reconstruction import CLI failed");
   const managedRuntimePlanInput = {
     static_members: managedMembers,
     method: {
@@ -894,7 +936,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedRuntimePlanCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

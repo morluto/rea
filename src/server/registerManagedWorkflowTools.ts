@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { compareManagedMembersEvidence } from "../application/ManagedMemberComparisonService.js";
+import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
 import {
   planManagedRuntimeCorrelationEvidence,
   type ManagedRuntimeCorrelationDependencies,
@@ -11,6 +12,7 @@ import {
   compareManagedMembersInputSchema,
   managedMemberComparisonResultSchema,
 } from "../domain/managedMemberComparison.js";
+import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
 import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Logger } from "../logger.js";
@@ -32,9 +34,9 @@ export const registerManagedWorkflowTools = (
   server: McpServer,
   options: ManagedWorkflowToolRegistration,
 ): void => {
-  const [compareContract, runtimeContract] = MANAGED_WORKFLOW_TOOL_CONTRACTS;
-  if (compareContract === undefined || runtimeContract === undefined)
-    throw new Error("Missing managed workflow contract");
+  const compareContract = contract("compare_managed_members");
+  const reconstructionContract = contract("import_managed_reconstruction");
+  const runtimeContract = contract("plan_managed_runtime_correlation");
   server.registerTool(
     compareContract.name,
     toolRegistrationOptions(compareContract),
@@ -90,6 +92,28 @@ export const registerManagedWorkflowTools = (
     },
   );
   server.registerTool(
+    reconstructionContract.name,
+    toolRegistrationOptions(reconstructionContract),
+    async (input) => {
+      const parsed = managedReconstructionImportInputSchema.parse(input);
+      const result = await logToolExecution(
+        options.logger,
+        reconstructionContract.name,
+        () => Promise.resolve(importManagedReconstructionEvidence(parsed)),
+      );
+      if (!result.ok) return toCallToolResult(result, reconstructionContract);
+      const recordedSource = options.recordEvidence?.(parsed.static_members);
+      if (recordedSource !== undefined && !recordedSource.ok)
+        return toCallToolResult(recordedSource, reconstructionContract);
+      const recorded = options.recordEvidence?.(result.value);
+      if (recorded !== undefined && !recorded.ok)
+        return toCallToolResult(recorded, reconstructionContract);
+      return toCallToolResult(result, reconstructionContract, {
+        evidenceResourcesAvailable: recorded !== undefined,
+      });
+    },
+  );
+  server.registerTool(
     runtimeContract.name,
     toolRegistrationOptions(runtimeContract),
     async (input) => {
@@ -111,6 +135,16 @@ export const registerManagedWorkflowTools = (
       });
     },
   );
+};
+
+const contract = (
+  name: (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[number]["name"],
+) => {
+  const found = MANAGED_WORKFLOW_TOOL_CONTRACTS.find(
+    (candidate) => candidate.name === name,
+  );
+  if (found === undefined) throw new Error(`Missing ${name} contract`);
+  return found;
 };
 
 const recordSources = (

@@ -11,7 +11,7 @@
     "skill_version": "20"
   },
   "tools": {
-    "total": 88,
+    "total": 89,
     "families": [
       {
         "id": "direct",
@@ -91,9 +91,10 @@
       {
         "id": "managed",
         "surface": "managed",
-        "count": 5,
+        "count": 6,
         "tools": [
           "compare_managed_members",
+          "import_managed_reconstruction",
           "inspect_managed_artifact",
           "inspect_managed_members",
           "inspect_managed_native_boundaries",
@@ -285,6 +286,7 @@
       "version": "1",
       "capabilities": [
         "compare_managed_members",
+        "import_managed_reconstruction",
         "plan_managed_runtime_correlation"
       ]
     },
@@ -474,7 +476,7 @@
     }
   ],
   "cli": {
-    "primary_count": 48,
+    "primary_count": 49,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -496,6 +498,7 @@
       "evidence-import",
       "extract-artifact",
       "function",
+      "import-managed-reconstruction",
       "import-reference-source",
       "inspect",
       "inspect-electron-page",
@@ -534,17 +537,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 48,
-      "mcp_tools": 88,
+      "cli_commands": 49,
+      "mcp_tools": 89,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 7
     },
     "digests": {
-      "tools_sha256": "f4740c8f0f8f24c18ee479070e7e808b1613bcc85d13d5abca953f5d55ed0b08",
+      "tools_sha256": "0df824c70f82b04b46110d923d5e4520e8331c0568729e643b2cdd7956e23193",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "e603aad57a79479004fbdc267644092e8365dd64d94ad772b9da4425a49abd73",
-      "combined_sha256": "3b64168cc24829a9a77321791a956811df69327269fa9aca5866a70b13d406e5"
+      "combined_sha256": "1b2c0c67b2b5e91f3100b87892bcedbbc53c8a2dea1f110a6be753659706c2f1"
     }
   }
 }
