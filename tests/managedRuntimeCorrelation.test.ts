@@ -146,6 +146,35 @@ describe("managed runtime correlation planning", () => {
     if (result.ok) return;
     expect(result.error._tag).toBe("AnalysisInputError");
   });
+
+  it("rejects a runtime lock for instruction-limited CIL", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-managed-runtime-"));
+    const artifactPath = join(directory, "fixture.dll");
+    const executablePath = join(directory, "dotnet");
+    const bytes = buildManagedPeFixture();
+    await writeFile(artifactPath, bytes);
+    await writeFile(executablePath, "#!/bin/sh\n");
+    const fixture = inspect(bytes, artifactPath, {
+      ...memberLimits,
+      maxMethodInstructions: 1,
+    });
+    const authority = await authorityFor(directory, executablePath, true);
+    const result = await planManagedRuntimeCorrelationEvidence(
+      {
+        policy: { enabled: true, roots: [directory], executablePath },
+        authority,
+      },
+      inputFor(fixture.evidence, fixture.method),
+    );
+
+    expect(fixture.method.body).toMatchObject({
+      status: "partial",
+      normalized_il_sha256: null,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+  });
 });
 
 const disabledPolicy: ManagedRuntimePolicy = {
@@ -210,7 +239,11 @@ const inputFor = (
   },
 });
 
-const inspect = (bytes: Buffer, path: string) => {
+const inspect = (
+  bytes: Buffer,
+  path: string,
+  limits: typeof memberLimits = memberLimits,
+) => {
   const target: BinaryTarget = {
     path,
     sha256: hash(bytes),
@@ -218,7 +251,7 @@ const inspect = (bytes: Buffer, path: string) => {
     format: "pe",
     architecture: "x86",
   };
-  const result = inspectManagedMembersBytes(bytes, target, memberLimits);
+  const result = inspectManagedMembersBytes(bytes, target, limits);
   const method = result.methods.items[0];
   if (method === undefined) throw new Error("fixture has no method");
   return {

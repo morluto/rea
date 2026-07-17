@@ -136,6 +136,9 @@ export const importManagedReconstruction = (
       (item) =>
         item.token === candidate.token &&
         item.signature.raw_sha256 === candidate.signature_sha256 &&
+        item.body.status === "present" &&
+        item.body.normalized_il_sha256 !== null &&
+        candidate.normalized_il_sha256 !== null &&
         item.body.normalized_il_sha256 === candidate.normalized_il_sha256,
     );
     if (observed === undefined)

@@ -1080,8 +1080,14 @@ const methodBody = (
     );
     const methodEnd = ilOffset + header.ilSize;
     const sectionOffset = (methodEnd + 3) & ~3;
+    const status =
+      decoded.issue !== null
+        ? "malformed"
+        : decoded.truncated > 0
+          ? "partial"
+          : "present";
     return {
-      status: decoded.issue === null ? "present" : "malformed",
+      status,
       header_format: header.format,
       rva,
       file_offset: offset,
@@ -1093,7 +1099,8 @@ const methodBody = (
           : `0x${header.localSig.toString(16).padStart(8, "0")}`,
       il_size: header.ilSize,
       il_sha256: sha256Bytes(il),
-      normalized_il_sha256: sha256Bytes(normalized),
+      normalized_il_sha256:
+        status === "present" ? sha256Bytes(normalized) : null,
       instruction_count: decoded.count,
       decoded_instruction_count: decoded.parsed.length,
       truncated_instructions: decoded.truncated,
@@ -1103,7 +1110,11 @@ const methodBody = (
         header.format === "fat" && (header.flags & 8) !== 0
           ? parseExceptionRegions(bytes, sectionOffset, bytes.length)
           : [],
-      issue: decoded.issue,
+      issue:
+        decoded.issue ??
+        (decoded.truncated > 0
+          ? `Instruction decode reached max_method_instructions ${String(limits.maxMethodInstructions)} before the end of the method body`
+          : null),
     };
   } catch (cause: unknown) {
     return {
@@ -1436,6 +1447,22 @@ export const inspectManagedMembersBytes = (
       limits.maxHeapItemBytes,
       limits,
     );
+    const methodBodyIssues: ManagedParseIssue[] = methods.methods.flatMap(
+      (method) =>
+        method.body.status === "partial"
+          ? [
+              {
+                code: "limit-exceeded" as const,
+                scope: `method.${method.token}.body.instructions`,
+                offset: method.body.file_offset,
+                detail:
+                  method.body.issue ??
+                  `Instruction decode reached max_method_instructions ${String(limits.maxMethodInstructions)}`,
+              },
+            ]
+          : [],
+    );
+    const coverageIssues = [...issues, ...methodBodyIssues];
     const related = edges(
       methods.methods,
       methods.core,
@@ -1476,13 +1503,18 @@ export const inspectManagedMembersBytes = (
         limits.edgeLimit,
       ),
       coverage: {
-        state: issues.length === 0 ? "complete" : "partial",
-        issues,
+        state: coverageIssues.length === 0 ? "complete" : "partial",
+        issues: coverageIssues,
       },
       limitations: [
         "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
         "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
         "Signatures are decoded for common ECMA-335 primitive, class, valuetype, pointer, byref, array, and generic variable forms; unsupported forms retain raw signature hashes.",
+        ...(methodBodyIssues.length > 0
+          ? [
+              "At least one CIL method body reached max_method_instructions; its decoded prefix is partial and has no normalized CIL identity.",
+            ]
+          : []),
       ],
     });
   } catch (cause: unknown) {

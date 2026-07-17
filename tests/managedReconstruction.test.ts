@@ -8,6 +8,8 @@ import {
   importManagedReconstruction,
   managedReconstructionImportInputSchema,
 } from "../src/domain/managedReconstruction.js";
+import { managedMemberInspectionSchema } from "../src/domain/managedArtifact.js";
+import { createEvidence } from "../src/domain/evidence.js";
 
 const exampleInput = () =>
   managedReconstructionImportInputSchema.parse(
@@ -91,6 +93,58 @@ describe("managed decompiler reconstruction import", () => {
           {
             ...exampleMethod(),
             normalized_il_sha256: "6".repeat(64),
+          },
+        ],
+      }),
+    ).toThrow(/does not match/u);
+  });
+
+  it("rejects reconstruction locks for partial CIL without normalized identity", () => {
+    const input = exampleInput();
+    const observed = managedMemberInspectionSchema.parse(
+      input.static_members.normalized_result,
+    );
+    const method = observed.methods.items[0];
+    if (method === undefined) throw new Error("missing observed method");
+    const partial = {
+      ...observed,
+      methods: {
+        ...observed.methods,
+        items: [
+          {
+            ...method,
+            body: {
+              ...method.body,
+              status: "partial" as const,
+              normalized_il_sha256: null,
+              truncated_instructions: 1,
+              issue: "instruction limit reached",
+            },
+          },
+        ],
+      },
+      coverage: { state: "partial" as const, issues: [] },
+    };
+    const partialEvidence = createEvidence(
+      undefined,
+      input.static_members.provider,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: partial,
+        rawResult: null,
+        limitations: partial.limitations,
+      },
+    );
+
+    expect(() =>
+      importManagedReconstruction({
+        ...input,
+        static_members: partialEvidence,
+        methods: [
+          {
+            ...exampleMethod(),
+            normalized_il_sha256: null,
           },
         ],
       }),

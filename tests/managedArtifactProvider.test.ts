@@ -226,9 +226,47 @@ describe("managed PE/CLI static provider", () => {
     expect(result.methods.items[0]?.body).toMatchObject({
       status: "malformed",
       il_size: 2,
+      normalized_il_sha256: null,
       decoded_instruction_count: 0,
       issue: "Unsupported CIL opcode 0x24 at IL offset 0",
     });
+  });
+
+  it("marks instruction-limited CIL as partial without assigning normalized identity", () => {
+    const bytes = buildManagedPeFixture();
+    const result = inspectManagedMembersBytes(bytes, target(bytes), {
+      ...memberLimits,
+      maxMethodInstructions: 1,
+    });
+    const il = bytes.subarray(0x0a01, 0x0a0d);
+
+    expect(result.metadata.status).toBe("complete");
+    expect(result.methods.items[0]?.body).toMatchObject({
+      status: "partial",
+      il_size: 12,
+      il_sha256: createHash("sha256").update(il).digest("hex"),
+      normalized_il_sha256: null,
+      instruction_count: 1,
+      decoded_instruction_count: 1,
+      truncated_instructions: 1,
+      issue:
+        "Instruction decode reached max_method_instructions 1 before the end of the method body",
+    });
+    expect(result.coverage).toEqual({
+      state: "partial",
+      issues: [
+        {
+          code: "limit-exceeded",
+          scope: "method.0x06000001.body.instructions",
+          offset: 0x0a00,
+          detail:
+            "Instruction decode reached max_method_instructions 1 before the end of the method body",
+        },
+      ],
+    });
+    expect(result.limitations.join(" ")).toContain(
+      "has no normalized CIL identity",
+    );
   });
 
   it("inspects metadata members, signatures, CIL hashes, call edges, and field anchors", () => {
