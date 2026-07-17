@@ -79,6 +79,31 @@ export const cliCommandOptionNames = (cli, name) => {
   );
 };
 
+/** Report primary CLI fields whose generated JSON Schema lacks help text. */
+export const cliCommandDescriptionIssues = (cli) => {
+  const commands = Cli.toCommands.get(cli);
+  if (commands === undefined)
+    throw new Error("Incur did not expose the registered REA CLI commands");
+  const missing = [];
+  for (const [commandName, command] of commands) {
+    if ("_alias" in command) continue;
+    for (const groupName of ["args", "options"]) {
+      if (!(groupName in command) || command[groupName] === undefined) continue;
+      const properties = z.toJSONSchema(command[groupName]).properties ?? {};
+      for (const [propertyName, property] of Object.entries(properties)) {
+        if (
+          typeof property !== "object" ||
+          property === null ||
+          typeof property.description !== "string" ||
+          property.description.trim() === ""
+        )
+          missing.push(`${commandName}.${groupName}.${propertyName}`);
+      }
+    }
+  }
+  return missing;
+};
+
 const assertSameNames = (label, actual, expected) => {
   const actualSet = new Set(actual);
   const expectedSet = new Set(expected);

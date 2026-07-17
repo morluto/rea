@@ -17,31 +17,74 @@ const investigationOptionsSchema = z.object({
     .boolean()
     .default(false)
     .describe("Approve persistent workspace writes"),
-  workspaceName: z.string().trim().min(1).max(200).default("default"),
-  expectedRevision: z.number().int().min(1).optional(),
+  workspaceName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .default("default")
+    .describe("Logical name recorded in the investigation workspace"),
+  expectedRevision: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Required current workspace revision for an atomic update"),
   replayRunId: z
     .string()
     .regex(/^run_[a-f0-9]{64}$/u)
     .optional()
     .describe("Replay one verified complete workspace run without rescanning"),
-  maxEntries: z.number().int().min(1).max(50_000).default(10_000),
+  maxEntries: z
+    .number()
+    .int()
+    .min(1)
+    .max(50_000)
+    .default(10_000)
+    .describe("Maximum artifact entries to inspect per version"),
   maxTotalBytes: z
     .number()
     .int()
     .min(1)
     .max(Number.MAX_SAFE_INTEGER)
-    .default(1_073_741_824),
+    .default(1_073_741_824)
+    .describe("Maximum total uncompressed artifact content to inspect"),
   maxEntryBytes: z
     .number()
     .int()
     .min(1)
     .max(Number.MAX_SAFE_INTEGER)
-    .default(268_435_456),
-  pageSize: z.number().int().min(1).max(500).default(500),
-  changeLimit: z.number().int().min(1).max(500).default(500),
-  integrityPolicy: z.enum(["fail", "record-and-continue"]).default("fail"),
-  integrityContinueApproved: z.boolean().default(false),
-  maxIntegrityMismatches: z.number().int().min(1).max(100).default(10),
+    .default(268_435_456)
+    .describe("Maximum uncompressed content to inspect for one entry"),
+  pageSize: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(500)
+    .describe("Maximum graph items loaded per investigation page"),
+  changeLimit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(500)
+    .describe("Maximum version changes to record"),
+  integrityPolicy: z
+    .enum(["fail", "record-and-continue"])
+    .default("fail")
+    .describe("Behavior when declared artifact integrity does not match"),
+  integrityContinueApproved: z
+    .boolean()
+    .default(false)
+    .describe("Approve continuing after recorded integrity mismatches"),
+  maxIntegrityMismatches: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10)
+    .describe("Maximum integrity mismatches to record before stopping"),
 });
 
 /** Register the persistent cross-version CLI workflow. */

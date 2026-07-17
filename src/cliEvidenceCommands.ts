@@ -79,8 +79,19 @@ export const registerEvidenceCommands = (
       right: z.string().describe("Right Evidence bundle JSON path"),
     }),
     options: z.object({
-      offset: z.number().int().min(0).default(0),
-      limit: z.number().int().min(1).max(500).default(100),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based changed-record offset"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(100)
+        .describe("Maximum changed records to return"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare", async () => {
