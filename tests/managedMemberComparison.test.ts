@@ -138,6 +138,62 @@ describe("managed member comparison", () => {
     });
   });
 
+  it("keeps unmatched members unknown when the opposite page is incomplete", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/left-paged.dll");
+    const right = inspect(buildManagedPeFixture(), "/tmp/right-paged.dll");
+    const leftPartial = {
+      ...left.result,
+      fields: {
+        ...left.result.fields,
+        items: [],
+        returned: 0,
+        dropped: 1,
+        complete: false,
+      },
+    };
+    const rightPartial = {
+      ...right.result,
+      methods: {
+        ...right.result.methods,
+        items: [],
+        returned: 0,
+        dropped: 1,
+        complete: false,
+      },
+    };
+    const result = compareManagedMembers(
+      { evidenceId: left.evidence.evidence_id, result: leftPartial },
+      { evidenceId: right.evidence.evidence_id, result: rightPartial },
+      comparisonLimits,
+    );
+
+    expect(result.summary).toMatchObject({
+      added: 0,
+      removed: 0,
+      unknown: 2,
+    });
+    expect(result.methods[0]).toMatchObject({
+      status: "unknown",
+      left: { token: "0x06000001" },
+      right: null,
+      limitations: [expect.stringContaining("unknown-within-unobserved-page")],
+    });
+    expect(result.fields[0]).toMatchObject({
+      status: "unknown",
+      left: null,
+      right: { token: "0x04000001" },
+      limitations: [expect.stringContaining("unknown-within-unobserved-page")],
+    });
+    expect(result.coverage).toEqual({
+      status: "truncated",
+      left_status: "partial",
+      right_status: "partial",
+      omitted_methods: 1,
+      omitted_fields: 1,
+      omitted_candidates: 0,
+    });
+  });
+
   it("does not guess ambiguous field signature matches", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left.dll");
     const leftField = left.result.fields.items[0];
