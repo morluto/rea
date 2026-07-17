@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
 import { analyzeJavaScriptStaticSource } from "../domain/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
+import {
+  DEFAULT_JAVASCRIPT_SEMANTIC_LIMITS,
+  type JavaScriptSemanticLimits,
+} from "../domain/javascriptSemanticIr.js";
 import type {
   JavaScriptSourceRange,
   JavaScriptSourcePoint,
@@ -14,15 +19,18 @@ import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
   JavaScriptHtmlScriptObservation,
+  JavaScriptJsonModuleObservation,
   JavaScriptPackageObservation,
   JavaScriptSourceMapObservation,
   JavaScriptSourceMapOriginal,
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactReconstructionInput } from "./JavaScriptArtifactReconstructionInput.js";
+import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
 
 interface MutableArtifactAnalysis {
   readonly files: AnalyzedJavaScriptArtifactFile[];
   readonly packages: JavaScriptPackageObservation[];
+  readonly jsonModules: JavaScriptJsonModuleObservation[];
   readonly htmlScripts: JavaScriptHtmlScriptObservation[];
   readonly sourceMaps: JavaScriptSourceMapObservation[];
   visitedNodes: number;
@@ -79,6 +87,7 @@ const finalizeArtifactAnalysis = (
   return {
     files: state.files,
     packages: state.packages,
+    json_modules: state.jsonModules,
     html_scripts: state.htmlScripts.slice(0, input.limits.max_findings),
     source_maps: state.sourceMaps,
     visited_ast_nodes: state.visitedNodes,
@@ -106,7 +115,7 @@ const analyzeArtifactFile = (
   context: ArtifactAnalysisContext,
 ): void => {
   const { state, input } = context;
-  if (file.kind === "package-json") state.packages.push(parsePackage(file));
+  addStructuredObservations(file, state);
   if (file.kind === "html" && file.text.included)
     state.htmlScripts.push(
       ...parseHtmlScripts(
@@ -117,7 +126,7 @@ const analyzeArtifactFile = (
     );
   if (file.kind === "source-map") addSourceMap(file, context);
   if (file.kind !== "javascript" || !file.text.included) {
-    state.files.push({ file, javascript: null });
+    state.files.push({ file, javascript: null, semantic: null });
     return;
   }
   const remainingNodes = input.limits.max_ast_nodes - state.visitedNodes;
@@ -129,7 +138,7 @@ const analyzeArtifactFile = (
     remainingModules <= 0 ||
     context.now() > context.deadline
   ) {
-    state.files.push({ file, javascript: null });
+    state.files.push({ file, javascript: null, semantic: null });
     state.truncatedScopes += 1;
     return;
   }
@@ -140,15 +149,38 @@ const analyzeArtifactFile = (
     deadline: context.deadline,
     now: context.now,
   });
-  state.files.push({ file, javascript: analysis });
+  const staticFindings = findingCount(analysis);
+  const semanticFindingBudget = Math.max(
+    0,
+    input.limits.max_findings - state.findings - staticFindings,
+  );
+  const semanticLimits: JavaScriptSemanticLimits = {
+    ...DEFAULT_JAVASCRIPT_SEMANTIC_LIMITS,
+    maxScopes: remainingNodes,
+    maxBindings: remainingNodes,
+    maxCallables: remainingNodes,
+    maxReferences: remainingNodes,
+    maxModuleLinks: semanticFindingBudget,
+  };
+  const semantics =
+    analysis.parse_status === "complete" || analysis.parse_status === "partial"
+      ? analyzeJavaScriptSemantics(file.text.value, semanticLimits)
+      : null;
+  state.files.push({
+    file,
+    javascript: analysis,
+    semantic:
+      semantics === null ? null : { ir: semantics, limits: semanticLimits },
+  });
   state.visitedNodes += analysis.visited_ast_nodes;
-  state.findings += findingCount(analysis);
+  state.findings += staticFindings + (semantics?.moduleLinks.length ?? 0);
   state.modules += analysis.bundler_registrations.reduce(
     (count, registration) => count + registration.modules.length,
     0,
   );
   if (analysis.parse_status === "failed") state.parseFailures += 1;
   if (analysis.parse_status === "truncated") state.truncatedScopes += 1;
+  if (semantics?.coverage.status === "truncated") state.truncatedScopes += 1;
 };
 
 const addSourceMap = (
@@ -171,6 +203,7 @@ const addSourceMap = (
 const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
   files: [],
   packages: [],
+  jsonModules: [],
   htmlScripts: [],
   sourceMaps: [],
   visitedNodes: 0,
@@ -180,6 +213,17 @@ const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
   truncatedScopes: 0,
   sourceMapSources: 0,
 });
+
+const addStructuredObservations = (
+  file: JavaScriptArtifactFile,
+  state: MutableArtifactAnalysis,
+): void => {
+  if (file.kind === "package-json") state.packages.push(parsePackage(file));
+  if (file.kind !== "json") return;
+  const json = analyzeJavaScriptJsonModule(file);
+  state.jsonModules.push(json);
+  if (json.status === "invalid") state.parseFailures += 1;
+};
 
 const parsePackage = (
   file: JavaScriptArtifactFile,

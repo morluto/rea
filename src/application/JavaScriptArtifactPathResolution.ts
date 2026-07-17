@@ -1,3 +1,4 @@
+import { builtinModules } from "node:module";
 import { posix } from "node:path";
 
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
@@ -31,6 +32,7 @@ export interface ResolveArtifactPathInput {
     | "html-reference";
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly htmlBaseHref?: string | null;
+  readonly moduleKind?: "import" | "require";
 }
 
 const EXTENSIONS = [
@@ -44,6 +46,9 @@ const EXTENSIONS = [
   ".node",
 ];
 const MAX_PACKAGE_DEPTH = 4;
+const NODE_BUILTINS = new Set(
+  builtinModules.map((name) => name.replace(/^node:/u, "")),
+);
 
 interface CandidateResolution {
   readonly resolvedPath: string | null;
@@ -113,9 +118,7 @@ const contextualCandidate = (
         "URL and Node builtin schemes are outside static artifact module resolution.",
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
-      return outcome(input, "external", null, [
-        "Bare package and Node builtin specifiers are not artifact entrypoints.",
-      ]);
+      return bareModuleCandidate(input, declared);
   } else if (hasScheme(declared))
     return outcome(input, "external", null, [
       "URL schemes are outside this local artifact path context.",
@@ -125,6 +128,62 @@ const contextualCandidate = (
     ? relative
     : posix.join(posix.dirname(input.sourcePath), relative);
 };
+
+const bareModuleCandidate = (
+  input: ResolveArtifactPathInput,
+  declared: string,
+): string | ArtifactPathResolution => {
+  const packageName = barePackageName(declared);
+  if (
+    packageName === null ||
+    NODE_BUILTINS.has(packageName) ||
+    declared.startsWith("#")
+  )
+    return outcome(input, "external", null, [
+      "The bare specifier is a Node builtin, package import map, or invalid package name.",
+    ]);
+  if (declared !== packageName)
+    return outcome(input, "external", null, [
+      "Bare package subpaths remain unresolved unless an exact package-exports subpath model is available.",
+    ]);
+  const source = input.files.get(input.sourcePath);
+  let directory = posix.dirname(input.sourcePath);
+  while (true) {
+    const candidate = posix.join(directory, "node_modules", declared);
+    if (hasContainerCandidate(input.files, candidate, source?.container_sha256))
+      return candidate;
+    if (directory === "." || directory === "") break;
+    directory = posix.dirname(directory);
+  }
+  return outcome(input, "external", null, [
+    "No matching bare package was inventoried in an enclosing node_modules directory.",
+  ]);
+};
+
+const barePackageName = (specifier: string): string | null => {
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@"))
+    return segments.length >= 2 && segments[0] !== "" && segments[1] !== ""
+      ? `${segments[0]}/${segments[1]}`
+      : null;
+  return segments[0] === "" ? null : (segments[0] ?? null);
+};
+
+const hasContainerCandidate = (
+  files: ReadonlyMap<string, JavaScriptArtifactFile>,
+  candidate: string,
+  containerSha256: string | undefined,
+): boolean =>
+  [...directCandidates(candidate), posix.join(candidate, "package.json")].some(
+    (path) => {
+      const file = files.get(path);
+      return (
+        file !== undefined &&
+        (containerSha256 === undefined ||
+          file.container_sha256 === containerSha256)
+      );
+    },
+  );
 
 const htmlCandidate = (
   input: ResolveArtifactPathInput,
@@ -204,7 +263,7 @@ const resolveCandidate = (
         `Directory package metadata ${packagePath} was inventoried but its text is unavailable: ${packageFile.text.reason}.`,
       ],
     };
-  const main = packageMain(packageFile.text.value);
+  const main = packageEntry(packageFile.text.value, input.moduleKind);
   if (main.status === "invalid")
     return {
       resolvedPath: null,
@@ -236,8 +295,9 @@ const directCandidates = (candidate: string): readonly string[] => [
   ...EXTENSIONS.map((extension) => posix.join(candidate, `index${extension}`)),
 ];
 
-const packageMain = (
+const packageEntry = (
   text: string,
+  moduleKind: ResolveArtifactPathInput["moduleKind"],
 ):
   | { readonly status: "value"; readonly value: string }
   | { readonly status: "missing" }
@@ -246,15 +306,46 @@ const packageMain = (
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null)
       return { status: "invalid" };
-    const main = Reflect.get(value, "main");
-    if (main === undefined) return { status: "missing" };
-    return typeof main === "string" && main.length <= 4_096
-      ? { status: "value", value: main }
-      : { status: "invalid" };
+    const rawExports = Reflect.get(value, "exports");
+    if (rawExports !== undefined) return packageExport(rawExports, moduleKind);
+    const preferred =
+      moduleKind === "import"
+        ? [Reflect.get(value, "module"), Reflect.get(value, "main")]
+        : [Reflect.get(value, "main"), Reflect.get(value, "module")];
+    const entry = preferred.find((candidate) => candidate !== undefined);
+    if (entry === undefined) return { status: "missing" };
+    return boundedPackagePath(entry);
   } catch {
     return { status: "invalid" };
   }
 };
+
+const packageExport = (
+  value: unknown,
+  moduleKind: ResolveArtifactPathInput["moduleKind"],
+):
+  | { readonly status: "value"; readonly value: string }
+  | { readonly status: "invalid" } => {
+  if (typeof value === "string") return boundedPackagePath(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { status: "invalid" };
+  const root = Reflect.get(value, ".") ?? value;
+  if (typeof root === "string") return boundedPackagePath(root);
+  if (typeof root !== "object" || root === null || Array.isArray(root))
+    return { status: "invalid" };
+  const condition =
+    Reflect.get(root, moduleKind ?? "default") ?? Reflect.get(root, "default");
+  return boundedPackagePath(condition);
+};
+
+const boundedPackagePath = (
+  value: unknown,
+):
+  | { readonly status: "value"; readonly value: string }
+  | { readonly status: "invalid" } =>
+  typeof value === "string" && value.length > 0 && value.length <= 4_096
+    ? { status: "value", value }
+    : { status: "invalid" };
 
 const notFoundCandidate = (): CandidateResolution => ({
   resolvedPath: null,

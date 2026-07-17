@@ -2,6 +2,10 @@ import type {
   JavaScriptSourceRange,
   JavaScriptStaticAnalysis,
 } from "../domain/javascriptStaticAnalysisTypes.js";
+import type {
+  JavaScriptSemanticIr,
+  JavaScriptSemanticLimits,
+} from "../domain/javascriptSemanticIr.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 
 /** Parsed package metadata used only for static entrypoint discovery. */
@@ -41,16 +45,31 @@ export interface JavaScriptSourceMapObservation {
   readonly limitation: string | null;
 }
 
+/** Bounded parse status for one inventoried JSON module. */
+export interface JavaScriptJsonModuleObservation {
+  readonly path: string;
+  readonly sha256: string;
+  readonly status: "included" | "invalid" | "unavailable";
+  readonly top_level_keys: readonly string[];
+  readonly omitted_top_level_keys: number | null;
+  readonly limitation: string | null;
+}
+
 /** One relevant file plus optional AST-only JavaScript facts. */
 export interface AnalyzedJavaScriptArtifactFile {
   readonly file: JavaScriptArtifactFile;
   readonly javascript: JavaScriptStaticAnalysis | null;
+  readonly semantic: {
+    readonly ir: JavaScriptSemanticIr;
+    readonly limits: JavaScriptSemanticLimits;
+  } | null;
 }
 
 /** Complete bounded static-analysis projection before graph construction. */
 export interface JavaScriptArtifactAnalysis {
   readonly files: readonly AnalyzedJavaScriptArtifactFile[];
   readonly packages: readonly JavaScriptPackageObservation[];
+  readonly json_modules: readonly JavaScriptJsonModuleObservation[];
   readonly html_scripts: readonly JavaScriptHtmlScriptObservation[];
   readonly source_maps: readonly JavaScriptSourceMapObservation[];
   readonly visited_ast_nodes: number;

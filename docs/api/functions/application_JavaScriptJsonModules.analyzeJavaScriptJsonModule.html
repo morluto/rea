@@ -1,4 +1,4 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>resolveArtifactPathByContext | rea-agents - v2.0.0</title><meta name="description" content="Documentation for rea-agents"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>analyzeJavaScriptJsonModule | rea-agents - v2.0.0</title><meta name="description" content="Documentation for rea-agents"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
 <div class="tsd-toolbar-contents container"><a href="../index.html" class="title">rea-agents - v2.0.0</a>
 <div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
 <ul role="listbox" id="tsd-search-results"></ul>
@@ -8,23 +8,23 @@
 <div class="col-content">
 <div class="tsd-page-title">
 <ul class="tsd-breadcrumb" aria-label="Breadcrumb">
-<li><a href="../modules/application_JavaScriptArtifactPathResolution.html">application/JavaScriptArtifactPathResolution</a></li>
-<li><a href="" aria-current="page">resolveArtifactPathByContext</a></li></ul>
-<h1>Function resolveArtifactPathByContext</h1></div>
+<li><a href="../modules/application_JavaScriptJsonModules.html">application/JavaScriptJsonModules</a></li>
+<li><a href="" aria-current="page">analyzeJavaScriptJsonModule</a></li></ul>
+<h1>Function analyzeJavaScriptJsonModule</h1></div>
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="resolveartifactpathbycontext"><span class="tsd-kind-call-signature">resolveArtifactPathByContext</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">input</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/application_JavaScriptArtifactPathResolution.ResolveArtifactPathInput.html" class="tsd-signature-type tsd-kind-interface">ResolveArtifactPathInput</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/application_JavaScriptArtifactPathResolution.ArtifactPathResolution.html" class="tsd-signature-type tsd-kind-interface">ArtifactPathResolution</a><a href="#resolveartifactpathbycontext" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="analyzejavascriptjsonmodule"><span class="tsd-kind-call-signature">analyzeJavaScriptJsonModule</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">file</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/application_JavaScriptArtifactFiles.JavaScriptArtifactFile.html" class="tsd-signature-type tsd-kind-interface">JavaScriptArtifactFile</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/application_JavaScriptArtifactAnalysisTypes.JavaScriptJsonModuleObservation.html" class="tsd-signature-type tsd-kind-interface">JavaScriptJsonModuleObservation</a><a href="#analyzejavascriptjsonmodule" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Resolve one declaration under its exact syntax/metadata context.</p>
+<div class="tsd-comment tsd-typography"><p>Parse one approved JSON module without evaluating JavaScript or resolving imports.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">input</span>: <a href="../interfaces/application_JavaScriptArtifactPathResolution.ResolveArtifactPathInput.html" class="tsd-signature-type tsd-kind-interface">ResolveArtifactPathInput</a></span></li></ul></div>
-<h4 class="tsd-returns-title">Returns <a href="../interfaces/application_JavaScriptArtifactPathResolution.ArtifactPathResolution.html" class="tsd-signature-type tsd-kind-interface">ArtifactPathResolution</a></h4><aside class="tsd-sources">
+<li><span><span class="tsd-kind-parameter">file</span>: <a href="../interfaces/application_JavaScriptArtifactFiles.JavaScriptArtifactFile.html" class="tsd-signature-type tsd-kind-interface">JavaScriptArtifactFile</a></span></li></ul></div>
+<h4 class="tsd-returns-title">Returns <a href="../interfaces/application_JavaScriptArtifactAnalysisTypes.JavaScriptJsonModuleObservation.html" class="tsd-signature-type tsd-kind-interface">JavaScriptJsonModuleObservation</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/JavaScriptArtifactPathResolution.ts#L60">src/application/JavaScriptArtifactPathResolution.ts:60</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/JavaScriptJsonModules.ts#L5">src/application/JavaScriptJsonModules.ts:5</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

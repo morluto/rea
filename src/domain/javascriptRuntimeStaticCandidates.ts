@@ -118,12 +118,20 @@ const candidateCategory = (
   node: ApplicationNode,
 ): StaticRuntimeCandidate["category"] | null => {
   if (node.kind === "electron-renderer") return "renderer";
-  if (node.kind === "javascript-asset" || node.kind === "javascript-module")
+  if (
+    node.kind === "javascript-asset" ||
+    (node.kind === "javascript-module" && !isStaticSourceModule(node))
+  )
     return "javascript";
   if (node.kind === "worker") return "worker";
   if (node.kind === "service-worker") return "service-worker";
   return null;
 };
+
+const isStaticSourceModule = (node: ApplicationNode): boolean =>
+  node.observations.some(
+    ({ properties }) => properties.semantic_role === "source-module",
+  );
 
 const indexStaticPaths = (
   graph: JavaScriptApplicationGraph,
