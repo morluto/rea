@@ -19,6 +19,7 @@ import type { JavaScriptArtifactReconstructionInput } from "./JavaScriptArtifact
 /** Relevant file categories projected from the complete artifact inventory. */
 export type JavaScriptArtifactFileKind =
   | "package-json"
+  | "json"
   | "javascript"
   | "html"
   | "source-map"
@@ -367,6 +368,7 @@ const relevantKind = (path: string): JavaScriptArtifactFileKind | undefined => {
   const lower = path.toLowerCase();
   if (lower === "package.json" || lower.endsWith("/package.json"))
     return "package-json";
+  if (lower.endsWith(".json")) return "json";
   if (/\.(?:cjs|mjs|js|jsx|ts|tsx)$/u.test(lower)) return "javascript";
   if (/\.html?$/u.test(lower)) return "html";
   if (lower.endsWith(".map")) return "source-map";
@@ -382,10 +384,12 @@ const filePriority = (kind: JavaScriptArtifactFileKind): number => {
       return 1;
     case "javascript":
       return 2;
-    case "source-map":
+    case "json":
       return 3;
-    case "native-addon":
+    case "source-map":
       return 4;
+    case "native-addon":
+      return 5;
   }
 };
 

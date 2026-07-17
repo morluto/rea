@@ -156,6 +156,77 @@ describe("contextual JavaScript artifact path resolution", () => {
     });
   });
 
+  it("resolves nearest inventoried bare packages with import/require conditions", () => {
+    const files = fileMap([
+      file("app/src/consumer.js", "root"),
+      file(
+        "app/node_modules/fixture/package.json",
+        "root",
+        JSON.stringify({
+          exports: {
+            ".": {
+              import: "./esm.mjs",
+              require: "./cjs.cjs",
+              default: "./fallback.js",
+            },
+          },
+        }),
+      ),
+      file("app/node_modules/fixture/esm.mjs", "root"),
+      file("app/node_modules/fixture/cjs.cjs", "root"),
+      file("app/node_modules/fixture/fallback.js", "root"),
+      file("app/node_modules/fixture/hidden.js", "root"),
+      file("app/node_modules/fs/index.js", "root"),
+    ]);
+
+    expect(
+      resolve({
+        declaredPath: "fixture",
+        sourcePath: "app/src/consumer.js",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "app/node_modules/fixture/esm.mjs",
+    });
+    expect(
+      resolve({
+        declaredPath: "fixture",
+        sourcePath: "app/src/consumer.js",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "app/node_modules/fixture/cjs.cjs",
+    });
+    expect(
+      resolve({
+        declaredPath: "fs",
+        sourcePath: "app/src/consumer.js",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    expect(
+      resolve({
+        declaredPath: "fixture/hidden.js",
+        sourcePath: "app/src/consumer.js",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "external",
+      resolved_path: null,
+      limitations: [expect.stringContaining("subpaths remain unresolved")],
+    });
+  });
+
   it("retains CommonJS and ESM file-base identity during inert extraction", () => {
     const analysis = analyzeJavaScriptStaticSource(
       `

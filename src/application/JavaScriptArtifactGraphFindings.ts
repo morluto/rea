@@ -70,7 +70,7 @@ const addReference = (
   const resolved =
     input.value.specifier === null
       ? null
-      : resolveReference(context, input.file.path, input.value.specifier);
+      : resolveReference(context, input.file.path, input.value);
   if (input.value.kind === "worker" || input.value.kind === "service-worker") {
     const worker = context.accumulator.addNode({
       kind: input.value.kind === "worker" ? "worker" : "service-worker",
@@ -325,8 +325,10 @@ const addSourceMapEdge = (
 const resolveReference = (
   context: JavaScriptArtifactGraphContext,
   sourcePath: string,
-  specifier: string,
+  reference: StaticReference,
 ): ResolvedReference | null => {
+  const specifier = reference.specifier;
+  if (specifier === null) return null;
   const module = context.moduleNodes.get(
     moduleLookupKey(sourcePath, specifier),
   );
@@ -336,7 +338,17 @@ const resolveReference = (
       ? null
       : { path: `${sourcePath}#module:${specifier}`, file, node: module };
   }
-  const path = resolveArtifactPath(specifier, sourcePath, context.filesByPath);
+  const path = resolveArtifactPath(
+    specifier,
+    sourcePath,
+    context.filesByPath,
+    reference.kind === "require"
+      ? "require"
+      : reference.kind === "static-import" ||
+          reference.kind === "dynamic-import"
+        ? "import"
+        : undefined,
+  );
   if (path === null) return null;
   const file = context.filesByPath.get(path);
   const node = context.fileNodes.get(path);

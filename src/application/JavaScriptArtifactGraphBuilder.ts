@@ -16,6 +16,10 @@ import {
 } from "./JavaScriptArtifactGraphDocuments.js";
 import { addJavaScriptStaticFindings } from "./JavaScriptArtifactGraphFindings.js";
 import {
+  addJavaScriptModuleRelationships,
+  addJavaScriptSourceModules,
+} from "./JavaScriptModuleRelationships.js";
+import {
   completeReconstructionCoverage,
   partialReconstructionCoverage,
 } from "./JavaScriptArtifactGraphEvidence.js";
@@ -52,13 +56,16 @@ export const buildJavaScriptArtifactGraph = (
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
     fileNodes: new Map(),
     assetNodes: new Map(),
+    sourceModuleNodes: new Map(),
     moduleNodes: new Map(),
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
   };
   addJavaScriptArtifactContainers(context);
   addJavaScriptArtifactFiles(context);
   const packageRoots = addJavaScriptPackageNodes(context);
+  addJavaScriptSourceModules(context);
   addJavaScriptBundlerNodes(context);
+  addJavaScriptModuleRelationships(context);
   addJavaScriptStaticFindings(context);
   addElectronBoundaries(context);
   addJavaScriptHtmlRoles(context);
@@ -87,6 +94,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   );
   const malformedStructuredData =
     context.analysis.packages.some(({ status }) => status !== "included") ||
+    context.analysis.json_modules.some(({ status }) => status !== "included") ||
     context.analysis.source_maps.some(({ status }) => status === "invalid");
   const partialJavaScript = context.analysis.files.some(
     ({ javascript }) =>
@@ -101,7 +109,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   if (context.analysis.truncated_scopes > 0)
     return partialReconstructionCoverage(
       reconstructionLimits(context.input),
-      null,
+      truncationOmittedCount(context),
       true,
     );
   if (exactLimitOmissions > 0)
@@ -117,6 +125,28 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
       false,
     );
   return completeReconstructionCoverage(reconstructionLimits(context.input));
+};
+
+const truncationOmittedCount = (
+  context: JavaScriptArtifactGraphContext,
+): number | null => {
+  const staticTruncations = context.analysis.files.filter(
+    ({ javascript }) => javascript?.parse_status === "truncated",
+  );
+  if (staticTruncations.length > 0) return null;
+  const semanticTruncations = context.analysis.files.flatMap(({ semantic }) =>
+    semantic?.ir.coverage.status === "truncated" ? [semantic.ir.coverage] : [],
+  );
+  const sourceMapTruncations = context.analysis.source_maps.filter(
+    ({ status }) => status === "truncated",
+  );
+  if (sourceMapTruncations.length > 0) return null;
+  if (semanticTruncations.length !== context.analysis.truncated_scopes)
+    return null;
+  const omissions = semanticTruncations.map(({ omittedCount }) => omittedCount);
+  return omissions.some((omitted) => omitted === null)
+    ? null
+    : omissions.reduce<number>((total, omitted) => total + (omitted ?? 0), 0);
 };
 
 const graphLimitations = (
@@ -140,6 +170,7 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
     ...(electronFindings === 0

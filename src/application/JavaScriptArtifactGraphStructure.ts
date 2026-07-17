@@ -4,13 +4,13 @@ import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTyp
 import type {
   JavaScriptArtifactContainer,
   JavaScriptArtifactFile,
-  JavaScriptArtifactFileKind,
 } from "./JavaScriptArtifactFiles.js";
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   addArtifactContainsEdge,
   addAstContainsEdge,
   addUnavailableStaticParseScope,
+  artifactFileNodeKind,
   artifactLocalIdentity,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
@@ -180,6 +180,17 @@ export const addJavaScriptArtifactFiles = (
         operation: "parse-package-json",
         limitation:
           packageValue.limitation ?? "Package metadata could not be parsed.",
+      });
+    const jsonValue = context.analysis.json_modules.find(
+      ({ path }) => path === file.path,
+    );
+    if (jsonValue !== undefined && jsonValue.status !== "included")
+      addUnavailableStaticParseScope(context, {
+        file,
+        asset: target,
+        operation: "parse-json-module",
+        limitation:
+          jsonValue.limitation ?? "JSON module content could not be parsed.",
       });
     const sourceMap = context.analysis.source_maps.find(
       ({ path }) => path === file.path,
@@ -373,6 +384,9 @@ const createFileTarget = (
   javascript: JavaScriptArtifactAnalysis["files"][number]["javascript"],
 ): ApplicationNode => {
   const kind = artifactFileNodeKind(file.kind);
+  const json = context.analysis.json_modules.find(
+    ({ path }) => path === file.path,
+  );
   return context.accumulator.addNode({
     kind,
     identity: {
@@ -391,6 +405,9 @@ const createFileTarget = (
           file_kind: file.kind,
           text_status: file.text.included ? "included" : file.text.reason,
           parse_status: javascript?.parse_status ?? null,
+          json_parse_status: json?.status ?? null,
+          json_top_level_keys: json?.top_level_keys ?? [],
+          omitted_json_top_level_keys: json?.omitted_top_level_keys ?? 0,
           vendor_markers: javascript?.vendors ?? [],
         },
         evidence: artifactObservationEvidence({
@@ -403,17 +420,6 @@ const createFileTarget = (
     ],
   });
 };
-
-const artifactFileNodeKind = (
-  kind: JavaScriptArtifactFileKind,
-): ApplicationNode["kind"] =>
-  kind === "javascript"
-    ? "javascript-asset"
-    : kind === "source-map"
-      ? "source-map"
-      : kind === "native-addon"
-        ? "native-addon"
-        : "artifact";
 
 const createAsarEntry = (
   context: JavaScriptArtifactGraphContext,

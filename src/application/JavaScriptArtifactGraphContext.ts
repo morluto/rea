@@ -6,6 +6,7 @@ import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTyp
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
+  JavaScriptArtifactFileKind,
 } from "./JavaScriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
@@ -33,6 +34,7 @@ export interface JavaScriptArtifactGraphContext {
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly fileNodes: Map<string, ApplicationNode>;
   readonly assetNodes: Map<string, ApplicationNode>;
+  readonly sourceModuleNodes: Map<string, ApplicationNode>;
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
 }
@@ -232,6 +234,18 @@ export const artifactLocalIdentity = (
   key: key.slice(0, 4_096),
 });
 
+/** Select the graph node kind for one inventoried relevant file. */
+export const artifactFileNodeKind = (
+  kind: JavaScriptArtifactFileKind,
+): ApplicationNode["kind"] =>
+  kind === "javascript"
+    ? "javascript-asset"
+    : kind === "source-map"
+      ? "source-map"
+      : kind === "native-addon"
+        ? "native-addon"
+        : "artifact";
+
 /** Create or merge an Electron role inferred from static syntax or metadata. */
 export const createElectronRoleNode = (
   context: JavaScriptArtifactGraphContext,
@@ -306,12 +320,14 @@ export const resolveArtifactPath = (
   specifier: string,
   sourcePath: string,
   files: ReadonlyMap<string, JavaScriptArtifactFile>,
+  moduleKind?: "import" | "require",
 ): string | null =>
   resolveArtifactPathByContext({
     declaredPath: specifier,
     sourcePath,
     context: "module-specifier",
     files,
+    ...(moduleKind === undefined ? {} : { moduleKind }),
   }).resolved_path;
 
 /** Locate the recovered module that owns a static finding. */
@@ -321,7 +337,7 @@ export const sourceNodeFor = (
   moduleKey: string | null,
 ): ApplicationNode | undefined =>
   moduleKey === null
-    ? undefined
+    ? context.sourceModuleNodes.get(path)
     : context.moduleNodes.get(moduleLookupKey(path, moduleKey));
 
 /** Named AST budgets committed to graph evidence coverage. */
