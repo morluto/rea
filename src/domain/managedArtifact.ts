@@ -170,8 +170,16 @@ const managedMethodBodySchema = z.object({
   init_locals: z.boolean().nullable(),
   local_var_sig_token: tokenSchema.nullable(),
   il_size: z.number().int().min(0),
-  il_sha256: digestSchema.nullable(),
-  normalized_il_sha256: digestSchema.nullable(),
+  il_sha256: digestSchema
+    .nullable()
+    .describe(
+      "SHA-256 of exactly the raw il_size CIL bytes; excludes the method header, locals signature, alignment, and extra sections",
+    ),
+  normalized_il_sha256: digestSchema
+    .nullable()
+    .describe(
+      "Member-result-v1 SHA-256 of UTF-8 JSON [opcode, operand_kind, operand] tuples for a complete decode; retains build-local tokens, omits switch targets, and excludes headers, locals, and exception regions",
+    ),
   instruction_count: z.number().int().min(0),
   decoded_instruction_count: z.number().int().min(0),
   truncated_instructions: z.number().int().min(0),
