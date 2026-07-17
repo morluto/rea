@@ -6,11 +6,13 @@
 export const PRODUCT_IDENTITY = {
   displayName: "REA",
   packageName: PACKAGE_METADATA.name,
+  packageSpecifier: `${PACKAGE_METADATA.name}@latest`,
   packageVersion: PACKAGE_METADATA.version,
   cliBinary: "rea",
-  mcpCommand: "npx -y rea-agents mcp",
+  mcpCommand: `npx -y ${PACKAGE_METADATA.name}@latest mcp`,
   mcpServerKey: "rea",
-  skillName: "rea-analysis",
+  skillName: "reverse-engineer-anything",
+  legacySkillNames: ["rea-analysis"],
   skillVersion: PACKAGE_METADATA.skillVersion,
   configFileName: "rea.json",
 } as const;

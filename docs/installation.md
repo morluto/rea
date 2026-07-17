@@ -13,6 +13,11 @@ rea setup
 
 REA supports Node.js 22.19+ and 24.11+ (including newer releases). It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
 
+Running `npm install rea-agents` without `--global` installs the executable only
+in the current project's `node_modules/.bin`; it does not make `rea` available
+on the shell `PATH`. Use `npx -y rea-agents@latest` for one-off commands or the
+global installation above for a shell-visible `rea` command.
+
 The optional curl wrapper installs only the global npm package:
 
 ```bash

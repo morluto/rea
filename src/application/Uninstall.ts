@@ -87,12 +87,7 @@ export const systemUninstallHost = (
 ): UninstallHost => ({
   clients: () => Promise.resolve(supportedClients(home)),
   removeClient: (client) => removeClient(client, fileSystem),
-  removeSkill: () =>
-    removeManagedPath(
-      join(home, ".agents/skills", PRODUCT_IDENTITY.skillName),
-      "skill",
-      fileSystem,
-    ),
+  removeSkill: () => removeManagedSkills(home, fileSystem),
   purgeData: async () => [
     await removeManagedPath(join(home, ".rea/cache"), "cache", fileSystem),
     await removeManagedPath(join(home, ".rea/state"), "state", fileSystem),
@@ -229,8 +224,10 @@ const isOwnedRegistration = (value: unknown): boolean => {
       args.length === 1 &&
       args[0] === "mcp") ||
     (command === "npx" &&
-      JSON.stringify(args) ===
-        JSON.stringify(["-y", PRODUCT_IDENTITY.packageName, "mcp"]))
+      (JSON.stringify(args) ===
+        JSON.stringify(["-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]) ||
+        JSON.stringify(args) ===
+          JSON.stringify(["-y", PRODUCT_IDENTITY.packageName, "mcp"])))
   );
 };
 
@@ -258,6 +255,36 @@ const removeManagedPath = async (
           "This item could not be removed. Check file permissions, then rerun uninstall.",
         );
   }
+};
+
+const removeManagedSkills = async (
+  home: string,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem> => {
+  const results: UninstallItem[] = [];
+  for (const name of [
+    PRODUCT_IDENTITY.skillName,
+    ...PRODUCT_IDENTITY.legacySkillNames,
+  ])
+    results.push(
+      await removeManagedPath(
+        join(home, ".agents/skills", name),
+        "skill",
+        fileSystem,
+      ),
+    );
+  const failed = results.find(({ status }) => status === "failed");
+  if (failed !== undefined) return failed;
+  const retained = results.find(({ status }) => status === "retained");
+  if (retained !== undefined) return retained;
+  const removed = results.filter(({ status }) => status === "removed");
+  if (removed.length > 0)
+    return item(
+      "skill",
+      "removed",
+      removed.map(({ detail }) => detail).join(" "),
+    );
+  return item("skill", "skipped", "No managed REA skill installation exists.");
 };
 
 const item = (

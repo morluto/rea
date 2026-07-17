@@ -55,7 +55,7 @@ describe("JSON client configuration transaction", () => {
         other: { command: "other" },
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents", "mcp"],
+          args: ["-y", "rea-agents@latest", "mcp"],
         },
       },
     });
@@ -79,7 +79,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents", "mcp"],
+          args: ["-y", "rea-agents@latest", "mcp"],
         },
       },
     });
@@ -108,7 +108,7 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents","mcp"]}}}\n',
+      '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@latest","mcp"]}}}\n',
     );
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
       status: "unchanged",
@@ -116,6 +116,30 @@ describe("JSON client configuration transaction", () => {
     await expect(
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
+  });
+
+  it("migrates an unversioned npx registration and preserves sibling configuration", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    const configPath = join(directory, "mcp.json");
+    const original =
+      '{"theme":"dark","mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents","mcp"]},"other":{"command":"other"}}}\n';
+    await writeFile(configPath, original);
+
+    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+      expect.objectContaining({ status: "configured" }),
+    );
+
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      theme: "dark",
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", "rea-agents@latest", "mcp"],
+        },
+        other: { command: "other" },
+      },
+    });
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
   });
 
   it("persists a custom Hopper launcher and remains idempotent", async () => {
@@ -132,7 +156,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents", "mcp"],
+          args: ["-y", "rea-agents@latest", "mcp"],
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

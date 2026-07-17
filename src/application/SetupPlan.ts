@@ -3,6 +3,7 @@ import type {
   SetupClient,
   SetupProviderEnvironment,
 } from "./Setup.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
 /** Build the complete setup mutation plan before approval. */
 export const setupPlan = (
@@ -42,8 +43,9 @@ export const setupPlan = (
     ? [
         {
           kind: "install_skill" as const,
-          target: "~/.agents/skills/rea-analysis/SKILL.md",
-          detail: "Install or update the bundled REA analysis skill.",
+          target: `~/.agents/skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
+          detail:
+            "Install or update the bundled REA reverse-engineering skill. If the retired rea-analysis skill exists, back up its SKILL.md beside the retired path, then remove that legacy entry.",
           external: false,
         },
       ]

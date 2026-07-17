@@ -117,9 +117,9 @@ Review the setup plan, approve it if appropriate, then describe the app or featu
 ### From Terminal — no installation
 
 ```bash
-npx -y rea-agents setup
-npx -y rea-agents doctor
-npx -y rea-agents analyze /Applications/Notes.app
+npx -y rea-agents@latest setup
+npx -y rea-agents@latest doctor
+npx -y rea-agents@latest analyze /Applications/Notes.app
 ```
 
 Review the setup plan before confirming it. Restart a configured agent so it loads REA.
@@ -146,6 +146,11 @@ an unrelated global package.
 
 Choose either the no-install commands or the global installation. You do not need both.
 
+`npm install rea-agents` without `--global` installs `rea` only into the
+current project's `node_modules/.bin`; it does not add `rea` to your shell
+`PATH`. Use the `npx` commands above for one-off runs or `--global` when you
+want a shell-visible `rea` command.
+
 ### Requirements
 
 - macOS 12 or newer
@@ -159,7 +164,7 @@ Deep binary operations use [Hopper](https://www.hopperapp.com/), a separate desk
 If something is not working, run:
 
 ```bash
-npx -y rea-agents doctor
+npx -y rea-agents@latest doctor
 ```
 
 `rea doctor --json` is read-only and distinguishes unsupported hosts, missing dependencies, a missing local analysis engine, configuration drift, and healthy checks. Paid-license activation is optional: on Linux, REA runs the supported Hopper demo build on a private Xvfb display and selects Hopper's offered demo mode for each analysis session.
@@ -432,7 +437,7 @@ Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, 
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents", "mcp"]
+      "args": ["-y", "rea-agents@latest", "mcp"]
     }
   }
 }
@@ -473,20 +478,20 @@ The CLI and MCP server use the same application workflows and evidence contracts
 The agent workflow above is the easiest way to use REA. For a one-off overview from the Terminal:
 
 ```bash
-npx -y rea-agents analyze /Applications/Notes.app
-npx -y rea-agents inspect /Applications/Notes.app
-npx -y rea-agents inspect /Applications/Notes.app --detail detailed --limit 20
-npx -y rea-agents search /Applications/Notes.app "offline"
-npx -y rea-agents function /Applications/Notes.app 0x1000
-npx -y rea-agents xrefs /Applications/Notes.app 0x1000
-npx -y rea-agents trace /Applications/Notes.app "offline"
-npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
-npx -y rea-agents investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes
-npx -y rea-agents capabilities
-npx -y rea-agents providers
+npx -y rea-agents@latest analyze /Applications/Notes.app
+npx -y rea-agents@latest inspect /Applications/Notes.app
+npx -y rea-agents@latest inspect /Applications/Notes.app --detail detailed --limit 20
+npx -y rea-agents@latest search /Applications/Notes.app "offline"
+npx -y rea-agents@latest function /Applications/Notes.app 0x1000
+npx -y rea-agents@latest xrefs /Applications/Notes.app 0x1000
+npx -y rea-agents@latest trace /Applications/Notes.app "offline"
+npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
+npx -y rea-agents@latest investigate-versions /path/to/v1 /path/to/v2 /absolute/path/to/evidence/releases.json --yes
+npx -y rea-agents@latest capabilities
+npx -y rea-agents@latest providers
 ```
 
-Run `npx -y rea-agents --help` for direct decompilation, bounded search and
+Run `npx -y rea-agents@latest --help` for direct decompilation, bounded search and
 other options. `analyze` and `inspect` share the same overview workflow;
 `function`, `xrefs`, and `trace` return the same Evidence v2 envelopes as MCP.
 
@@ -588,9 +593,9 @@ first terminal, interaction, exit, filesystem, protocol, process, or shim
 divergence. See [Process Capture v4](docs/process-capture.md) for scenario
 fields, command-shim replay, checkpoint triggers, limits, and safety behavior.
 
-If the native PTY backend is unavailable, install Xcode command-line tools and
-run `npm run rebuild:native`. Linux source builds require Python, `make`, and a
-C++ toolchain. Compatible packaged binaries do not require this rebuild.
+REA installs a prebuilt PTY backend for supported macOS, Linux, and Windows
+architectures. If the capability check reports that the backend is unavailable,
+reinstall REA for the current platform and architecture.
 
 ASAR inventory verifies Electron integrity metadata for both archive entries
 and `.asar.unpacked` companion files. Integrity failures identify the logical

@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { IPty } from "node-pty";
+import type { IPty } from "@lydell/node-pty";
 
 import type {
   FilesystemCheckpoint,

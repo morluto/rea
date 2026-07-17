@@ -78,7 +78,7 @@ const registrationAligned = (
     command.length === 4 &&
     command[0] === "npx" &&
     command[1] === "-y" &&
-    command[2] === PRODUCT_IDENTITY.packageName &&
+    command[2] === PRODUCT_IDENTITY.packageSpecifier &&
     command[3] === "mcp"
   )
     return true;

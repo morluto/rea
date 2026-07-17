@@ -146,9 +146,14 @@ describe("agent lifecycle", () => {
     const home = await mkdtemp(join(tmpdir(), "rea-uninstall-"));
     roots.push(home);
     const cursor = join(home, ".cursor/mcp.json");
-    const skill = join(home, ".agents/skills/rea-analysis/SKILL.md");
+    const skill = join(
+      home,
+      ".agents/skills/reverse-engineer-anything/SKILL.md",
+    );
+    const legacySkill = join(home, ".agents/skills/rea-analysis/SKILL.md");
     await mkdir(dirname(cursor), { recursive: true });
     await mkdir(dirname(skill), { recursive: true });
+    await mkdir(dirname(legacySkill), { recursive: true });
     await writeFile(
       cursor,
       JSON.stringify({
@@ -159,6 +164,7 @@ describe("agent lifecycle", () => {
       }),
     );
     await writeFile(skill, "managed");
+    await writeFile(legacySkill, "legacy managed");
     await mkdir(join(home, ".rea"), { recursive: true });
     await import("node:fs/promises").then(({ symlink }) =>
       symlink(home, join(home, ".rea/cache")),
@@ -168,6 +174,8 @@ describe("agent lifecycle", () => {
     expect(JSON.parse(await readFile(cursor, "utf8"))).toEqual({
       mcpServers: { other: { command: "other" } },
     });
+    await expect(readFile(skill, "utf8")).rejects.toThrow();
+    await expect(readFile(legacySkill, "utf8")).rejects.toThrow();
     expect(first.items).toContainEqual(
       expect.objectContaining({
         name: "cache",
@@ -300,7 +308,7 @@ describe("agent lifecycle", () => {
   it("reports a managed-path removal failure", async () => {
     const home = await mkdtemp(join(tmpdir(), "rea-uninstall-remove-"));
     roots.push(home);
-    const skillRoot = join(home, ".agents/skills/rea-analysis");
+    const skillRoot = join(home, ".agents/skills/reverse-engineer-anything");
     await mkdir(skillRoot, { recursive: true });
     const result = await runUninstall(
       false,

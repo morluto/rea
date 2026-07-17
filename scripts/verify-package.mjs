@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -37,6 +38,16 @@ try {
   const packedFiles = (
     await exec("tar", ["-tf", join(root, tarball)])
   ).stdout.split("\n");
+  const packedManifest = JSON.parse(
+    (await exec("tar", ["-xOf", join(root, tarball), "package/package.json"]))
+      .stdout,
+  );
+  if (
+    packedManifest.scripts?.postinstall !== undefined ||
+    packedManifest.dependencies?.["node-pty"] !== undefined ||
+    packedManifest.dependencies?.["@lydell/node-pty"] !== "1.1.0"
+  )
+    throw new Error("package retained a lifecycle-dependent PTY installation");
   if (
     packedFiles.some(
       (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
@@ -121,10 +132,89 @@ try {
   };
   await exec(
     "npm",
-    ["install", "--global", "--prefix", prefix, join(root, tarball)],
+    [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--prefix",
+      prefix,
+      join(root, tarball),
+    ],
     { env: environment },
   );
   const cli = join(prefix, "bin", "rea");
+  const processCaptureCapabilityUrl = pathToFileURL(
+    join(
+      prefix,
+      "lib/node_modules/rea-agents/dist/application/ProcessCaptureCapability.js",
+    ),
+  ).href;
+  const processCaptureCapability = json(
+    (
+      await exec(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `const { probeProcessCaptureCapability } = await import(${JSON.stringify(processCaptureCapabilityUrl)}); process.stdout.write(JSON.stringify(await probeProcessCaptureCapability()));`,
+        ],
+        { env: environment },
+      )
+    ).stdout,
+  );
+  if (processCaptureCapability.available !== true)
+    throw new Error(
+      `packaged PTY backend failed without lifecycle scripts: ${JSON.stringify(processCaptureCapability)}`,
+    );
+  const noOptionalPrefix = join(workspace, "prefix-no-optional");
+  await exec(
+    "npm",
+    [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--omit=optional",
+      "--prefix",
+      noOptionalPrefix,
+      join(root, tarball),
+    ],
+    { env: environment },
+  );
+  const noOptionalCli = join(noOptionalPrefix, "bin", "rea");
+  await rm(
+    join(
+      noOptionalPrefix,
+      "lib/node_modules/rea-agents/node_modules/@lydell",
+      `node-pty-${process.platform}-${process.arch}`,
+    ),
+    { recursive: true, force: true },
+  );
+  const noOptionalCapabilityUrl = pathToFileURL(
+    join(
+      noOptionalPrefix,
+      "lib/node_modules/rea-agents/dist/application/ProcessCaptureCapability.js",
+    ),
+  ).href;
+  const noOptionalCapability = json(
+    (
+      await exec(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `const { probeProcessCaptureCapability } = await import(${JSON.stringify(noOptionalCapabilityUrl)}); process.stdout.write(JSON.stringify(await probeProcessCaptureCapability()));`,
+        ],
+        { env: environment },
+      )
+    ).stdout,
+  );
+  if (
+    !(await run(noOptionalCli, ["--help"], environment)).includes("setup") ||
+    noOptionalCapability.available !== false
+  )
+    throw new Error(
+      `packaged CLI did not degrade without the optional PTY binary: ${JSON.stringify(noOptionalCapability)}`,
+    );
   const help = await run(cli, ["--help"], environment);
   const llms = await run(cli, ["--llms"], environment);
   const doctorExecution = await runWithStatus(
@@ -662,16 +752,22 @@ try {
     );
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
-  if (!mcpRegistration.includes("add-mcp npx -y rea-agents mcp --name rea"))
-    throw new Error("Incur mcp add did not register the floating npx command");
-  const skillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
+  if (
+    !mcpRegistration.includes("add-mcp npx -y rea-agents@latest mcp --name rea")
+  )
+    throw new Error("Incur mcp add did not register the latest npx command");
+  const skillPath = join(
+    home,
+    ".agents/skills/reverse-engineer-anything/SKILL.md",
+  );
+  const legacySkillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
   const siblingSkillPath = join(home, ".agents/skills/unrelated/SKILL.md");
   if (supportedSetupHost) {
     await mkdir(join(home, ".agents/skills/rea-analysis"), {
       recursive: true,
     });
     await mkdir(join(home, ".agents/skills/unrelated"), { recursive: true });
-    await writeFile(skillPath, "stale managed skill\n");
+    await writeFile(legacySkillPath, "stale managed skill\n");
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }
   const plannedExecution = await runWithStatus(
@@ -684,13 +780,16 @@ try {
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
     const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
-    const plannedSkill = await readFile(skillPath, "utf8");
+    const plannedSkill = await readFile(legacySkillPath, "utf8");
     if (
       planned.status !== "needs_confirmation" ||
       plannedExecution.status !== 1 ||
       planned.appliedActions.length !== 0 ||
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
-      !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
+      !planned.plannedActions.some(
+        ({ kind, detail }) =>
+          kind === "install_skill" && detail.includes("back up its SKILL.md"),
+      ) ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
       plannedCodexConfig !== 'model = "gpt-5"\n' ||
       plannedCursorConfig !== '{"existing":true}\n' ||
@@ -764,17 +863,18 @@ try {
       throw new Error("packaged setup did not preserve config symlinks");
     const skill = await readFile(skillPath, "utf8");
     const canonicalSkill = await readFile(
-      join(root, "skills/rea-analysis/SKILL.md"),
+      join(root, "skills/reverse-engineer-anything/SKILL.md"),
       "utf8",
     );
     if (skill !== canonicalSkill)
       throw new Error("packaged skill did not match its canonical source");
     if (
-      (await readFile(`${skillPath}.rea.backup`, "utf8")) !==
+      (await pathExists(legacySkillPath)) ||
+      (await readFile(`${legacySkillPath}.rea.backup`, "utf8")) !==
         "stale managed skill\n" ||
       (await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n"
     )
-      throw new Error("packaged stale-skill upgrade was not isolated");
+      throw new Error("packaged skill-name migration was not isolated");
     const alignedDoctorExecution = await runWithStatus(
       cli,
       ["doctor", "--json"],
@@ -1036,7 +1136,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedRuntimePlanCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents mcp", doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
+    `${JSON.stringify({ cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedRuntimePlanCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: "npx -y rea-agents@latest mcp", lifecycleScriptsRequired: false, doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 3 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

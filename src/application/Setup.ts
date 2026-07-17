@@ -53,7 +53,7 @@ export {
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
-    ? ["npx", "-y", PRODUCT_IDENTITY.packageName, "mcp"]
+    ? ["npx", "-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]
     : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
 
 /** Result of one backup/write/readback transaction. */
@@ -405,7 +405,7 @@ export const configureJsonClient = async (
   command: readonly string[] = [
     "npx",
     "-y",
-    PRODUCT_IDENTITY.packageName,
+    PRODUCT_IDENTITY.packageSpecifier,
     "mcp",
   ],
 ): Promise<ClientConfigurationResult> => {
@@ -483,7 +483,7 @@ export const configureTomlClient = async (
   command: readonly string[] = [
     "npx",
     "-y",
-    PRODUCT_IDENTITY.packageName,
+    PRODUCT_IDENTITY.packageSpecifier,
     "mcp",
   ],
 ): Promise<ClientConfigurationResult> => {

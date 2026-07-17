@@ -48,13 +48,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run rebuild:native
       - name: Install packed CLI in isolation
         shell: bash
         run: |
           tarball="$(npm pack --silent)"
           prefix="${RUNNER_TEMP}/rea-prefix"
-          npm install --global --prefix "${prefix}" "./${tarball}"
+          npm install --global --ignore-scripts --prefix "${prefix}" "./${tarball}"
           echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
           echo 'REA_VERIFY_SERVER_ARGS_JSON=["mcp"]' >> "${GITHUB_ENV}"
       - name: Verify two binaries through an alternate launcher symlink

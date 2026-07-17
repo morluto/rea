@@ -61,10 +61,10 @@ describe("localized README product facts", () => {
       expect(content).toContain(
         "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
       );
-      expect(content).toContain("npx -y rea-agents setup");
-      expect(content).toContain("npx -y rea-agents doctor");
+      expect(content).toContain("npx -y rea-agents@latest setup");
+      expect(content).toContain("npx -y rea-agents@latest doctor");
       expect(content).toContain("rea uninstall");
-      expect(content).toContain('"args": ["-y", "rea-agents", "mcp"]');
+      expect(content).toContain('"args": ["-y", "rea-agents@latest", "mcp"]');
       expect(content).toContain("Node.js 22");
       expect(content).toContain("macOS 12");
       expect(content).toContain("Ubuntu 24.04");
@@ -81,7 +81,8 @@ describe("localized README product facts", () => {
 
   it("keeps both English CLI onboarding paths discoverable", async () => {
     const content = await readFile(resolve("README.md"), "utf8");
-    expect(content).toContain("npx -y rea-agents analyze");
+    expect(content).toContain("npx -y rea-agents@latest analyze");
+    expect(content).toContain("npm install rea-agents` without `--global`");
     expect(content).toContain("npm install --global rea-agents");
     expect(content).toContain("rea setup");
     expect(content).toContain("--install-hopper");
