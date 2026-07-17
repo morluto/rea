@@ -10,7 +10,7 @@ for (const argument of arguments_)
     throw new Error(`Unknown skill metadata option: ${argument}`);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const path = join(root, "skills/rea-analysis/SKILL.md");
+const path = join(root, "skills/reverse-engineer-anything/SKILL.md");
 const current = await readFile(path, "utf8");
 const { CATALOG_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${String(Date.now())}`

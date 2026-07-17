@@ -1,8 +1,8 @@
 ---
-name: rea-analysis
+name: reverse-engineer-anything
 description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
 metadata:
-  version: "20"
+  version: "21"
   tool_count: 95
   catalog_digest: "b3db06bedadc1ad21a6cfe76f58a9c6cebbf9bce4f9663733b6bab07a57203c3"
 ---
@@ -101,9 +101,9 @@ Notes is only a documentation example. Never select an app unless the user names
 
 ## Ensure REA is ready
 
-1. Run `npx -y rea-agents doctor`.
+1. Run `npx -y rea-agents@latest doctor`.
 2. If setup is needed, tell the user REA needs to install its local binary-analysis tools. Do not lead with implementation details or assume the user knows reverse-engineering products.
-3. Before installing external software, obtain approval and identify what will be installed. If deeper analysis needs Hopper, describe it as REA's local analysis engine and note that it is a separate Mac app with its own license. Then run `npx -y rea-agents setup --yes`.
+3. Before installing external software, obtain approval and identify what will be installed. If deeper analysis needs Hopper, describe it as REA's local analysis engine and note that it is a separate Mac app with its own license. Then run `npx -y rea-agents@latest setup --yes`.
 4. If macOS or an installer requests human input, tell the user exactly what needs attention. After they finish, rerun setup and doctor.
 5. If setup registers a new MCP server, tell the user to restart their agent to load all REA tools. Direct CLI commands remain available before restart.
 

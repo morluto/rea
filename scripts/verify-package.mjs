@@ -756,14 +756,18 @@ try {
     !mcpRegistration.includes("add-mcp npx -y rea-agents@latest mcp --name rea")
   )
     throw new Error("Incur mcp add did not register the latest npx command");
-  const skillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
+  const skillPath = join(
+    home,
+    ".agents/skills/reverse-engineer-anything/SKILL.md",
+  );
+  const legacySkillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
   const siblingSkillPath = join(home, ".agents/skills/unrelated/SKILL.md");
   if (supportedSetupHost) {
     await mkdir(join(home, ".agents/skills/rea-analysis"), {
       recursive: true,
     });
     await mkdir(join(home, ".agents/skills/unrelated"), { recursive: true });
-    await writeFile(skillPath, "stale managed skill\n");
+    await writeFile(legacySkillPath, "stale managed skill\n");
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }
   const plannedExecution = await runWithStatus(
@@ -776,7 +780,7 @@ try {
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
     const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
-    const plannedSkill = await readFile(skillPath, "utf8");
+    const plannedSkill = await readFile(legacySkillPath, "utf8");
     if (
       planned.status !== "needs_confirmation" ||
       plannedExecution.status !== 1 ||
@@ -856,17 +860,18 @@ try {
       throw new Error("packaged setup did not preserve config symlinks");
     const skill = await readFile(skillPath, "utf8");
     const canonicalSkill = await readFile(
-      join(root, "skills/rea-analysis/SKILL.md"),
+      join(root, "skills/reverse-engineer-anything/SKILL.md"),
       "utf8",
     );
     if (skill !== canonicalSkill)
       throw new Error("packaged skill did not match its canonical source");
     if (
-      (await readFile(`${skillPath}.rea.backup`, "utf8")) !==
+      (await pathExists(legacySkillPath)) ||
+      (await readFile(`${legacySkillPath}.rea.backup`, "utf8")) !==
         "stale managed skill\n" ||
       (await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n"
     )
-      throw new Error("packaged stale-skill upgrade was not isolated");
+      throw new Error("packaged skill-name migration was not isolated");
     const alignedDoctorExecution = await runWithStatus(
       cli,
       ["doctor", "--json"],

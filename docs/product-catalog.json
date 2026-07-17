@@ -8,7 +8,7 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "20"
+    "skill_version": "21"
   },
   "tools": {
     "total": 95,

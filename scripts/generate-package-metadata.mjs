@@ -18,12 +18,12 @@ const lock = JSON.parse(
   await readFile(join(root, "package-lock.json"), "utf8"),
 );
 const skill = await readFile(
-  join(root, "skills/rea-analysis/SKILL.md"),
+  join(root, "skills/reverse-engineer-anything/SKILL.md"),
   "utf8",
 );
 const skillVersion = /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(skill)?.[1];
 if (skillVersion === undefined)
-  throw new Error("Missing rea-analysis skill metadata version");
+  throw new Error("Missing reverse-engineer-anything skill metadata version");
 const versionOf = (name) => {
   const value = lock.packages?.[`node_modules/${name}`]?.version;
   if (typeof value !== "string")
