@@ -58,17 +58,40 @@ export const registerPolicyCommands = (
   cli.command(CLI_COMMANDS.policy, {
     description: "Inspect, explain, or revoke unified local permission grants",
     args: z.object({
-      action: z.enum(["status", "list", "explain", "revoke"]),
-      value: z.string().optional(),
+      action: z
+        .enum(["status", "list", "explain", "revoke"])
+        .describe("Permission-policy operation to perform"),
+      value: z
+        .string()
+        .optional()
+        .describe("Capability to explain or grant ID to revoke"),
     }),
     options: z.object({
-      root: z.string().optional(),
-      executable: z.string().optional(),
-      environmentNames: z.array(z.string()).default([]),
-      origins: z.array(z.string()).default([]),
-      network: z.enum(["none", "loopback", "external"]).default("none"),
-      mount: z.boolean().default(false),
-      write: z.boolean().default(false),
+      root: z.string().optional().describe("Filesystem root to authorize"),
+      executable: z
+        .string()
+        .optional()
+        .describe("Executable path to authorize"),
+      environmentNames: z
+        .array(z.string())
+        .default([])
+        .describe("Environment variable names the operation may read"),
+      origins: z
+        .array(z.string())
+        .default([])
+        .describe("Exact browser origins the operation may access"),
+      network: z
+        .enum(["none", "loopback", "external"])
+        .default("none")
+        .describe("Maximum network scope to authorize"),
+      mount: z
+        .boolean()
+        .default(false)
+        .describe("Authorize mounting an artifact filesystem"),
+      write: z
+        .boolean()
+        .default(false)
+        .describe("Explain the write form of the requested capability"),
       yes: z
         .boolean()
         .default(false)

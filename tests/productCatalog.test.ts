@@ -38,6 +38,7 @@ import {
 import { ensureGeneratedFile } from "../scripts/lib/generated-file.mjs";
 import {
   createCliInventory,
+  cliCommandDescriptionIssues,
   cliCommandOptionNames,
   createProductCatalog,
   serializeProductCatalog,
@@ -159,6 +160,10 @@ describe("canonical product catalog", () => {
     expect(inventory.aliases).toEqual([
       { name: "compare-bundles", target: "compare" },
     ]);
+  });
+
+  it("describes every primary command argument and option", () => {
+    expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
   });
 
   it("exposes the shared provider selector on every deep-analysis command", () => {

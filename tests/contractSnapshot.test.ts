@@ -25,6 +25,7 @@ import {
   annotationsFromEffects,
   TOOL_EFFECTS,
 } from "../src/contracts/toolEffects.js";
+import { toolRegistrationOptions } from "../src/server/toolRegistrationOptions.js";
 
 const convertContractJsonSchema = (schema: z.ZodType) =>
   z.toJSONSchema(schema, {
@@ -59,6 +60,31 @@ const emptySchemaPaths = (value: unknown, path = "$"): string[] => {
 };
 
 describe("tool contract surface", () => {
+  it("gives fallback parameter guidance operational meaning", () => {
+    const contract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "analyze_function",
+    );
+    expect(contract).toBeDefined();
+    if (contract === undefined) return;
+
+    const advertisedSchema =
+      toolRegistrationOptions(contract).inputSchema[
+        "~standard"
+      ].jsonSchema.input();
+    const properties = Object.fromEntries(
+      Object.entries(advertisedSchema.properties ?? {}),
+    );
+    expect(properties.include_assembly).toMatchObject({
+      description: "Whether to include assembly in the result.",
+    });
+    expect(properties.max_instructions).toMatchObject({
+      description: "Maximum permitted instructions for this operation.",
+    });
+    expect(properties.pseudocode_offset).toMatchObject({
+      description: "Zero-based index of the first pseudocode to return.",
+    });
+  });
+
   it("advertises complete typed schemas and annotations for all analysis tools", () => {
     const contracts = [
       ...OFFICIAL_TOOL_CONTRACTS,

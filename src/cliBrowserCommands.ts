@@ -31,6 +31,23 @@ const browserScopeOptions = {
   approved: z.boolean().default(false).describe("Approve passive observation"),
 };
 
+const boundedCount = (
+  subject: string,
+  maximum: number,
+  fallback: number,
+  minimum = 1,
+) =>
+  z
+    .number()
+    .int()
+    .min(minimum)
+    .max(maximum)
+    .default(fallback)
+    .describe(`Maximum ${subject}`);
+
+const boundedBytes = (subject: string, maximum: number, fallback: number) =>
+  boundedCount(`${subject} in bytes`, maximum, fallback);
+
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
   cli: ReturnType<typeof Cli.create>,
@@ -53,8 +70,13 @@ const registerTargetList = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      offset: z.number().int().min(0).default(0),
-      limit: z.number().int().min(1).max(200).default(100),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based browser-target offset"),
+      limit: boundedCount("browser targets to return", 200, 100),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "list-browser-targets", async () => {
@@ -92,88 +114,114 @@ const registerPageInspection = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: z.number().int().min(0).max(10_000).default(500),
-      includeAccessibilityText: z.boolean().default(false),
-      includeConsoleText: z.boolean().default(false),
-      consoleTextApproved: z.boolean().default(false),
-      includeJsonBodyShapes: z.boolean().default(false),
-      jsonBodySchemaApproved: z.boolean().default(false),
-      includeWebsocketShapes: z.boolean().default(false),
-      websocketShapeApproved: z.boolean().default(false),
-      includeScriptSources: z.boolean().default(false),
-      includeStorageKeys: z.boolean().default(false),
-      maxFrames: z.number().int().min(1).max(1_000).default(200),
-      maxDomNodes: z.number().int().min(1).max(10_000).default(2_000),
-      maxAxNodes: z.number().int().min(1).max(10_000).default(2_000),
-      maxAxTextFieldBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024)
-        .default(1_024),
-      maxTotalAxTextBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(1_024 * 1_024)
-        .default(64 * 1_024),
-      maxScripts: z.number().int().min(1).max(1_000).default(200),
-      maxResources: z.number().int().min(1).max(10_000).default(2_000),
-      maxWorkers: z.number().int().min(1).max(5_000).default(500),
-      maxStorageKeys: z.number().int().min(1).max(10_000).default(1_000),
-      maxScriptSourceBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(4 * 1_024 * 1_024)
-        .default(1_024 * 1_024),
-      maxTotalScriptSourceBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024 * 1_024)
-        .default(4 * 1_024 * 1_024),
-      maxNetworkEvents: z.number().int().min(1).max(10_000).default(1_000),
-      maxConsoleEvents: z.number().int().min(1).max(2_000).default(200),
-      maxConsoleTextFieldBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024)
-        .default(1_024),
-      maxTotalConsoleTextBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(1_024 * 1_024)
-        .default(64 * 1_024),
-      maxJsonBodyBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(4 * 1_024 * 1_024)
-        .default(1_024 * 1_024),
-      maxTotalJsonBodyBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024 * 1_024)
-        .default(4 * 1_024 * 1_024),
-      maxJsonShapeNodes: z.number().int().min(1).max(100_000).default(5_000),
-      maxJsonShapeDepth: z.number().int().min(1).max(100).default(20),
-      maxWebsocketEvents: z.number().int().min(1).max(5_000).default(500),
-      maxWebsocketShapeBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(1_024 * 1_024)
-        .default(64 * 1_024),
-      maxTotalWebsocketShapeBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024 * 1_024)
-        .default(1_024 * 1_024),
+      observationMs: boundedCount(
+        "observation duration in milliseconds",
+        10_000,
+        500,
+        0,
+      ),
+      includeAccessibilityText: z
+        .boolean()
+        .default(false)
+        .describe("Include bounded accessibility text"),
+      includeConsoleText: z
+        .boolean()
+        .default(false)
+        .describe("Include bounded console message text"),
+      consoleTextApproved: z
+        .boolean()
+        .default(false)
+        .describe("Approve capturing console message text"),
+      includeJsonBodyShapes: z
+        .boolean()
+        .default(false)
+        .describe("Include structural shapes of JSON response bodies"),
+      jsonBodySchemaApproved: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Approve inspecting JSON response bodies for structural shapes",
+        ),
+      includeWebsocketShapes: z
+        .boolean()
+        .default(false)
+        .describe("Include structural shapes of WebSocket payloads"),
+      websocketShapeApproved: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Approve inspecting WebSocket payloads for structural shapes",
+        ),
+      includeScriptSources: z
+        .boolean()
+        .default(false)
+        .describe("Include bounded JavaScript source text"),
+      includeStorageKeys: z
+        .boolean()
+        .default(false)
+        .describe("Include storage key names without values"),
+      maxFrames: boundedCount("page frames", 1_000, 200),
+      maxDomNodes: boundedCount("DOM nodes", 10_000, 2_000),
+      maxAxNodes: boundedCount("accessibility nodes", 10_000, 2_000),
+      maxAxTextFieldBytes: boundedBytes(
+        "one accessibility text field",
+        16 * 1_024,
+        1_024,
+      ),
+      maxTotalAxTextBytes: boundedBytes(
+        "total accessibility text",
+        1_024 * 1_024,
+        64 * 1_024,
+      ),
+      maxScripts: boundedCount("scripts", 1_000, 200),
+      maxResources: boundedCount("resources", 10_000, 2_000),
+      maxWorkers: boundedCount("workers", 5_000, 500),
+      maxStorageKeys: boundedCount("storage keys", 10_000, 1_000),
+      maxScriptSourceBytes: boundedBytes(
+        "one script source",
+        4 * 1_024 * 1_024,
+        1_024 * 1_024,
+      ),
+      maxTotalScriptSourceBytes: boundedBytes(
+        "total script source",
+        16 * 1_024 * 1_024,
+        4 * 1_024 * 1_024,
+      ),
+      maxNetworkEvents: boundedCount("network events", 10_000, 1_000),
+      maxConsoleEvents: boundedCount("console events", 2_000, 200),
+      maxConsoleTextFieldBytes: boundedBytes(
+        "one console text field",
+        16 * 1_024,
+        1_024,
+      ),
+      maxTotalConsoleTextBytes: boundedBytes(
+        "total console text",
+        1_024 * 1_024,
+        64 * 1_024,
+      ),
+      maxJsonBodyBytes: boundedBytes(
+        "one JSON response body",
+        4 * 1_024 * 1_024,
+        1_024 * 1_024,
+      ),
+      maxTotalJsonBodyBytes: boundedBytes(
+        "total JSON response bodies",
+        16 * 1_024 * 1_024,
+        4 * 1_024 * 1_024,
+      ),
+      maxJsonShapeNodes: boundedCount("JSON shape nodes", 100_000, 5_000),
+      maxJsonShapeDepth: boundedCount("JSON shape depth", 100, 20),
+      maxWebsocketEvents: boundedCount("WebSocket events", 5_000, 500),
+      maxWebsocketShapeBytes: boundedBytes(
+        "one WebSocket shape",
+        1_024 * 1_024,
+        64 * 1_024,
+      ),
+      maxTotalWebsocketShapeBytes: boundedBytes(
+        "total WebSocket shapes",
+        16 * 1_024 * 1_024,
+        1_024 * 1_024,
+      ),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-web-page", async () => {
@@ -245,32 +293,45 @@ const registerBundleAnalysis = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      sourceCaptureApproved: z.boolean().default(false),
-      observationMs: z.number().int().min(0).max(10_000).default(500),
-      fetchSourceMaps: z.boolean().default(false),
-      sourceMapFetchApproved: z.boolean().default(false),
-      maxFindings: z.number().int().min(1).max(10_000).default(1_000),
-      maxAstNodes: z.number().int().min(1).max(2_000_000).default(250_000),
-      maxSourceMaps: z.number().int().min(1).max(1_000).default(100),
-      maxSourceMapBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024 * 1_024)
-        .default(4 * 1_024 * 1_024),
-      maxTotalSourceMapBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(64 * 1_024 * 1_024)
-        .default(16 * 1_024 * 1_024),
-      maxSourceMapMappings: z
-        .number()
-        .int()
-        .min(1)
-        .max(100_000)
-        .default(10_000),
-      maxOriginalSources: z.number().int().min(1).max(20_000).default(2_000),
+      sourceCaptureApproved: z
+        .boolean()
+        .default(false)
+        .describe("Approve capturing bounded script source text"),
+      observationMs: boundedCount(
+        "observation duration in milliseconds",
+        10_000,
+        500,
+        0,
+      ),
+      fetchSourceMaps: z
+        .boolean()
+        .default(false)
+        .describe("Fetch source maps referenced by captured scripts"),
+      sourceMapFetchApproved: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Approve fetching referenced source maps from allowed origins",
+        ),
+      maxFindings: boundedCount("static-analysis findings", 10_000, 1_000),
+      maxAstNodes: boundedCount("JavaScript AST nodes", 2_000_000, 250_000),
+      maxSourceMaps: boundedCount("source maps", 1_000, 100),
+      maxSourceMapBytes: boundedBytes(
+        "one source map",
+        16 * 1_024 * 1_024,
+        4 * 1_024 * 1_024,
+      ),
+      maxTotalSourceMapBytes: boundedBytes(
+        "total source maps",
+        64 * 1_024 * 1_024,
+        16 * 1_024 * 1_024,
+      ),
+      maxSourceMapMappings: boundedCount(
+        "decoded source-map mappings",
+        100_000,
+        10_000,
+      ),
+      maxOriginalSources: boundedCount("original source files", 20_000, 2_000),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "analyze-web-bundle", async () => {
@@ -321,8 +382,12 @@ const registerObservationSession = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: z.number().int().min(1).max(60_000).default(10_000),
-      maxTimelineEvents: z.number().int().min(1).max(20_000).default(2_000),
+      observationMs: boundedCount(
+        "observation duration in milliseconds",
+        60_000,
+        10_000,
+      ),
+      maxTimelineEvents: boundedCount("timeline events", 20_000, 2_000),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "observe-web-session", async () => {

@@ -22,8 +22,13 @@ import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 
 const scopeOptions = {
-  allowedOrigins: z.array(z.string().min(1)).optional(),
-  approved: z.boolean().default(false),
+  allowedOrigins: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      "Exact origins to observe; defaults to REA_BROWSER_ALLOWED_ORIGINS_JSON",
+    ),
+  approved: z.boolean().default(false).describe("Approve passive observation"),
 };
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
@@ -43,19 +48,47 @@ const registerWebMcp = (
 ): void => {
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
-    args: z.object({ endpoint: z.string(), targetId: z.string() }),
+    args: z.object({
+      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      targetId: z.string().describe("Target ID from list-browser-targets"),
+    }),
     options: z.object({
       ...scopeOptions,
-      observationMs: z.number().int().min(0).max(10_000).default(100),
-      maxTools: z.number().int().min(1).max(5_000).default(500),
+      observationMs: z
+        .number()
+        .int()
+        .min(0)
+        .max(10_000)
+        .default(100)
+        .describe("Observation duration in milliseconds"),
+      maxTools: z
+        .number()
+        .int()
+        .min(1)
+        .max(5_000)
+        .default(500)
+        .describe("Maximum page-declared WebMCP tools to return"),
       maxSchemaBytes: z
         .number()
         .int()
         .min(1)
         .max(1_024 * 1_024)
-        .default(256 * 1_024),
-      maxSchemaNodes: z.number().int().min(1).max(100_000).default(5_000),
-      maxSchemaDepth: z.number().int().min(1).max(100).default(20),
+        .default(256 * 1_024)
+        .describe("Maximum serialized size of one declared tool schema"),
+      maxSchemaNodes: z
+        .number()
+        .int()
+        .min(1)
+        .max(100_000)
+        .default(5_000)
+        .describe("Maximum nodes in one declared tool schema"),
+      maxSchemaDepth: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum nesting depth in one declared tool schema"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "discover-webmcp-tools", async () => {
@@ -90,9 +123,18 @@ const registerCaptureDiff = (
 ): void => {
   cli.command(CLI_COMMANDS.compareWebCaptures, {
     description: "Compare two normalized web capture JSON values",
-    args: z.object({ beforeJson: z.string(), afterJson: z.string() }),
+    args: z.object({
+      beforeJson: z.string().describe("Earlier normalized web capture JSON"),
+      afterJson: z.string().describe("Later normalized web capture JSON"),
+    }),
     options: z.object({
-      maxChanges: z.number().int().min(1).max(20_000).default(2_000),
+      maxChanges: z
+        .number()
+        .int()
+        .min(1)
+        .max(20_000)
+        .default(2_000)
+        .describe("Maximum normalized changes to return"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare-web-captures", async () => {
@@ -119,16 +161,23 @@ const registerScreenshot = (
 ): void => {
   cli.command(CLI_COMMANDS.captureWebScreenshot, {
     description: "Capture an explicitly approved visible page viewport",
-    args: z.object({ endpoint: z.string(), targetId: z.string() }),
+    args: z.object({
+      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      targetId: z.string().describe("Target ID from list-browser-targets"),
+    }),
     options: z.object({
       ...scopeOptions,
-      screenshotApproved: z.boolean().default(false),
+      screenshotApproved: z
+        .boolean()
+        .default(false)
+        .describe("Approve capturing the visible page viewport"),
       maximumImageBytes: z
         .number()
         .int()
         .min(1)
         .max(8 * 1_024 * 1_024)
-        .default(4 * 1_024 * 1_024),
+        .default(4 * 1_024 * 1_024)
+        .describe("Maximum captured PNG size"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "capture-web-screenshot", async () => {
@@ -160,15 +209,25 @@ const registerScreenshotDiff = (
 ): void => {
   cli.command(CLI_COMMANDS.compareWebScreenshots, {
     description: "Compare two self-verifying PNG artifact JSON values",
-    args: z.object({ beforeJson: z.string(), afterJson: z.string() }),
+    args: z.object({
+      beforeJson: z.string().describe("Earlier screenshot artifact JSON"),
+      afterJson: z.string().describe("Later screenshot artifact JSON"),
+    }),
     options: z.object({
-      channelThreshold: z.number().int().min(0).max(255).default(0),
+      channelThreshold: z
+        .number()
+        .int()
+        .min(0)
+        .max(255)
+        .default(0)
+        .describe("Per-channel difference threshold for changed pixels"),
       maximumPixels: z
         .number()
         .int()
         .min(1)
         .max(32_000_000)
-        .default(16_000_000),
+        .default(16_000_000)
+        .describe("Maximum decoded pixels per screenshot"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare-web-screenshots", async () => {

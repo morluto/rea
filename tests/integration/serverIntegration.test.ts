@@ -115,6 +115,16 @@ const assertDescribedStrictObjects = (
       assertDescribedStrictObjects(value, root, `${path}[${String(index)}]`);
 };
 
+const assertDescribedRootObject = (schema: unknown, path: string): void => {
+  const object = Object.fromEntries(objectEntries(schema));
+  expect(object.additionalProperties, path).toBe(false);
+  for (const [property, propertySchema] of objectEntries(object.properties))
+    expect(
+      Object.fromEntries(objectEntries(propertySchema)).description,
+      `${path}.properties.${property}`,
+    ).toEqual(expect.any(String));
+};
+
 describe("full MCP integration with multi-tool sequences", () => {
   it("executes a realistic workflow: list methods, decompile selected, get xrefs", async () => {
     const client = await connect({
@@ -225,6 +235,7 @@ describe("full MCP integration with multi-tool sequences", () => {
         tool.inputSchema,
         tool.name,
       );
+      assertDescribedRootObject(tool.outputSchema, `${tool.name}.output`);
     }
   });
 

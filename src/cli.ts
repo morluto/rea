@@ -106,8 +106,17 @@ const registerCoreCommands = (
   logger: Logger,
 ): void => {
   const overviewOptions = z.object({
-    detail: z.enum(["concise", "detailed"]).default("concise"),
-    limit: z.number().int().min(1).max(50).default(10),
+    detail: z
+      .enum(["concise", "detailed"])
+      .default("concise")
+      .describe("Overview detail level"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .default(10)
+      .describe("Maximum overview items to return"),
     snapshot: z
       .string()
       .min(1)
@@ -154,7 +163,11 @@ const registerCoreCommands = (
       address: z.string().describe("Procedure address"),
     }),
     options: z.object({
-      snapshot: z.string().min(1).optional(),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     run: ({ args, options }) =>
@@ -269,7 +282,11 @@ const registerXrefsCommand = (
       address: z.string().describe("Hexadecimal address"),
     }),
     options: z.object({
-      snapshot: z.string().min(1).optional(),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     run: ({ args, options }) =>
@@ -295,10 +312,29 @@ const registerTraceCommand = (
       query: z.string().min(1).describe("Literal feature query"),
     }),
     options: z.object({
-      caseSensitive: z.boolean().default(false),
-      limit: z.number().int().min(1).max(100).default(20),
-      maxOperations: z.number().int().min(1).max(100).default(20),
-      snapshot: z.string().min(1).optional(),
+      caseSensitive: z
+        .boolean()
+        .default(false)
+        .describe("Match the query with exact letter case"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum matching roots to examine"),
+      maxOperations: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum analysis operations in the trace"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     alias: {
@@ -351,11 +387,36 @@ const registerFunctionCommand = (
       address: z.string().describe("Procedure name or address"),
     }),
     options: z.object({
-      includeAssembly: z.boolean().default(false),
-      limit: z.number().int().min(1).max(500).default(100),
-      maxPseudocodeChars: z.number().int().min(1).max(100_000).default(20_000),
-      maxInstructions: z.number().int().min(1).max(5_000).default(500),
-      snapshot: z.string().min(1).optional(),
+      includeAssembly: z
+        .boolean()
+        .default(false)
+        .describe("Include bounded assembly instructions"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(100)
+        .describe("Maximum referenced items to return"),
+      maxPseudocodeChars: z
+        .number()
+        .int()
+        .min(1)
+        .max(100_000)
+        .default(20_000)
+        .describe("Maximum pseudocode characters to return"),
+      maxInstructions: z
+        .number()
+        .int()
+        .min(1)
+        .max(5_000)
+        .default(500)
+        .describe("Maximum assembly instructions to return"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     alias: {
@@ -392,12 +453,36 @@ const registerSearchCommand = (
       pattern: z.string().min(1).describe("Literal text or regex pattern"),
     }),
     options: z.object({
-      kind: z.enum(["strings", "procedures"]).default("strings"),
-      mode: z.enum(["literal", "regex"]).default("literal"),
-      caseSensitive: z.boolean().default(false),
-      offset: z.number().int().min(0).default(0),
-      limit: z.number().int().min(1).max(100).default(100),
-      snapshot: z.string().min(1).optional(),
+      kind: z
+        .enum(["strings", "procedures"])
+        .default("strings")
+        .describe("Analyzed item kind to search"),
+      mode: z
+        .enum(["literal", "regex"])
+        .default("literal")
+        .describe("Interpret the pattern as literal text or a regex"),
+      caseSensitive: z
+        .boolean()
+        .default(false)
+        .describe("Match the pattern with exact letter case"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based matching-item offset"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(100)
+        .describe("Maximum matching items to return"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     alias: { caseSensitive: "case-sensitive" },
@@ -495,12 +580,38 @@ const registerArtifactCommands = (
       path: z.string().describe("Application or package path"),
     }),
     options: z.object({
-      offset: z.number().int().min(0).default(0),
-      limit: z.number().int().min(1).max(500).default(100),
-      integrityPolicy: z.enum(["fail", "record-and-continue"]).default("fail"),
-      integrityContinueApproved: z.boolean().default(false),
-      maxIntegrityMismatches: z.number().int().min(1).max(100).default(10),
-      nativeMountApproved: z.boolean().default(false),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based offset for graph nodes, occurrences, and edges"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(100)
+        .describe("Maximum nodes, occurrences, and edges per result section"),
+      integrityPolicy: z
+        .enum(["fail", "record-and-continue"])
+        .default("fail")
+        .describe("Behavior when declared artifact integrity does not match"),
+      integrityContinueApproved: z
+        .boolean()
+        .default(false)
+        .describe("Approve continuing after recorded integrity mismatches"),
+      maxIntegrityMismatches: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .default(10)
+        .describe("Maximum integrity mismatches to record before stopping"),
+      nativeMountApproved: z
+        .boolean()
+        .default(false)
+        .describe("Approve read-only native mounting when required"),
     }),
     alias: {
       integrityPolicy: "integrity-policy",
@@ -537,7 +648,8 @@ const registerArtifactCommands = (
       occurrenceIds: z
         .array(z.string().regex(/^occ_[a-f0-9]{64}$/u))
         .min(1)
-        .max(500),
+        .max(500)
+        .describe("Exact artifact occurrence IDs selected for extraction"),
     }),
     alias: { outputRoot: "output-root", occurrenceIds: "occurrence-ids" },
     run: ({ args }) =>
@@ -556,6 +668,49 @@ const registerArtifactCommands = (
   });
 };
 
+const managedOffset = (subject: string) =>
+  z.number().int().min(0).default(0).describe(`Zero-based ${subject} offset`);
+
+const managedLimit = (subject: string, maximum: number, fallback: number) =>
+  z
+    .number()
+    .int()
+    .min(1)
+    .max(maximum)
+    .default(fallback)
+    .describe(`Maximum ${subject} to return`);
+
+const managedInspectionLimits = {
+  maxFileBytes: z
+    .number()
+    .int()
+    .min(4_096)
+    .max(1_073_741_824)
+    .default(268_435_456)
+    .describe("Maximum managed artifact file size accepted for inspection"),
+  maxMetadataBytes: z
+    .number()
+    .int()
+    .min(256)
+    .max(268_435_456)
+    .default(67_108_864)
+    .describe("Maximum CLI metadata region size accepted for inspection"),
+  maxTableRows: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_000_000)
+    .default(100_000)
+    .describe("Maximum rows accepted in any CLI metadata table"),
+  maxHeapItemBytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16_777_216)
+    .default(1_048_576)
+    .describe("Maximum bytes accepted for one CLI metadata heap item"),
+};
+
 const registerManagedCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
@@ -566,31 +721,46 @@ const registerManagedCommands = (
       path: z.string().describe("Managed PE executable or assembly path"),
     }),
     options: z.object({
-      referenceOffset: z.number().int().min(0).default(0),
-      referenceLimit: z.number().int().min(1).max(500).default(100),
-      resourceOffset: z.number().int().min(0).default(0),
-      resourceLimit: z.number().int().min(1).max(500).default(100),
-      attributeOffset: z.number().int().min(0).default(0),
-      attributeLimit: z.number().int().min(1).max(500).default(100),
-      maxFileBytes: z
+      referenceOffset: z
         .number()
         .int()
-        .min(4_096)
-        .max(1_073_741_824)
-        .default(268_435_456),
-      maxMetadataBytes: z
-        .number()
-        .int()
-        .min(256)
-        .max(268_435_456)
-        .default(67_108_864),
-      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
-      maxHeapItemBytes: z
+        .min(0)
+        .default(0)
+        .describe("Zero-based assembly-reference offset"),
+      referenceLimit: z
         .number()
         .int()
         .min(1)
-        .max(16_777_216)
-        .default(1_048_576),
+        .max(500)
+        .default(100)
+        .describe("Maximum assembly references to return"),
+      resourceOffset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based manifest-resource offset"),
+      resourceLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(100)
+        .describe("Maximum manifest resources to return"),
+      attributeOffset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Zero-based assembly-attribute offset"),
+      attributeLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(100)
+        .describe("Maximum assembly attributes to return"),
+      ...managedInspectionLimits,
     }),
     alias: {
       referenceOffset: "reference-offset",
@@ -632,48 +802,38 @@ const registerManagedCommands = (
       path: z.string().describe("Managed PE executable or assembly path"),
     }),
     options: z.object({
-      typeOffset: z.number().int().min(0).default(0),
-      typeLimit: z.number().int().min(1).max(500).default(100),
-      methodOffset: z.number().int().min(0).default(0),
-      methodLimit: z.number().int().min(1).max(500).default(100),
-      fieldOffset: z.number().int().min(0).default(0),
-      fieldLimit: z.number().int().min(1).max(500).default(100),
-      memberRefOffset: z.number().int().min(0).default(0),
-      memberRefLimit: z.number().int().min(1).max(500).default(100),
-      edgeOffset: z.number().int().min(0).default(0),
-      edgeLimit: z.number().int().min(1).max(1_000).default(250),
-      instructionAnchorLimit: z.number().int().min(0).max(500).default(100),
-      maxFileBytes: z
+      typeOffset: managedOffset("type definition"),
+      typeLimit: managedLimit("type definitions", 500, 100),
+      methodOffset: managedOffset("method definition"),
+      methodLimit: managedLimit("method definitions", 500, 100),
+      fieldOffset: managedOffset("field definition"),
+      fieldLimit: managedLimit("field definitions", 500, 100),
+      memberRefOffset: managedOffset("member reference"),
+      memberRefLimit: managedLimit("member references", 500, 100),
+      edgeOffset: managedOffset("member edge"),
+      edgeLimit: managedLimit("member edges", 1_000, 250),
+      instructionAnchorLimit: z
         .number()
         .int()
-        .min(4_096)
-        .max(1_073_741_824)
-        .default(268_435_456),
-      maxMetadataBytes: z
-        .number()
-        .int()
-        .min(256)
-        .max(268_435_456)
-        .default(67_108_864),
-      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
-      maxHeapItemBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16_777_216)
-        .default(1_048_576),
+        .min(0)
+        .max(500)
+        .default(100)
+        .describe("Maximum CIL instruction anchors per method"),
+      ...managedInspectionLimits,
       maxMethodBodyBytes: z
         .number()
         .int()
         .min(1)
         .max(16_777_216)
-        .default(1_048_576),
+        .default(1_048_576)
+        .describe("Maximum CIL method body size accepted for inspection"),
       maxMethodInstructions: z
         .number()
         .int()
         .min(1)
         .max(100_000)
-        .default(10_000),
+        .default(10_000)
+        .describe("Maximum decoded CIL instructions per method"),
     }),
     alias: {
       typeOffset: "type-offset",
@@ -729,31 +889,13 @@ const registerManagedCommands = (
       path: z.string().describe("Managed PE executable or assembly path"),
     }),
     options: z.object({
-      moduleRefOffset: z.number().int().min(0).default(0),
-      moduleRefLimit: z.number().int().min(1).max(500).default(100),
-      importOffset: z.number().int().min(0).default(0),
-      importLimit: z.number().int().min(1).max(500).default(100),
-      implementationOffset: z.number().int().min(0).default(0),
-      implementationLimit: z.number().int().min(1).max(500).default(100),
-      maxFileBytes: z
-        .number()
-        .int()
-        .min(4_096)
-        .max(1_073_741_824)
-        .default(268_435_456),
-      maxMetadataBytes: z
-        .number()
-        .int()
-        .min(256)
-        .max(268_435_456)
-        .default(67_108_864),
-      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
-      maxHeapItemBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16_777_216)
-        .default(1_048_576),
+      moduleRefOffset: managedOffset("module reference"),
+      moduleRefLimit: managedLimit("module references", 500, 100),
+      importOffset: managedOffset("platform import"),
+      importLimit: managedLimit("platform imports", 500, 100),
+      implementationOffset: managedOffset("native implementation"),
+      implementationLimit: managedLimit("native implementations", 500, 100),
+      ...managedInspectionLimits,
     }),
     alias: {
       moduleRefOffset: "module-ref-offset",
@@ -800,46 +942,54 @@ const registerManagedCommands = (
         .describe("Candidate managed PE executable or assembly"),
     }),
     options: z.object({
-      maxMethodMatches: z.number().int().min(1).max(50_000).default(10_000),
-      maxFieldMatches: z.number().int().min(0).max(50_000).default(5_000),
-      maxCandidates: z.number().int().min(1).max(500).default(50),
-      typeLimit: z.number().int().min(1).max(500).default(500),
-      methodLimit: z.number().int().min(1).max(500).default(500),
-      fieldLimit: z.number().int().min(1).max(500).default(500),
-      memberRefLimit: z.number().int().min(1).max(500).default(500),
-      edgeLimit: z.number().int().min(1).max(1_000).default(1_000),
-      instructionAnchorLimit: z.number().int().min(0).max(500).default(500),
-      maxFileBytes: z
-        .number()
-        .int()
-        .min(4_096)
-        .max(1_073_741_824)
-        .default(268_435_456),
-      maxMetadataBytes: z
-        .number()
-        .int()
-        .min(256)
-        .max(268_435_456)
-        .default(67_108_864),
-      maxTableRows: z.number().int().min(1).max(1_000_000).default(100_000),
-      maxHeapItemBytes: z
+      maxMethodMatches: z
         .number()
         .int()
         .min(1)
-        .max(16_777_216)
-        .default(1_048_576),
+        .max(50_000)
+        .default(10_000)
+        .describe("Maximum exact method matches to return"),
+      maxFieldMatches: z
+        .number()
+        .int()
+        .min(0)
+        .max(50_000)
+        .default(5_000)
+        .describe("Maximum exact field matches to return"),
+      maxCandidates: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(50)
+        .describe("Maximum ambiguous candidates per unmatched member"),
+      typeLimit: managedLimit("type definitions per artifact", 500, 500),
+      methodLimit: managedLimit("method definitions per artifact", 500, 500),
+      fieldLimit: managedLimit("field definitions per artifact", 500, 500),
+      memberRefLimit: managedLimit("member references per artifact", 500, 500),
+      edgeLimit: managedLimit("member edges per artifact", 1_000, 1_000),
+      instructionAnchorLimit: z
+        .number()
+        .int()
+        .min(0)
+        .max(500)
+        .default(500)
+        .describe("Maximum CIL instruction anchors per compared method"),
+      ...managedInspectionLimits,
       maxMethodBodyBytes: z
         .number()
         .int()
         .min(1)
         .max(16_777_216)
-        .default(1_048_576),
+        .default(1_048_576)
+        .describe("Maximum CIL method body size accepted for comparison"),
       maxMethodInstructions: z
         .number()
         .int()
         .min(1)
         .max(100_000)
-        .default(100_000),
+        .default(100_000)
+        .describe("Maximum decoded CIL instructions per compared method"),
     }),
     alias: {
       maxMethodMatches: "max-method-matches",
@@ -1006,7 +1156,10 @@ const registerNativeCommands = (
     description: "Parse app plist metadata without launching Hopper",
     args: z.object({ path: z.string().describe("App or Mach-O path") }),
     options: z.object({
-      relativePath: z.string().default("Contents/Info.plist"),
+      relativePath: z
+        .string()
+        .default("Contents/Info.plist")
+        .describe("Plist path relative to the app root"),
     }),
     alias: { relativePath: "relative-path" },
     run: ({ args, options }) =>
@@ -1023,7 +1176,11 @@ const registerNativeCommands = (
     description: "Demangle a bounded Swift symbol batch without Hopper",
     args: z.object({
       path: z.string().describe("Artifact path used for evidence identity"),
-      symbols: z.array(z.string().min(1)).min(1).max(500),
+      symbols: z
+        .array(z.string().min(1))
+        .min(1)
+        .max(500)
+        .describe("Swift mangled symbols to demangle"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "demangle-swift", () =>

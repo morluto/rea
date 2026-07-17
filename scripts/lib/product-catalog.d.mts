@@ -57,6 +57,7 @@ export function cliCommandOptionNames(
   cli: unknown,
   name: string,
 ): readonly string[];
+export function cliCommandDescriptionIssues(cli: unknown): readonly string[];
 export function serializeProductCatalog(
   catalog: ProductCatalog,
 ): Promise<string>;
