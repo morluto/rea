@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
@@ -36,11 +36,7 @@ export const canonicalSkillNeedsInstall = async (
 ): Promise<boolean> => {
   try {
     const { content, destination } = await canonicalSkillFiles(home);
-    if ((await readOptionalText(destination)) !== content) return true;
-    for (const name of PRODUCT_IDENTITY.legacySkillNames)
-      if ((await readOptionalText(skillDestination(home, name))) !== undefined)
-        return true;
-    return false;
+    return (await readOptionalText(destination)) !== content;
   } catch {
     return true;
   }
@@ -54,30 +50,13 @@ export const installCanonicalSkill = async (
   let backup = `${destination}.rea.backup`;
   let original: string | undefined;
   let canonicalChanged = false;
-  const removedLegacy: Array<{
-    readonly content: string;
-    readonly destination: string;
-  }> = [];
   try {
     const canonical = await canonicalSkillFiles(home);
     destination = canonical.destination;
     backup = `${destination}.rea.backup`;
     const { content } = canonical;
     original = await readOptionalText(destination);
-    const legacy: Array<{
-      readonly content: string;
-      readonly destination: string;
-    }> = [];
-    for (const name of PRODUCT_IDENTITY.legacySkillNames) {
-      const legacyDestination = skillDestination(home, name);
-      const legacyContent = await readOptionalText(legacyDestination);
-      if (legacyContent !== undefined) {
-        if ((await lstat(dirname(legacyDestination))).isSymbolicLink())
-          throw new Error("legacy skill directory is a symbolic link");
-        legacy.push({ content: legacyContent, destination: legacyDestination });
-      }
-    }
-    if (original === content && legacy.length === 0) return "unchanged";
+    if (original === content) return "unchanged";
     await mkdir(dirname(destination), { recursive: true });
     if (original !== undefined && original !== content)
       await writeFileAtomic(backup, original, {
@@ -92,15 +71,6 @@ export const installCanonicalSkill = async (
       });
     if ((await readFile(destination, "utf8")) !== content)
       throw new Error("skill readback mismatch");
-    for (const legacySkill of legacy) {
-      await writeFileAtomic(
-        `${legacySkill.destination}.rea.backup`,
-        legacySkill.content,
-        { encoding: "utf8", mode: 0o600 },
-      );
-      await rm(legacySkill.destination, { force: true });
-      removedLegacy.push(legacySkill);
-    }
     return "installed";
   } catch {
     try {
@@ -114,16 +84,6 @@ export const installCanonicalSkill = async (
     } catch {
       // The canonical backup remains beside the skill for operator recovery.
     }
-    for (const legacySkill of removedLegacy)
-      try {
-        await mkdir(dirname(legacySkill.destination), { recursive: true });
-        await writeFileAtomic(legacySkill.destination, legacySkill.content, {
-          encoding: "utf8",
-          mode: 0o600,
-        });
-      } catch {
-        // The legacy backup remains beside the skill for operator recovery.
-      }
     return "failed";
   }
 };

@@ -260,32 +260,12 @@ const removeManagedPath = async (
 const removeManagedSkills = async (
   home: string,
   fileSystem: UninstallFileSystem,
-): Promise<UninstallItem> => {
-  const results: UninstallItem[] = [];
-  for (const name of [
-    PRODUCT_IDENTITY.skillName,
-    ...PRODUCT_IDENTITY.legacySkillNames,
-  ])
-    results.push(
-      await removeManagedPath(
-        join(home, ".agents/skills", name),
-        "skill",
-        fileSystem,
-      ),
-    );
-  const failed = results.find(({ status }) => status === "failed");
-  if (failed !== undefined) return failed;
-  const retained = results.find(({ status }) => status === "retained");
-  if (retained !== undefined) return retained;
-  const removed = results.filter(({ status }) => status === "removed");
-  if (removed.length > 0)
-    return item(
-      "skill",
-      "removed",
-      removed.map(({ detail }) => detail).join(" "),
-    );
-  return item("skill", "skipped", "No managed REA skill installation exists.");
-};
+): Promise<UninstallItem> =>
+  removeManagedPath(
+    join(home, ".agents/skills", PRODUCT_IDENTITY.skillName),
+    "skill",
+    fileSystem,
+  );
 
 const item = (
   name: string,

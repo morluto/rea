@@ -1,11 +1,4 @@
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -48,50 +41,5 @@ describe("canonical skill transaction", () => {
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
     expect(await canonicalSkillNeedsInstall(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
-  });
-
-  it("backs up and retires the legacy skill name", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-skill-test-"));
-    roots.push(home);
-    const legacy = join(home, ".agents/skills/rea-analysis/SKILL.md");
-    const destination = join(
-      home,
-      ".agents/skills/reverse-engineer-anything/SKILL.md",
-    );
-    await mkdir(dirname(legacy), { recursive: true });
-    await writeFile(legacy, "legacy managed skill\n");
-
-    expect(await canonicalSkillNeedsInstall(home)).toBe(true);
-    expect(await installCanonicalSkill(home)).toBe("installed");
-    expect(await readFile(destination, "utf8")).toContain(
-      "name: reverse-engineer-anything",
-    );
-    expect(await readFile(`${legacy}.rea.backup`, "utf8")).toBe(
-      "legacy managed skill\n",
-    );
-    await expect(readFile(legacy, "utf8")).rejects.toThrow();
-    expect(await canonicalSkillNeedsInstall(home)).toBe(false);
-  });
-
-  it("does not migrate a legacy skill through a directory symlink", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-skill-test-"));
-    roots.push(home);
-    const skillsRoot = join(home, ".agents/skills");
-    const external = join(home, "external-skill");
-    const legacyRoot = join(skillsRoot, "rea-analysis");
-    const legacy = join(legacyRoot, "SKILL.md");
-    const destination = join(skillsRoot, "reverse-engineer-anything/SKILL.md");
-    await mkdir(skillsRoot, { recursive: true });
-    await mkdir(external, { recursive: true });
-    await writeFile(join(external, "SKILL.md"), "external skill\n");
-    await symlink(
-      external,
-      legacyRoot,
-      process.platform === "win32" ? "junction" : "dir",
-    );
-
-    expect(await installCanonicalSkill(home)).toBe("failed");
-    expect(await readFile(legacy, "utf8")).toBe("external skill\n");
-    await expect(readFile(destination, "utf8")).rejects.toThrow();
   });
 });
