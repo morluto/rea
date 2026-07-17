@@ -365,10 +365,14 @@ describe("JavaScript artifact reconstruction", () => {
     const root = await mkdtemp(join(tmpdir(), "rea-javascript-ast-limit-"));
     await writeFile(
       join(root, "large.js"),
-      Array.from(
-        { length: 100 },
-        (_, index) => `export const value${String(index)} = ${String(index)};`,
-      ).join("\n"),
+      [
+        'import "./unobserved.js";',
+        ...Array.from(
+          { length: 100 },
+          (_, index) =>
+            `export const value${String(index)} = ${String(index)};`,
+        ),
+      ].join("\n"),
     );
 
     const result = await reconstructJavaScriptArtifact({
@@ -382,6 +386,18 @@ describe("JavaScript artifact reconstruction", () => {
       status: "partial",
       truncated: true,
       omitted_count: null,
+    });
+    const derivedImport = result.graph.edges.find(
+      ({ relation, properties }) =>
+        relation === "imports" && properties.specifier === "./unobserved.js",
+    );
+    expect(derivedImport?.evidence.coverage).toEqual({
+      status: "partial",
+      truncated: true,
+      omitted_count: null,
+      limits: expect.arrayContaining([
+        { name: "max-ast-nodes", value: 50, unit: "items" },
+      ]),
     });
   });
 
