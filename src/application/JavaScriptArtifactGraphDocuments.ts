@@ -2,7 +2,7 @@ import {
   addArtifactContainsEdge,
   addStaticInferenceEdge,
   createElectronRoleNode,
-  resolveArtifactPath,
+  linkElectronRoleToAsset,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -10,6 +10,7 @@ import {
   completeReconstructionCoverage,
   partialReconstructionCoverage,
 } from "./JavaScriptArtifactGraphEvidence.js";
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 /** Project HTML renderer entrypoints and their local script assets. */
 export const addJavaScriptHtmlRoles = (
@@ -26,11 +27,17 @@ export const addJavaScriptHtmlRoles = (
   for (const [htmlPath, scripts] of byHtml) {
     const html = context.filesByPath.get(htmlPath);
     if (html === undefined) continue;
+    const roleResolution = {
+      declared_path: html.path,
+      resolution_context: "html-reference" as const,
+      resolved_path: html.path,
+      resolution_status: "resolved" as const,
+      limitations: [],
+    };
     const role = createElectronRoleNode(context, {
       kind: "electron-renderer",
       anchor: html,
-      declaredPath: html.path,
-      resolvedPath: html.path,
+      resolution: roleResolution,
       mechanism: "html-script-entrypoint",
     });
     addArtifactContainsEdge(context, {
@@ -39,12 +46,20 @@ export const addJavaScriptHtmlRoles = (
       file: html,
       operation: "discover-html-renderer",
     });
+    linkElectronRoleToAsset(context, {
+      role,
+      anchor: html,
+      resolution: roleResolution,
+    });
     for (const script of scripts) {
-      const resolvedPath = resolveArtifactPath(
-        script.script_path,
-        html.path,
-        context.filesByPath,
-      );
+      const resolution = resolveArtifactPathByContext({
+        declaredPath: script.script_path,
+        sourcePath: html.path,
+        context: "html-reference",
+        files: context.filesByPath,
+        htmlBaseHref: script.base_href,
+      });
+      const resolvedPath = resolution.resolved_path;
       if (resolvedPath === null) continue;
       const resolved = context.fileNodes.get(resolvedPath);
       if (resolved === undefined) continue;
@@ -57,7 +72,11 @@ export const addJavaScriptHtmlRoles = (
         relation: "loads",
         properties: {
           script_path: script.script_path,
+          base_href: script.base_href,
+          resolution_context: resolution.resolution_context,
           resolved_path: resolvedPath,
+          resolution_status: resolution.resolution_status,
+          limitations: resolution.limitations,
         },
       });
     }

@@ -237,6 +237,7 @@ const parseHtmlScripts = (
   maximum: number,
 ): JavaScriptHtmlScriptObservation[] => {
   const scripts: JavaScriptHtmlScriptObservation[] = [];
+  const baseHref = htmlBaseHref(text);
   const pattern = /<script\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/giu;
   for (const match of text.matchAll(pattern)) {
     const script = match[2]?.slice(0, 4_096);
@@ -245,10 +246,16 @@ const parseHtmlScripts = (
     scripts.push({
       html_path: path,
       script_path: script,
+      base_href: baseHref,
       location: rangeForOffsets(text, start, start + match[0].length),
     });
   }
   return scripts;
+};
+
+const htmlBaseHref = (text: string): string | null => {
+  const match = /<base\b[^>]*\bhref\s*=\s*(["'])([^"']+)\1[^>]*>/iu.exec(text);
+  return match?.[2]?.slice(0, 4_096) ?? null;
 };
 
 const parseSourceMap = (

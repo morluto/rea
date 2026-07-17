@@ -17,7 +17,7 @@ export const writeJavaScriptArtifactFixture = async (
         {
           name: "rea-javascript-fixture",
           version: "1.0.0",
-          main: "./main.js",
+          main: "main.js",
           renderer: "./renderer/index.html",
         },
         null,

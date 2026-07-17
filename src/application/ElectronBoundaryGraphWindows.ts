@@ -10,7 +10,6 @@ import {
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
-  resolveArtifactPath,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -21,6 +20,7 @@ import {
   electronFindingSourceNode,
   electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 interface FindingInput<Value> {
   readonly context: JavaScriptArtifactGraphContext;
@@ -77,6 +77,7 @@ const addBrowserWindow = (
           web_preferences: value.web_preferences,
           omitted_web_preferences: value.omitted_web_preferences,
           preload_path: value.preload_path,
+          preload_resolution_context: value.preload_resolution_context,
           absence_means_default: false,
         },
         evidence: astObservationEvidence({
@@ -111,16 +112,16 @@ const addWindowPreload = (
 ): void => {
   const declared = input.value.preload_path;
   if (declared === null) return;
-  const resolved = resolveArtifactPath(
-    declared,
-    input.file.path,
-    input.context.filesByPath,
-  );
+  const resolution = resolveArtifactPathByContext({
+    declaredPath: declared,
+    sourcePath: input.file.path,
+    context: input.value.preload_resolution_context ?? "module-specifier",
+    files: input.context.filesByPath,
+  });
   const role = createElectronRoleNode(input.context, {
     kind: "electron-preload",
     anchor: input.file,
-    declaredPath: declared,
-    resolvedPath: resolved,
+    resolution,
     mechanism: "BrowserWindow:webPreferences.preload",
     range: input.value.location,
     coverage: input.coverage,
@@ -133,12 +134,18 @@ const addWindowPreload = (
     coverage: input.coverage,
     relation: "loads",
     operation: "associate-browser-window-preload",
-    properties: { declared_path: declared, resolved_path: resolved },
+    properties: {
+      declared_path: declared,
+      resolution_context: resolution.resolution_context,
+      resolved_path: resolution.resolved_path,
+      resolution_status: resolution.resolution_status,
+      limitations: resolution.limitations,
+    },
   });
   linkElectronRoleToAsset(input.context, {
     role,
     anchor: input.file,
-    path: resolved,
+    resolution,
     range: input.value.location,
     coverage: input.coverage,
   });
@@ -210,6 +217,7 @@ const addUtilityProcess = (
         label: value.service_name ?? value.module_path,
         properties: {
           module_path: value.module_path,
+          module_resolution_context: value.module_resolution_context,
           module_expression: value.module_expression,
           service_name: value.service_name,
         },
@@ -237,11 +245,13 @@ const addUtilityProcess = (
     },
   });
   if (value.module_path === null) return;
-  const resolved = resolveArtifactPath(
-    value.module_path,
-    file.path,
-    context.filesByPath,
-  );
+  const resolution = resolveArtifactPathByContext({
+    declaredPath: value.module_path,
+    sourcePath: file.path,
+    context: value.module_resolution_context ?? "module-specifier",
+    files: context.filesByPath,
+  });
+  const resolved = resolution.resolved_path;
   const target =
     resolved === null
       ? undefined
@@ -255,6 +265,11 @@ const addUtilityProcess = (
     coverage,
     relation: "maps_to",
     operation: "resolve-utility-process-entrypoint",
-    properties: { resolved_path: resolved },
+    properties: {
+      declared_path: value.module_path,
+      resolution_context: resolution.resolution_context,
+      resolved_path: resolved,
+      resolution_status: resolution.resolution_status,
+    },
   });
 };

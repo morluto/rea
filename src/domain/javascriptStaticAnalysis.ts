@@ -28,6 +28,7 @@ import {
   sourceSlice,
   staticArrayValues,
   staticPath,
+  staticPathResolutionContext,
   storageKind,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -261,6 +262,21 @@ const inspectCall = (
       value: {
         role: "renderer",
         path: first,
+        resolution_context: "filesystem-expression",
+        mechanism: `call:${name}`,
+        module_key: null,
+        location: range(node),
+      },
+    });
+  if (name.endsWith("loadURL") && first !== undefined)
+    addLocatedFinding(context, {
+      collection: accumulator.roles,
+      key: `role\0renderer\0${first}`,
+      node,
+      value: {
+        role: "renderer",
+        path: first,
+        resolution_context: "module-specifier",
         mechanism: `call:${name}`,
         module_key: null,
         location: range(node),
@@ -410,6 +426,7 @@ const inspectRoleProperty = (
     value: {
       role: "preload",
       path,
+      resolution_context: staticPathResolutionContext(node.value),
       mechanism: "property:preload",
       module_key: null,
       location: range(node),

@@ -1,4 +1,7 @@
-import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
+import type {
+  JavaScriptSourceRange,
+  JavaScriptStaticPathContext,
+} from "./javascriptStaticAnalysisTypes.js";
 
 /** One inert literal or unresolved expression observed in Electron syntax. */
 export type ElectronStaticValue =
@@ -26,6 +29,7 @@ export interface ElectronBrowserWindowFinding {
   readonly web_preferences: readonly ElectronWebPreference[];
   readonly omitted_web_preferences: number;
   readonly preload_path: string | null;
+  readonly preload_resolution_context: JavaScriptStaticPathContext | null;
   readonly module_key: string | null;
   readonly location: JavaScriptSourceRange;
 }
@@ -91,6 +95,7 @@ export interface ElectronSenderValidationFinding {
 /** One utilityProcess.fork declaration and its statically visible entrypoint. */
 export interface ElectronUtilityProcessFinding {
   readonly module_path: string | null;
+  readonly module_resolution_context: JavaScriptStaticPathContext | null;
   readonly module_expression: string | null;
   readonly service_name: string | null;
   readonly module_key: string | null;

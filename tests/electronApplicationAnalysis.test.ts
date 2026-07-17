@@ -91,6 +91,51 @@ describe("static Electron application analysis", () => {
         "native-export",
       ]),
     );
+    const roles = graph.nodes.filter(({ kind }) =>
+      ["electron-main", "electron-preload", "electron-renderer"].includes(kind),
+    );
+    expect(roles.length).toBeGreaterThanOrEqual(3);
+    for (const role of roles) {
+      for (const observation of role.observations)
+        expect(observation.properties).toMatchObject({
+          declared_path: expect.any(String),
+          resolution_context: expect.stringMatching(
+            /^(package-entrypoint|filesystem-expression|module-specifier|html-reference)$/u,
+          ),
+          resolution_status: expect.stringMatching(
+            /^(resolved|not-found|unavailable|external|rejected)$/u,
+          ),
+          limitations: expect.any(Array),
+        });
+      if (
+        role.observations.some(
+          ({ properties }) => properties.resolution_status === "resolved",
+        )
+      )
+        expect(
+          graph.edges.some(
+            (edge) =>
+              edge.source_node_id === role.node_id &&
+              edge.relation === "maps_to",
+          ),
+        ).toBe(true);
+    }
+    const dirnamePreload = roles.find(
+      ({ kind, observations }) =>
+        kind === "electron-preload" &&
+        observations.some(
+          ({ properties }) =>
+            properties.declared_path === "preload.js" &&
+            properties.resolution_context === "filesystem-expression",
+        ),
+    );
+    expect(dirnamePreload?.observations[0]?.properties).toMatchObject({
+      declared_path: "preload.js",
+      resolution_context: "filesystem-expression",
+      resolved_path: "preload.js",
+      resolution_status: "resolved",
+      limitations: [],
+    });
     expect(graph.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

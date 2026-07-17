@@ -21,6 +21,7 @@ import {
   propertyName,
   range,
   staticPath,
+  staticPathResolutionContext,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -57,6 +58,7 @@ const inspectBrowserWindow = (
     web_preferences: collected.preferences,
     omitted_web_preferences: collected.omitted,
     preload_path: collected.preloadPath,
+    preload_resolution_context: collected.preloadResolutionContext,
     module_key: null,
     location: range(node),
   };
@@ -75,6 +77,7 @@ const collectWindowOptions = (
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
   readonly preferences: readonly ElectronWebPreference[];
   readonly preloadPath: string | null;
+  readonly preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"];
   readonly unknown: number;
   readonly omitted: number;
 } => {
@@ -83,6 +86,7 @@ const collectWindowOptions = (
       status: options === undefined ? "missing" : "dynamic",
       preferences: [],
       preloadPath: null,
+      preloadResolutionContext: null,
       unknown: options === undefined ? 0 : 1,
       omitted: 0,
     };
@@ -92,6 +96,7 @@ const collectWindowOptions = (
       status: "missing",
       preferences: [],
       preloadPath: null,
+      preloadResolutionContext: null,
       unknown: 0,
       omitted: 0,
     };
@@ -100,6 +105,7 @@ const collectWindowOptions = (
       status: "dynamic",
       preferences: [],
       preloadPath: null,
+      preloadResolutionContext: null,
       unknown: 1,
       omitted: 0,
     };
@@ -113,12 +119,15 @@ const collectWebPreferences = (
   readonly status: "object-literal";
   readonly preferences: readonly ElectronWebPreference[];
   readonly preloadPath: string | null;
+  readonly preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"];
   readonly unknown: number;
   readonly omitted: number;
 } => {
   const preferences: ElectronWebPreference[] = [];
   let unknown = 0;
   let preloadPath: string | null = null;
+  let preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"] =
+    null;
   for (const property of object.properties) {
     if (t.isSpreadElement(property)) {
       unknown += 1;
@@ -146,7 +155,10 @@ const collectWebPreferences = (
       continue;
     }
     const path = name === "preload" ? staticPath(property.value) : undefined;
-    if (path !== undefined) preloadPath = path;
+    if (path !== undefined) {
+      preloadPath = path;
+      preloadResolutionContext = staticPathResolutionContext(property.value);
+    }
     const value: ElectronStaticValue =
       path === undefined
         ? electronStaticValue(source, property.value)
@@ -159,6 +171,7 @@ const collectWebPreferences = (
     status: "object-literal",
     preferences: preferences.slice(0, MAX_WEB_PREFERENCES),
     preloadPath,
+    preloadResolutionContext,
     unknown,
     omitted: Math.max(0, preferences.length - MAX_WEB_PREFERENCES),
   };
@@ -221,6 +234,10 @@ const inspectUtilityProcess = (
   const moduleNode = argumentNode(node.arguments[0]);
   const modulePath =
     moduleNode === undefined ? undefined : staticPath(moduleNode);
+  const moduleResolutionContext =
+    modulePath === undefined || moduleNode === undefined
+      ? null
+      : staticPathResolutionContext(moduleNode);
   const options = argumentNode(node.arguments[2]);
   const serviceName =
     t.isObjectExpression(options) &&
@@ -230,6 +247,7 @@ const inspectUtilityProcess = (
   if (modulePath === undefined) context.accumulator.unknownFindings += 1;
   const finding: ElectronUtilityProcessFinding = {
     module_path: modulePath ?? null,
+    module_resolution_context: moduleResolutionContext,
     module_expression:
       modulePath === undefined
         ? boundedExpression(context.source, moduleNode)

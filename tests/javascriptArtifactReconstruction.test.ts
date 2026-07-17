@@ -105,6 +105,44 @@ describe("JavaScript artifact reconstruction", () => {
         "persists_to",
       ]),
     );
+    const mainRole = graph.nodes.find(
+      (node) =>
+        node.kind === "electron-main" &&
+        node.observations.some(
+          ({ properties }) => properties.declared_path === "main.js",
+        ),
+    );
+    const preloadRole = graph.nodes.find(
+      (node) =>
+        node.kind === "electron-preload" &&
+        node.observations.some(
+          ({ properties }) => properties.declared_path === "preload.js",
+        ),
+    );
+    expect(mainRole?.observations[0]?.properties).toMatchObject({
+      declared_path: "main.js",
+      resolution_context: "package-entrypoint",
+      resolved_path: "main.js",
+      resolution_status: "resolved",
+      limitations: [],
+    });
+    expect(preloadRole?.observations[0]?.properties).toMatchObject({
+      declared_path: "preload.js",
+      resolution_context: "filesystem-expression",
+      resolved_path: "preload.js",
+      resolution_status: "resolved",
+      limitations: [],
+    });
+    for (const role of [mainRole, preloadRole]) {
+      expect(role).toBeDefined();
+      expect(
+        graph.edges.some(
+          (edge) =>
+            edge.source_node_id === role?.node_id &&
+            edge.relation === "maps_to",
+        ),
+      ).toBe(true);
+    }
     const endpointJson = JSON.stringify(
       graph.nodes.filter(({ kind }) => kind === "endpoint"),
     );
