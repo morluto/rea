@@ -12,7 +12,6 @@ export const PRODUCT_IDENTITY = {
   mcpCommand: `npx -y ${PACKAGE_METADATA.name}@latest mcp`,
   mcpServerKey: "rea",
   skillName: "reverse-engineer-anything",
-  legacySkillNames: ["rea-analysis"],
   skillVersion: PACKAGE_METADATA.skillVersion,
   configFileName: "rea.json",
 } as const;

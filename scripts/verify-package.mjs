@@ -760,14 +760,9 @@ try {
     home,
     ".agents/skills/reverse-engineer-anything/SKILL.md",
   );
-  const legacySkillPath = join(home, ".agents/skills/rea-analysis/SKILL.md");
   const siblingSkillPath = join(home, ".agents/skills/unrelated/SKILL.md");
   if (supportedSetupHost) {
-    await mkdir(join(home, ".agents/skills/rea-analysis"), {
-      recursive: true,
-    });
     await mkdir(join(home, ".agents/skills/unrelated"), { recursive: true });
-    await writeFile(legacySkillPath, "stale managed skill\n");
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }
   const plannedExecution = await runWithStatus(
@@ -780,23 +775,18 @@ try {
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
     const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
-    const plannedSkill = await readFile(legacySkillPath, "utf8");
     if (
       planned.status !== "needs_confirmation" ||
       plannedExecution.status !== 1 ||
       planned.appliedActions.length !== 0 ||
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
-      !planned.plannedActions.some(
-        ({ kind, detail }) =>
-          kind === "install_skill" && detail.includes("back up its SKILL.md"),
-      ) ||
+      !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
       plannedCodexConfig !== 'model = "gpt-5"\n' ||
-      plannedCursorConfig !== '{"existing":true}\n' ||
-      plannedSkill !== "stale managed skill\n"
+      plannedCursorConfig !== '{"existing":true}\n'
     )
       throw new Error(
-        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, codexConfig: plannedCodexConfig, cursorConfig: plannedCursorConfig, skill: plannedSkill })}`,
+        `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, codexConfig: plannedCodexConfig, cursorConfig: plannedCursorConfig })}`,
       );
   }
   const firstExecution = await runWithStatus(
@@ -868,13 +858,8 @@ try {
     );
     if (skill !== canonicalSkill)
       throw new Error("packaged skill did not match its canonical source");
-    if (
-      (await pathExists(legacySkillPath)) ||
-      (await readFile(`${legacySkillPath}.rea.backup`, "utf8")) !==
-        "stale managed skill\n" ||
-      (await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n"
-    )
-      throw new Error("packaged skill-name migration was not isolated");
+    if ((await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n")
+      throw new Error("packaged skill installation modified a sibling skill");
     const alignedDoctorExecution = await runWithStatus(
       cli,
       ["doctor", "--json"],

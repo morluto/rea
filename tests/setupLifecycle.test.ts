@@ -150,10 +150,8 @@ describe("agent lifecycle", () => {
       home,
       ".agents/skills/reverse-engineer-anything/SKILL.md",
     );
-    const legacySkill = join(home, ".agents/skills/rea-analysis/SKILL.md");
     await mkdir(dirname(cursor), { recursive: true });
     await mkdir(dirname(skill), { recursive: true });
-    await mkdir(dirname(legacySkill), { recursive: true });
     await writeFile(
       cursor,
       JSON.stringify({
@@ -164,7 +162,6 @@ describe("agent lifecycle", () => {
       }),
     );
     await writeFile(skill, "managed");
-    await writeFile(legacySkill, "legacy managed");
     await mkdir(join(home, ".rea"), { recursive: true });
     await import("node:fs/promises").then(({ symlink }) =>
       symlink(home, join(home, ".rea/cache")),
@@ -175,7 +172,6 @@ describe("agent lifecycle", () => {
       mcpServers: { other: { command: "other" } },
     });
     await expect(readFile(skill, "utf8")).rejects.toThrow();
-    await expect(readFile(legacySkill, "utf8")).rejects.toThrow();
     expect(first.items).toContainEqual(
       expect.objectContaining({
         name: "cache",
