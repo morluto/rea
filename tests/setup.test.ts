@@ -152,6 +152,10 @@ describe("setup workflow", () => {
       "configure_client",
       "install_skill",
     ]);
+    expect(
+      result.plannedActions.find(({ kind }) => kind === "install_skill")
+        ?.detail,
+    ).toContain("back up its SKILL.md");
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
     expect(result.remediation).toBe(

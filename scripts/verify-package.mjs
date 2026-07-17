@@ -786,7 +786,10 @@ try {
       plannedExecution.status !== 1 ||
       planned.appliedActions.length !== 0 ||
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
-      !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
+      !planned.plannedActions.some(
+        ({ kind, detail }) =>
+          kind === "install_skill" && detail.includes("back up its SKILL.md"),
+      ) ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
       plannedCodexConfig !== 'model = "gpt-5"\n' ||
       plannedCursorConfig !== '{"existing":true}\n' ||
