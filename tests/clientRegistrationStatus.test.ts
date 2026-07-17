@@ -17,7 +17,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
+      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@latest", "mcp"]\n',
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),
@@ -43,5 +43,24 @@ describe("client registration status", () => {
       ]),
     );
     expect(JSON.stringify(statuses)).not.toContain("SECRET");
+  });
+
+  it("reports an unversioned npx registration as stale", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rea-registrations-"));
+    await mkdir(join(home, ".codex"));
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
+    );
+
+    const statuses = await readClientRegistrationStatuses(home);
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "codex",
+        command: ["npx", "-y", "rea-agents", "mcp"],
+        state: "stale",
+      }),
+    ]);
   });
 });

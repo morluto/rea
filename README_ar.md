@@ -90,7 +90,7 @@ npx skills add morluto/rea
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents setup
+npx -y rea-agents@latest setup
 ```
 
 إذا طلب macOS أو برنامج التثبيت تأكيدًا، فأكمل الخطوة ثم شغّل الأمر نفسه مرة أخرى.
@@ -111,7 +111,7 @@ npx -y rea-agents setup
 إذا واجهت مشكلة، فشغّل:
 
 ```bash
-npx -y rea-agents doctor
+npx -y rea-agents@latest doctor
 rea uninstall
 rea uninstall --purge-data
 ```
@@ -180,7 +180,7 @@ rea uninstall --purge-data
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents", "mcp"]
+      "args": ["-y", "rea-agents@latest", "mcp"]
     }
   }
 }
@@ -206,11 +206,11 @@ flowchart LR
 سير عمل الوكيل أعلاه هو أسهل طريقة لاستخدام REA. للحصول على نظرة سريعة على تطبيق من الطرفية:
 
 ```bash
-npx -y rea-agents analyze /Applications/Notes.app
-npx -y rea-agents compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
+npx -y rea-agents@latest analyze /Applications/Notes.app
+npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/path/to/right-evidence.json
 ```
 
-شغّل `npx -y rea-agents --help` لمعرفة خيارات فك الترجمة المباشر والخيارات الأخرى.
+شغّل `npx -y rea-agents@latest --help` لمعرفة خيارات فك الترجمة المباشر والخيارات الأخرى.
 
 يمكن لـ REA فتح مجلد `.app` على Mac مباشرة. إذا لم يعثر الوكيل على التطبيق، فأخبره بمكان تثبيته.
 

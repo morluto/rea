@@ -1,5 +1,4 @@
 import { tmpdir } from "node:os";
-import { spawn } from "node-pty";
 
 export type ProcessCaptureCapability =
   | { readonly available: true; readonly backend: "node-pty" }
@@ -13,6 +12,7 @@ export type ProcessCaptureCapability =
 export const probeProcessCaptureCapability =
   async (): Promise<ProcessCaptureCapability> => {
     try {
+      const { spawn } = await import("@lydell/node-pty");
       const terminal = spawn(
         process.platform === "win32" ? "cmd.exe" : "/bin/sh",
         process.platform === "win32" ? ["/c", "exit", "0"] : ["-c", "exit 0"],

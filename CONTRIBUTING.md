@@ -8,7 +8,6 @@ REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verificati
 
 ```bash
 npm ci
-npm run rebuild:native # only when the packaged PTY binary is incompatible
 npm test
 ```
 
@@ -78,8 +77,8 @@ npm publish --access public
 After npm registry propagation, verify the published CLI and connect the client SDK version pinned in `package.json` to the published server to confirm the canonical tool catalog:
 
 ```bash
-npx -y rea-agents --help
-npx -y rea-agents doctor
-npx -y rea-agents setup --yes
-npx -y rea-agents mcp
+npx -y rea-agents@latest --help
+npx -y rea-agents@latest doctor
+npx -y rea-agents@latest setup --yes
+npx -y rea-agents@latest mcp
 ```

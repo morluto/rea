@@ -1,4 +1,4 @@
-import { spawn, type IPty } from "node-pty";
+import type { IPty } from "@lydell/node-pty";
 import type {
   InteractionEvent,
   ProcessCapture,
@@ -204,6 +204,7 @@ const startCaptureRuntime = async (options: {
   let shimReplay: CommandShimReplay | undefined;
   let terminal: IPty | undefined;
   try {
+    const { spawn } = await import("@lydell/node-pty");
     replay = await startLoopbackReplay(scenario);
     const startedAt = new Date();
     const started = Date.now();
