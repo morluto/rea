@@ -111,6 +111,33 @@ describe("managed member comparison", () => {
     });
   });
 
+  it("does not match identical instruction-limited method prefixes", () => {
+    const limited = { ...memberLimits, maxMethodInstructions: 1 };
+    const left = inspect(
+      buildManagedPeFixture(),
+      "/tmp/left-partial.dll",
+      limited,
+    );
+    const right = inspect(
+      buildManagedPeFixture(),
+      "/tmp/right-partial.dll",
+      limited,
+    );
+    const result = compareManagedMembers(
+      { evidenceId: left.evidence.evidence_id, result: left.result },
+      { evidenceId: right.evidence.evidence_id, result: right.result },
+      comparisonLimits,
+    );
+
+    expect(result.matching.exact_il_signature).toBe(0);
+    expect(result.matching.structural_method_shape).toBe(0);
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      left_status: "partial",
+      right_status: "partial",
+    });
+  });
+
   it("does not guess ambiguous field signature matches", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left.dll");
     const leftField = left.result.fields.items[0];
@@ -201,7 +228,11 @@ describe("managed member comparison", () => {
   });
 });
 
-const inspect = (bytes: Buffer, path: string) => {
+const inspect = (
+  bytes: Buffer,
+  path: string,
+  limits: typeof memberLimits = memberLimits,
+) => {
   const target: BinaryTarget = {
     path,
     sha256: hash(bytes),
@@ -209,7 +240,7 @@ const inspect = (bytes: Buffer, path: string) => {
     format: "pe",
     architecture: "x86",
   };
-  const result = inspectManagedMembersBytes(bytes, target, memberLimits);
+  const result = inspectManagedMembersBytes(bytes, target, limits);
   return {
     result,
     evidence: createEvidence(target, MANAGED_STATIC_PROVIDER, {

@@ -162,7 +162,7 @@ const managedInstructionAnchorSchema = z.object({
 });
 
 const managedMethodBodySchema = z.object({
-  status: z.enum(["present", "absent", "malformed", "too-large"]),
+  status: z.enum(["present", "partial", "absent", "malformed", "too-large"]),
   header_format: z.enum(["tiny", "fat", "none", "unknown"]),
   rva: z.number().int().min(0).max(0xffff_ffff),
   file_offset: offsetSchema.nullable(),

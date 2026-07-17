@@ -190,7 +190,7 @@ export interface ManagedMemberComparisonSide {
 interface Keyed<Item> {
   readonly item: Item;
   readonly exactKey: string | null;
-  readonly structuralKey: string;
+  readonly structuralKey: string | null;
 }
 
 interface MatchedPair<Item> {
@@ -335,6 +335,7 @@ const keyMethod = (item: Method): Keyed<Method> => ({
   item,
   exactKey:
     item.signature.parse_status === "decoded" &&
+    item.body.status === "present" &&
     item.body.normalized_il_sha256 !== null
       ? stableKey([
           "method-exact",
@@ -342,29 +343,35 @@ const keyMethod = (item: Method): Keyed<Method> => ({
           item.body.normalized_il_sha256,
         ])
       : null,
-  structuralKey: stableKey([
-    "method-structural",
-    item.signature.kind,
-    item.signature.calling_convention,
-    item.signature.generic_parameter_count,
-    item.signature.parameter_count,
-    item.signature.return_type,
-    item.signature.parameter_types,
-    item.body.status,
-    item.body.header_format,
-    item.body.il_size,
-    item.body.max_stack,
-    item.body.init_locals,
-    item.body.opcode_counts,
-    item.body.anchors.map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-    item.body.exception_regions.map((region) => [
-      region.flags,
-      region.try_length,
-      region.handler_length,
-      region.class_token === null ? null : "type-token",
-      region.filter_offset === null ? null : "filter",
-    ]),
-  ]),
+  structuralKey:
+    item.body.status === "present"
+      ? stableKey([
+          "method-structural",
+          item.signature.kind,
+          item.signature.calling_convention,
+          item.signature.generic_parameter_count,
+          item.signature.parameter_count,
+          item.signature.return_type,
+          item.signature.parameter_types,
+          item.body.status,
+          item.body.header_format,
+          item.body.il_size,
+          item.body.max_stack,
+          item.body.init_locals,
+          item.body.opcode_counts,
+          item.body.anchors.map(({ opcode, operand_kind }) => [
+            opcode,
+            operand_kind,
+          ]),
+          item.body.exception_regions.map((region) => [
+            region.flags,
+            region.try_length,
+            region.handler_length,
+            region.class_token === null ? null : "type-token",
+            region.filter_offset === null ? null : "filter",
+          ]),
+        ])
+      : null,
 });
 
 const keyField = (item: Field): Keyed<Field> => ({

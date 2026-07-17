@@ -84,7 +84,13 @@ export const managedRuntimeCorrelationResultSchema = z.strictObject({
     normalized_il_sha256: digestSchema.nullable(),
     body_sha256: digestSchema.nullable(),
     il_size: z.number().int().min(0),
-    body_status: z.enum(["present", "absent", "malformed", "too-large"]),
+    body_status: z.enum([
+      "present",
+      "partial",
+      "absent",
+      "malformed",
+      "too-large",
+    ]),
     exact_build_required: z.literal(true),
   }),
   requested_runtime: z.strictObject({
@@ -138,6 +144,9 @@ export const planManagedRuntimeCorrelation = (
     (item) =>
       item.token === input.method.token &&
       item.signature.raw_sha256 === input.method.signature_sha256 &&
+      item.body.status === "present" &&
+      item.body.normalized_il_sha256 !== null &&
+      input.method.normalized_il_sha256 !== null &&
       item.body.normalized_il_sha256 === input.method.normalized_il_sha256,
   );
   if (method === undefined)
