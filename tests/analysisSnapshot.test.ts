@@ -144,7 +144,7 @@ describe("analysis snapshots", () => {
   });
 
   it("writes canonical private v2 JSON and rejects changed query identity", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-analysis-snapshot-"));
+    directory = await mkdtemp(join(tmpdir(), "rea-snapshot-"));
     const path = join(directory, "analysis.json");
     const target = snapshotTarget(TARGET);
     const binding = snapshotBinding(PROFILE);
