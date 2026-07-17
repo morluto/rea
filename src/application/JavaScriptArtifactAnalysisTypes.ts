@@ -20,6 +20,7 @@ export interface JavaScriptPackageObservation {
 export interface JavaScriptHtmlScriptObservation {
   readonly html_path: string;
   readonly script_path: string;
+  readonly base_href: string | null;
   readonly location: JavaScriptSourceRange;
 }
 

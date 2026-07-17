@@ -2,7 +2,7 @@ import type { ElectronIpcFinding } from "../domain/electronStaticAnalysisTypes.j
 import type { ElectronBoundarySummary } from "../domain/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
-import { resolveArtifactPath } from "./JavaScriptArtifactGraphContext.js";
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 /** One IPC fact retaining its exact owning artifact for graph projection. */
 export interface ElectronIpcRecord {
@@ -152,11 +152,22 @@ export const summarizeElectronBoundaries = (
     sender_validation_observations: validations.length,
     utility_processes: utilities.length,
     resolved_utility_entrypoints: utilities.filter(({ file, finding }) =>
-      resolvesToFile(file, finding.module_path, files),
+      resolvesToFile({
+        file,
+        specifier: finding.module_path,
+        context: finding.module_resolution_context ?? "module-specifier",
+        files,
+      }),
     ).length,
     native_addon_bindings: nativeBindings.length,
     resolved_native_addon_bindings: nativeBindings.filter(({ file, finding }) =>
-      resolvesToFile(file, finding.specifier, files, "native-addon"),
+      resolvesToFile({
+        file,
+        specifier: finding.specifier,
+        context: "module-specifier",
+        files,
+        kind: "native-addon",
+      }),
     ).length,
   };
 };
@@ -182,17 +193,25 @@ const isMainHandler = ({ finding }: ElectronIpcRecord): boolean =>
   finding.side === "main" &&
   (finding.mode === "listen" || finding.mode === "handle");
 
-const resolvesToFile = (
-  file: JavaScriptArtifactFile,
-  specifier: string | null,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-  kind?: JavaScriptArtifactFile["kind"],
-): boolean => {
-  if (specifier === null) return false;
-  const resolved = resolveArtifactPath(specifier, file.path, files);
+interface ResolveToFileInput {
+  readonly file: JavaScriptArtifactFile;
+  readonly specifier: string | null;
+  readonly context: "module-specifier" | "filesystem-expression";
+  readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
+  readonly kind?: JavaScriptArtifactFile["kind"];
+}
+
+const resolvesToFile = (input: ResolveToFileInput): boolean => {
+  if (input.specifier === null) return false;
+  const resolved = resolveArtifactPathByContext({
+    declaredPath: input.specifier,
+    sourcePath: input.file.path,
+    context: input.context,
+    files: input.files,
+  }).resolved_path;
   return (
     resolved !== null &&
-    (kind === undefined || files.get(resolved)?.kind === kind)
+    (input.kind === undefined || input.files.get(resolved)?.kind === input.kind)
   );
 };
 

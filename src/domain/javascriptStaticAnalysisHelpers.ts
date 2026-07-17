@@ -8,6 +8,7 @@ import type {
   JavaScriptBundlerRegistration,
   JavaScriptSourceRange,
   JavaScriptStaticAnalysis,
+  JavaScriptStaticPathContext,
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 
@@ -152,6 +153,14 @@ export const staticArrayValues = (
 export const staticPath = (node: t.Node): string | undefined =>
   staticPathAt(node, 0);
 
+/** Classify whether inert path syntax is a module specifier or file expression. */
+export const staticPathResolutionContext = (
+  node: t.Node,
+): JavaScriptStaticPathContext =>
+  isFilesystemPathExpression(node, 0)
+    ? "filesystem-expression"
+    : "module-specifier";
+
 const staticPathAt = (node: t.Node, depth: number): string | undefined => {
   if (depth >= 128) return undefined;
   if (t.isStringLiteral(node)) return node.value.slice(0, 4_096);
@@ -177,12 +186,25 @@ const staticCallPath = (
 ): string | undefined => {
   const name = calleeName(node.callee);
   if (name === "URL" || name.endsWith(".URL"))
-    return stringValue(node.arguments[0]);
+    return isFileIdentity(argumentNode(node.arguments[1]))
+      ? stringValue(node.arguments[0])
+      : undefined;
+  if (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) {
+    const argument = argumentNode(node.arguments[0]);
+    return argument === undefined
+      ? undefined
+      : staticPathAt(argument, depth + 1);
+  }
+  if (
+    (name === "dirname" || name.endsWith(".dirname")) &&
+    isFileIdentity(argumentNode(node.arguments[0]))
+  )
+    return "";
   if (!name.endsWith(".join") && !name.endsWith(".resolve") && name !== "join")
     return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
-    if (t.isIdentifier(argument, { name: "__dirname" })) continue;
+    if (isDirectoryIdentity(argumentNode(argument))) continue;
     const value = t.isNode(argument)
       ? staticPathAt(argument, depth + 1)
       : undefined;
@@ -190,6 +212,67 @@ const staticCallPath = (
     parts.push(value);
   }
   return parts.length === 0 ? undefined : posix.join(...parts).slice(0, 4_096);
+};
+
+const isFilesystemPathExpression = (node: t.Node, depth: number): boolean => {
+  if (depth >= 128) return false;
+  if (t.isStringLiteral(node)) return node.value.startsWith("/");
+  if (isFileIdentity(node) || isDirectoryIdentity(node)) return true;
+  if (t.isBinaryExpression(node, { operator: "+" }))
+    return (
+      isFilesystemPathExpression(node.left, depth + 1) ||
+      isFilesystemPathExpression(node.right, depth + 1)
+    );
+  if (t.isCallExpression(node) || t.isNewExpression(node)) {
+    const name = calleeName(node.callee);
+    if (name === "URL" || name.endsWith(".URL"))
+      return isFileIdentity(argumentNode(node.arguments[1]));
+    if (name === "fileURLToPath" || name.endsWith(".fileURLToPath"))
+      return node.arguments.some((argument) => {
+        const value = argumentNode(argument);
+        return (
+          value !== undefined && isFilesystemPathExpression(value, depth + 1)
+        );
+      });
+    return node.arguments.some((argument) => {
+      const value = argumentNode(argument);
+      return (
+        value !== undefined && isFilesystemPathExpression(value, depth + 1)
+      );
+    });
+  }
+  return false;
+};
+
+const isDirectoryIdentity = (node: t.Node | undefined): boolean => {
+  if (t.isIdentifier(node, { name: "__dirname" })) return true;
+  if (!t.isCallExpression(node) && !t.isNewExpression(node)) return false;
+  const name = calleeName(node.callee);
+  if (name === "URL" || name.endsWith(".URL"))
+    return isFileIdentity(argumentNode(node.arguments[1]));
+  return (
+    (name === "dirname" || name.endsWith(".dirname")) &&
+    isFileIdentity(argumentNode(node.arguments[0]))
+  );
+};
+
+const isFileIdentity = (node: t.Node | undefined): boolean => {
+  if (t.isIdentifier(node, { name: "__filename" })) return true;
+  if (node === undefined) return false;
+  if (
+    t.isMemberExpression(node) &&
+    t.isMetaProperty(node.object) &&
+    node.object.meta.name === "import" &&
+    node.object.property.name === "meta" &&
+    propertyName(node.property) === "url"
+  )
+    return true;
+  if (!t.isCallExpression(node)) return false;
+  const name = calleeName(node.callee);
+  return (
+    (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) &&
+    isFileIdentity(argumentNode(node.arguments[0]))
+  );
 };
 
 /** Select the literal URL argument for recognized network callees. */

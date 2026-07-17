@@ -1,5 +1,10 @@
 import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
 
+/** Static syntax context retained for later artifact path resolution. */
+export type JavaScriptStaticPathContext =
+  | "module-specifier"
+  | "filesystem-expression";
+
 /** One source coordinate produced by the JavaScript parser. */
 export interface JavaScriptSourcePoint {
   readonly line: number;
@@ -76,6 +81,7 @@ export interface JavaScriptBundlerRegistration {
 export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
   readonly path: string;
+  readonly resolution_context: JavaScriptStaticPathContext;
   readonly mechanism: string;
   readonly module_key: string | null;
   readonly location: JavaScriptSourceRange;

@@ -1,5 +1,3 @@
-import { posix } from "node:path";
-
 import type { ArtifactInventorySnapshot } from "./ArtifactInventory.js";
 import type { ApplicationGraphEvidence } from "../domain/javascriptApplicationEvidenceSchemas.js";
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
@@ -19,6 +17,10 @@ import {
   unavailableAstEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import type { JavaScriptArtifactReconstructionInput } from "./JavaScriptArtifactReconstructionInput.js";
+import {
+  resolveArtifactPathByContext,
+  type ArtifactPathResolution,
+} from "./JavaScriptArtifactPathResolution.js";
 
 /** Mutable graph-construction state scoped to one reconstruction. */
 export interface JavaScriptArtifactGraphContext {
@@ -72,8 +74,7 @@ export interface InferenceEdgeInput extends AstEdgeInput {
 export interface RoleNodeInput {
   readonly kind: "electron-main" | "electron-preload" | "electron-renderer";
   readonly anchor: JavaScriptArtifactFile;
-  readonly declaredPath: string;
-  readonly resolvedPath: string | null;
+  readonly resolution: ArtifactPathResolution;
   readonly mechanism: string;
   readonly range?: JavaScriptSourceRange;
   readonly coverage?: JavaScriptArtifactGraphCoverage;
@@ -83,7 +84,7 @@ export interface RoleNodeInput {
 export interface RoleAssetLinkInput {
   readonly role: ApplicationNode;
   readonly anchor: JavaScriptArtifactFile;
-  readonly path: string | null;
+  readonly resolution: ArtifactPathResolution;
   readonly range?: JavaScriptSourceRange;
   readonly coverage?: JavaScriptArtifactGraphCoverage;
 }
@@ -241,14 +242,17 @@ export const createElectronRoleNode = (
     identity: artifactLocalIdentity(
       input.anchor.sha256,
       "electron-role",
-      `${input.kind}:${input.resolvedPath ?? input.declaredPath}`,
+      `${input.kind}:${input.resolution.resolution_context}:${input.resolution.resolved_path ?? input.resolution.declared_path}`,
     ),
     observations: [
       {
-        label: input.resolvedPath ?? input.declaredPath,
+        label: input.resolution.resolved_path ?? input.resolution.declared_path,
         properties: {
-          declared_path: input.declaredPath,
-          resolved_path: input.resolvedPath,
+          declared_path: input.resolution.declared_path,
+          resolution_context: input.resolution.resolution_context,
+          resolved_path: input.resolution.resolved_path,
+          resolution_status: input.resolution.resolution_status,
+          limitations: input.resolution.limitations,
           mechanism: input.mechanism,
         },
         evidence: staticInferenceEvidence({
@@ -256,6 +260,7 @@ export const createElectronRoleNode = (
           path: input.anchor.path,
           operation: "discover-electron-entrypoint",
           coverage: input.coverage ?? completeReconstructionCoverage(),
+          limitations: input.resolution.limitations,
           ...(input.range === undefined ? {} : { range: input.range }),
         }),
       },
@@ -267,20 +272,26 @@ export const linkElectronRoleToAsset = (
   context: JavaScriptArtifactGraphContext,
   input: RoleAssetLinkInput,
 ): void => {
-  if (input.path === null) return;
-  const asset =
-    context.assetNodes.get(input.path) ?? context.fileNodes.get(input.path);
+  const path = input.resolution.resolved_path;
+  if (path === null) return;
+  const asset = context.assetNodes.get(path) ?? context.fileNodes.get(path);
   if (asset === undefined) return;
   context.accumulator.addEdge({
     source_node_id: input.role.node_id,
     target_node_id: asset.node_id,
     relation: "maps_to",
-    properties: { resolved_path: input.path },
+    properties: {
+      declared_path: input.resolution.declared_path,
+      resolution_context: input.resolution.resolution_context,
+      resolved_path: path,
+      resolution_status: input.resolution.resolution_status,
+    },
     evidence: staticInferenceEvidence({
       sha256: input.anchor.sha256,
       path: input.anchor.path,
       operation: "resolve-electron-entrypoint",
       coverage: input.coverage ?? completeReconstructionCoverage(),
+      limitations: input.resolution.limitations,
       ...(input.range === undefined ? {} : { range: input.range }),
     }),
   });
@@ -295,20 +306,13 @@ export const resolveArtifactPath = (
   specifier: string,
   sourcePath: string,
   files: ReadonlyMap<string, JavaScriptArtifactFile>,
-): string | null => {
-  const clean = specifier.split("#", 1)[0]?.split("?", 1)[0] ?? "";
-  if (clean === "" || /^[A-Za-z][A-Za-z+.-]*:/u.test(clean)) return null;
-  if (!clean.startsWith(".") && !clean.startsWith("/")) return null;
-  const candidate = posix.normalize(
-    clean.startsWith("/")
-      ? clean.slice(1)
-      : posix.join(posix.dirname(sourcePath), clean),
-  );
-  if (candidate === ".." || candidate.startsWith("../")) return null;
-  for (const path of pathCandidates(candidate))
-    if (files.has(path)) return path;
-  return null;
-};
+): string | null =>
+  resolveArtifactPathByContext({
+    declaredPath: specifier,
+    sourcePath,
+    context: "module-specifier",
+    files,
+  }).resolved_path;
 
 /** Locate the recovered module that owns a static finding. */
 export const sourceNodeFor = (
@@ -319,18 +323,6 @@ export const sourceNodeFor = (
   moduleKey === null
     ? undefined
     : context.moduleNodes.get(moduleLookupKey(path, moduleKey));
-
-const pathCandidates = (path: string): readonly string[] => [
-  path,
-  `${path}.js`,
-  `${path}.mjs`,
-  `${path}.cjs`,
-  `${path}.ts`,
-  `${path}.tsx`,
-  `${path}.node`,
-  posix.join(path, "index.js"),
-  posix.join(path, "index.ts"),
-];
 
 /** Named AST budgets committed to graph evidence coverage. */
 export const javaScriptAnalysisLimits = (

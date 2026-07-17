@@ -16,7 +16,6 @@ import {
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
   moduleLookupKey,
-  resolveArtifactPath,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -25,6 +24,7 @@ import {
   completeReconstructionCoverage,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 interface PackageRoleInput {
   readonly packageNode: ApplicationNode;
@@ -456,16 +456,16 @@ const addPackageRole = (
   input: PackageRoleInput,
 ): void => {
   if (input.declaredPath === null) return;
-  const resolvedPath = resolveArtifactPath(
-    input.declaredPath,
-    input.packageFile.path,
-    context.filesByPath,
-  );
+  const resolution = resolveArtifactPathByContext({
+    declaredPath: input.declaredPath,
+    sourcePath: input.packageFile.path,
+    context: "package-entrypoint",
+    files: context.filesByPath,
+  });
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,
-    declaredPath: input.declaredPath,
-    resolvedPath,
+    resolution,
     mechanism:
       input.kind === "electron-main"
         ? "package.json:main"
@@ -477,19 +477,23 @@ const addPackageRole = (
     relation: "loads",
     properties: {
       declared_path: input.declaredPath,
-      resolved_path: resolvedPath,
+      resolution_context: resolution.resolution_context,
+      resolved_path: resolution.resolved_path,
+      resolution_status: resolution.resolution_status,
+      limitations: resolution.limitations,
     },
     evidence: staticInferenceEvidence({
       sha256: input.packageFile.sha256,
       path: input.packageFile.path,
       operation: "discover-package-entrypoint",
       coverage: completeReconstructionCoverage(),
+      limitations: resolution.limitations,
     }),
   });
   linkElectronRoleToAsset(context, {
     role,
     anchor: input.packageFile,
-    path: resolvedPath,
+    resolution,
   });
 };
 

@@ -17,6 +17,7 @@ import {
   astObservationEvidence,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
+import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -226,17 +227,17 @@ const addDiscoveredRole = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticRolePath>,
 ): void => {
-  const resolvedPath = resolveArtifactPath(
-    input.value.path,
-    input.file.path,
-    context.filesByPath,
-  );
+  const resolution = resolveArtifactPathByContext({
+    declaredPath: input.value.path,
+    sourcePath: input.file.path,
+    context: input.value.resolution_context,
+    files: context.filesByPath,
+  });
   const role = createElectronRoleNode(context, {
     kind:
       input.value.role === "preload" ? "electron-preload" : "electron-renderer",
     anchor: input.file,
-    declaredPath: input.value.path,
-    resolvedPath,
+    resolution,
     mechanism: input.value.mechanism,
     range: input.value.location,
     coverage: input.coverage,
@@ -256,7 +257,7 @@ const addDiscoveredRole = (
   linkElectronRoleToAsset(context, {
     role,
     anchor: input.file,
-    path: resolvedPath,
+    resolution,
     range: input.value.location,
     coverage: input.coverage,
   });
