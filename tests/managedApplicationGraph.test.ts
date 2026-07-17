@@ -116,7 +116,12 @@ describe("managed application graph projection", () => {
       },
     });
 
-    expect(evidence.ok).toBe(true);
+    expect(
+      evidence.ok,
+      evidence.ok
+        ? undefined
+        : `${JSON.stringify(evidence.error)} cause=${String(evidence.error.cause)}`,
+    ).toBe(true);
     if (!evidence.ok) throw new Error("projection failed");
     const parsed = parseEvidence(evidence.value);
     expect(parsed).toMatchObject({
@@ -198,6 +203,132 @@ describe("managed application graph projection", () => {
     expect(trace.value.normalized_result).toMatchObject({
       source_evidence_id: parsed.evidence_id,
       summary: { matched_seeds: 1 },
+    });
+  });
+
+  it("preserves source-page omissions in graph and per-fact coverage", () => {
+    const bytes = buildManagedPeFixture();
+    const binary = target(bytes);
+    const members = inspectManagedMembersBytes(bytes, binary, memberLimits);
+    const partialMembers = {
+      ...members,
+      methods: {
+        ...members.methods,
+        total: 2,
+        returned: 1,
+        dropped: 1,
+        complete: false,
+      },
+    };
+    const memberEvidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: partialMembers,
+      rawResult: null,
+      limitations: partialMembers.limitations,
+      locations: [{ kind: "artifact-path", path: binary.path }],
+    });
+
+    const evidence = projectManagedApplicationGraphEvidence({
+      managed_members: memberEvidence,
+      limits: {
+        max_types: 100,
+        max_methods: 100,
+        max_fields: 100,
+        max_pinvoke_imports: 100,
+        max_native_implementations: 100,
+      },
+    });
+
+    expect(
+      evidence.ok,
+      evidence.ok
+        ? undefined
+        : `${JSON.stringify(evidence.error)} cause=${String(evidence.error.cause)}`,
+    ).toBe(true);
+    if (!evidence.ok) throw new Error("projection failed");
+    const result = managedApplicationGraphResultSchema.parse(
+      parseEvidence(evidence.value).normalized_result,
+    );
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+    expect(result.coverage).toMatchObject({
+      status: "truncated",
+      omitted_types: 0,
+      omitted_methods: 1,
+      omitted_fields: 0,
+    });
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: true,
+      omitted_count: 1,
+    });
+    const method = graph.nodes.find(({ kind }) => kind === "managed-method");
+    expect(method?.observations[0]?.evidence.coverage).toMatchObject({
+      status: "partial",
+      truncated: true,
+      omitted_count: 1,
+    });
+    expect(
+      graph.edges.find(
+        ({ target_node_id }) => target_node_id === method?.node_id,
+      )?.evidence.coverage,
+    ).toMatchObject({
+      status: "partial",
+      truncated: true,
+      omitted_count: 1,
+    });
+
+    const parserPartialMembers = {
+      ...partialMembers,
+      coverage: {
+        state: "partial" as const,
+        issues: [
+          {
+            code: "limit-exceeded" as const,
+            scope: "method.0x06000001.body.instructions",
+            offset: 0x0a00,
+            detail: "instruction limit reached",
+          },
+        ],
+      },
+    };
+    const parserPartialEvidence = createEvidence(
+      binary,
+      MANAGED_STATIC_PROVIDER,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: parserPartialMembers,
+        rawResult: null,
+        limitations: parserPartialMembers.limitations,
+      },
+    );
+    const parserPartialProjection = projectManagedApplicationGraphEvidence({
+      managed_members: parserPartialEvidence,
+      limits: {
+        max_types: 100,
+        max_methods: 100,
+        max_fields: 100,
+        max_pinvoke_imports: 100,
+        max_native_implementations: 100,
+      },
+    });
+
+    expect(parserPartialProjection.ok).toBe(true);
+    if (!parserPartialProjection.ok)
+      throw new Error("partial projection failed");
+    const parserPartialResult = managedApplicationGraphResultSchema.parse(
+      parseEvidence(parserPartialProjection.value).normalized_result,
+    );
+    expect(parserPartialResult.coverage).toMatchObject({
+      status: "partial",
+      omitted_methods: 1,
+    });
+    expect(parserPartialResult.graph.coverage).toEqual({
+      status: "partial",
+      truncated: false,
+      omitted_count: null,
+      limits: [],
     });
   });
 });

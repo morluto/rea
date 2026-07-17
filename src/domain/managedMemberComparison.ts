@@ -10,6 +10,7 @@ import {
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import type { JsonValue } from "./jsonValue.js";
+import { assessKnownPageCoverage } from "./knownPageCoverage.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
@@ -219,6 +220,10 @@ export const compareManagedMembers = (
   right: ManagedMemberComparisonSide,
   limits: CompareManagedMembersInput["limits"],
 ): ManagedMemberComparisonResult => {
+  const leftMethodPage = assessKnownPageCoverage(left.result.methods);
+  const rightMethodPage = assessKnownPageCoverage(right.result.methods);
+  const leftFieldPage = assessKnownPageCoverage(left.result.fields);
+  const rightFieldPage = assessKnownPageCoverage(right.result.fields);
   const methodMatches = matchMethods(
     left.result.methods.items.map(keyMethod),
     right.result.methods.items.map(keyMethod),
@@ -229,18 +234,20 @@ export const compareManagedMembers = (
     right.result.fields.items.map(keyField),
     limits.max_candidates,
   );
-  const methodItems = buildMethodItems(
-    methodMatches,
-    left.evidenceId,
-    right.evidenceId,
+  const methodItems = buildMethodItems(methodMatches, {
+    leftEvidenceId: left.evidenceId,
+    rightEvidenceId: right.evidenceId,
+    leftComplete: leftMethodPage.sourceComplete,
+    rightComplete: rightMethodPage.sourceComplete,
     limits,
-  );
-  const fieldItems = buildFieldItems(
-    fieldMatches,
-    left.evidenceId,
-    right.evidenceId,
+  });
+  const fieldItems = buildFieldItems(fieldMatches, {
+    leftEvidenceId: left.evidenceId,
+    rightEvidenceId: right.evidenceId,
+    leftComplete: leftFieldPage.sourceComplete,
+    rightComplete: rightFieldPage.sourceComplete,
     limits,
-  );
+  });
   const allItems = [...methodItems.items, ...fieldItems.items];
   const summary = {
     unchanged: allItems.filter(({ status }) => status === "unchanged").length,
@@ -267,11 +274,23 @@ export const compareManagedMembers = (
     unmatched: allItems.filter(({ match }) => match.status === "unmatched")
       .length,
   };
+  const coverage = buildComparisonCoverage({
+    left: left.result,
+    right: right.result,
+    leftMethodPage,
+    rightMethodPage,
+    leftFieldPage,
+    rightFieldPage,
+    omittedMethodItems: methodItems.omitted,
+    omittedFieldItems: fieldItems.omitted,
+    omittedCandidates:
+      methodMatches.omittedCandidates + fieldMatches.omittedCandidates,
+  });
   const limitations = comparisonLimitations(
     left.result,
     right.result,
-    methodItems.omitted + fieldItems.omitted,
-    methodMatches.omittedCandidates + fieldMatches.omittedCandidates,
+    coverage.omitted_methods + coverage.omitted_fields,
+    coverage.omitted_candidates,
   );
   const result = {
     schema_version: 1,
@@ -294,30 +313,82 @@ export const compareManagedMembers = (
     matching,
     methods: methodItems.items,
     fields: fieldItems.items,
-    coverage: {
-      status:
-        methodItems.omitted + fieldItems.omitted > 0 ||
-        !left.result.methods.complete ||
-        !right.result.methods.complete ||
-        !left.result.fields.complete ||
-        !right.result.fields.complete
-          ? "truncated"
-          : left.result.coverage.state === "complete" &&
-              right.result.coverage.state === "complete"
-            ? "complete-within-inputs"
-            : "partial",
-      left_status: left.result.coverage.state,
-      right_status: right.result.coverage.state,
-      omitted_methods: methodItems.omitted,
-      omitted_fields: fieldItems.omitted,
-      omitted_candidates:
-        methodMatches.omittedCandidates + fieldMatches.omittedCandidates,
-    },
+    coverage,
     evidence_links: [left.evidenceId, right.evidenceId],
     limitations,
   } satisfies ManagedMemberComparisonResult;
   return managedMemberComparisonResultSchema.parse(result);
 };
+
+type PageAssessment = ReturnType<typeof assessKnownPageCoverage>;
+
+interface ComparisonCoverageInput {
+  readonly left: ManagedMemberInspection;
+  readonly right: ManagedMemberInspection;
+  readonly leftMethodPage: PageAssessment;
+  readonly rightMethodPage: PageAssessment;
+  readonly leftFieldPage: PageAssessment;
+  readonly rightFieldPage: PageAssessment;
+  readonly omittedMethodItems: number;
+  readonly omittedFieldItems: number;
+  readonly omittedCandidates: number;
+}
+
+const buildComparisonCoverage = ({
+  left,
+  right,
+  leftMethodPage,
+  rightMethodPage,
+  leftFieldPage,
+  rightFieldPage,
+  omittedMethodItems,
+  omittedFieldItems,
+  omittedCandidates,
+}: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
+  const omittedMethods =
+    omittedMethodItems +
+    leftMethodPage.sourceOmittedCount +
+    rightMethodPage.sourceOmittedCount;
+  const omittedFields =
+    omittedFieldItems +
+    leftFieldPage.sourceOmittedCount +
+    rightFieldPage.sourceOmittedCount;
+  const leftStatus = sideCoverageStatus(
+    left,
+    leftMethodPage.sourceComplete && leftFieldPage.sourceComplete,
+  );
+  const rightStatus = sideCoverageStatus(
+    right,
+    rightMethodPage.sourceComplete && rightFieldPage.sourceComplete,
+  );
+  const unknownInput =
+    left.coverage.state !== "complete" || right.coverage.state !== "complete";
+  const truncated = omittedMethods + omittedFields + omittedCandidates > 0;
+  return {
+    status: unknownInput
+      ? "partial"
+      : truncated
+        ? "truncated"
+        : leftStatus === "complete" && rightStatus === "complete"
+          ? "complete-within-inputs"
+          : "partial",
+    left_status: leftStatus,
+    right_status: rightStatus,
+    omitted_methods: omittedMethods,
+    omitted_fields: omittedFields,
+    omitted_candidates: omittedCandidates,
+  };
+};
+
+const sideCoverageStatus = (
+  result: ManagedMemberInspection,
+  pagesComplete: boolean,
+): ManagedMemberComparisonResult["coverage"]["left_status"] =>
+  result.coverage.state === "unavailable"
+    ? "unavailable"
+    : result.coverage.state === "complete" && pagesComplete
+      ? "complete"
+      : "partial";
 
 const sideManifest = (
   side: ManagedMemberComparisonSide,
@@ -502,9 +573,7 @@ const groupBy = <Item>(
 
 const buildMethodItems = (
   matches: ReturnType<typeof matchMethods>,
-  leftEvidenceId: string,
-  rightEvidenceId: string,
-  limits: CompareManagedMembersInput["limits"],
+  context: ComparisonItemContext,
 ): { readonly items: MethodItem[]; readonly omitted: number } => {
   const items: MethodItem[] = [];
   for (const pair of matches.pairs) {
@@ -526,7 +595,7 @@ const buildMethodItems = (
         candidate_right_tokens: [],
       },
       dimensions,
-      evidence_links: [leftEvidenceId, rightEvidenceId],
+      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [],
     });
   }
@@ -548,28 +617,22 @@ const buildMethodItems = (
         candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
       },
       dimensions: ["availability"],
-      evidence_links: [leftEvidenceId, rightEvidenceId],
+      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [
         "Multiple managed methods share the same non-name identity key; REA did not guess a token remap.",
       ],
     });
   }
   for (const item of matches.leftOnly)
-    items.push(
-      methodOnlyItem(item.item, leftEvidenceId, rightEvidenceId, true),
-    );
+    items.push(methodOnlyItem(item.item, context, true));
   for (const item of matches.rightOnly)
-    items.push(
-      methodOnlyItem(item.item, leftEvidenceId, rightEvidenceId, false),
-    );
-  return limitItems(items, limits.max_method_matches);
+    items.push(methodOnlyItem(item.item, context, false));
+  return limitItems(items, context.limits.max_method_matches);
 };
 
 const buildFieldItems = (
   matches: ReturnType<typeof matchFields>,
-  leftEvidenceId: string,
-  rightEvidenceId: string,
-  limits: CompareManagedMembersInput["limits"],
+  context: ComparisonItemContext,
 ): { readonly items: FieldItem[]; readonly omitted: number } => {
   const items: FieldItem[] = [];
   for (const pair of matches.pairs) {
@@ -592,7 +655,7 @@ const buildFieldItems = (
         candidate_left_tokens: [],
         candidate_right_tokens: [],
       },
-      evidence_links: [leftEvidenceId, rightEvidenceId],
+      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [],
     });
   }
@@ -612,19 +675,25 @@ const buildFieldItems = (
         candidate_left_tokens: ambiguous.left.map(({ item }) => item.token),
         candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
       },
-      evidence_links: [leftEvidenceId, rightEvidenceId],
+      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [
         "Multiple managed fields share the same signature; REA did not guess a token remap from names.",
       ],
     });
   for (const item of matches.leftOnly)
-    items.push(fieldOnlyItem(item.item, leftEvidenceId, rightEvidenceId, true));
+    items.push(fieldOnlyItem(item.item, context, true));
   for (const item of matches.rightOnly)
-    items.push(
-      fieldOnlyItem(item.item, leftEvidenceId, rightEvidenceId, false),
-    );
-  return limitItems(items, limits.max_field_matches);
+    items.push(fieldOnlyItem(item.item, context, false));
+  return limitItems(items, context.limits.max_field_matches);
 };
+
+interface ComparisonItemContext {
+  readonly leftEvidenceId: string;
+  readonly rightEvidenceId: string;
+  readonly leftComplete: boolean;
+  readonly rightComplete: boolean;
+  readonly limits: CompareManagedMembersInput["limits"];
+}
 
 const limitItems = <Item>(
   items: readonly Item[],
@@ -636,46 +705,58 @@ const limitItems = <Item>(
 
 const methodOnlyItem = (
   item: Method,
-  leftEvidenceId: string,
-  rightEvidenceId: string,
+  context: ComparisonItemContext,
   left: boolean,
-): MethodItem => ({
-  item_id: `mmc_method_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
-  status: left ? "removed" : "added",
-  left: left ? methodIdentity(item) : null,
-  right: left ? null : methodIdentity(item),
-  match: {
-    status: "unmatched",
-    basis: "none",
-    confidence: "unknown",
-    candidate_left_tokens: [],
-    candidate_right_tokens: [],
-  },
-  dimensions: ["availability"],
-  evidence_links: [leftEvidenceId, rightEvidenceId],
-  limitations: [],
-});
+): MethodItem => {
+  const absenceObserved = left ? context.rightComplete : context.leftComplete;
+  return {
+    item_id: `mmc_method_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
+    status: absenceObserved ? (left ? "removed" : "added") : "unknown",
+    left: left ? methodIdentity(item) : null,
+    right: left ? null : methodIdentity(item),
+    match: {
+      status: "unmatched",
+      basis: "none",
+      confidence: "unknown",
+      candidate_left_tokens: [],
+      candidate_right_tokens: [],
+    },
+    dimensions: ["availability"],
+    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
+    limitations: absenceObserved
+      ? []
+      : [
+          `unknown-within-unobserved-page: The ${left ? "right" : "left"} method page is incomplete, so absence was not observed.`,
+        ],
+  };
+};
 
 const fieldOnlyItem = (
   item: Field,
-  leftEvidenceId: string,
-  rightEvidenceId: string,
+  context: ComparisonItemContext,
   left: boolean,
-): FieldItem => ({
-  item_id: `mmc_field_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
-  status: left ? "removed" : "added",
-  left: left ? fieldIdentity(item) : null,
-  right: left ? null : fieldIdentity(item),
-  match: {
-    status: "unmatched",
-    basis: "none",
-    confidence: "unknown",
-    candidate_left_tokens: [],
-    candidate_right_tokens: [],
-  },
-  evidence_links: [leftEvidenceId, rightEvidenceId],
-  limitations: [],
-});
+): FieldItem => {
+  const absenceObserved = left ? context.rightComplete : context.leftComplete;
+  return {
+    item_id: `mmc_field_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
+    status: absenceObserved ? (left ? "removed" : "added") : "unknown",
+    left: left ? fieldIdentity(item) : null,
+    right: left ? null : fieldIdentity(item),
+    match: {
+      status: "unmatched",
+      basis: "none",
+      confidence: "unknown",
+      candidate_left_tokens: [],
+      candidate_right_tokens: [],
+    },
+    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
+    limitations: absenceObserved
+      ? []
+      : [
+          `unknown-within-unobserved-page: The ${left ? "right" : "left"} field page is incomplete, so absence was not observed.`,
+        ],
+  };
+};
 
 const methodIdentity = (item: Method): NonNullable<MethodItem["left"]> => ({
   token: item.token,
