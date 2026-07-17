@@ -160,7 +160,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     name: "compare_managed_members",
     ...toolContractMetadata("compare_managed_members"),
     description:
-      "Compare two authenticated inspect_managed_members Evidence records using unique-only CIL/signature and structural method-shape tiers. Names are reported as observations but are not used as a matching basis; metadata tokens are remapped as build-local coordinates bound to each artifact SHA-256 and MVID.",
+      "Compare two authenticated inspect_managed_members Evidence records using unique-only decoded-CIL-v1/signature and structural method-shape tiers. Names are reported as observations but are not used as a matching basis; metadata tokens remain build-local coordinates bound to each artifact SHA-256 and MVID, and the v1 tuple digest does not itself remap them.",
     kind: "application",
     inputSchema: compareManagedMembersReferenceInputSchema,
     outputSchema: comparisonOutputSchema,
@@ -203,7 +203,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     name: "import_managed_reconstruction",
     ...toolContractMetadata("import_managed_reconstruction"),
     description:
-      "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and normalized IL hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
+      "Import decompiler-produced managed reconstruction against authenticated inspect_managed_members Evidence. The workflow locks each method to artifact SHA-256, MVID, metadata token, signature hash, and the limited member-result-v1 decoded-IL tuple hash, records the decompiler identity and options, and marks C# or pseudocode as analyst inference rather than canonical byte observation.",
     kind: "application",
     inputSchema: managedReconstructionReferenceInputSchema,
     outputSchema: reconstructionOutputSchema,
@@ -224,7 +224,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     name: "plan_managed_runtime_correlation",
     ...toolContractMetadata("plan_managed_runtime_correlation"),
     description:
-      "Prepare a separately authorized managed runtime-correlation admission plan from authenticated inspect_managed_members Evidence. The operation is default-disabled, requires the managed_runtime permission ceiling and grant, locks the exact artifact SHA-256, MVID, method signature, and normalized IL shape, distinguishes attach/load/debugger/reflection/instrumentation effects, and records that no target code was executed.",
+      "Prepare a separately authorized managed runtime-correlation admission plan from authenticated inspect_managed_members Evidence. The operation is default-disabled, requires the managed_runtime permission ceiling and grant, locks the exact artifact SHA-256, MVID, method signature, and limited member-result-v1 decoded-IL tuple hash, distinguishes attach/load/debugger/reflection/instrumentation effects, and records that no target code was executed.",
     kind: "application",
     inputSchema: managedRuntimeCorrelationReferenceInputSchema,
     outputSchema: runtimeOutputSchema,

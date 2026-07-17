@@ -232,6 +232,53 @@ describe("managed PE/CLI static provider", () => {
     });
   });
 
+  it("keeps the documented decoded-CIL v1 golden vector stable", () => {
+    const il = Buffer.from([0x00, 0x2a]);
+    const tinyBytes = buildManagedPeFixture({
+      ilBody: Buffer.from([0x0a, ...il]),
+    });
+    const fatHeader = Buffer.alloc(12);
+    fatHeader.writeUInt16LE(0x3013, 0);
+    fatHeader.writeUInt16LE(32, 2);
+    fatHeader.writeUInt32LE(il.length, 4);
+    fatHeader.writeUInt32LE(0x1100_0001, 8);
+    const fatBytes = buildManagedPeFixture({
+      ilBody: Buffer.concat([fatHeader, il]),
+    });
+    const tiny = inspectManagedMembersBytes(
+      tinyBytes,
+      target(tinyBytes),
+      memberLimits,
+    );
+    const fat = inspectManagedMembersBytes(
+      fatBytes,
+      target(fatBytes),
+      memberLimits,
+    );
+
+    expect(tiny.methods.items[0]?.body).toMatchObject({
+      status: "present",
+      header_format: "tiny",
+      max_stack: 8,
+      init_locals: false,
+      local_var_sig_token: null,
+      il_size: 2,
+      il_sha256: createHash("sha256").update(il).digest("hex"),
+      normalized_il_sha256:
+        "5e5fad7741cb44bca3a4f045546b7449990da343f612f5f34c0ca30e9eee0636",
+      opcode_counts: { nop: 1, ret: 1 },
+      exception_regions: [],
+    });
+    expect(fat.methods.items[0]?.body).toMatchObject({
+      header_format: "fat",
+      max_stack: 32,
+      init_locals: true,
+      local_var_sig_token: "0x11000001",
+      il_sha256: tiny.methods.items[0]?.body.il_sha256,
+      normalized_il_sha256: tiny.methods.items[0]?.body.normalized_il_sha256,
+    });
+  });
+
   it("marks instruction-limited CIL as partial without assigning normalized identity", () => {
     const bytes = buildManagedPeFixture();
     const result = inspectManagedMembersBytes(bytes, target(bytes), {

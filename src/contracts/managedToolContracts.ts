@@ -137,7 +137,7 @@ export const MANAGED_TOOL_CONTRACTS = [
     name: "inspect_managed_members",
     ...toolContractMetadata("inspect_managed_members"),
     description:
-      "Inspect bounded PE/CLI metadata members, signatures, method body IL hashes, exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID.",
+      "Inspect bounded PE/CLI metadata members, signatures, raw CIL hashes, limited member-result-v1 decoded-instruction-tuple hashes, separately reported exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID; the v1 tuple hash does not resolve them or fully commit control flow.",
     kind: "managed-provider",
     inputSchema: managedMemberInputSchema,
     outputSchema: memberOutputSchema,

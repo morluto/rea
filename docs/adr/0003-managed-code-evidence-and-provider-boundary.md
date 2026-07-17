@@ -4,9 +4,10 @@
 - Date: 2026-07-16
 - Implementation status: Read-only PE/CLI triage and exact identity are shipped
   through `inspect_managed_artifact` / `rea inspect-managed-artifact`. Bounded
-  metadata, signatures, method bodies, normalized CIL, exception regions, call
-  edges, and field-access anchors are shipped through `inspect_managed_members`
-  / `rea inspect-managed-members`. Static member comparison and build-local
+  metadata, signatures, method bodies, raw CIL hashes, limited
+  decoded-instruction-tuple v1 hashes, exception regions, call edges, and
+  field-access anchors are shipped through `inspect_managed_members`; `rea
+inspect-managed-members` provides CLI parity. Static member comparison and build-local
   token remapping are shipped through `compare_managed_members` /
   `rea compare-managed-members`. Declaration-only managed/native boundary
   inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL
@@ -216,22 +217,50 @@ Method observations add:
 declaring type + normalized CLI signature
 build-local metadata token
 RVA/file extent when present
-exact method-body SHA-256
-normalized-CIL schema version + SHA-256 when CIL is valid
-max stack + locals signature + exception-region commitment
+raw CIL byte length + SHA-256 when the body is admitted
+member-result schema version + decoded-instruction-tuple SHA-256 when CIL is valid
+separate max-stack, locals-token, and exception-region observations
 ```
 
-The exact body hash commits header bytes, CIL bytes, and admitted extra
-sections. Normalized CIL decodes instructions, converts branch operands to
-instruction coordinates, and resolves metadata operands to canonical
-signatures or literal identities under a versioned algorithm. It preserves
-opcode, prefix, constant, local/argument, generic, and exception semantics. It
-does not erase differences merely to make two builds match.
+The shipped `il_sha256` commits only the raw CIL byte stream identified by the
+method header's `il_size`. It does not commit the method header, local-signature
+blob, alignment padding, or extra sections such as exception clauses. Those
+facts remain separate observations and the enclosing artifact SHA-256 binds
+them to the exact file. A digest over the complete method body is not shipped.
+
+The caller-visible field remains named `normalized_il_sha256`, but its shipped
+v1 meaning is deliberately narrower than a canonical semantic CIL identity.
+For a completely decoded method, REA serializes the instruction-order array of
+`[opcode, operand_kind, operand]` tuples with JavaScript `JSON.stringify`,
+encodes that text as UTF-8, and reports its lowercase SHA-256. The member
+result's `schema_version: 1` scopes this convention; there is no independent
+normalized-CIL algorithm-version field in v1.
+
+Operands retain the current decoder projection: metadata and user-string
+operands are build-local lowercase hexadecimal tokens, scalar branch operands
+are decimal target CIL byte offsets, and `switch` retains only its decimal case
+count. Constants and variable indexes are decimal strings; an operand-free
+instruction uses kind `none` and value `null`. Opcode names preserve distinct
+short forms and prefix instructions, but instruction offsets, branch target
+instruction identity, switch targets, resolved token identities, method
+headers, locals, and exception regions are not part of this digest. A partial
+or malformed decode has no `normalized_il_sha256`.
+
+Consequently v1 is a deterministic decoded-tuple fingerprint, not proof of
+semantic equivalence. In particular, methods with the same opcodes and switch
+case counts can share it despite different switch targets, and token movement
+can change it without a semantic change. Cross-build comparison may use it as
+one unique-only structural tier while retaining artifact/MVID commitments and
+ambiguity; it must not describe the digest itself as token-remapped canonical
+CIL. Canonical operand resolution, complete control-flow operands,
+exception/local commitments, and an explicit algorithm version require a new
+normalized-CIL schema.
 
 Metadata tokens are reported because they are precise coordinates inside one
 module. Cross-version identity never consists of a token alone. A structural
-match cites both build commitments, both local tokens, the normalized inputs,
-the matching algorithm version, and all competing candidates.
+match cites both build commitments, both local tokens, the v1 tuple inputs, the
+member-result schema version, and all competing candidates. V1 cannot cite a
+separate matching-algorithm version because none is exposed.
 
 ### 5. Separate five evidence layers
 
@@ -356,8 +385,9 @@ requires its own threat model and admission decision.
   coverage; it never returns a partial list labeled complete.
 - Managed addresses distinguish file offsets, RVAs, native virtual addresses,
   metadata tokens, and CIL offsets. They are not interchangeable.
-- Cache compatibility is exact on artifact/component commitment, parser
-  profile, normalized-CIL schema, and producer version.
+- Cache compatibility is exact on artifact/component commitment, member-result
+  schema, parser profile, and producer version. For shipped v1,
+  `normalized_il_sha256` has no independent algorithm-version field.
 - Provider-neutral workflows may compose canonical managed findings with the
   one native binding, but every source operation retains its actual producer.
 
@@ -400,7 +430,9 @@ or development-only oracles.
 ## Rollout gates
 
 1. Add read-only triage and identity with malformed-input bounds. Shipped.
-2. Add metadata, signatures, method bodies, normalized CIL, and exact Evidence. Shipped.
+2. Add metadata, signatures, method bodies, deterministic decoded-CIL tuple
+   fingerprints, and exact artifact Evidence. Shipped with the v1 limitations
+   above; full normalized-CIL semantics remain planned.
 3. Add obfuscation-resistant slices and cross-build match states. Shipped.
 4. Compose explicit managed/native boundaries with Hopper/Ghidra. Declaration
    inventory and native export/function Evidence matching shipped; native-body
