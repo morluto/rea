@@ -35,6 +35,7 @@ export interface JavaScriptArtifactGraphContext {
   readonly fileNodes: Map<string, ApplicationNode>;
   readonly assetNodes: Map<string, ApplicationNode>;
   readonly sourceModuleNodes: Map<string, ApplicationNode>;
+  readonly chunkNodes: Map<string, ApplicationNode>;
   readonly moduleNodes: Map<string, ApplicationNode>;
   readonly containerNodes: Map<string, ApplicationNode>;
 }
@@ -314,6 +315,13 @@ export const linkElectronRoleToAsset = (
 /** Deterministic key for one recovered module inside a bundle asset. */
 export const moduleLookupKey = (path: string, moduleKey: string): string =>
   `${path}\0${moduleKey}`;
+
+/** Deterministic key for one recovered bundler chunk inside a bundle asset. */
+export const chunkLookupKey = (
+  path: string,
+  runtime: string,
+  chunkKey: string,
+): string => `${path}\0${runtime}\0${chunkKey}`;
 
 /** Resolve a relative static specifier without escaping the artifact root. */
 export const resolveArtifactPath = (

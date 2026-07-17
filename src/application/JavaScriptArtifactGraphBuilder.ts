@@ -57,6 +57,7 @@ export const buildJavaScriptArtifactGraph = (
     fileNodes: new Map(),
     assetNodes: new Map(),
     sourceModuleNodes: new Map(),
+    chunkNodes: new Map(),
     moduleNodes: new Map(),
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
   };

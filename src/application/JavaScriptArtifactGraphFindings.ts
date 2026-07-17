@@ -4,6 +4,7 @@ import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,
   artifactLocalIdentity,
+  chunkLookupKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
@@ -329,6 +330,8 @@ const resolveReference = (
 ): ResolvedReference | null => {
   const specifier = reference.specifier;
   if (specifier === null) return null;
+  const chunk = resolveBundlerChunkReference(context, sourcePath, reference);
+  if (chunk !== null) return chunk;
   const module = context.moduleNodes.get(
     moduleLookupKey(sourcePath, specifier),
   );
@@ -353,6 +356,43 @@ const resolveReference = (
   const file = context.filesByPath.get(path);
   const node = context.fileNodes.get(path);
   return file === undefined || node === undefined ? null : { path, file, node };
+};
+
+const resolveBundlerChunkReference = (
+  context: JavaScriptArtifactGraphContext,
+  sourcePath: string,
+  reference: StaticReference,
+): ResolvedReference | null => {
+  const key = reference.specifier?.startsWith("chunk:")
+    ? reference.specifier.slice("chunk:".length)
+    : null;
+  if (key === null) return null;
+  const file = context.filesByPath.get(sourcePath);
+  if (file === undefined) return null;
+  const registrations = context.analysis.files
+    .find(({ file: analyzedFile }) => analyzedFile.path === sourcePath)
+    ?.javascript?.bundler_registrations.filter(({ modules }) =>
+      reference.module_key === null
+        ? true
+        : modules.some(
+            ({ module_key: moduleKey }) => moduleKey === reference.module_key,
+          ),
+    );
+  if (registrations === undefined) return null;
+  const candidates = registrations.flatMap(({ runtime }) => {
+    const node = context.chunkNodes.get(
+      chunkLookupKey(sourcePath, runtime, key),
+    );
+    return node === undefined ? [] : [node];
+  });
+  const unique = [
+    ...new Map(candidates.map((node) => [node.node_id, node])).values(),
+  ];
+  if (unique.length !== 1) return null;
+  const node = unique[0];
+  return node === undefined
+    ? null
+    : { path: `${sourcePath}#chunk:${key}`, file, node };
 };
 
 const unresolvedReferenceNode = (
