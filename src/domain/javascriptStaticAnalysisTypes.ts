@@ -57,6 +57,7 @@ export interface JavaScriptStaticStorage {
 /** One exact module factory recovered from a Webpack/Rspack registration. */
 export interface JavaScriptBundlerModule {
   readonly module_key: string;
+  readonly factory_require_name: string | null;
   readonly source_sha256: string;
   readonly structural_fingerprint_sha256: string | null;
   readonly structural_fingerprint_algorithm: "babel-ast-v1" | null;
@@ -73,6 +74,14 @@ export interface JavaScriptBundlerRegistration {
   readonly chunk_keys: readonly string[];
   readonly omitted_chunk_keys: number;
   readonly unknown_chunk_keys: number;
+  readonly runtime_require_name: string | null;
+  readonly runtime_module_cache_status: "observed" | "not-observed";
+  readonly entry_module_keys: readonly string[];
+  readonly omitted_entry_module_keys: number;
+  readonly unknown_entry_module_keys: number;
+  readonly async_chunk_keys: readonly string[];
+  readonly omitted_async_chunk_keys: number;
+  readonly unknown_async_chunk_keys: number;
   readonly modules: readonly JavaScriptBundlerModule[];
   readonly location: JavaScriptSourceRange;
 }
