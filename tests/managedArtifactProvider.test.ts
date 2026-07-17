@@ -153,6 +153,30 @@ describe("managed PE/CLI static provider", () => {
     expect(boundaries.identity_scope.requires_mvid).toBe(result.module?.mvid);
   });
 
+  it("decodes ECMA-335 pointer and byref element types without swapping them", () => {
+    const bytes = buildManagedPeFixture({
+      fieldSignature: Buffer.from([0x06, 0x1d, 0x0f, 0x0f, 0x08]),
+      methodSignature: Buffer.from([
+        0x00, 0x02, 0x10, 0x08, 0x0f, 0x08, 0x10, 0x0e,
+      ]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      target(bytes),
+      memberLimits,
+    );
+
+    expect(result.fields.items[0]?.signature).toMatchObject({
+      parse_status: "decoded",
+      field_type: "i4**[]",
+    });
+    expect(result.methods.items[0]?.signature).toMatchObject({
+      parse_status: "decoded",
+      return_type: "i4&",
+      parameter_types: ["i4*", "string&"],
+    });
+  });
+
   it("reads fat method header size from the full flags-and-size word", () => {
     const il = Buffer.from([
       0x21, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x22, 0x00,

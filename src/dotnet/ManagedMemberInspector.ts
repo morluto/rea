@@ -362,6 +362,11 @@ const ELEMENT_TYPES = new Map<number, string>([
   [0x1c, "object"],
 ]);
 
+const ELEMENT_TYPE_SUFFIXES = new Map<number, string>([
+  [0x0f, "*"],
+  [0x10, "&"],
+]);
+
 const readTypeSignature = (
   blob: Buffer,
   offset: number,
@@ -370,13 +375,10 @@ const readTypeSignature = (
   if (kind === undefined) throw new RangeError("truncated type signature");
   const named = ELEMENT_TYPES.get(kind);
   if (named !== undefined) return { value: named, next: offset + 1 };
-  if (kind === 0x0f) {
+  const suffix = ELEMENT_TYPE_SUFFIXES.get(kind);
+  if (suffix !== undefined) {
     const inner = readTypeSignature(blob, offset + 1);
-    return { value: `${inner.value}&`, next: inner.next };
-  }
-  if (kind === 0x10) {
-    const inner = readTypeSignature(blob, offset + 1);
-    return { value: `${inner.value}*`, next: inner.next };
+    return { value: `${inner.value}${suffix}`, next: inner.next };
   }
   if (kind === 0x11 || kind === 0x12) {
     const token = readCompressed(blob, offset + 1);

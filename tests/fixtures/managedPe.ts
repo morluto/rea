@@ -2,9 +2,11 @@ interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
   readonly fieldName?: string;
+  readonly fieldSignature?: Buffer;
   readonly ilBody?: Buffer;
   readonly metadataValidMaskExtra?: bigint;
   readonly methodName?: string;
+  readonly methodSignature?: Buffer;
   readonly mvid?: Buffer;
   readonly pinvoke?: {
     readonly importName?: string;
@@ -292,8 +294,12 @@ export const buildManagedPeFixture = (
     strings.add(name),
   );
   const tokenBlob = blobs.add(Buffer.from("b77a5c561934e089", "hex"));
-  const fieldSignature = blobs.add(Buffer.from([0x06, 0x08]));
-  const methodSignature = blobs.add(Buffer.from([0x00, 0x00, 0x01]));
+  const fieldSignature = blobs.add(
+    options.fieldSignature ?? Buffer.from([0x06, 0x08]),
+  );
+  const methodSignature = blobs.add(
+    options.methodSignature ?? Buffer.from([0x00, 0x00, 0x01]),
+  );
   const constructorSignature = blobs.add(Buffer.from([0x20, 0x01, 0x01, 0x0e]));
   const attributeBlob = blobs.add(
     fixedStringAttributeBlob(
