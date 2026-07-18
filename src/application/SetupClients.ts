@@ -3,6 +3,7 @@ import type {
   SetupClient,
   SetupHost,
   SetupProviderEnvironment,
+  SetupProgressEvent,
 } from "./Setup.js";
 
 const failedConfigurationMessage = (
@@ -25,19 +26,41 @@ export const configureDetectedClients = async (options: {
   readonly command: readonly string[];
   readonly clients: Record<string, ClientConfigurationResult>;
   readonly appliedActions: string[];
+  readonly onProgress?: (event: SetupProgressEvent) => void;
 }): Promise<string | undefined> => {
   let failure: string | undefined;
   for (const client of options.detectedClients) {
+    const actionId = `configure_client:${client.name}`;
+    const label = client.displayName ?? client.name;
+    options.onProgress?.({ actionId, label, state: "started" });
     const result = await options.host.configureClient(
       client,
       options.providerEnvironment,
       options.command,
     );
     options.clients[client.name] = result;
-    if (result.status === "failed")
+    if (result.status === "failed") {
       failure ??= failedConfigurationMessage(result.reason);
-    else if (result.status === "configured")
+      options.onProgress?.({
+        actionId,
+        label,
+        state: "failed",
+        detail: failedConfigurationMessage(result.reason),
+      });
+    } else if (result.status === "configured") {
       options.appliedActions.push(`configured_${client.name}`);
+      options.onProgress?.({ actionId, label, state: "completed" });
+    } else {
+      options.onProgress?.({
+        actionId,
+        label,
+        state: "warning",
+        detail:
+          result.status === "unchanged"
+            ? "Already current"
+            : "Manual configuration required",
+      });
+    }
   }
   return failure;
 };

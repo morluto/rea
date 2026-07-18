@@ -3,6 +3,7 @@ import { join } from "node:path";
 /** One supported client configuration location. */
 export interface SetupClient {
   readonly name: string;
+  readonly displayName?: string;
   readonly configPath: string;
   readonly markerPath?: string;
   readonly format?: "json" | "toml" | "unsupported";
@@ -70,6 +71,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
 export const supportedClients = (home: string): readonly SetupClient[] =>
   SUPPORTED_CLIENT_DEFINITIONS.map((definition) => ({
     name: definition.name,
+    displayName: definition.displayName,
     configPath: join(home, ...definition.configPath),
     markerPath: join(home, ...definition.markerPath),
     format: definition.format,

@@ -22,6 +22,17 @@ const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
 const MAX_PACKAGE_BYTES = 100_000_000;
 const BUNDLE_IDENTIFIER = "com.cryptic-apps.hopper-web-4";
 
+/** Stable network and command effects disclosed before macOS Hopper setup. */
+export const macHopperInstallDisclosure = {
+  networkOrigins: [RELEASES_URL, DOWNLOAD_PREFIX] as const,
+  commands: [
+    "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
+    "codesign --verify --deep --strict <mounted-hopper.app>",
+    "ditto <mounted-hopper.app> <user-Applications-stage>",
+    "open <installed-hopper.app>",
+  ] as const,
+};
+
 /** Result of installing the official Hopper macOS application. */
 export type MacHopperInstallResult =
   | { readonly status: "installed"; readonly launcherPath: string }

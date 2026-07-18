@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   installLinuxHopper,
+  linuxHopperInstallDisclosure,
   linuxPackageManagerCommands,
   linuxSharedLibrariesAvailable,
   parseLinuxDistribution,
@@ -92,6 +93,18 @@ describe("Linux Hopper host classification", () => {
 });
 
 describe("Linux Hopper installation", () => {
+  it("discloses the exact download, integrity evidence, and privileged command", () => {
+    expect(linuxHopperInstallDisclosure("deb", false)).toEqual({
+      downloadUrl:
+        "https://www.hopperapp.com:443/downloader/public/Hopper-6.4.2-Linux-demo.deb",
+      expectedBytes: 35_755_772,
+      expectedSha1: "e4f79dff602648a8ff4a88b773875b6bfac0dc65",
+      commands: [
+        "pkexec apt-get install -y <verified-hopper.deb> xvfb xauth python3 libx11-6 libxtst6",
+      ],
+    });
+  });
+
   it.each([
     ["deb", "apt-get"],
     ["rpm", "dnf"],

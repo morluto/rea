@@ -92,9 +92,30 @@ npm install --global rea-agents
 rea setup
 ```
 
-Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent configuration. `rea setup` detects what is already present, prints every proposed change, and asks before applying it.
+Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent
+configuration. `rea setup` opens with the work it enables: investigate local
+apps from an agent, recover evidence through a deep-analysis provider, and
+reuse REA's guided workflow. It summarizes the detected agents, then offers
+**Set up all available capabilities (recommended)**, **Customize**, or
+**No thanks**. Customize shows every concrete target with an `MCP`, `provider`,
+or `skill` label.
+
+REA keeps the journey inline so its history remains in the terminal. Before
+anything changes, it validates existing configuration, prints exact paths and
+external effects, and asks for final approval with **No** as the default. The
+screen keeps the available keys visible while you choose; Ctrl-C and declining
+leave the system unchanged.
 
 REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It configures the first six when detected; Devin is reported but left unchanged because it has no documented local MCP configuration boundary. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
+
+Use `rea setup --dry-run` to inspect the plan, repeat `--client` to select exact
+agents, and `--accessible` for sequential vertical prompts. Machine output
+remains available through `--json`; prompt UI and progress go to stderr.
+
+After a successful setup, REA reports the capabilities now ready to use and a
+concrete next step, such as restarting a configured agent before asking it to
+investigate an application. It does not claim an integration or provider is
+ready unless setup and its final diagnostic check verified it.
 
 An optional curl wrapper installs the same CLI package and starts setup only when a terminal is available:
 

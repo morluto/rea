@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   installMacHopper,
+  macHopperInstallDisclosure,
   type MacHopperInstallHost,
 } from "../src/application/MacHopper.js";
 
@@ -74,6 +75,18 @@ class FakeMacHopperHost implements MacHopperInstallHost {
 }
 
 describe("macOS Hopper installation", () => {
+  it("discloses network and command boundaries before installation", () => {
+    expect(macHopperInstallDisclosure).toMatchObject({
+      networkOrigins: [
+        "https://www.hopperapp.com/include/files-api.php?request=releases&public=true",
+        "https://www.hopperapp.com:443/downloader/public/",
+      ],
+    });
+    expect(macHopperInstallDisclosure.commands).toContain(
+      "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
+    );
+  });
+
   it("installs, verifies, opens, and cleans the official package", async () => {
     const host = new FakeMacHopperHost();
     await expect(installMacHopper({}, host)).resolves.toEqual({

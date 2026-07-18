@@ -37,19 +37,72 @@ Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-pro
 
 ## Review setup changes
 
-`rea setup` discovers the current state, prints one plan, and asks `Continue? [Y/n]`. The plan identifies:
+`rea setup` uses an inline, scroll-preserving journey inspired by the clarity of
+PostHog's CLI wizard. It begins with the outcome instead of the installer
+mechanics:
+
+- investigate local applications from a supported agent;
+- recover evidence through an available deep-analysis provider;
+- use the bundled skill for a repeatable investigation workflow.
+
+REA then summarizes the detected clients and presents one gateway:
+
+- **Set up all available capabilities (recommended)** selects the complete
+  resolved plan;
+- **Customize** opens the concrete action picker;
+- **No thanks** exits without making changes.
+
+The custom picker labels each target by its role: `MCP` for an agent
+registration, `provider` for Hopper or a validated bring-your-own provider, and
+`skill` for the REA investigation skill. These labels describe different setup
+modalities rather than suggesting that every target is an MCP registration.
+The picker keeps its navigation, selection, confirmation, and cancellation keys
+visible instead of relying on a transient hint.
+
+Both recommended and custom paths converge on the same exact preflight. REA
+validates the current state, prints the proposed effects, and asks for final
+approval with **No** as the default. Selection alone never authorizes a
+mutation. The plan identifies:
 
 - an existing Hopper installation, a validated bring-your-own Ghidra environment, or the official Hopper package it proposes to install;
 - each detected agent configuration path;
 - the REA skill destination;
-- external software and package-manager effects.
+- external software, network origins, integrity evidence, and package-manager
+  commands.
 
-Declining makes no changes. Agent configuration writes preserve unrelated entries, create backups, use atomic replacement, and verify their result.
+Malformed or unsafe existing configuration blocks the whole transaction before
+Hopper installation or any file write. Declining, pressing Ctrl-C, or selecting
+nothing makes no changes. Agent configuration writes preserve unrelated
+entries, create backups, use atomic replacement, and verify their result.
 
-For automation, `rea setup --json` reports the plan without applying it. `rea setup --yes` applies user-owned registrations and the skill. Installing missing Hopper non-interactively additionally requires `--install-hopper`:
+Progress remains append-only so completed and failed operations stay visible in
+terminal history. After a successful run, the completion message names the
+verified capabilities now available—for example configured MCP clients, the
+selected analysis provider, and the installed skill—and gives the corresponding
+next action. When an agent must restart to load its registration, REA says so;
+otherwise it suggests beginning an investigation. It does not advertise a
+capability that the final diagnostic check did not verify.
+
+Select exact clients in scripts with repeatable `--client` flags, or retain
+automatic discovery explicitly with `--all-detected`. Use `--skill=false` to
+omit the bundled skill and `--dry-run` for a read-only plan:
 
 ```bash
-rea setup --yes --install-hopper --json
+rea setup --client codex --client cursor --skill=false --dry-run
+```
+
+Prompt UI and progress are written to stderr so stdout remains available for
+structured results and pipelines. `NO_COLOR=1` disables color. Use
+`--accessible` for sequential, vertically rendered yes/no prompts.
+
+For automation, `rea setup --json` reports the plan without applying it.
+Prefer pairing `--yes` with explicit scope such as `--client codex`,
+`--all-detected`, or `--skill`. Legacy unscoped `--yes` remains compatible for
+this release but emits a deprecation warning. Installing missing Hopper
+non-interactively additionally requires `--install-hopper`:
+
+```bash
+rea setup --yes --all-detected --install-hopper --json
 ```
 
 ## Hopper

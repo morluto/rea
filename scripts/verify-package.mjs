@@ -772,6 +772,12 @@ try {
   );
   const planned = json(plannedExecution.stdout);
   if (supportedSetupHost) {
+    const scopedExecution = await runWithStatus(
+      cli,
+      ["setup", "--client", "codex", "--dry-run", "--json"],
+      environment,
+    );
+    const scoped = json(scopedExecution.stdout);
     const plannedClaudeConfig = await readFile(claudeConfig, "utf8");
     const plannedCodexConfig = await readFile(codexTarget, "utf8");
     const plannedCursorConfig = await readFile(cursorConfig, "utf8");
@@ -787,6 +793,14 @@ try {
     )
       throw new Error(
         `packaged setup plan was not read-only: ${JSON.stringify({ status: planned.status, exitCode: plannedExecution.status, plannedKinds: planned.plannedActions.map(({ kind }) => kind), appliedKinds: planned.appliedActions.map(({ kind }) => kind), claudeConfig: plannedClaudeConfig, codexConfig: plannedCodexConfig, cursorConfig: plannedCursorConfig })}`,
+      );
+    if (
+      scopedExecution.status !== 1 ||
+      scoped.plannedActions.length !== 1 ||
+      scoped.plannedActions[0]?.id !== "configure_client:codex"
+    )
+      throw new Error(
+        `packaged explicit setup scope admitted implicit actions: ${JSON.stringify(scoped)}`,
       );
   }
   const firstExecution = await runWithStatus(
@@ -888,15 +902,13 @@ try {
     if (
       failed.status !== "needs_human" ||
       failedExecution.status !== 1 ||
-      failed.clients?.claude_desktop?.status !== "failed" ||
-      failed.clients?.cursor?.status !== "configured" ||
-      !failed.appliedActions.includes("configured_cursor") ||
+      Object.keys(failed.clients ?? {}).length !== 0 ||
+      failed.appliedActions.length !== 0 ||
       (await readFile(claudeConfig, "utf8")) !== "malformed" ||
-      json(await readFile(cursorConfig, "utf8")).mcpServers?.rea?.command !==
-        cli
+      json(await readFile(cursorConfig, "utf8")).mcpServers?.rea !== undefined
     )
       throw new Error(
-        `packaged setup did not continue after an earlier client failure: ${JSON.stringify(failed)}`,
+        `packaged setup did not block all mutation after malformed preflight: ${JSON.stringify(failed)}`,
       );
     await writeFile(claudeConfig, "{}\n");
     const recoveredExecution = await runWithStatus(
@@ -924,8 +936,8 @@ try {
     if (
       dangling.status !== "needs_human" ||
       danglingExecution.status !== 1 ||
-      dangling.clients?.gemini_cli?.status !== "failed" ||
-      dangling.clients?.gemini_cli?.reason !== "path" ||
+      Object.keys(dangling.clients ?? {}).length !== 0 ||
+      dangling.appliedActions.length !== 0 ||
       !(await lstat(geminiConfig)).isSymbolicLink() ||
       (await pathExists(`${geminiConfig}.rea.backup`))
     )
