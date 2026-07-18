@@ -214,14 +214,15 @@ const verifySetupFailureRecovery = async ({
   if (
     failed.status !== "needs_human" ||
     failedExecution.status !== 1 ||
-    failed.clients?.claude_desktop?.status !== "failed" ||
-    failed.clients?.cursor?.status !== "configured" ||
-    !failed.appliedActions.includes("configured_cursor") ||
+    Object.keys(failed.clients ?? {}).length !== 0 ||
+    failed.appliedActions.length !== 0 ||
+    !failed.remediation?.includes("Claude Desktop") ||
     (await readFile(claudeConfig, "utf8")) !== "malformed" ||
-    json(await readFile(cursorConfig, "utf8")).mcpServers?.rea?.command !== cli
+    json(await readFile(cursorConfig, "utf8")).existing !== true ||
+    json(await readFile(cursorConfig, "utf8")).mcpServers?.rea !== undefined
   )
     throw new Error(
-      `packaged setup did not continue after an earlier client failure: ${JSON.stringify(failed)}`,
+      `packaged setup mutated clients after a preflight failure: ${JSON.stringify(failed)}`,
     );
   await writeFile(claudeConfig, "{}\n");
   const recoveredExecution = await runWithStatus(
@@ -232,7 +233,8 @@ const verifySetupFailureRecovery = async ({
   const recovered = json(recoveredExecution.stdout);
   if (
     recovered.status !== status ||
-    recoveredExecution.status !== (status === "ready" ? 0 : 1)
+    recoveredExecution.status !== (status === "ready" ? 0 : 1) ||
+    json(await readFile(cursorConfig, "utf8")).mcpServers?.rea?.command !== cli
   )
     throw new Error("packaged setup did not recover");
 };
@@ -251,8 +253,10 @@ const verifyDanglingSymlink = async ({ cli, environment, home }) => {
   if (
     dangling.status !== "needs_human" ||
     danglingExecution.status !== 1 ||
-    dangling.clients?.gemini_cli?.status !== "failed" ||
-    dangling.clients?.gemini_cli?.reason !== "path" ||
+    Object.keys(dangling.clients ?? {}).length !== 0 ||
+    dangling.appliedActions.length !== 0 ||
+    !dangling.remediation?.includes("Gemini CLI") ||
+    !dangling.remediation?.includes("unsafe or unresolved") ||
     !(await lstat(geminiConfig)).isSymbolicLink() ||
     (await pathExists(`${geminiConfig}.rea.backup`))
   )
