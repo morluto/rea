@@ -16,7 +16,7 @@ const statusSchema = z.object({
   ),
 });
 
-export type ToolAvailabilityReason =
+type ToolAvailabilityReason =
   | "available"
   | "target_required"
   | "provider_missing"

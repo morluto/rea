@@ -105,7 +105,7 @@ export interface DoctorReport {
 }
 
 /** Installed-package, skill, client, and runtime identity observations. */
-export interface DoctorIdentity {
+interface DoctorIdentity {
   readonly cli_package_version: string;
   readonly expected_skill_version: string;
   readonly sdk: typeof SDK_IDENTITY;

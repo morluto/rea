@@ -77,13 +77,13 @@ interface WindowsAdmittedPathObservation<TKind extends "file" | "directory"> {
 }
 
 /** Backend observation for a handle-admitted regular file. */
-export interface WindowsAdmittedFileObservation
+interface WindowsAdmittedFileObservation
   extends WindowsAdmittedPathObservation<"file"> {
   readonly sha256: string;
 }
 
 /** Backend observation for a handle-admitted directory. */
-export interface WindowsAdmittedDirectoryObservation
+interface WindowsAdmittedDirectoryObservation
   extends WindowsAdmittedPathObservation<"directory"> {
   readonly sha256: null;
 }
@@ -221,7 +221,7 @@ const ownedProcessSnapshotSchema = z.strictObject({
 });
 
 /** Verified provider-neutral policy observations for a private runtime root. */
-export interface WindowsPrivateDaclObservation {
+interface WindowsPrivateDaclObservation {
   readonly objectKind: "directory" | "file";
   readonly owner: "current_user";
   readonly dacl: "present";
@@ -239,7 +239,7 @@ export interface WindowsPrivateDaclObservation {
 }
 
 /** Exact normalized DACL policies read back from a sealed runtime tree. */
-export interface WindowsPrivateRootSecurityObservation {
+interface WindowsPrivateRootSecurityObservation {
   readonly manifestSha256: string;
   readonly rootDirectory: WindowsPrivateDaclObservation & {
     readonly objectKind: "directory";
@@ -280,7 +280,7 @@ export interface WindowsPrivateRootSecurityObservation {
 }
 
 /** Verified provider-neutral policy observations for a private runtime root. */
-export interface WindowsPrivateRootObservation {
+interface WindowsPrivateRootObservation {
   readonly canonicalPath: string;
   readonly stableIdentity: string;
   readonly state: "sealed";
@@ -298,40 +298,40 @@ export interface WindowsPrivateRootObservation {
 }
 
 /** Hard bounds applied while projecting admitted runtime inputs. */
-export interface WindowsRuntimeProjectionLimits {
+interface WindowsRuntimeProjectionLimits {
   readonly entries: number;
   readonly depth: number;
   readonly bytes: number;
 }
 
 /** One admitted directory tree assigned a provider-neutral runtime role. */
-export interface WindowsRuntimeTreeProjection {
+interface WindowsRuntimeTreeProjection {
   readonly role: "ghidra" | "jdk";
   readonly source: WindowsAdmittedDirectory;
   readonly destination: string;
 }
 
 /** One admitted file assigned a provider-neutral runtime role. */
-export interface WindowsRuntimeFileProjection {
+interface WindowsRuntimeFileProjection {
   readonly role: "bridge" | "session" | "target";
   readonly source: WindowsAdmittedFile;
   readonly destination: string;
 }
 
 /** Immutable bounds applied before an owned process is started. */
-export interface WindowsOwnedProcessLimits {
+interface WindowsOwnedProcessLimits {
   readonly stdoutBytes: number;
   readonly stderrBytes: number;
 }
 
 /** Final process observation independent of Win32 status structures. */
-export interface WindowsOwnedProcessExit {
+interface WindowsOwnedProcessExit {
   readonly status: "exited" | "terminated";
   readonly exitCode: number | null;
 }
 
 /** Normalized Job Object policy proven before an owned process is returned. */
-export interface WindowsJobOwnershipObservation {
+interface WindowsJobOwnershipObservation {
   readonly jobObject: "dedicated_unnamed";
   readonly assignment: "proc_thread_attribute_job_list";
   readonly processExecution: "job_assigned_at_creation";
@@ -346,12 +346,12 @@ export interface WindowsJobOwnershipObservation {
 }
 
 /** Idempotent close observation for a dedicated process Job Object. */
-export interface WindowsOwnedProcessClose {
+interface WindowsOwnedProcessClose {
   readonly status: "already_empty" | "terminated";
 }
 
 /** One continuously drained stream with bounded retained bytes. */
-export interface WindowsOwnedProcessStreamSnapshot {
+interface WindowsOwnedProcessStreamSnapshot {
   readonly retained: Uint8Array;
   readonly totalBytes: number;
   readonly truncated: boolean;
@@ -384,32 +384,32 @@ export interface WindowsNativeBackendProcess
 }
 
 /** Backend result for one newly admitted file. */
-export interface WindowsNativeAdmittedFile {
+interface WindowsNativeAdmittedFile {
   readonly resource: WindowsNativeBackendResource;
   readonly observation: unknown;
 }
 
 /** Backend result for one newly admitted directory. */
-export interface WindowsNativeAdmittedDirectory {
+interface WindowsNativeAdmittedDirectory {
   readonly resource: WindowsNativeBackendResource;
   readonly observation: unknown;
 }
 
 /** Backend result for one newly created private root. */
-export interface WindowsNativePrivateRoot {
+interface WindowsNativePrivateRoot {
   readonly resource: WindowsNativeBackendResource;
   readonly observation: unknown;
 }
 
 /** Adapter-private admitted tree without application wrapper values. */
-export interface WindowsNativeRuntimeTreeProjection {
+interface WindowsNativeRuntimeTreeProjection {
   readonly role: WindowsRuntimeTreeProjection["role"];
   readonly source: WindowsNativeBackendResource;
   readonly destination: string;
 }
 
 /** Adapter-private admitted file without application wrapper values. */
-export interface WindowsNativeRuntimeFileProjection {
+interface WindowsNativeRuntimeFileProjection {
   readonly role: WindowsRuntimeFileProjection["role"];
   readonly source: WindowsNativeBackendResource;
   readonly destination: string;

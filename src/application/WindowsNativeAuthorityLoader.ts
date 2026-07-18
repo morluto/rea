@@ -85,7 +85,7 @@ type LoadedWindowsNativeBackend = WindowsNativeAuthorityBackend & {
 const require = createRequire(import.meta.url);
 
 /** Production host backed by Node's exact CommonJS/native-addon loader. */
-export const systemWindowsNativeAuthorityLoadHost =
+const systemWindowsNativeAuthorityLoadHost =
   (): WindowsNativeAuthorityLoadHost => ({
     platform: process.platform,
     architecture: process.arch,
