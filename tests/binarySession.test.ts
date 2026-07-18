@@ -31,6 +31,7 @@ describe("binary session", () => {
     const [first] = await targets();
     const session = new BinarySession(cacheProvider([]));
     expect((await session.open(first)).ok).toBe(true);
+    expect(session.listUnknowns()).toEqual([]);
     const identity = session.providerIdentity();
     Reflect.set(identity, "id", "forged");
     expect(session.providerIdentity().id).toBe("fixture");

@@ -270,11 +270,13 @@ export abstract class BinarySessionRecords {
     return this.#evidence.updateUnknown(input, evidence);
   }
 
-  listUnknowns(filters: {
-    readonly status?: UnknownStatus;
-    readonly severity?: ResidualUnknown["severity"];
-    readonly domain?: string;
-  }): ResidualUnknown[] {
+  listUnknowns(
+    filters: {
+      readonly status?: UnknownStatus;
+      readonly severity?: ResidualUnknown["severity"];
+      readonly domain?: string;
+    } = {},
+  ): ResidualUnknown[] {
     return this.#evidence.listUnknowns(filters);
   }
 
