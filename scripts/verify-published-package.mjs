@@ -10,23 +10,47 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? ""))
 const serverEnvironment = { ...process.env };
 delete serverEnvironment.HOPPER_TARGET_PATH;
 const transport = new StdioClientTransport({
-  command: "npx",
-  args: ["--yes", "--package", `rea-agents@${version}`, "rea", "mcp"],
+  command: "npm",
+  args: [
+    "exec",
+    "--yes",
+    `--package=rea-agents@${version}`,
+    "--",
+    "rea",
+    "mcp",
+  ],
   env: serverEnvironment,
   stderr: "pipe",
 });
-const client = new Client({ name: "published-package-canary", version: "1" });
+const client = new Client({
+  name: "published-package-canary",
+  version: "1",
+});
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   if (stderr.length < 16_384) stderr += chunk.toString("utf8");
 });
 
+let publishedToolCount = 0;
+
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  if (tools.tools.length !== CATALOG_IDENTITY.counts.mcp_tools)
+  const toolNames = tools.tools.map(({ name }) => name);
+  const canonicalToolNames = new Set(
+    CATALOG_IDENTITY.tools.map(({ name }) => name),
+  );
+  const unknownToolNames = toolNames.filter(
+    (name) => !canonicalToolNames.has(name),
+  );
+  publishedToolCount = toolNames.length;
+  if (
+    publishedToolCount === 0 ||
+    new Set(toolNames).size !== publishedToolCount ||
+    unknownToolNames.length > 0
+  )
     throw new Error(
-      `Published MCP exposed ${String(tools.tools.length)} tools`,
+      `Published MCP exposed an invalid capability-scoped tool projection (${String(publishedToolCount)} tools, unknown: ${unknownToolNames.join(", ") || "none"})`,
     );
   const status = await client.callTool({
     name: "binary_session",
@@ -42,5 +66,5 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ package: "rea-agents", version, mcpTools: CATALOG_IDENTITY.counts.mcp_tools })}\n`,
+  `${JSON.stringify({ package: "rea-agents", version, mcpTools: publishedToolCount, canonicalMcpTools: CATALOG_IDENTITY.counts.mcp_tools })}\n`,
 );
