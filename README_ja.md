@@ -91,7 +91,7 @@ Ubuntu 24.04+、Fedora 41+、64 ビット Arch Linux では、REA が公式の D
 ```bash
 # 1. REA をセットアップ
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents@latest setup
+npx rea-agents setup
 ```
 
 macOS やインストーラーから確認を求められた場合は、その操作を完了してから同じコマンドをもう一度実行してください。

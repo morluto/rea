@@ -85,20 +85,21 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 
 ## Quick start
 
-### Install the CLI — recommended
+### Run setup — recommended
 
 ```bash
-npm install --global rea-agents
-rea setup
+npx rea-agents setup
 ```
 
-Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent
-configuration. `rea setup` opens with the work it enables: investigate local
-apps from an agent, recover evidence through a deep-analysis provider, and
-reuse REA's guided workflow. It summarizes the detected agents, then offers
-**Set up all available capabilities (recommended)**, **Customize**, or
-**No thanks**. Customize shows every concrete target with an `MCP`, `provider`,
-or `skill` label.
+The npm package-runner prompt, when shown, approves downloading REA for this
+invocation; it does not approve any setup changes. The REA wizard separately
+shows its complete plan and asks before applying it. Setup does not update
+Homebrew, Node.js, or npm. `npx rea-agents setup` opens with the work it
+enables: investigate local apps from an agent, recover evidence through a
+deep-analysis provider, and reuse REA's guided workflow. It summarizes the
+detected agents, then offers **Set up all available capabilities
+(recommended)**, **Customize**, or **No thanks**. Customize shows every
+concrete target with an `MCP`, `provider`, or `skill` label.
 
 REA keeps the journey inline so its history remains in the terminal. Before
 anything changes, it validates existing configuration, prints exact paths and
@@ -138,7 +139,7 @@ Review the setup plan, approve it if appropriate, then describe the app or featu
 ### From Terminal — no installation
 
 ```bash
-npx -y rea-agents@latest setup
+npx rea-agents setup
 npx -y rea-agents@latest doctor
 npx -y rea-agents@latest analyze /Applications/Notes.app
 ```

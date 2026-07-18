@@ -2,21 +2,26 @@
 
 REA separates installing its CLI from configuring external software and agents.
 
-## Install the CLI
+## Start setup
 
-The recommended installation is:
+The recommended setup entrypoint is:
 
 ```bash
-npm install --global rea-agents
-rea setup
+npx rea-agents setup
 ```
+
+If npm asks to download and run the package, that approval applies only to the
+current package-runner invocation. REA still prints its own setup plan and asks
+for separate approval before changing agent configuration or installing a
+product-owned component.
 
 REA supports Node.js 22.19+ and 24.11+ (including newer releases). It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
 
 Running `npm install rea-agents` without `--global` installs the executable only
 in the current project's `node_modules/.bin`; it does not make `rea` available
-on the shell `PATH`. Use `npx -y rea-agents@latest` for one-off commands or the
-global installation above for a shell-visible `rea` command.
+on the shell `PATH`. Use `npx rea-agents setup` for the guided setup journey,
+`npx -y rea-agents@latest` for unattended one-off commands, or install globally
+with `npm install --global rea-agents` for a shell-visible `rea` command.
 
 The optional curl wrapper installs only the global npm package:
 
