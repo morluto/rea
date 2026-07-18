@@ -12,13 +12,11 @@
 <li><a href="" aria-current="page">SetupResult</a></li></ul>
 <h1>Interface SetupResult</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Structured setup outcome intended to travel back through an agent to a human.
-<code>needs_human</code> carries remediation text instead of initiating an interactive
-prompt, avoiding deadlocks in stdio and other unattended environments.</p>
+<div class="tsd-comment tsd-typography"><p>Structured setup outcome carrying remediation instead of prompting.</p>
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">SetupResult</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#appliedactions">appliedActions</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#clients">clients</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <a href="../types/application_Setup.ClientConfigurationResult.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationResult</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#code">code</a><span class="tsd-signature-symbol">?:</span> <a href="../types/application_SetupInstallFailure.SetupFailureCode.html" class="tsd-signature-type tsd-kind-type-alias">SetupFailureCode</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#doctor">doctor</a><span class="tsd-signature-symbol">:</span> <a href="application_Doctor.DoctorReport.html" class="tsd-signature-type tsd-kind-interface">DoctorReport</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#plannedactions">plannedActions</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="application_Setup.SetupAction.html" class="tsd-signature-type tsd-kind-interface">SetupAction</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#remediation">remediation</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#status">status</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;ready&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;planned&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;needs_confirmation&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;needs_human&quot;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L99">src/application/Setup.ts:99</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L103">src/application/Setup.ts:103</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -41,37 +39,37 @@ prompt, avoiding deadlocks in stdio and other unattended environments.</p>
 <h3 class="tsd-anchor-link" id="appliedactions"><code class="tsd-tag">Readonly</code><span>applied<wbr/>Actions</span><a href="#appliedactions" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">appliedActions</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L102">src/application/Setup.ts:102</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L106">src/application/Setup.ts:106</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="clients"><code class="tsd-tag">Readonly</code><span>clients</span><a href="#clients" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">clients</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <a href="../types/application_Setup.ClientConfigurationResult.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationResult</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L103">src/application/Setup.ts:103</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L107">src/application/Setup.ts:107</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="code"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>code</span><a href="#code" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">code</span><span class="tsd-signature-symbol">?:</span> <a href="../types/application_SetupInstallFailure.SetupFailureCode.html" class="tsd-signature-type tsd-kind-type-alias">SetupFailureCode</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L106">src/application/Setup.ts:106</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L110">src/application/Setup.ts:110</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="doctor"><code class="tsd-tag">Readonly</code><span>doctor</span><a href="#doctor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doctor</span><span class="tsd-signature-symbol">:</span> <a href="application_Doctor.DoctorReport.html" class="tsd-signature-type tsd-kind-interface">DoctorReport</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L104">src/application/Setup.ts:104</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L108">src/application/Setup.ts:108</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="plannedactions"><code class="tsd-tag">Readonly</code><span>planned<wbr/>Actions</span><a href="#plannedactions" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">plannedActions</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="application_Setup.SetupAction.html" class="tsd-signature-type tsd-kind-interface">SetupAction</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L101">src/application/Setup.ts:101</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L105">src/application/Setup.ts:105</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="remediation"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>remediation</span><a href="#remediation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">remediation</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L105">src/application/Setup.ts:105</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L109">src/application/Setup.ts:109</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="status"><code class="tsd-tag">Readonly</code><span>status</span><a href="#status" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">status</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;ready&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;planned&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;needs_confirmation&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;needs_human&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L100">src/application/Setup.ts:100</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L104">src/application/Setup.ts:104</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
