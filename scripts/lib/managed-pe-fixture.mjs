@@ -232,10 +232,8 @@ export const alternateMvid = Buffer.from([
 ]);
 
 /** Build a source-owned PE/CLI fixture without committing compiled binaries. */
-export const buildManagedPeFixture = (options = {}) => {
-  const strings = new StringHeap();
-  const blobs = new BlobHeap();
-  const methods = options.methods ?? [
+const managedFixtureMethods = (options) =>
+  options.methods ?? [
     {
       name: options.methodName ?? "Main",
       body: options.ilBody ?? defaultIlBody,
@@ -243,6 +241,10 @@ export const buildManagedPeFixture = (options = {}) => {
       implFlags: options.methodImplFlags ?? 0,
     },
   ];
+
+const buildManagedMetadata = (options, methods) => {
+  const strings = new StringHeap();
+  const blobs = new BlobHeap();
   const stringsForMethods = methods.map((method) => strings.add(method.name));
   const moduleName = strings.add("Fixture.dll");
   const assemblyName = strings.add("Fixture.Managed");
@@ -320,6 +322,10 @@ export const buildManagedPeFixture = (options = {}) => {
     blobs.toBuffer(),
   );
   if (options.corruptMetadataSignature === true) metadata.writeUInt32LE(0, 0);
+  return metadata;
+};
+
+const buildManagedImage = (options, methods, metadata) => {
   const resourceData = options.resourceData ?? Buffer.from("resource-data");
   const resourceDirectory = Buffer.concat([
     u32(resourceData.length),
@@ -381,7 +387,12 @@ export const buildManagedPeFixture = (options = {}) => {
   return image;
 };
 
-/** Build a syntactically valid PE32 fixture with no CLI directory. */
+/** Build a source-owned PE/CLI fixture without committing compiled binaries. */
+export const buildManagedPeFixture = (options = {}) => {
+  const methods = managedFixtureMethods(options);
+  const metadata = buildManagedMetadata(options, methods);
+  return buildManagedImage(options, methods, metadata);
+};
 export const buildNativePeFixture = () => {
   const image = buildManagedPeFixture();
   const cliDirectory = 0x84 + 20 + 96 + 14 * 8;

@@ -111,13 +111,21 @@ const typeDefRow = (
 const fieldRow = (name: number, signature: number): Buffer =>
   Buffer.concat([u16(0x0001), u16(name), u16(signature)]);
 
-const methodDefRow = (
-  name: number,
-  signature: number,
+interface MethodDefRowInput {
+  readonly name: number;
+  readonly signature: number;
+  readonly rva?: number;
+  readonly flags?: number;
+  readonly implFlags?: number;
+}
+
+const methodDefRow = ({
+  name,
+  signature,
   rva = 0,
   flags = 0x0016,
   implFlags = 0,
-): Buffer =>
+}: MethodDefRowInput): Buffer =>
   Buffer.concat([
     u32(rva),
     u16(implFlags),
@@ -265,9 +273,8 @@ const tablesStream = (
   return Buffer.concat([header, ...counts, ...data]);
 };
 
-/** Build a source-owned PE32/CLI fixture without committing compiled binaries. */
-export const buildManagedPeFixture = (
-  options: ManagedPeFixtureOptions = {},
+const buildManagedFixtureMetadata = (
+  options: ManagedPeFixtureOptions,
 ): Buffer => {
   const strings = new StringHeap();
   const blobs = new BlobHeap();
@@ -314,12 +321,12 @@ export const buildManagedPeFixture = (
     [
       6,
       [
-        methodDefRow(
-          methodName,
-          methodSignature,
-          0x2800,
-          options.pinvoke === undefined ? 0x0016 : 0x2016,
-        ),
+        methodDefRow({
+          name: methodName,
+          signature: methodSignature,
+          rva: 0x2800,
+          flags: options.pinvoke === undefined ? 0x0016 : 0x2016,
+        }),
       ],
     ],
     [10, [memberRefRow(constructorName, constructorSignature)]],
@@ -352,6 +359,13 @@ export const buildManagedPeFixture = (
     blobs.toBuffer(),
   );
   if (options.corruptMetadataSignature === true) metadata.writeUInt32LE(0, 0);
+  return metadata;
+};
+
+const buildManagedFixtureImage = (
+  options: ManagedPeFixtureOptions,
+  metadata: Buffer,
+): Buffer => {
   const resourceData = options.resourceData ?? Buffer.from("resource-data");
   const resourceDirectory = Buffer.concat([
     u32(resourceData.length),
@@ -410,6 +424,12 @@ export const buildManagedPeFixture = (
   resourceDirectory.copy(image, 0x0800);
   return image;
 };
+
+/** Build a source-owned PE32/CLI fixture without committing compiled binaries. */
+export const buildManagedPeFixture = (
+  options: ManagedPeFixtureOptions = {},
+): Buffer =>
+  buildManagedFixtureImage(options, buildManagedFixtureMetadata(options));
 
 /** Build a syntactically valid PE32 fixture with no CLI directory. */
 export const buildNativePeFixture = (): Buffer => {
