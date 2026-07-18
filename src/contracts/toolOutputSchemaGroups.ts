@@ -48,7 +48,7 @@ import {
   pageOutput,
   procedureIdentity,
   procedureInfoOutput,
-  resultOf,
+  evidenceResultOf as resultOf,
   searchPageOutput,
   segmentOutput,
   sessionProvider,

@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">SetupAction</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#backuppath">backupPath</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#commands">commands</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#detail">detail</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#external">external</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#id">id</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#integrity">integrity</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#kind">kind</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;install_hopper&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;install_skill&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;configure_client&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#label">label</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#networkorigins">networkOrigins</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#operation">operation</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;update&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;install&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;create&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#target">target</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L130">src/application/Setup.ts:130</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L110">src/application/Setup.ts:110</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -53,47 +53,22 @@
 <h3 class="tsd-anchor-link" id="detail"><code class="tsd-tag">Readonly</code><span>detail</span><a href="#detail" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">detail</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L135">src/application/Setup.ts:135</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L113">src/application/Setup.ts:113</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="external"><code class="tsd-tag">Readonly</code><span>external</span><a href="#external" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">external</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L136">src/application/Setup.ts:136</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member">
-<h3 class="tsd-anchor-link" id="id"><code class="tsd-tag">Readonly</code><span>id</span><a href="#id" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">id</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L131">src/application/Setup.ts:131</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member">
-<h3 class="tsd-anchor-link" id="integrity"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>integrity</span><a href="#integrity" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">integrity</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L141">src/application/Setup.ts:141</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L114">src/application/Setup.ts:114</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="kind"><code class="tsd-tag">Readonly</code><span>kind</span><a href="#kind" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">kind</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;install_hopper&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;install_skill&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;configure_client&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L132">src/application/Setup.ts:132</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member">
-<h3 class="tsd-anchor-link" id="label"><code class="tsd-tag">Readonly</code><span>label</span><a href="#label" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">label</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L133">src/application/Setup.ts:133</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member">
-<h3 class="tsd-anchor-link" id="networkorigins"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>network<wbr/>Origins</span><a href="#networkorigins" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">networkOrigins</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L139">src/application/Setup.ts:139</a></li></ul></aside></section>
-<section class="tsd-panel tsd-member">
-<h3 class="tsd-anchor-link" id="operation"><code class="tsd-tag">Readonly</code><span>operation</span><a href="#operation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">operation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;update&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;install&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;create&quot;</span></div><aside class="tsd-sources">
-<ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L137">src/application/Setup.ts:137</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L111">src/application/Setup.ts:111</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="target"><code class="tsd-tag">Readonly</code><span>target</span><a href="#target" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">target</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L134">src/application/Setup.ts:134</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L112">src/application/Setup.ts:112</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

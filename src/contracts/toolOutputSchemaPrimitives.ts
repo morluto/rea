@@ -21,7 +21,7 @@ export const evidenceResultOf = (schema: z.ZodType) =>
     evidence_uri: z.string().regex(/^rea:\/\/evidence\/ev_[a-f0-9]{64}$/u),
   });
 
-export const resultOf = evidenceResultOf;
+const resultOf = evidenceResultOf;
 export const lifecycleResultOf = (schema: z.ZodType) =>
   z.object({ result: schema });
 
@@ -60,7 +60,7 @@ export const targetKindSchema = z.enum([
   "artifact",
 ]);
 
-export const providerCapability = z.object({
+const providerCapability = z.object({
   operation: z.string(),
   available: z.boolean(),
   reason: z.string().nullable(),
@@ -85,19 +85,19 @@ export const providerCapability = z.object({
   limitations: z.array(z.string()),
 });
 
-export const providerIdentity = z.object({
+const providerIdentity = z.object({
   id: z.string(),
   name: z.string(),
   version: z.string().nullable(),
 });
 
-export const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
+const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
 );
 
-export const providerDiagnostics = z.record(z.string(), z.json());
+const providerDiagnostics = z.record(z.string(), z.json());
 
-export const providerAvailability = z.discriminatedUnion("status", [
+const providerAvailability = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("available"),
     code: z.null(),
@@ -112,7 +112,7 @@ export const providerAvailability = z.discriminatedUnion("status", [
   }),
 ]);
 
-export const providerTargetSupport = z.discriminatedUnion("status", [
+const providerTargetSupport = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("unknown"),
     code: z.null(),
@@ -240,9 +240,12 @@ export const sessionProvider = z.object({
 
 export const nullableText = z.string().nullable();
 export const addressList = z.array(z.string());
-export const addressedEntry = z.object({ address: z.string(), name: z.string() });
+export const addressedEntry = z.object({
+  address: z.string(),
+  name: z.string(),
+});
 export const procedureIdentity = procedureIdentitySchema;
-export const localVariable = localVariableSchema;
+const localVariable = localVariableSchema;
 
 export const containingProcedureResolution = z.discriminatedUnion("found", [
   z.object({
@@ -258,12 +261,12 @@ export const containingProcedureResolution = z.discriminatedUnion("found", [
   }),
 ]);
 
-export const unavailable = z.object({
+const unavailable = z.object({
   available: z.literal(false),
   reason: z.string(),
 });
 
-export const availableMemoryPermissions = z.object({
+const availableMemoryPermissions = z.object({
   available: z.literal(true),
   source: z.literal("ghidra-memory-block"),
 });
@@ -277,7 +280,7 @@ export const bounded = (item: z.ZodType) =>
     next_offset: z.number().int().min(0).nullable(),
   });
 
-export const addressedValue = z.object({
+const addressedValue = z.object({
   address: z.string(),
   value: z.string(),
   value_truncated: z.boolean().optional(),
@@ -325,7 +328,7 @@ export const searchPageOutput = pageOutput.extend({
   ),
 });
 
-export const memoryRegionOutput = z.object({
+const memoryRegionOutput = z.object({
   name: z.string(),
   start: z.string(),
   end: z.string(),

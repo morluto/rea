@@ -38,7 +38,7 @@ const modulePath = (
   evidence: ReturnType<typeof parseEvidence>,
 ): string | null => evidence.subject?.local_path ?? null;
 
-export const symbolsForEvidence = (
+const symbolsForEvidence = (
   evidence: ReturnType<typeof parseEvidence>,
 ): {
   readonly supported: boolean;

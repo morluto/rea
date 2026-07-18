@@ -364,6 +364,13 @@ const mapResources = (
   }
 };
 
+const inventoryPagesComplete = (
+  inventory: ReturnType<typeof readManagedMetadataInventory>,
+): boolean =>
+  inventory.references.complete &&
+  inventory.resources.complete &&
+  inventory.attributes.complete;
+
 /** Inspect PE/CLI identity directly from bounded bytes without CLR loading. */
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
@@ -405,7 +412,13 @@ export const inspectManagedArtifactBytes = (
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return managedArtifactInspectionSchema.parse(
-      partialMetadataResult({ target, bytes, layout, limits, issue: cause.issue }),
+      partialMetadataResult({
+        target,
+        bytes,
+        layout,
+        limits,
+        issue: cause.issue,
+      }),
     );
   }
   const resourceIssues: ManagedParseIssue[] = [];
@@ -417,10 +430,7 @@ export const inspectManagedArtifactBytes = (
     resourceDirectory,
   );
   const issues = [...resourceIssues, ...inventory.issues];
-  const pagesComplete =
-    inventory.references.complete &&
-    inventory.resources.complete &&
-    inventory.attributes.complete;
+  const pagesComplete = inventoryPagesComplete(inventory);
   const limitations = [
     ...(pagesComplete
       ? []

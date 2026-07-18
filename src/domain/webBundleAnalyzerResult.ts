@@ -3,7 +3,10 @@ import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
 } from "./webBundleAnalysis.js";
-import type { AnalysisAccumulator, IncludedScript } from "./webBundleAnalyzerInspection.js";
+import type {
+  AnalysisAccumulator,
+  IncludedScript,
+} from "./webBundleAnalyzerInspection.js";
 
 export const buildWebBundleAnalysis = (
   inspection: WebPageInspection,
@@ -67,15 +70,13 @@ const buildCaptureObservation = (
 });
 
 const sourceArtifact = (script: IncludedScript) => {
-  if (!script.source.included)
-    throw new TypeError("Filtered source changed");
+  if (!script.source.included) throw new TypeError("Filtered source changed");
   const { text: _text, ...artifact } = script.source.artifact;
   return { ...artifact, text_available: true };
 };
 
 const chunkNode = (script: IncludedScript) => {
-  if (!script.source.included)
-    throw new TypeError("Filtered source changed");
+  if (!script.source.included) throw new TypeError("Filtered source changed");
   return {
     script_key: script.script_key,
     url: script.url,

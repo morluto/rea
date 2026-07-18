@@ -89,7 +89,12 @@ const applyTier = (context: TierContext): void => {
     const leftGroup = leftByKey.get(key) ?? [];
     const rightGroup = rightByKey.get(key) ?? [];
     if (rightGroup.length === 0) continue;
-    recordCandidates(leftGroup, rightGroup, context.leftCandidates, context.rightCandidates);
+    recordCandidates(
+      leftGroup,
+      rightGroup,
+      context.leftCandidates,
+      context.rightCandidates,
+    );
     if (leftGroup.length !== 1 || rightGroup.length !== 1) continue;
     const leftNode = leftGroup[0];
     const rightNode = rightGroup[0];

@@ -26,7 +26,7 @@ export const boundedCollector = (maximum: number) => {
   };
 };
 
-export const collect = async (
+const collect = async (
   executable: string,
   arguments_: readonly string[],
   maximum: number,

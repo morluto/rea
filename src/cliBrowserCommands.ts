@@ -20,6 +20,7 @@ import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { browserPageInspectionOptions } from "./cliObservationOptions.js";
 
 const browserScopeOptions = {
   allowedOrigins: z
@@ -112,117 +113,7 @@ const registerPageInspection = (
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
-    options: z.object({
-      ...browserScopeOptions,
-      observationMs: boundedCount(
-        "observation duration in milliseconds",
-        10_000,
-        500,
-        0,
-      ),
-      includeAccessibilityText: z
-        .boolean()
-        .default(false)
-        .describe("Include bounded accessibility text"),
-      includeConsoleText: z
-        .boolean()
-        .default(false)
-        .describe("Include bounded console message text"),
-      consoleTextApproved: z
-        .boolean()
-        .default(false)
-        .describe("Approve capturing console message text"),
-      includeJsonBodyShapes: z
-        .boolean()
-        .default(false)
-        .describe("Include structural shapes of JSON response bodies"),
-      jsonBodySchemaApproved: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Approve inspecting JSON response bodies for structural shapes",
-        ),
-      includeWebsocketShapes: z
-        .boolean()
-        .default(false)
-        .describe("Include structural shapes of WebSocket payloads"),
-      websocketShapeApproved: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Approve inspecting WebSocket payloads for structural shapes",
-        ),
-      includeScriptSources: z
-        .boolean()
-        .default(false)
-        .describe("Include bounded JavaScript source text"),
-      includeStorageKeys: z
-        .boolean()
-        .default(false)
-        .describe("Include storage key names without values"),
-      maxFrames: boundedCount("page frames", 1_000, 200),
-      maxDomNodes: boundedCount("DOM nodes", 10_000, 2_000),
-      maxAxNodes: boundedCount("accessibility nodes", 10_000, 2_000),
-      maxAxTextFieldBytes: boundedBytes(
-        "one accessibility text field",
-        16 * 1_024,
-        1_024,
-      ),
-      maxTotalAxTextBytes: boundedBytes(
-        "total accessibility text",
-        1_024 * 1_024,
-        64 * 1_024,
-      ),
-      maxScripts: boundedCount("scripts", 1_000, 200),
-      maxResources: boundedCount("resources", 10_000, 2_000),
-      maxWorkers: boundedCount("workers", 5_000, 500),
-      maxStorageKeys: boundedCount("storage keys", 10_000, 1_000),
-      maxScriptSourceBytes: boundedBytes(
-        "one script source",
-        4 * 1_024 * 1_024,
-        1_024 * 1_024,
-      ),
-      maxTotalScriptSourceBytes: boundedBytes(
-        "total script source",
-        16 * 1_024 * 1_024,
-        4 * 1_024 * 1_024,
-      ),
-      maxNetworkEvents: boundedCount("network events", 10_000, 1_000),
-      maxConsoleEvents: boundedCount("console events", 2_000, 200),
-      maxConsoleTextFieldBytes: boundedBytes(
-        "one console text field",
-        16 * 1_024,
-        1_024,
-      ),
-      maxTotalConsoleTextBytes: boundedBytes(
-        "total console text",
-        1_024 * 1_024,
-        64 * 1_024,
-      ),
-      maxJsonBodyBytes: boundedBytes(
-        "one JSON response body",
-        4 * 1_024 * 1_024,
-        1_024 * 1_024,
-      ),
-      maxTotalJsonBodyBytes: boundedBytes(
-        "total JSON response bodies",
-        16 * 1_024 * 1_024,
-        4 * 1_024 * 1_024,
-      ),
-      maxJsonShapeNodes: boundedCount("JSON shape nodes", 100_000, 5_000),
-      maxJsonShapeDepth: boundedCount("JSON shape depth", 100, 20),
-      maxWebsocketEvents: boundedCount("WebSocket events", 5_000, 500),
-      maxWebsocketShapeBytes: boundedBytes(
-        "one WebSocket shape",
-        1_024 * 1_024,
-        64 * 1_024,
-      ),
-      maxTotalWebsocketShapeBytes: boundedBytes(
-        "total WebSocket shapes",
-        16 * 1_024 * 1_024,
-        1_024 * 1_024,
-      ),
-    }),
+    options: browserPageInspectionOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-web-page", async () => {
         const context = await browserContext();

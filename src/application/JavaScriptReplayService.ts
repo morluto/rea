@@ -75,6 +75,8 @@ export const runControlledReplayValidated = async (
     options.signal,
   );
   if (!prepared.ok) return prepared;
+  if (isAborted(options.signal))
+    return err(new AnalysisCancelledError(OPERATION));
 
   if (input.mode === "plan")
     return ok(

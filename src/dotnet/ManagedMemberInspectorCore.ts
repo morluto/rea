@@ -302,7 +302,7 @@ export const parseTypes = (
   return items;
 };
 
-export const readCompressed = (
+const readCompressed = (
   bytes: Buffer,
   offset: number,
 ): { readonly value: number; readonly next: number } => {

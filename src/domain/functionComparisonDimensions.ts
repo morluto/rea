@@ -16,7 +16,10 @@ import {
   sorted,
   stringAndNameProjection,
 } from "./functionComparisonNormalization.js";
-import type { DimensionName, FunctionDimension } from "./functionComparisonSchemas.js";
+import type {
+  DimensionName,
+  FunctionDimension,
+} from "./functionComparisonSchemas.js";
 import {
   canonicalJson,
   dimensionResult,

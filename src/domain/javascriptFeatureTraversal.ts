@@ -50,11 +50,23 @@ export const traverseApplicationFeature = (
     const depth = depths.get(current) ?? 0;
     for (const entry of adjacency.get(current) ?? []) {
       if (depth >= limits.max_depth) {
-        recordOmission({ entry, current, omittedNodes, omittedEdges, frontier });
+        recordOmission({
+          entry,
+          current,
+          omittedNodes,
+          omittedEdges,
+          frontier,
+        });
         continue;
       }
       if (!visited.has(entry.nextNodeId) && visited.size >= limits.max_nodes) {
-        recordOmission({ entry, current, omittedNodes, omittedEdges, frontier });
+        recordOmission({
+          entry,
+          current,
+          omittedNodes,
+          omittedEdges,
+          frontier,
+        });
         continue;
       }
       if (

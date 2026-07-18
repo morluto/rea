@@ -4,7 +4,11 @@ import {
   functionComparisonResultSchema,
   type FunctionComparisonResult,
 } from "./functionComparisonSchemas.js";
-import { overallStatus, summarize, canonicalJson } from "./functionComparisonResults.js";
+import {
+  overallStatus,
+  summarize,
+  canonicalJson,
+} from "./functionComparisonResults.js";
 import { compareDimensions } from "./functionComparisonDimensions.js";
 
 export {

@@ -3,7 +3,7 @@ import { open } from "node:fs/promises";
 import { classifyArtifactPath } from "../ArtifactGraphConstruction.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 
-export const classifyContainerExtension = (
+const classifyContainerExtension = (
   path: string,
 ): ArtifactNode["format"] | undefined => {
   const lower = path.toLowerCase();

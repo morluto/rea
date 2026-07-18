@@ -257,7 +257,7 @@ export async function assertMalformedFixture(path) {
     );
 }
 
-export function assertStrings(strings) {
+function assertStrings(strings) {
   for (const expected of [
     "REA_GHIDRA_INVENTORY_ENTRY",
     "REA_GHIDRA_LEAF_VALUE",
@@ -273,7 +273,7 @@ export function assertStrings(strings) {
   }
 }
 
-export function assertSegments(segments, imageBase) {
+function assertSegments(segments, imageBase) {
   if (
     !Array.isArray(segments) ||
     segments.length === 0 ||

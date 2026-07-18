@@ -13,7 +13,7 @@ import {
   requireProcedure,
 } from "./verify-real-ghidra-assertions.mjs";
 
-export async function functionCall(client, operation, parameters) {
+async function functionCall(client, operation, parameters) {
   const input = parseGhidraFunctionInput(operation, parameters);
   if (!input.ok) throw input.error;
   const called = await client.callTool(operation, input.value);

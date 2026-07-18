@@ -26,5 +26,10 @@ export const analyzeCapturedWebBundle = (
   const accumulator = emptyAccumulator();
   const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   for (const script of sourceScripts) analyzeScript(script, input, accumulator);
-  return buildWebBundleAnalysis(inspection, sourceScripts, sourceMaps, accumulator);
+  return buildWebBundleAnalysis(
+    inspection,
+    sourceScripts,
+    sourceMaps,
+    accumulator,
+  );
 };

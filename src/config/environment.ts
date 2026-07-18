@@ -5,7 +5,7 @@ import { ConfigurationError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 
-export const environmentSchema = z
+const environmentSchema = z
   .object({
     REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
     GHIDRA_INSTALL_DIR: z

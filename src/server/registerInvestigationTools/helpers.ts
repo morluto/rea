@@ -60,7 +60,7 @@ export const functionEvidenceIds = (
     ),
   );
 
-export const uniqueIds = (ids: readonly string[]): string[] =>
+const uniqueIds = (ids: readonly string[]): string[] =>
   [...new Set(ids)].sort((left, right) => left.localeCompare(right));
 
 export const evidenceClosure = (

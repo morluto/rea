@@ -17,9 +17,7 @@ import {
   inspectRoleProperty,
 } from "./javascriptStaticAnalysisCalls.js";
 import { inspectBundlerRegistration } from "./javascriptStaticAnalysisBundler.js";
-import {
-  finalizeLocatedFindings,
-} from "./javascriptStaticAnalysisFindings.js";
+import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
 import {
   createJavaScriptAnalysisAccumulator,
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,

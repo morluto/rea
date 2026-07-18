@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-
 import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationNode,
@@ -15,8 +14,11 @@ import {
   type ManagedMemberInspection,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
-import type { GraphBuildState, ParsedManagedGraphInput } from "./managedApplicationGraph.js";
-
+import type {
+  GraphBuildState,
+  ParsedManagedGraphInput,
+} from "./managedApplicationGraph.js";
+import { moduleCoverageState } from "./managedApplicationGraphNodeCoverage.js";
 type ManagedMethod = ManagedMemberInspection["methods"]["items"][number];
 type ManagedField = ManagedMemberInspection["fields"]["items"][number];
 type ManagedType = ManagedMemberInspection["types"]["items"][number];
@@ -204,7 +206,7 @@ export const addMemberNodes = (
 };
 
 /** Build a managed type application node. */
-export const typeNode = (
+const typeNode = (
   state: GraphBuildState,
   type: ManagedType,
   coverage: ApplicationGraphEvidence["coverage"],
@@ -233,7 +235,7 @@ export const typeNode = (
   });
 
 /** Build a managed method application node. */
-export const methodNode = (
+const methodNode = (
   state: GraphBuildState,
   method: ManagedMethod,
   coverage: ApplicationGraphEvidence["coverage"],
@@ -269,7 +271,7 @@ export const methodNode = (
   });
 
 /** Build a managed field application node. */
-export const fieldNode = (
+const fieldNode = (
   state: GraphBuildState,
   field: ManagedField,
   coverage: ApplicationGraphEvidence["coverage"],
@@ -374,7 +376,7 @@ export const addBoundaryNodes = (
 };
 
 /** Build a managed P/Invoke import application node. */
-export const pinvokeNode = (
+const pinvokeNode = (
   state: GraphBuildState,
   pinvoke: PinvokeImport,
   coverage: ApplicationGraphEvidence["coverage"],
@@ -409,7 +411,7 @@ export const pinvokeNode = (
   });
 
 /** Build a managed native implementation application node. */
-export const nativeImplementationNode = (
+const nativeImplementationNode = (
   state: GraphBuildState,
   implementation: NativeImplementation,
   coverage: ApplicationGraphEvidence["coverage"],
@@ -444,7 +446,7 @@ export const nativeImplementationNode = (
   });
 
 /** Add a contains relationship edge between two nodes. */
-export const addContainsEdge = (
+const addContainsEdge = (
   state: GraphBuildState,
   source: ApplicationNode,
   target: ApplicationNode,
@@ -466,7 +468,7 @@ export const addContainsEdge = (
 };
 
 /** Build an artifact-local key identity for a managed graph entity. */
-export const artifactLocalIdentity = (
+const artifactLocalIdentity = (
   artifactSha256: string,
   namespace: string,
   key: string,
@@ -479,10 +481,12 @@ export const artifactLocalIdentity = (
 });
 
 /** Build managed static-analysis evidence for a graph observation. */
-export const managedEvidence = (
+const managedEvidence = (
   state: GraphBuildState,
   operation: string,
-  coverage: ApplicationGraphEvidence["coverage"] = managedSourceCoverage("complete"),
+  coverage: ApplicationGraphEvidence["coverage"] = managedSourceCoverage(
+    "complete",
+  ),
 ): ApplicationGraphEvidence => ({
   authority: "managed-static-analysis",
   state: "observed",
@@ -516,17 +520,7 @@ export const managedEvidence = (
 });
 
 /** Sanitize an artifact path into a managed graph location. */
-export const graphArtifactPath = (path: string): string => {
+const graphArtifactPath = (path: string): string => {
   const name = basename(path).replaceAll(/[^A-Za-z0-9._-]/gu, "_");
   return `managed/${name.length === 0 ? "artifact.pe" : name}`;
 };
-
-/** Derive the module coverage state from the best available evidence source. */
-export const moduleCoverageState = (
-  parsed: ParsedManagedGraphInput,
-): "complete" | "partial" | "unavailable" =>
-  parsed.artifact !== null && parsed.artifact.result.module !== null
-    ? parsed.artifact.result.coverage.state
-    : parsed.members !== null && parsed.members.result.module !== null
-      ? parsed.members.result.coverage.state
-      : (parsed.boundaries?.result.coverage.state ?? "complete");

@@ -334,7 +334,10 @@ const addRouteFrameworkInference = (context: RouteFrameworkContext): void => {
       value,
       confidence: "medium",
       basis: [
-        { ...basis(context.script, `call:${context.name}`), ...locationFields(context.node) },
+        {
+          ...basis(context.script, `call:${context.name}`),
+          ...locationFields(context.node),
+        },
       ],
     }),
   );
@@ -383,8 +386,9 @@ export const emptyAccumulator = (): AnalysisAccumulator => ({
   astLimitReached: false,
 });
 
-export const isIncludedScript = (script: BrowserScript): script is IncludedScript =>
-  script.source.included;
+export const isIncludedScript = (
+  script: BrowserScript,
+): script is IncludedScript => script.source.included;
 
 const routeCallNames = [
   "route",

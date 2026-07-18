@@ -24,12 +24,12 @@ const matchBasisSchema = z.enum([
   "unsupported-native-evidence",
 ]);
 
-export const nativeVerificationLimitsSchema = z.strictObject({
+const nativeVerificationLimitsSchema = z.strictObject({
   max_native_observations: z.number().int().min(1).max(50).default(20),
   max_candidates_per_import: z.number().int().min(1).max(100).default(25),
 });
 
-export const nativeSymbolSchema = z.strictObject({
+const nativeSymbolSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
   operation: z.string().min(1),
   name: z.string().min(1),

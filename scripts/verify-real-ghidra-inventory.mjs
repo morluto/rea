@@ -45,7 +45,7 @@ export async function allItems(client, operation, parameters) {
   return items;
 }
 
-export async function expectRemoteFailure(client, operation, parameters, code) {
+async function expectRemoteFailure(client, operation, parameters, code) {
   const result = await client.callTool(operation, parameters);
   if (
     result.ok ||
@@ -59,7 +59,7 @@ export async function expectRemoteFailure(client, operation, parameters, code) {
   return { operation, code };
 }
 
-export async function verifyBridgeRejections(client) {
+async function verifyBridgeRejections(client) {
   return {
     unknownDocument: await expectRemoteFailure(
       client,

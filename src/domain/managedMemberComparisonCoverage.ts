@@ -4,7 +4,7 @@ import type {
 } from "./managedMemberComparison.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 
-export interface PageAssessment {
+interface PageAssessment {
   readonly sourceComplete: boolean;
   readonly sourceOmittedCount: number;
 }

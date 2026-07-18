@@ -238,7 +238,10 @@ const readCoffHeader = (bytes: Buffer): CoffHeader => {
   return { coff, machine, sectionCount, optionalSize, characteristics };
 };
 
-const readOptionalHeader = (bytes: Buffer, coff: CoffHeader): OptionalHeader => {
+const readOptionalHeader = (
+  bytes: Buffer,
+  coff: CoffHeader,
+): OptionalHeader => {
   const optionalOffset = coff.coff + 20;
   requireRange(bytes, optionalOffset, coff.optionalSize, "pe.optional-header");
   if (coff.optionalSize < 96)
@@ -272,13 +275,12 @@ const readSections = (
   coff: CoffHeader,
   optional: OptionalHeader,
 ): readonly PeSection[] => {
-  const sectionOffset = add(optional.optionalOffset, coff.optionalSize, "pe.sections");
-  requireRange(
-    bytes,
-    sectionOffset,
-    coff.sectionCount * 40,
+  const sectionOffset = add(
+    optional.optionalOffset,
+    coff.optionalSize,
     "pe.sections",
   );
+  requireRange(bytes, sectionOffset, coff.sectionCount * 40, "pe.sections");
   const sections: PeSection[] = [];
   for (let index = 0; index < coff.sectionCount; index += 1) {
     const offset = sectionOffset + index * 40;

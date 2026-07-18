@@ -31,10 +31,10 @@ export interface PendingIntegrityContradiction {
   readonly unpacked: boolean;
 }
 
-export const UNAVAILABLE_UNPACKED_LIMITATION =
+const UNAVAILABLE_UNPACKED_LIMITATION =
   "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.";
 
-export const emptyScan = (): {
+const emptyScan = (): {
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];

@@ -14,7 +14,7 @@ import {
 } from "./GhidraTransport.js";
 
 /** Stable listeners attached for the lifetime of one bridge socket. */
-export interface GhidraSocketHandlers {
+interface GhidraSocketHandlers {
   readonly data: (chunk: string) => void;
   readonly error: () => void;
   readonly close: () => void;
@@ -37,7 +37,7 @@ export interface GhidraSocketConnectOptions {
 }
 
 /** Attach decoded bridge listeners and return an idempotent detach callback. */
-export const attachGhidraSocket = (
+const attachGhidraSocket = (
   socket: Socket,
   handlers: GhidraSocketHandlers,
 ): (() => void) => {
@@ -96,7 +96,7 @@ export const connectGhidraSocket = async (
 };
 
 /** Open one abort-aware connection to an observed local Ghidra endpoint. */
-export const connectGhidraSocketOnce = (
+const connectGhidraSocketOnce = (
   target: GhidraConnectTarget,
   signal: AbortSignal,
 ): Promise<Result<Socket, GhidraSessionError>> =>
