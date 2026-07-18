@@ -60,7 +60,7 @@ export const reconstructJavaScriptArtifact = async (
   const snapshot = await scanCanonicalArtifactInventory(
     path,
     artifactLimitsForReconstruction(input),
-    signal,
+    { signal },
   );
   if (snapshot.manifest.root_format !== format)
     throw new ArtifactReaderFailure(

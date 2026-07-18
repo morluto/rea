@@ -1,21 +1,9 @@
-import {
-  access,
-  copyFile,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
-import { z } from "zod";
-import writeFileAtomic from "write-file-atomic";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { supportsNodeVersion } from "../domain/runtimeVersion.js";
-import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import {
   runDoctor,
   systemDoctorHost,
@@ -36,6 +24,15 @@ import {
   installCanonicalSkill,
 } from "./SetupSkill.js";
 import { setupPlan } from "./SetupPlan.js";
+import {
+  clientConfigurationAligned,
+  configureJsonClient,
+  configureTomlClient,
+} from "./SetupClientConfiguration.js";
+export {
+  configureJsonClient,
+  configureTomlClient,
+} from "./SetupClientConfiguration.js";
 import {
   setupInstallFailure,
   type SetupFailureCode,
@@ -184,14 +181,8 @@ export const runSetup = async (
   const appliedActions: string[] = [];
   let plannedActions: readonly SetupAction[] = [];
   const clients: Record<string, ClientConfigurationResult> = {};
-  const fail = async (remediation: string): Promise<SetupResult> => ({
-    status: "needs_human",
-    plannedActions,
-    appliedActions,
-    clients,
-    doctor: await host.doctor(),
-    remediation,
-  });
+  const fail = (remediation: string) =>
+    setupFailure(remediation, [host, plannedActions, appliedActions, clients]);
   const unsupported = await hostRemediation(host, options.installHopper);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
@@ -345,15 +336,28 @@ export const runSetup = async (
   };
 };
 
-const discoverSetupActions = async (input: {
-  readonly host: SetupHost;
-  readonly providerEnvironment: SetupProviderEnvironment;
-  readonly forceHopperInstall: boolean;
-  readonly proposeHopper: boolean;
-  readonly selectedClientIds: readonly string[] | undefined;
-  readonly installSkillSelection: boolean | undefined;
-}) => {
-  const { host, providerEnvironment } = input;
+const setupFailure = async (
+  remediation: string,
+  [host, plannedActions, appliedActions, clients]: readonly [
+    SetupHost,
+    readonly SetupAction[],
+    readonly string[],
+    Readonly<Record<string, ClientConfigurationResult>>,
+  ],
+): Promise<SetupResult> => ({
+  status: "needs_human",
+  plannedActions,
+  appliedActions,
+  clients,
+  doctor: await host.doctor(),
+  remediation,
+});
+
+const discoverSetupActions = async (
+  host: SetupHost,
+  providerEnvironment: SetupProviderEnvironment,
+  forceHopperInstall: boolean,
+) => {
   const initialDoctor = await host.doctor();
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
     ({ name, ok, detail }) =>
@@ -389,49 +393,11 @@ const discoverSetupActions = async (input: {
         providerEnvironment,
         command,
       );
-  const inspections = await inspectClients(
-    host,
-    clients,
-    providerEnvironment,
-    command,
-  );
-  const invalid = inspections.find(
-    ({ inspection }) => inspection.status === "invalid",
-  );
-  const blocker =
-    invalid?.inspection.status === "invalid"
-      ? `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`
-      : undefined;
-  const clientPlans = inspections.flatMap(({ client, inspection }) =>
-    inspection.status === "create" ||
-    inspection.status === "update" ||
-    (installHopper && inspection.status === "already_current")
-      ? [
-          {
-            client,
-            operation:
-              inspection.status === "already_current"
-                ? ("update" as const)
-                : inspection.status,
-            ...(inspection.status !== "already_current" &&
-            inspection.backupPath !== undefined
-              ? { backupPath: inspection.backupPath }
-              : {}),
-          },
-        ]
-      : [],
-  );
-  const linuxDistribution =
-    host.platform === "linux" ? await host.linuxDistribution() : undefined;
-  const plannedActions = setupPlan({
-    platform: host.platform,
+  const plannedActions = setupPlan(host.platform, {
     installHopper,
     installSkill,
-    clients: clientPlans,
+    clients,
     providerEnvironment,
-    ...(linuxDistribution?.packageFamily === undefined
-      ? {}
-      : { linuxPackageFamily: linuxDistribution.packageFamily }),
   });
   return {
     installHopper,
@@ -591,161 +557,6 @@ export const detectClients = async (
   return detected;
 };
 
-/** Back up, atomically update, and semantically read back one JSON MCP configuration. */
-export const configureJsonClient = async (
-  client: SetupClient,
-  environment: SetupProviderEnvironment | string = {},
-  command: readonly string[] = [
-    "npx",
-    "-y",
-    PRODUCT_IDENTITY.packageSpecifier,
-    "mcp",
-  ],
-): Promise<ClientConfigurationResult> => {
-  const transactionPath = await resolveClientConfigTransactionPath(
-    client.configPath,
-  );
-  if (transactionPath === undefined)
-    return { status: "failed", reason: "path" };
-  let document: Record<string, unknown> = {};
-  let original: string | undefined;
-  try {
-    original = await readFile(transactionPath, "utf8");
-    document = parseObject(original);
-  } catch (cause: unknown) {
-    if (!isMissing(cause)) return { status: "failed", reason: "readback" };
-  }
-  let servers: Record<string, unknown>;
-  try {
-    servers = parseOptionalObject(document.mcpServers);
-  } catch {
-    return { status: "failed", reason: "readback" };
-  }
-  const desired = clientConfigurationDesired(
-    normalizeProviderEnvironment(environment),
-    command,
-  );
-  if (
-    JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
-    JSON.stringify(desired)
-  )
-    return { status: "unchanged" };
-  let backupPath: string | undefined;
-  if (original !== undefined) {
-    backupPath = `${client.configPath}.rea.backup`;
-    if (!(await preserveConfigBackup(transactionPath, backupPath)))
-      return { status: "failed", reason: "backup" };
-  }
-  document.mcpServers = {
-    ...servers,
-    [PRODUCT_IDENTITY.mcpServerKey]: desired,
-  };
-  const encoded = `${JSON.stringify(document, null, 2)}\n`;
-  try {
-    await mkdir(dirname(client.configPath), { recursive: true });
-    await writeFileAtomic(transactionPath, encoded, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-  } catch {
-    return { status: "failed", reason: "write" };
-  }
-  try {
-    const readback = parseObject(await readFile(transactionPath, "utf8"));
-    const value = parseOptionalObject(readback.mcpServers)[
-      PRODUCT_IDENTITY.mcpServerKey
-    ];
-    if (JSON.stringify(value) !== JSON.stringify(desired)) {
-      await restoreConfig(transactionPath, original);
-      return { status: "failed", reason: "readback" };
-    }
-  } catch {
-    await restoreConfig(transactionPath, original);
-    return { status: "failed", reason: "readback" };
-  }
-  return {
-    status: "configured",
-    ...(backupPath === undefined ? {} : { backupPath }),
-  };
-};
-
-/** Back up, atomically update, and semantically read back Codex TOML configuration. */
-export const configureTomlClient = async (
-  client: SetupClient,
-  environment: SetupProviderEnvironment | string = {},
-  command: readonly string[] = [
-    "npx",
-    "-y",
-    PRODUCT_IDENTITY.packageSpecifier,
-    "mcp",
-  ],
-): Promise<ClientConfigurationResult> => {
-  const transactionPath = await resolveClientConfigTransactionPath(
-    client.configPath,
-  );
-  if (transactionPath === undefined)
-    return { status: "failed", reason: "path" };
-  let document: Record<string, unknown> = {};
-  let original: string | undefined;
-  try {
-    original = await readFile(transactionPath, "utf8");
-    document = objectSchema.parse(parseToml(original));
-  } catch (cause: unknown) {
-    if (!isMissing(cause)) return { status: "failed", reason: "readback" };
-  }
-  let servers: Record<string, unknown>;
-  try {
-    servers = parseOptionalObject(document.mcp_servers);
-  } catch {
-    return { status: "failed", reason: "readback" };
-  }
-  const desired = clientConfigurationDesired(
-    normalizeProviderEnvironment(environment),
-    command,
-  );
-  if (
-    JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
-    JSON.stringify(desired)
-  )
-    return { status: "unchanged" };
-  const backupPath =
-    original === undefined ? undefined : `${client.configPath}.rea.backup`;
-  if (
-    backupPath !== undefined &&
-    !(await preserveConfigBackup(transactionPath, backupPath))
-  )
-    return { status: "failed", reason: "backup" };
-  document.mcp_servers = {
-    ...servers,
-    [PRODUCT_IDENTITY.mcpServerKey]: desired,
-  };
-  try {
-    await mkdir(dirname(client.configPath), { recursive: true });
-    await writeFileAtomic(transactionPath, stringifyToml(document), {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    const readback = objectSchema.parse(
-      parseToml(await readFile(transactionPath, "utf8")),
-    );
-    if (
-      JSON.stringify(
-        parseOptionalObject(readback.mcp_servers)[
-          PRODUCT_IDENTITY.mcpServerKey
-        ],
-      ) !== JSON.stringify(desired)
-    )
-      throw new Error("TOML readback mismatch");
-  } catch {
-    await restoreConfig(transactionPath, original);
-    return { status: "failed", reason: "readback" };
-  }
-  return {
-    status: "configured",
-    ...(backupPath === undefined ? {} : { backupPath }),
-  };
-};
-
 const major = (version: string): number =>
   Number.parseInt(version.split(".")[0] ?? "0", 10);
 const exists = async (path: string): Promise<boolean> => {
@@ -756,139 +567,6 @@ const exists = async (path: string): Promise<boolean> => {
     return false;
   }
 };
-const preserveConfigBackup = async (
-  source: string,
-  destination: string,
-): Promise<boolean> => {
-  try {
-    await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
-    return true;
-  } catch (cause: unknown) {
-    return cause instanceof Error && "code" in cause && cause.code === "EEXIST";
-  }
-};
-const objectSchema = z.record(z.string(), z.unknown());
-const parseOptionalObject = (value: unknown): Record<string, unknown> =>
-  value === undefined ? {} : objectSchema.parse(value);
-const parseObject = (text: string): Record<string, unknown> =>
-  objectSchema.parse(JSON.parse(text));
-const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-const restoreConfig = async (
-  path: string,
-  original: string | undefined,
-): Promise<void> => {
-  try {
-    if (original === undefined) await rm(path, { force: true });
-    else await writeFile(path, original, { encoding: "utf8", mode: 0o600 });
-  } catch {
-    // The backup remains available for the remediation reported by setup.
-  }
-};
-
-const clientConfigurationDesired = (
-  providerEnvironment: SetupProviderEnvironment,
-  command: readonly string[],
-) => {
-  const environment = Object.fromEntries(
-    Object.entries(providerEnvironment).sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
-  );
-  return {
-    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
-    args: command.slice(1),
-    ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-  };
-};
-
-const clientConfigurationAligned = async (
-  client: SetupClient,
-  providerEnvironment: SetupProviderEnvironment,
-  command: readonly string[],
-): Promise<boolean> => {
-  const desired = clientConfigurationDesired(providerEnvironment, command);
-  try {
-    const original = await readFile(client.configPath, "utf8");
-    if (client.format === "toml") {
-      const document = objectSchema.parse(parseToml(original));
-      const servers = parseOptionalObject(document.mcp_servers);
-      return (
-        JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
-        JSON.stringify(desired)
-      );
-    }
-    const document = parseObject(original);
-    const servers = parseOptionalObject(document.mcpServers);
-    return (
-      JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
-      JSON.stringify(desired)
-    );
-  } catch {
-    return false;
-  }
-};
-
-const inspectClientConfiguration = async (
-  client: SetupClient,
-  providerEnvironment: SetupProviderEnvironment,
-  command: readonly string[],
-): Promise<ClientConfigurationInspection> => {
-  if (client.format === "unsupported") return { status: "already_current" };
-  const transactionPath = await resolveClientConfigTransactionPath(
-    client.configPath,
-  );
-  if (transactionPath === undefined)
-    return {
-      status: "invalid",
-      remediation:
-        "The configuration path is unsafe or unresolved. Check ownership and symbolic links before rerunning setup.",
-    };
-  let original: string;
-  try {
-    original = await readFile(transactionPath, "utf8");
-  } catch (cause: unknown) {
-    if (isMissing(cause)) return { status: "create" };
-    return {
-      status: "invalid",
-      remediation:
-        "The configuration file could not be read. Check its permissions before rerunning setup.",
-    };
-  }
-  const desired = clientConfigurationDesired(providerEnvironment, command);
-  try {
-    const document =
-      client.format === "toml"
-        ? objectSchema.parse(parseToml(original))
-        : parseObject(original);
-    const servers = parseOptionalObject(
-      client.format === "toml" ? document.mcp_servers : document.mcpServers,
-    );
-    if (
-      JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
-      JSON.stringify(desired)
-    )
-      return { status: "already_current" };
-  } catch {
-    return {
-      status: "invalid",
-      remediation:
-        "The existing configuration is malformed. Repair it before setup applies any other changes.",
-    };
-  }
-  return {
-    status: "update",
-    backupPath: `${client.configPath}.rea.backup`,
-  };
-};
-
-const normalizeProviderEnvironment = (
-  environment: SetupProviderEnvironment | string,
-): SetupProviderEnvironment =>
-  typeof environment === "string"
-    ? { HOPPER_LAUNCHER_PATH: environment }
-    : environment;
-
 const providerRegistrationEnvironment = (
   inspections: readonly DoctorProviderInspection[],
 ): SetupProviderEnvironment =>

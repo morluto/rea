@@ -132,17 +132,7 @@ export const installMacHopper = async (
 };
 
 const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
-  async download(url) {
-    const response = await fetch(url, {
-      headers: { accept: "application/json", "user-agent": "rea-installer" },
-      signal: AbortSignal.timeout(120_000),
-    });
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (length > MAX_PACKAGE_BYTES)
-      return { ok: false, bytes: new Uint8Array() };
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return { ok: response.ok && bytes.byteLength <= MAX_PACKAGE_BYTES, bytes };
-  },
+  download: downloadPackage,
   createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-mac-")),
   createMountDirectory: (path) => mkdir(path),
   writePackage: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
@@ -235,6 +225,17 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
   cleanup: (path) => rm(path, { recursive: true, force: true }),
   destination: () => join(homedir(), "Applications/Hopper Disassembler.app"),
 });
+
+const downloadPackage = async (url: string) => {
+  const response = await fetch(url, {
+    headers: { accept: "application/json", "user-agent": "rea-installer" },
+    signal: AbortSignal.timeout(120_000),
+  });
+  const length = Number(response.headers.get("content-length") ?? "0");
+  if (length > MAX_PACKAGE_BYTES) return { ok: false, bytes: new Uint8Array() };
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return { ok: response.ok && bytes.byteLength <= MAX_PACKAGE_BYTES, bytes };
+};
 
 const parseJson = (bytes: Uint8Array): unknown =>
   JSON.parse(new TextDecoder().decode(bytes));

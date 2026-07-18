@@ -7,7 +7,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 
-interface DerivedOperationContext {
+export interface DerivedOperationContext {
   readonly mcpReq: {
     readonly signal: AbortSignal;
     readonly _meta?: { readonly progressToken?: string | number | undefined };

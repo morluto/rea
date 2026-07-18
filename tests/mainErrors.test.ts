@@ -8,13 +8,19 @@ type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 const nextTurn = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve));
 
-const dependencies = (
-  serve: RuntimeDependencies["serve"],
-  output: string[],
-  shutdown: Array<() => void>,
-  exitCodes: number[],
-  shutdownUnregistrations: string[] = [],
-): RuntimeDependencies => ({
+const dependencies = ({
+  serve,
+  output,
+  shutdown,
+  exitCodes,
+  shutdownUnregistrations = [],
+}: {
+  readonly serve: RuntimeDependencies["serve"];
+  readonly output: string[];
+  readonly shutdown: Array<() => void>;
+  readonly exitCodes: number[];
+  readonly shutdownUnregistrations?: string[];
+}): RuntimeDependencies => ({
   env: {},
   serve,
   writeStderr: (text) => output.push(text),
@@ -39,8 +45,8 @@ describe("MCP runtime errors", () => {
     const exitCodes: number[] = [];
     expect(
       await run(
-        dependencies(
-          (_factory, received) => {
+        dependencies({
+          serve: (_factory, received) => {
             options = received;
             return { close };
           },
@@ -48,7 +54,7 @@ describe("MCP runtime errors", () => {
           shutdown,
           exitCodes,
           shutdownUnregistrations,
-        ),
+        }),
       ),
     ).toBe(0);
     options?.onerror?.(new Error("SECRET transport stack"));
@@ -67,17 +73,17 @@ describe("MCP runtime errors", () => {
     const unregistrations: string[] = [];
     let closeCalls = 0;
     const runtime: RuntimeDependencies = {
-      ...dependencies(
-        () => ({
+      ...dependencies({
+        serve: () => ({
           close: async () => {
             closeCalls += 1;
           },
         }),
-        [],
+        output: [],
         shutdown,
-        [],
-        unregistrations,
-      ),
+        exitCodes: [],
+        shutdownUnregistrations: unregistrations,
+      }),
       registerReload: (handler) => {
         reload.push(handler);
         return () => unregistrations.push("reload");
@@ -100,14 +106,14 @@ describe("MCP runtime errors", () => {
     const output: string[] = [];
     expect(
       await run(
-        dependencies(
-          () => {
+        dependencies({
+          serve: () => {
             throw new Error("SECRET startup stack");
           },
           output,
-          [],
-          [],
-        ),
+          shutdown: [],
+          exitCodes: [],
+        }),
       ),
     ).toBe(1);
     expect(output).toEqual([
@@ -120,12 +126,14 @@ describe("MCP runtime errors", () => {
     const shutdown: Array<() => void> = [];
     const exitCodes: number[] = [];
     await run(
-      dependencies(
-        () => ({ close: () => Promise.reject(new Error("SECRET close")) }),
+      dependencies({
+        serve: () => ({
+          close: () => Promise.reject(new Error("SECRET close")),
+        }),
         output,
         shutdown,
         exitCodes,
-      ),
+      }),
     );
     shutdown[0]?.();
     await nextTurn();

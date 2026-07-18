@@ -18,6 +18,21 @@ export const registerEvidenceResources = (
   server: McpServer,
   session: BinarySessionPort,
 ): void => {
+  registerReconstructionCoverageResource(server, session);
+  registerInvestigationWorkspaceResource(server, session);
+  registerSessionEvidenceResource(server, session);
+  registerActiveResidualUnknownsResource(server, session);
+  registerAnalysisSnapshotResource(server, session);
+  registerArtifactPageResource(server, session);
+  registerFunctionDossierResource(server, session);
+  registerEvidenceSectionResource(server, session);
+  registerResidualUnknownResource(server, session);
+};
+
+const registerReconstructionCoverageResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "reconstruction-coverage-revision",
     new ResourceTemplate(
@@ -59,6 +74,12 @@ export const registerEvidenceResources = (
       return jsonResource(uri.href, workspace);
     },
   );
+};
+
+const registerInvestigationWorkspaceResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "investigation-workspace-revision",
     new ResourceTemplate("rea://workspace/{workspaceId}/revision/{revision}", {
@@ -109,6 +130,12 @@ export const registerEvidenceResources = (
       return jsonResource(uri.href, workspace);
     },
   );
+};
+
+const registerSessionEvidenceResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "session-evidence",
     new ResourceTemplate("rea://evidence/{evidenceId}", {
@@ -151,6 +178,12 @@ export const registerEvidenceResources = (
       };
     },
   );
+};
+
+const registerActiveResidualUnknownsResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "active-residual-unknowns",
     "rea://unknowns/active",
@@ -165,6 +198,12 @@ export const registerEvidenceResources = (
         session.listUnknowns().filter(({ status }) => status !== "resolved"),
       ),
   );
+};
+
+const registerAnalysisSnapshotResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "analysis-snapshot",
     new ResourceTemplate("rea://snapshot/{snapshotDigest}", {
@@ -199,6 +238,12 @@ export const registerEvidenceResources = (
       return jsonResource(uri.href, snapshot.value);
     },
   );
+};
+
+const registerArtifactPageResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "artifact-page",
     new ResourceTemplate("rea://artifact/{manifestId}/{collection}", {
@@ -240,6 +285,12 @@ export const registerEvidenceResources = (
       });
     },
   );
+};
+
+const registerFunctionDossierResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "function-dossier",
     new ResourceTemplate("rea://function/{targetSha256}/{address}", {
@@ -265,6 +316,12 @@ export const registerEvidenceResources = (
       return jsonResource(uri.href, evidence);
     },
   );
+};
+
+const registerEvidenceSectionResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "evidence-section",
     new ResourceTemplate("rea://evidence/{evidenceId}/section/{section}", {
@@ -300,6 +357,12 @@ export const registerEvidenceResources = (
       });
     },
   );
+};
+
+const registerResidualUnknownResource = (
+  server: McpServer,
+  session: BinarySessionPort,
+): void => {
   server.registerResource(
     "residual-unknown",
     new ResourceTemplate("rea://unknown/{unknownId}", {

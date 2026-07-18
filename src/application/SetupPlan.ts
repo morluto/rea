@@ -1,34 +1,24 @@
+import { PRODUCT_IDENTITY } from "../identity.js";
 import type {
   SetupAction,
   SetupClient,
   SetupProviderEnvironment,
 } from "./Setup.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import {
-  linuxHopperInstallDisclosure,
-  type LinuxPackageFamily,
-} from "./LinuxHopper.js";
-import { macHopperInstallDisclosure } from "./MacHopper.js";
 
-/** Preflighted client mutation admitted into the setup plan. */
-export type SetupClientPlan = Readonly<{
-  client: SetupClient;
-  operation: "create" | "update";
-  backupPath?: string;
-}>;
-
-/** Build the complete setup mutation plan before approval. */
-export const setupPlan = (input: {
-  readonly platform: NodeJS.Platform;
+/** Inputs used to build the setup mutation plan. */
+export interface SetupPlanOptions {
   readonly installHopper: boolean;
   readonly installSkill: boolean;
-  readonly clients: readonly SetupClientPlan[];
+  readonly clients: readonly SetupClient[];
   readonly providerEnvironment: SetupProviderEnvironment;
-  readonly linuxPackageFamily?: LinuxPackageFamily;
-}): readonly SetupAction[] => [
-  ...(input.installHopper
+}
+
+/** Build the complete setup mutation plan before approval. */
+export const setupPlan = (
+  platform: NodeJS.Platform,
+  options: SetupPlanOptions,
+): readonly SetupAction[] => [
+  ...(options.installHopper
     ? [
         {
           id: "install_hopper",
@@ -55,8 +45,8 @@ export const setupPlan = (input: {
         },
       ]
     : []),
-  ...input.clients
-    .filter(({ client }) => client.format !== "unsupported")
+  ...options.clients
+    .filter(({ format }) => format !== "unsupported")
     .map(
       ({ client, operation, backupPath }): SetupAction => ({
         id: `configure_client:${client.name}`,
@@ -64,15 +54,15 @@ export const setupPlan = (input: {
         label: client.displayName ?? client.name,
         target: client.configPath,
         detail: clientConfigurationDetail(
-          client.displayName ?? client.name,
-          input.providerEnvironment,
+          client.name,
+          options.providerEnvironment,
         ),
         external: false,
         operation,
         ...(backupPath === undefined ? {} : { backupPath }),
       }),
     ),
-  ...(input.installSkill
+  ...(options.installSkill
     ? [
         {
           id: "install_skill",

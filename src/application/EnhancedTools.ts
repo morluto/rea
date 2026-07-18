@@ -2,11 +2,9 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import type { z } from "zod";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
-  AnalysisInputError,
   AnalysisCancelledError,
   AnalysisOutputError,
   projectAnalysisError,
@@ -14,9 +12,9 @@ import {
 } from "../domain/errors.js";
 import {
   addressDistance,
+  parseAddressedPage,
   parseDocuments,
   parseFunctionDossier,
-  parseAddressedPage,
   parseListCount,
   parseRelatedAddresses,
   parseSegments,
@@ -30,21 +28,15 @@ import {
 } from "../domain/symbolAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
-type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
-type TraceMatch = { type: string; address: string; value: string };
-type TraceReference = {
-  target_address: string;
-  source_address: string;
-  containing_procedure: JsonValue;
-};
-
-/** One enhanced call whose input was parsed at its owning adapter boundary. */
-export type ValidatedEnhancedCall = {
-  [Name in EnhancedToolName]: {
-    readonly name: Name;
-    readonly input: z.output<(typeof enhancedInputSchemas)[Name]>;
-  };
-}[EnhancedToolName];
+import {
+  invalidEnhancedInput,
+  type EnhancedResult,
+  type TraceMatch,
+  type TraceReference,
+  type ValidatedEnhancedCall,
+} from "./EnhancedToolTypes.js";
+import { readAllAddressed } from "./EnhancedToolPagination.js";
+export type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
 
 /**
  * Composes direct provider operations into bounded reverse-engineering tools.
@@ -65,13 +57,13 @@ export class EnhancedTools {
         const parsed = enhancedInputSchemas.swift_classes.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "get_objc_protocols":
         return this.executeValidated({ name, input: {} }, signal);
@@ -79,13 +71,13 @@ export class EnhancedTools {
         const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "get_call_graph": {
         const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "analyze_swift_types":
         return this.executeValidated({ name, input: {} }, signal);
@@ -93,25 +85,25 @@ export class EnhancedTools {
         const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "binary_overview": {
         const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "analyze_function": {
         const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
       case "trace_feature": {
         const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error);
       }
     }
   }
@@ -154,7 +146,7 @@ export class EnhancedTools {
   }
 
   async #swiftClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
-    const procedures = await this.#allProcedures(signal);
+    const procedures = await this.#allAddressed("list_procedures", signal);
     return procedures.ok
       ? ok(discoverSwiftClasses(procedures.value, pattern))
       : procedures;
@@ -276,7 +268,7 @@ export class EnhancedTools {
   }
 
   async #analyzeSwiftTypes(signal?: AbortSignal): EnhancedResult {
-    const procedures = await this.#allProcedures(signal);
+    const procedures = await this.#allAddressed("list_procedures", signal);
     return procedures.ok
       ? ok(categorizeSwiftTypes(procedures.value))
       : procedures;
@@ -321,7 +313,7 @@ export class EnhancedTools {
       await Promise.all([
         this.#call("list_segments", {}, signal),
         this.#call("list_documents", {}, signal),
-        this.#allProcedures(signal),
+        this.#allAddressed("list_procedures", signal),
         this.#call("list_strings", {}, signal),
       ]);
     if (!segmentsResult.ok) return segmentsResult;
@@ -507,35 +499,16 @@ export class EnhancedTools {
     });
   }
 
-  async #allProcedures(signal?: AbortSignal) {
-    return this.#allAddressed("list_procedures", signal);
-  }
-
   async #allAddressed(
     tool: "list_names" | "list_procedures",
     signal?: AbortSignal,
   ) {
-    const entries: Array<{ address: string; name: string }> = [];
-    let offset = 0;
-    while (true) {
-      const result = await this.#call(tool, { offset, limit: 500 }, signal);
-      if (!result.ok) return result;
-      const page = parseAddressedPage(result.value);
-      if (!page.ok) return page;
-      entries.push(...page.value.items);
-      if (!page.value.hasMore || page.value.nextOffset === null) {
-        return ok(entries);
-      }
-      if (page.value.nextOffset <= offset) {
-        return err(
-          new AnalysisOutputError(
-            tool,
-            "provider returned a non-advancing pagination offset",
-          ),
-        );
-      }
-      offset = page.value.nextOffset;
-    }
+    return readAllAddressed({
+      call: (name, arguments_, operationSignal) =>
+        this.#call(name, arguments_, operationSignal),
+      tool,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
 
   async #call(
@@ -552,12 +525,3 @@ export class EnhancedTools {
     return execution.ok ? ok(execution.value.result) : execution;
   }
 }
-
-const invalidInput = (name: EnhancedToolName, cause: Error): EnhancedResult =>
-  Promise.resolve(
-    err(
-      new AnalysisInputError(name, {
-        cause,
-      }),
-    ),
-  );

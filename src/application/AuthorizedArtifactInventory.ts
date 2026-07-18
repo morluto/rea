@@ -5,7 +5,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { withinRoot } from "../reference/ReferenceSourceReaderPaths.js";
 import {
   scanCanonicalArtifactInventory,
-  type ArtifactIntegrityPolicy,
+  type ArtifactInventoryOptions,
   type ArtifactInventorySnapshot,
 } from "./ArtifactInventory.js";
 import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
@@ -15,8 +15,7 @@ export const scanAuthorizedArtifactInventory = async (
   inputPath: string,
   roots: readonly string[],
   limits: ArtifactLimits,
-  signal?: AbortSignal,
-  integrity?: ArtifactIntegrityPolicy,
+  options: ArtifactInventoryOptions = {},
 ): Promise<ArtifactInventorySnapshot> => {
   if (roots.length === 0)
     throw new ArtifactReaderFailure(
@@ -32,11 +31,5 @@ export const scanAuthorizedArtifactInventory = async (
       "path",
       "Artifact path is outside approved input roots",
     );
-  return scanCanonicalArtifactInventory(
-    path,
-    limits,
-    signal,
-    undefined,
-    integrity,
-  );
+  return scanCanonicalArtifactInventory(path, limits, options);
 };

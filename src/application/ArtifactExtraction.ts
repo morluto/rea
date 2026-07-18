@@ -226,7 +226,7 @@ const loadInventory = async (
   selectedIds: ReadonlySet<string>,
   signal?: AbortSignal,
 ): Promise<LoadedInventory> => {
-  const snapshot = await scanArtifactInventory(path, limits, signal);
+  const snapshot = await scanArtifactInventory(path, limits, { signal });
   const occurrences = new Map<string, ArtifactOccurrence>();
   const neededNodes = new Set<string>();
   collectOccurrences(

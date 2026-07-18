@@ -102,68 +102,101 @@ export const registerPolicyCommands = (
       logCliCommand(logger, "policy", async () => {
         const config = parseConfig(process.env);
         if (!config.ok) return failure(config.error);
-        if (args.action === "status")
-          return {
-            reload: "SIGHUP",
-            restart_required: false,
-            administrator_ceilings: config.value.permissionCeilings,
-            project_store: config.value.permissionProjectStore ?? null,
-          };
-        if (args.action === "list")
-          return readProjectGrants(config.value).then((result) =>
-            result.ok ? { grants: result.grants } : result.error,
-          );
-        if (args.action === "revoke") {
-          if (args.value === undefined)
-            return { error: "Grant ID is required for policy revoke" };
-          const { permissionProjectRoot, permissionProjectStore } =
-            config.value;
-          if (
-            permissionProjectRoot === undefined ||
-            permissionProjectStore === undefined
-          )
-            return { error: "Project policy is not configured" };
-          const approval = await approvePolicyRevocation({
+        if (args.action === "status") return policyStatus(config.value);
+        if (args.action === "list") return policyList(config.value);
+        if (args.action === "revoke")
+          return policyRevoke({
+            config: config.value,
+            grantId: args.value,
             approved: options.yes,
             interactive:
               !agent && !formatExplicit && process.stdin.isTTY === true,
-            grantId: args.value,
             confirm: confirmPolicyRevocation,
           });
-          if (!approval.approved)
-            return approval.reason === "required"
-              ? {
-                  error:
-                    "Policy revoke requires confirmation. Rerun interactively or with --yes.",
-                  grant_id: args.value,
-                }
-              : {
-                  error: "Policy revocation was cancelled",
-                  grant_id: args.value,
-                };
-          const revoked = await revokeProjectPermissionGrant(
-            permissionProjectStore,
-            permissionProjectRoot,
-            args.value,
-          );
-          return revoked.ok && revoked.value
-            ? {
-                revoked: args.value,
-                reload: "Send SIGHUP to the REA MCP process",
-              }
-            : revoked.ok
-              ? { error: "Grant was not found", grant_id: args.value }
-              : { error: revoked.error.message };
-        }
         const capability = capabilitySchema.safeParse(args.value);
         if (!capability.success)
           return {
             error: "A registered capability is required for policy explain",
           };
-        return explain(config.value, capability.data, options);
+        return policyExplain(config.value, capability.data, options);
       }),
   });
 };
+
+const policyStatus = (config: AppConfig) => ({
+  reload: "SIGHUP",
+  restart_required: false,
+  administrator_ceilings: config.permissionCeilings,
+  project_store: config.permissionProjectStore ?? null,
+});
+
+const policyList = (config: AppConfig) =>
+  readProjectGrants(config).then((result) =>
+    result.ok ? { grants: result.grants } : result.error,
+  );
+
+interface PolicyRevokeContext {
+  readonly config: AppConfig;
+  readonly grantId: string | undefined;
+  readonly approved: boolean;
+  readonly interactive: boolean;
+  readonly confirm: (grantId: string) => Promise<boolean>;
+}
+
+const policyRevoke = async (context: PolicyRevokeContext) => {
+  if (context.grantId === undefined)
+    return { error: "Grant ID is required for policy revoke" };
+  const { permissionProjectRoot, permissionProjectStore } = context.config;
+  if (
+    permissionProjectRoot === undefined ||
+    permissionProjectStore === undefined
+  )
+    return { error: "Project policy is not configured" };
+  const approval = await approvePolicyRevocation({
+    approved: context.approved,
+    interactive: context.interactive,
+    grantId: context.grantId,
+    confirm: context.confirm,
+  });
+  if (!approval.approved)
+    return approval.reason === "required"
+      ? {
+          error:
+            "Policy revoke requires confirmation. Rerun interactively or with --yes.",
+          grant_id: context.grantId,
+        }
+      : {
+          error: "Policy revocation was cancelled",
+          grant_id: context.grantId,
+        };
+  const revoked = await revokeProjectPermissionGrant(
+    permissionProjectStore,
+    permissionProjectRoot,
+    context.grantId,
+  );
+  return revoked.ok && revoked.value
+    ? {
+        revoked: context.grantId,
+        reload: "Send SIGHUP to the REA MCP process",
+      }
+    : revoked.ok
+      ? { error: "Grant was not found", grant_id: context.grantId }
+      : { error: revoked.error.message };
+};
+
+const policyExplain = async (
+  config: AppConfig,
+  capability: PermissionCapability,
+  options: {
+    readonly root?: string | undefined;
+    readonly executable?: string | undefined;
+    readonly environmentNames: readonly string[];
+    readonly origins: readonly string[];
+    readonly network: "none" | "loopback" | "external";
+    readonly mount: boolean;
+    readonly write: boolean;
+  },
+) => explain(config, capability, options);
 
 const confirmPolicyRevocation = async (grantId: string): Promise<boolean> => {
   const prompt = createInterface({
