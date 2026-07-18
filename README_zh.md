@@ -91,7 +91,7 @@ npx skills add morluto/rea
 ```bash
 # 1. 安装和配置 REA
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx -y rea-agents@latest setup
+npx rea-agents setup
 ```
 
 如果 macOS 或安装程序要求确认，请完成提示，然后再次运行同一命令。

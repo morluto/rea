@@ -32,7 +32,7 @@ try {
     evidenceRoot,
     referenceRoot,
   });
-  const { cli } = await verifyPackageInstall({
+  const { cli, packageRunnerCli } = await verifyPackageInstall({
     root,
     tarball,
     prefix: environmentData.prefix,
@@ -80,6 +80,7 @@ try {
   });
   await verifyPackageSetup({
     cli,
+    packageRunnerCli,
     environment: environmentData.environment,
     home: environmentData.home,
     npxLog: environmentData.npxLog,

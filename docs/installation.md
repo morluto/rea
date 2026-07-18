@@ -2,21 +2,26 @@
 
 REA separates installing its CLI from configuring external software and agents.
 
-## Install the CLI
+## Start setup
 
-The recommended installation is:
+The recommended setup entrypoint is:
 
 ```bash
-npm install --global rea-agents
-rea setup
+npx rea-agents setup
 ```
+
+If npm asks to download and run the package, that approval applies only to the
+current package-runner invocation. REA still prints its own setup plan and asks
+for separate approval before changing agent configuration or installing a
+product-owned component.
 
 REA supports Node.js 22.19+ and 24.11+ (including newer releases). It uses the npm already paired with that runtime and never upgrades Node.js, npm, or Homebrew.
 
 Running `npm install rea-agents` without `--global` installs the executable only
 in the current project's `node_modules/.bin`; it does not make `rea` available
-on the shell `PATH`. Use `npx -y rea-agents@latest` for one-off commands or the
-global installation above for a shell-visible `rea` command.
+on the shell `PATH`. Use `npx rea-agents setup` for the guided setup journey,
+`npx -y rea-agents@latest` for unattended one-off commands, or install globally
+with `npm install --global rea-agents` for a shell-visible `rea` command.
 
 The optional curl wrapper installs only the global npm package:
 
@@ -45,24 +50,23 @@ mechanics:
 - recover evidence through an available deep-analysis provider;
 - use the bundled skill for a repeatable investigation workflow.
 
-REA then summarizes the detected clients and presents one gateway:
+REA then summarizes the detected clients and asks which independent
+capabilities to set up. The capability picker starts empty and labels each
+choice by its role: `MCP` for coding-agent access, `provider` for Hopper, and
+`skill` for the shared REA investigation workflow. Selecting MCP access opens a
+second empty checklist for the exact detected agents that should receive a
+registration. Detection provides context; it does not preselect or authorize a
+configuration write.
 
-- **Set up all available capabilities (recommended)** selects the complete
-  resolved plan;
-- **Customize** opens the concrete action picker;
-- **No thanks** exits without making changes.
+Choosing no capabilities exits without changes. Selecting the skill or provider
+does not implicitly select an agent, and selecting agent access does not include
+every detected agent. The picker keeps its navigation, selection, confirmation,
+and cancellation keys visible instead of relying on a transient hint.
 
-The custom picker labels each target by its role: `MCP` for an agent
-registration, `provider` for Hopper or a validated bring-your-own provider, and
-`skill` for the REA investigation skill. These labels describe different setup
-modalities rather than suggesting that every target is an MCP registration.
-The picker keeps its navigation, selection, confirmation, and cancellation keys
-visible instead of relying on a transient hint.
-
-Both recommended and custom paths converge on the same exact preflight. REA
-validates the current state, prints the proposed effects, and asks for final
-approval with **No** as the default. Selection alone never authorizes a
-mutation. The plan identifies:
+Every selected path converges on the same exact preflight. REA validates the
+current state, prints the proposed effects, and asks for final approval with
+**No** as the default. Selection alone never authorizes a mutation. The plan
+identifies:
 
 - an existing Hopper installation, a validated bring-your-own Ghidra environment, or the official Hopper package it proposes to install;
 - each detected agent configuration path;

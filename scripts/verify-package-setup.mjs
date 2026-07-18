@@ -8,6 +8,8 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
+import { spawn } from "@lydell/node-pty";
+
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import {
   json,
@@ -24,6 +26,52 @@ const verifyMcpAdd = async ({ cli, environment, npxLog }) => {
   )
     throw new Error("Incur mcp add did not register the latest npx command");
 };
+
+const verifyInteractiveSetup = async ({ command, environment, root }) =>
+  new Promise((resolvePromise, reject) => {
+    let output = "";
+    let cancelled = false;
+    let settled = false;
+    const terminal = spawn(command, ["setup"], {
+      cwd: root,
+      env: { ...environment, NO_COLOR: "1", TERM: "xterm-256color" },
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+    });
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error === undefined) resolvePromise();
+      else reject(error);
+    };
+    const timeout = setTimeout(() => {
+      terminal.kill();
+      finish(
+        new Error(`packaged setup wizard timed out after output: ${output}`),
+      );
+    }, 20_000);
+
+    terminal.onData((data) => {
+      output += data;
+      if (!cancelled && output.includes("What should REA set up?")) {
+        cancelled = true;
+        terminal.write("\u0003");
+      }
+    });
+    terminal.onExit(() => {
+      if (!cancelled || !output.includes("No changes were made.")) {
+        finish(
+          new Error(
+            `packaged rea-agents setup did not open and cancel the wizard: ${output}`,
+          ),
+        );
+        return;
+      }
+      finish();
+    });
+  });
 
 const verifySetupPlan = async ({
   cli,
@@ -308,6 +356,7 @@ const verifyUninstall = async ({
 /** Verify setup transactions, skill installation, and uninstall for supported hosts. */
 export async function verifyPackageSetup({
   cli,
+  packageRunnerCli,
   environment,
   home,
   npxLog,
@@ -319,6 +368,11 @@ export async function verifyPackageSetup({
   supportedSetupHost,
   root,
 }) {
+  await verifyInteractiveSetup({
+    command: packageRunnerCli,
+    environment,
+    root,
+  });
   await verifyMcpAdd({ cli, environment, npxLog });
   const skillPath = join(
     home,

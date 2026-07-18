@@ -30,7 +30,8 @@
   },
   "type": "module",
   "bin": {
-    "rea": "scripts/rea.mjs"
+    "rea": "scripts/rea.mjs",
+    "rea-agents": "scripts/rea.mjs"
   },
   "engines": {
     "node": "^22.19.0 || >=24.11.0"

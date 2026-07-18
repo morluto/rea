@@ -22,6 +22,11 @@ export async function verifyPackagePack({ root, workspace }) {
   )
     throw new Error("package retained a lifecycle-dependent PTY installation");
   if (
+    packedManifest.bin?.rea !== "scripts/rea.mjs" ||
+    packedManifest.bin?.["rea-agents"] !== "scripts/rea.mjs"
+  )
+    throw new Error("package did not expose both rea command entry points");
+  if (
     packedFiles.some(
       (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
     )

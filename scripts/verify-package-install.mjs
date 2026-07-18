@@ -25,6 +25,9 @@ export async function verifyPackageInstall({
     { env: environment },
   );
   const cli = join(prefix, "bin", "rea");
+  const packageRunnerCli = join(prefix, "bin", "rea-agents");
+  if (!(await run(packageRunnerCli, ["--help"], environment)).includes("setup"))
+    throw new Error("packaged rea-agents alias did not expose setup");
   const processCaptureCapabilityUrl = pathToFileURL(
     join(
       prefix,
@@ -97,5 +100,5 @@ export async function verifyPackageInstall({
     throw new Error(
       `packaged CLI did not degrade without the optional PTY binary: ${JSON.stringify(noOptionalCapability)}`,
     );
-  return { cli };
+  return { cli, packageRunnerCli };
 }

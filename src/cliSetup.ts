@@ -5,7 +5,6 @@ import {
   isCancel,
   multiselect,
   outro,
-  select,
 } from "@clack/prompts";
 
 import type {
@@ -29,7 +28,13 @@ const promptStreams = {
   withGuide: true,
 } as const;
 
-type SetupMode = "recommended" | "custom" | "skip";
+const agentAccessCapabilityId = "agent_access";
+
+interface SetupCapability {
+  readonly id: string;
+  readonly label: string;
+  readonly hint: string;
+}
 
 /** Run the inline setup picker, exact preflight, and default-No consent. */
 export const confirmInteractiveSetup = async (
@@ -40,22 +45,8 @@ export const confirmInteractiveSetup = async (
   renderValueIntroduction();
   renderDetectedSummary(actions);
   renderKeyboardHelp(accessible);
-  const mode = await selectSetupMode(actions, accessible);
-  if (mode === undefined) return cancelledDecision(actions);
-  if (mode === "skip") {
-    cancel("No changes were made.", promptStreams);
-    return {
-      approved: false,
-      selectedActionIds: actions.map(({ id }) => id),
-    };
-  }
-  const selectedActionIds =
-    mode === "recommended"
-      ? actions.map(({ id }) => id)
-      : accessible
-        ? await selectActionsAccessibly(actions)
-        : await selectActions(actions);
-  if (selectedActionIds === undefined) return cancelledDecision(actions);
+  const selectedActionIds = await selectSetupActions(actions, accessible);
+  if (selectedActionIds === undefined) return cancelledDecision();
   if (selectedActionIds.length === 0) {
     cancel("Nothing selected. No changes were made.", promptStreams);
     return { approved: false, selectedActionIds };
@@ -131,18 +122,104 @@ export const conciseSetupResult = (result: SetupResult) => ({
     : { remediation: result.remediation }),
 });
 
-const selectActions = async (
+const selectSetupActions = async (
+  actions: readonly SetupAction[],
+  accessible: boolean,
+): Promise<readonly string[] | undefined> => {
+  const clientActions = actions.filter(
+    ({ kind }) => kind === "configure_client",
+  );
+  const componentActions = actions.filter(
+    ({ kind }) => kind !== "configure_client",
+  );
+  const capabilities = setupCapabilities(clientActions, componentActions);
+  const selectedCapabilities = accessible
+    ? await selectCapabilitiesAccessibly(capabilities)
+    : await selectCapabilities(capabilities);
+  if (selectedCapabilities === undefined) return undefined;
+  const selectedCapabilityIds = new Set(selectedCapabilities);
+  const selectedActionIds = componentActions
+    .filter(({ id }) => selectedCapabilityIds.has(id))
+    .map(({ id }) => id);
+  if (!selectedCapabilityIds.has(agentAccessCapabilityId))
+    return selectedActionIds;
+  const selectedClients = accessible
+    ? await selectClientsAccessibly(clientActions)
+    : await selectClients(clientActions);
+  return selectedClients === undefined
+    ? undefined
+    : [...selectedClients, ...selectedActionIds];
+};
+
+const setupCapabilities = (
+  clientActions: readonly SetupAction[],
+  componentActions: readonly SetupAction[],
+): readonly SetupCapability[] => [
+  ...(clientActions.length === 0
+    ? []
+    : [
+        {
+          id: agentAccessCapabilityId,
+          label: "Coding-agent access (MCP)",
+          hint: `${String(clientActions.length)} detected ${clientActions.length === 1 ? "agent" : "agents"}`,
+        },
+      ]),
+  ...componentActions.map((action) => ({
+    id: action.id,
+    label: `${action.label} (${actionModality(action)})`,
+    hint: `${action.operation} · ${action.target}`,
+  })),
+];
+
+const selectCapabilities = async (
+  capabilities: readonly SetupCapability[],
+): Promise<readonly string[] | undefined> => {
+  const selection = await multiselect({
+    ...promptStreams,
+    message: "What should REA set up?",
+    options: capabilities.map((capability) => ({
+      value: capability.id,
+      label: capability.label,
+      hint: capability.hint,
+    })),
+    required: false,
+    maxItems: Math.max(
+      3,
+      Math.min(capabilities.length, (process.stderr.rows ?? 24) - 8),
+    ),
+    showInstructions: true,
+  });
+  return isCancel(selection) ? undefined : selection;
+};
+
+const selectCapabilitiesAccessibly = async (
+  capabilities: readonly SetupCapability[],
+): Promise<readonly string[] | undefined> => {
+  const selected: string[] = [];
+  for (const capability of capabilities) {
+    const included = await confirm({
+      ...promptStreams,
+      message: `Set up ${capability.label}? ${capability.hint}`,
+      initialValue: false,
+      vertical: true,
+    });
+    if (isCancel(included)) return undefined;
+    if (included) selected.push(capability.id);
+  }
+  return selected;
+};
+
+const selectClients = async (
   actions: readonly SetupAction[],
 ): Promise<readonly string[] | undefined> => {
   const selection = await multiselect({
     ...promptStreams,
-    message: "Choose what REA should configure",
+    message: "Which agents should use REA?",
     options: actions.map((action) => ({
       value: action.id,
-      label: `${action.label} (${actionModality(action)})`,
+      label: `${action.label} (detected)`,
       hint: `${action.operation} · ${action.target}`,
     })),
-    initialValues: actions.map(({ id }) => id),
     required: false,
     maxItems: Math.max(
       3,
@@ -153,70 +230,21 @@ const selectActions = async (
   return isCancel(selection) ? undefined : selection;
 };
 
-const selectActionsAccessibly = async (
+const selectClientsAccessibly = async (
   actions: readonly SetupAction[],
 ): Promise<readonly string[] | undefined> => {
   const selected: string[] = [];
   for (const action of actions) {
     const included = await confirm({
       ...promptStreams,
-      message: `Include ${action.label} (${actionModality(action)})? ${action.target}`,
-      initialValue: true,
+      message: `Configure ${action.label}? ${action.target}`,
+      initialValue: false,
       vertical: true,
     });
     if (isCancel(included)) return undefined;
     if (included) selected.push(action.id);
   }
   return selected;
-};
-
-const selectSetupMode = async (
-  actions: readonly SetupAction[],
-  accessible: boolean,
-): Promise<SetupMode | undefined> => {
-  if (accessible) return selectSetupModeAccessibly();
-  const mode = await select<SetupMode>({
-    ...promptStreams,
-    message: "Choose a setup",
-    options: [
-      {
-        value: "recommended",
-        label: "Set up all available capabilities",
-        hint: `recommended · ${actionCount(actions.length)}`,
-      },
-      {
-        value: "custom",
-        label: "Customize setup",
-        hint: "choose integrations and components",
-      },
-      {
-        value: "skip",
-        label: "No thanks",
-        hint: "make no changes",
-      },
-    ],
-    initialValue: "recommended",
-  });
-  return isCancel(mode) ? undefined : mode;
-};
-
-const selectSetupModeAccessibly = async (): Promise<SetupMode | undefined> => {
-  const recommended = await confirm({
-    ...promptStreams,
-    message: "Use the recommended complete setup?",
-    initialValue: true,
-    vertical: true,
-  });
-  if (isCancel(recommended)) return undefined;
-  if (recommended) return "recommended";
-  const customize = await confirm({
-    ...promptStreams,
-    message: "Customize integrations and components?",
-    initialValue: true,
-    vertical: true,
-  });
-  if (isCancel(customize)) return undefined;
-  return customize ? "custom" : "skip";
 };
 
 const renderValueIntroduction = (): void => {
@@ -237,20 +265,10 @@ const renderDetectedSummary = (actions: readonly SetupAction[]): void => {
   if (clients.length === 0) {
     writeLine("◆  No agent integrations need configuration");
   } else {
-    writeLine(`◆  Detected ${humanList(clients.map(({ label }) => label))}`);
-    for (const client of clients) {
-      writeLine(
-        `│  ${client.label} · ${actionModality(client)} · ${client.operation}`,
-      );
-      writeLine(`│  ${client.target}`);
-    }
-  }
-  const components = actions.filter(({ kind }) => kind !== "configure_client");
-  if (components.length > 0) {
-    writeLine("│");
     writeLine(
-      `│  Also available: ${components.map((action) => `${action.label} (${actionModality(action)})`).join(", ")}`,
+      `◆  Found ${String(clients.length)} supported ${clients.length === 1 ? "agent" : "agents"}`,
     );
+    writeLine(`│  ${humanList(clients.map(({ label }) => label))}`);
   }
 };
 
@@ -312,9 +330,6 @@ const actionModality = (action: SetupAction): string => {
   return "skill";
 };
 
-const actionCount = (count: number): string =>
-  `${String(count)} ${count === 1 ? "change" : "changes"}`;
-
 const humanList = (values: readonly string[]): string => {
   if (values.length < 2) return values[0] ?? "";
   if (values.length === 2) return `${values[0]} and ${values[1]}`;
@@ -345,13 +360,11 @@ const renderPreflight = (actions: readonly SetupAction[]): void => {
   );
 };
 
-const cancelledDecision = (
-  actions: readonly SetupAction[],
-): SetupConfirmationDecision => {
+const cancelledDecision = (): SetupConfirmationDecision => {
   cancel("Setup cancelled. No changes were made.", promptStreams);
   return {
     approved: false,
-    selectedActionIds: actions.map(({ id }) => id),
+    selectedActionIds: [],
   };
 };
 

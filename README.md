@@ -85,26 +85,29 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 
 ## Quick start
 
-### Install the CLI — recommended
+### Run setup — recommended
 
 ```bash
-npm install --global rea-agents
-rea setup
+npx rea-agents setup
 ```
 
-Installing the CLI does not update Homebrew, Node.js, npm, Hopper, or agent
-configuration. `rea setup` opens with the work it enables: investigate local
-apps from an agent, recover evidence through a deep-analysis provider, and
-reuse REA's guided workflow. It summarizes the detected agents, then offers
-**Set up all available capabilities (recommended)**, **Customize**, or
-**No thanks**. Customize shows every concrete target with an `MCP`, `provider`,
-or `skill` label.
+The npm package-runner prompt, when shown, approves downloading REA for this
+invocation; it does not approve any setup changes. The REA wizard separately
+shows its complete plan and asks before applying it. Setup does not update
+Homebrew, Node.js, or npm. `npx rea-agents setup` opens with the work it
+enables: investigate local apps from an agent, recover evidence through a
+deep-analysis provider, and reuse REA's guided workflow. It summarizes the
+detected agents, then asks which independent capabilities to set up: coding-agent
+access through MCP, the shared investigation skill, and—when needed—the Hopper
+provider. Nothing is preselected. Choosing MCP access opens a second empty
+checklist for the specific detected agents that should receive a registration.
 
-REA keeps the journey inline so its history remains in the terminal. Before
-anything changes, it validates existing configuration, prints exact paths and
-external effects, and asks for final approval with **No** as the default. The
-screen keeps the available keys visible while you choose; Ctrl-C and declining
-leave the system unchanged.
+REA keeps the journey inline so its history remains in the terminal. Selecting
+a capability does not select every detected target or authorize a change.
+Before anything changes, REA validates existing configuration, prints exact
+paths and external effects, and asks for final approval with **No** as the
+default. The screen keeps the available keys visible while you choose; Ctrl-C
+and declining leave the system unchanged.
 
 REA detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. It configures the first six when detected; Devin is reported but left unchanged because it has no documented local MCP configuration boundary. Registrations are additive, backup-first, and read back after writing. You can safely rerun setup.
 
@@ -138,7 +141,7 @@ Review the setup plan, approve it if appropriate, then describe the app or featu
 ### From Terminal — no installation
 
 ```bash
-npx -y rea-agents@latest setup
+npx rea-agents setup
 npx -y rea-agents@latest doctor
 npx -y rea-agents@latest analyze /Applications/Notes.app
 ```
