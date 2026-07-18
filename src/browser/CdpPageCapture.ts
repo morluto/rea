@@ -7,11 +7,7 @@ import {
   BrowserObservationError,
   type BrowserObservationOperation,
 } from "../domain/errors.js";
-import {
-  reconcileCapturedWebScript,
-  stableWebResources,
-  stableWebScriptKey,
-} from "../domain/webInventory.js";
+import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
@@ -27,19 +23,14 @@ import {
 } from "./CdpCaptureDocuments.js";
 import {
   allowedSanitizedUrl,
-  boundedText,
   delayWithCancellation,
   isHttpUrl,
-  recordValue,
-  recordsValue,
-  requiredRecord,
-  sourceExcluded,
-  sourceResult,
-  stringValue,
 } from "./CdpCaptureValues.js";
+import { captureScripts } from "./CdpPageCaptureScripts.js";
+import { captureWorkers } from "./CdpPageCaptureWorkers.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
-interface CaptureContext {
+export interface CaptureContext {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
   readonly operation: Extract<
@@ -74,11 +65,6 @@ interface CapturedSections {
 
 export interface CapturedPage {
   readonly inspection: WebPageInspection;
-  readonly sourceMapRequests: readonly WebSourceMapRequest[];
-}
-
-interface CapturedScripts {
-  readonly inventory: WebPageInspection["scripts"];
   readonly sourceMapRequests: readonly WebSourceMapRequest[];
 }
 
@@ -149,15 +135,15 @@ const captureAuthorizedPage = async (
   const accessibility = await accessibilityForFrames(state, frames);
   if (accessibility.total > accessibility.nodes.length)
     state.events.completeness.truncate("accessibility");
-  const scripts = await captureScripts(
+  const scripts = await captureScripts({
     context,
-    state.events,
-    resourceCapture.items,
+    events: state.events,
+    rawResources: resourceCapture.items,
     resources,
-    new Set(frames.map((frame) => frame.frame_id)),
-  );
+    frameIds: new Set(frames.map((frame) => frame.frame_id)),
+  });
   const workerCapture = await captureWorkers(
-    state,
+    { context, allowedOrigins, limitations, events: state.events },
     new Set(frames.map((frame) => frame.frame_id)),
   );
   if (workerCapture.total > workerCapture.items.length)
@@ -403,130 +389,6 @@ const accessibilityForFrames = async (
   return capture;
 };
 
-const captureScripts = async (
-  context: CaptureContext,
-  events: CdpCaptureEvents,
-  rawResources: readonly CapturedResource[],
-  resources: WebPageInspection["resources"],
-  frameIds: ReadonlySet<string>,
-): Promise<CapturedScripts> => {
-  let totalSourceBytes = 0;
-  const drafts: {
-    readonly item: Omit<
-      WebPageInspection["scripts"]["items"][number],
-      "script_key"
-    >;
-    readonly sourceMapRawUrl: string | null;
-  }[] = [];
-  for (const script of events.scripts.values()) {
-    let source: WebPageInspection["scripts"]["items"][number]["source"] =
-      sourceExcluded("source capture was not approved");
-    if (context.input.include_script_sources) {
-      if (script.length > context.input.limits.max_script_source_bytes) {
-        source = sourceExcluded(
-          "declared script length exceeds per-script limit",
-        );
-        events.completeness.truncate("script_sources");
-      } else if (
-        totalSourceBytes + script.length >
-        context.input.limits.max_total_script_source_bytes
-      ) {
-        source = sourceExcluded("total script source limit reached");
-        events.completeness.truncate("script_sources");
-      } else {
-        const result = requiredRecord(
-          await context.connection.send(
-            "Debugger.getScriptSource",
-            { scriptId: script.scriptId },
-            context.sessionId,
-            context.signal,
-          ),
-        );
-        const content = stringValue(result.scriptSource) ?? "";
-        const bytes = Buffer.byteLength(content);
-        if (
-          bytes > context.input.limits.max_script_source_bytes ||
-          totalSourceBytes + bytes >
-            context.input.limits.max_total_script_source_bytes
-        ) {
-          source = sourceExcluded(
-            "actual source exceeds configured byte limits",
-          );
-          events.completeness.truncate("script_sources");
-        } else {
-          source = sourceResult(content);
-          totalSourceBytes += bytes;
-        }
-      }
-    }
-    const inventoryScript = {
-      frame_id: events.frameForScript(script, frameIds),
-      url: script.url,
-      cdp_hash: script.hash,
-      length: script.length,
-      is_module: script.isModule,
-      language: script.language,
-      source_map_url: script.sourceMapUrl,
-    };
-    drafts.push({
-      item: {
-        ...inventoryScript,
-        origin: script.origin,
-        resource_reconciliation: reconcileCapturedWebScript(
-          { ...inventoryScript, rawUrl: script.rawUrl },
-          rawResources,
-          resources,
-        ),
-        source,
-      },
-      sourceMapRawUrl: script.sourceMapRawUrl,
-    });
-  }
-  if (!context.input.include_script_sources)
-    events.completeness.exclude(
-      "script_sources",
-      "not_approved",
-      events.scripts.size,
-    );
-  const keyed = drafts.map((draft) => ({
-    ...draft,
-    base: stableWebScriptKey(draft.item),
-  }));
-  keyed.sort(
-    (left, right) =>
-      left.base.localeCompare(right.base) ||
-      sourceDigest(left.item.source).localeCompare(
-        sourceDigest(right.item.source),
-      ) ||
-      (left.item.frame_id ?? "").localeCompare(right.item.frame_id ?? ""),
-  );
-  const totals = new Map<string, number>();
-  for (const { base } of keyed) totals.set(base, (totals.get(base) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  const sourceMapRequests: WebSourceMapRequest[] = [];
-  const items = keyed.map(({ base, item, sourceMapRawUrl }) => {
-    const occurrence = (seen.get(base) ?? 0) + 1;
-    seen.set(base, occurrence);
-    const scriptKey =
-      totals.get(base) === 1 ? base : `${base}_${String(occurrence)}`;
-    if (item.source_map_url !== null && sourceMapRawUrl !== null)
-      sourceMapRequests.push({
-        scriptKey,
-        declaredUrl: item.source_map_url,
-        fetchUrl: sourceMapRawUrl,
-      });
-    return { script_key: scriptKey, ...item };
-  });
-  return {
-    inventory: { total: events.scripts.size, items },
-    sourceMapRequests,
-  };
-};
-
-const sourceDigest = (
-  source: WebPageInspection["scripts"]["items"][number]["source"],
-): string => (source.included ? source.artifact.sha256 : source.reason);
-
 const publicResource = ({ rawUrl: _rawUrl, ...resource }: CapturedResource) =>
   resource;
 
@@ -540,66 +402,6 @@ const deduplicatedAgentHints = (
     seen.add(key);
     return true;
   });
-};
-
-const captureWorkers = async (
-  state: CaptureState,
-  frameIds: ReadonlySet<string>,
-): Promise<{
-  readonly total: number;
-  readonly items: WebPageInspection["workers"];
-}> => {
-  const { context, allowedOrigins, limitations, events } = state;
-  const completeness = events.completeness;
-  const result = await optionalCdpCommand(
-    { ...context, sessionId: undefined },
-    "Target.getTargets",
-    {},
-    limitations,
-  );
-  const items: WebPageInspection["workers"] = [];
-  let total = 0;
-  if (result === undefined) completeness.unavailable("workers");
-  for (const target of recordsValue(recordValue(result)?.targetInfos)) {
-    const type = stringValue(target.type) ?? "";
-    const url = allowedSanitizedUrl(target.url, allowedOrigins);
-    const relatedToPage =
-      stringValue(target.openerId) === context.target.id ||
-      (stringValue(target.parentFrameId) !== undefined &&
-        frameIds.has(stringValue(target.parentFrameId) ?? ""));
-    if (!type.includes("worker")) continue;
-    if (!relatedToPage) {
-      completeness.exclude("workers", "out_of_target_scope");
-      continue;
-    }
-    if (url === undefined) {
-      const rawUrl = stringValue(target.url);
-      completeness.exclude(
-        "workers",
-        rawUrl === undefined || rawUrl === ""
-          ? "unattributed_origin"
-          : isHttpUrl(rawUrl)
-            ? "disallowed_origin"
-            : "unsupported_url",
-      );
-      continue;
-    }
-    total += 1;
-    if (items.length >= context.input.limits.max_workers) continue;
-    items.push({
-      target_id: (stringValue(target.targetId) ?? "").slice(0, 256),
-      type: type.slice(0, 100),
-      url: url.url,
-      origin: url.origin,
-      attached: target.attached === true,
-      opener_target_id: boundedText(target.openerId, 256) ?? null,
-      parent_frame_id: boundedText(target.parentFrameId, 256) ?? null,
-    });
-  }
-  return {
-    total,
-    items,
-  };
 };
 
 const normalizedTarget = (

@@ -364,82 +364,117 @@ const resultFor = (
 ): Readonly<Record<string, unknown>> => {
   switch (command.method) {
     case "Target.attachToTarget":
-      return { sessionId: options.invalidAttachedSession ? "" : "session-1" };
+      return attachToTargetResult(options);
     case "Page.getFrameTree":
-      return frameTree(
-        port,
-        frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
-          ? options.frameUrlAfterFirstRead
-          : frameTreeReads <= (options.transitionalFrameReads ?? 0)
-            ? ":"
-            : (options.electronFileUrl ?? options.attachedFrameUrl),
-        options.extraCollections === true,
-      );
+      return frameTreeResult(port, options, frameTreeReads);
     case "Page.getResourceTree":
-      return resourceTree(
-        port,
-        options.extraCollections === true,
-        options.electronFileUrl,
-        options.duplicateElectronInventory === true,
-      );
+      return resourceTreeResult(port, options);
     case "DOMSnapshot.captureSnapshot":
-      return domSnapshot(
-        port,
-        options.electronFileUrl,
-        options.extraCollections === true,
-      );
+      return domSnapshotResult(port, options);
     case "Accessibility.getFullAXTree":
-      return accessibilityTree(options.extraCollections === true);
+      return accessibilityTreeResult(options);
     case "Debugger.getScriptSource":
-      return { scriptSource: "export const observed = 'source-secret';" };
+      return scriptSourceResult();
     case "Network.getResponseBody":
-      return options.invalidResponseBodyBase64 === true
-        ? { body: "%%%not-base64%%%", base64Encoded: true }
-        : {
-            body: JSON.stringify({
-              result: { ok: true, token: "response-body-secret" },
-              items: [{ id: 1 }, { id: 2 }],
-            }),
-            base64Encoded: false,
-          };
+      return responseBodyResult(options);
     case "Page.captureScreenshot":
-      return {
-        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==",
-      };
+      return screenshotResult();
     case "Target.getTargets":
       return { targetInfos: targets(port, options).map(endpointTargetToInfo) };
     case "Storage.getUsageAndQuota":
-      return { usage: 42, quota: 1_024, usageBreakdown: [] };
+      return storageUsageResult();
     case "DOMStorage.getDOMStorageItems":
-      return {
-        entries:
-          options.extraCollections === true
-            ? [
-                ["public-key", "storage-secret"],
-                ["second-key", "second-secret"],
-              ]
-            : [["public-key", "storage-secret"]],
-      };
+      return domStorageResult(options);
     case "IndexedDB.requestDatabaseNames":
-      return {
-        databaseNames:
-          options.extraCollections === true
-            ? ["app-db", "second-db"]
-            : ["app-db"],
-      };
+      return indexedDbResult(options);
     case "CacheStorage.requestCacheNames":
-      return {
-        caches: [
-          { cacheName: "assets-v1", cacheId: "secret-id" },
-          ...(options.extraCollections === true
-            ? [{ cacheName: "assets-v2", cacheId: "second-secret-id" }]
-            : []),
-        ],
-      };
+      return cacheStorageResult(options);
     default:
       return {};
   }
 };
+
+const attachToTargetResult = (options: FakeOptions) => ({
+  sessionId: options.invalidAttachedSession ? "" : "session-1",
+});
+
+const frameTreeResult = (
+  port: number,
+  options: FakeOptions,
+  frameTreeReads: number,
+) =>
+  frameTree(
+    port,
+    frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
+      ? options.frameUrlAfterFirstRead
+      : frameTreeReads <= (options.transitionalFrameReads ?? 0)
+        ? ":"
+        : (options.electronFileUrl ?? options.attachedFrameUrl),
+    options.extraCollections === true,
+  );
+
+const resourceTreeResult = (port: number, options: FakeOptions) =>
+  resourceTree(
+    port,
+    options.extraCollections === true,
+    options.electronFileUrl,
+    options.duplicateElectronInventory === true,
+  );
+
+const domSnapshotResult = (port: number, options: FakeOptions) =>
+  domSnapshot(port, options.electronFileUrl, options.extraCollections === true);
+
+const accessibilityTreeResult = (options: FakeOptions) =>
+  accessibilityTree(options.extraCollections === true);
+
+const scriptSourceResult = () => ({
+  scriptSource: "export const observed = 'source-secret';",
+});
+
+const responseBodyResult = (options: FakeOptions) =>
+  options.invalidResponseBodyBase64 === true
+    ? { body: "%%%not-base64%%%", base64Encoded: true }
+    : {
+        body: JSON.stringify({
+          result: { ok: true, token: "response-body-secret" },
+          items: [{ id: 1 }, { id: 2 }],
+        }),
+        base64Encoded: false,
+      };
+
+const screenshotResult = () => ({
+  data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PzWvWQAAAABJRU5ErkJggg==",
+});
+
+const storageUsageResult = () => ({
+  usage: 42,
+  quota: 1_024,
+  usageBreakdown: [],
+});
+
+const domStorageResult = (options: FakeOptions) => ({
+  entries:
+    options.extraCollections === true
+      ? [
+          ["public-key", "storage-secret"],
+          ["second-key", "second-secret"],
+        ]
+      : [["public-key", "storage-secret"]],
+});
+
+const indexedDbResult = (options: FakeOptions) => ({
+  databaseNames:
+    options.extraCollections === true ? ["app-db", "second-db"] : ["app-db"],
+});
+
+const cacheStorageResult = (options: FakeOptions) => ({
+  caches: [
+    { cacheName: "assets-v1", cacheId: "secret-id" },
+    ...(options.extraCollections === true
+      ? [{ cacheName: "assets-v2", cacheId: "second-secret-id" }]
+      : []),
+  ],
+});
 
 const versionTargetId = (options: FakeOptions): string =>
   options.electronFileUrl === undefined ? "allowed-page" : "electron-page";
@@ -642,56 +677,7 @@ const emitEvents = (
   port: number,
   options: FakeOptions,
 ): void => {
-  if (command.method === "Debugger.enable") {
-    if (options.foreignSessionEvents === true)
-      event(socket, "Debugger.scriptParsed", "foreign-session", {
-        scriptId: "script-foreign",
-        url: `http://127.0.0.1:${String(port)}/foreign.js`,
-        hash: "foreign-hash",
-        length: 20,
-        isModule: false,
-      });
-    event(socket, "Debugger.scriptParsed", command.sessionId, {
-      scriptId: "script-allowed",
-      url:
-        options.electronFileUrl === undefined
-          ? `http://127.0.0.1:${String(port)}/app.js?token=script-secret`
-          : new URL("app.js", options.electronFileUrl).href,
-      hash: "cdp-hash",
-      length: 40,
-      isModule: true,
-      executionContextId: 1,
-      scriptLanguage: "JavaScript",
-      sourceMapURL: "/app.js.map?token=map-secret",
-    });
-    if (
-      options.electronFileUrl !== undefined &&
-      options.duplicateElectronInventory === true
-    )
-      event(socket, "Debugger.scriptParsed", command.sessionId, {
-        scriptId: "script-allowed-duplicate",
-        url: new URL("app.js", options.electronFileUrl).href,
-        hash: "cdp-hash",
-        length: 40,
-        isModule: true,
-        executionContextId: 1,
-        scriptLanguage: "JavaScript",
-      });
-    event(socket, "Debugger.scriptParsed", command.sessionId, {
-      scriptId: "script-private",
-      url: "https://private.example.test/private.js?secret=forbidden",
-      hash: "private-hash",
-      length: 100,
-      isModule: false,
-    });
-    event(socket, "Debugger.scriptParsed", command.sessionId, {
-      scriptId: "script-inline",
-      url: "",
-      hash: "inline-secret",
-      length: 100,
-      isModule: false,
-    });
-  }
+  emitDebuggerEvents(socket, command, port, options);
   if (command.method === "Network.enable") {
     if (options.navigateDuringObservationUrl !== undefined)
       event(socket, "Page.frameNavigated", command.sessionId, {
@@ -794,55 +780,7 @@ const emitEvents = (
         },
       });
   }
-  if (command.method === "Runtime.enable") {
-    event(socket, "Runtime.executionContextCreated", command.sessionId, {
-      context: {
-        id: 1,
-        origin:
-          options.electronFileUrl === undefined
-            ? `http://127.0.0.1:${String(port)}`
-            : "file://",
-        auxData: { frameId: "frame-main", isDefault: true },
-      },
-    });
-    event(socket, "Runtime.consoleAPICalled", command.sessionId, {
-      type: "log",
-      timestamp: 123,
-      args: [
-        {
-          type: "string",
-          value:
-            options.sensitiveShapes === true
-              ? "authorization=Bearer console-secret"
-              : "console-secret",
-        },
-        ...(options.sensitiveShapes === true
-          ? [
-              { type: "number", value: 42 },
-              {
-                type: "object",
-                objectId: "must-not-be-expanded",
-                description: "object-secret",
-              },
-            ]
-          : []),
-      ],
-      stackTrace: {
-        callFrames: [
-          {
-            url: `http://127.0.0.1:${String(port)}/app.js?secret=console-url`,
-            lineNumber: 7,
-            columnNumber: 9,
-          },
-        ],
-      },
-    });
-    event(socket, "Runtime.consoleAPICalled", command.sessionId, {
-      type: "unknown-origin-console-secret",
-      timestamp: 124,
-      args: [{ type: "string", value: "unknown-console-value-secret" }],
-    });
-  }
+  emitRuntimeEvents(socket, command, port, options);
   if (command.method === "WebMCP.enable" && options.webMcpTools === true) {
     event(socket, "WebMCP.toolsAdded", command.sessionId, {
       tools: [
@@ -922,26 +860,7 @@ const emitEvents = (
       });
     }
   }
-  if (
-    command.method === "DOMSnapshot.captureSnapshot" &&
-    options.navigateDuringCaptureUrl !== undefined
-  )
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: options.navigateDuringCaptureUrl,
-      },
-    });
-  if (
-    command.method === "Page.captureScreenshot" &&
-    options.navigateDuringScreenshotUrl !== undefined
-  )
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: options.navigateDuringScreenshotUrl,
-      },
-    });
+  emitCaptureNavigation(socket, command, options);
   if (
     command.method === "Page.setLifecycleEventsEnabled" &&
     options.sessionTimeline !== undefined
@@ -999,6 +918,136 @@ const emitEvents = (
         targetId: "allowed-page",
       });
   }
+};
+
+const emitDebuggerEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
+  if (command.method !== "Debugger.enable") return;
+  if (options.foreignSessionEvents === true)
+    event(socket, "Debugger.scriptParsed", "foreign-session", {
+      scriptId: "script-foreign",
+      url: `http://127.0.0.1:${String(port)}/foreign.js`,
+      hash: "foreign-hash",
+      length: 20,
+      isModule: false,
+    });
+  event(socket, "Debugger.scriptParsed", command.sessionId, {
+    scriptId: "script-allowed",
+    url:
+      options.electronFileUrl === undefined
+        ? `http://127.0.0.1:${String(port)}/app.js?token=script-secret`
+        : new URL("app.js", options.electronFileUrl).href,
+    hash: "cdp-hash",
+    length: 40,
+    isModule: true,
+    executionContextId: 1,
+    scriptLanguage: "JavaScript",
+    sourceMapURL: "/app.js.map?token=map-secret",
+  });
+  if (
+    options.electronFileUrl !== undefined &&
+    options.duplicateElectronInventory === true
+  )
+    event(socket, "Debugger.scriptParsed", command.sessionId, {
+      scriptId: "script-allowed-duplicate",
+      url: new URL("app.js", options.electronFileUrl).href,
+      hash: "cdp-hash",
+      length: 40,
+      isModule: true,
+      executionContextId: 1,
+      scriptLanguage: "JavaScript",
+    });
+  event(socket, "Debugger.scriptParsed", command.sessionId, {
+    scriptId: "script-private",
+    url: "https://private.example.test/private.js?secret=forbidden",
+    hash: "private-hash",
+    length: 100,
+    isModule: false,
+  });
+  event(socket, "Debugger.scriptParsed", command.sessionId, {
+    scriptId: "script-inline",
+    url: "",
+    hash: "inline-secret",
+    length: 100,
+    isModule: false,
+  });
+};
+
+const emitRuntimeEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
+  if (command.method !== "Runtime.enable") return;
+  event(socket, "Runtime.executionContextCreated", command.sessionId, {
+    context: {
+      id: 1,
+      origin:
+        options.electronFileUrl === undefined
+          ? `http://127.0.0.1:${String(port)}`
+          : "file://",
+      auxData: { frameId: "frame-main", isDefault: true },
+    },
+  });
+  event(socket, "Runtime.consoleAPICalled", command.sessionId, {
+    type: "log",
+    timestamp: 123,
+    args: [
+      {
+        type: "string",
+        value:
+          options.sensitiveShapes === true
+            ? "authorization=Bearer console-secret"
+            : "console-secret",
+      },
+      ...(options.sensitiveShapes === true
+        ? [
+            { type: "number", value: 42 },
+            {
+              type: "object",
+              objectId: "must-not-be-expanded",
+              description: "object-secret",
+            },
+          ]
+        : []),
+    ],
+    stackTrace: {
+      callFrames: [
+        {
+          url: `http://127.0.0.1:${String(port)}/app.js?secret=console-url`,
+          lineNumber: 7,
+          columnNumber: 9,
+        },
+      ],
+    },
+  });
+  event(socket, "Runtime.consoleAPICalled", command.sessionId, {
+    type: "unknown-origin-console-secret",
+    timestamp: 124,
+    args: [{ type: "string", value: "unknown-console-value-secret" }],
+  });
+};
+
+const emitCaptureNavigation = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  options: FakeOptions,
+): void => {
+  const navigationUrl =
+    command.method === "DOMSnapshot.captureSnapshot"
+      ? options.navigateDuringCaptureUrl
+      : command.method === "Page.captureScreenshot"
+        ? options.navigateDuringScreenshotUrl
+        : undefined;
+  if (navigationUrl !== undefined)
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: { id: "frame-main", url: navigationUrl },
+    });
 };
 
 const event = (

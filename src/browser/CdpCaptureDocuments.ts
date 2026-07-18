@@ -5,7 +5,6 @@ import type {
 import {
   allowedSanitizedUrl,
   boundedText,
-  isHttpUrl,
   numberValue,
   recordValue,
   recordsValue,
@@ -13,6 +12,7 @@ import {
   stringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 
 export type CapturedResource = Omit<
@@ -183,14 +183,14 @@ export const captureDom = (
           .map((value) => indexedString(strings, value).slice(0, 256))
           .slice(0, 200),
       });
-      const metadata = domMetadata(
+      const metadata = domMetadata({
         strings,
-        attributeIndexes,
+        attributes: attributeIndexes,
         documentUrl,
         nodeIndex,
         nodeName,
         allowedOrigins,
-      );
+      });
       for (const url of metadata.urls) {
         if (urls.length >= input.limits.max_resources) {
           completeness?.truncate("metadata");
@@ -312,17 +312,29 @@ const numberArray = (value: unknown): readonly number[] =>
       })
     : [];
 
+interface DomMetadataOptions {
+  readonly strings: readonly string[];
+  readonly attributes: readonly number[];
+  readonly documentUrl: string;
+  readonly nodeIndex: number;
+  readonly nodeName: string;
+  readonly allowedOrigins: ReadonlySet<string>;
+}
+
 const domMetadata = (
-  strings: readonly string[],
-  attributes: readonly number[],
-  documentUrl: string,
-  nodeIndex: number,
-  nodeName: string,
-  allowedOrigins: ReadonlySet<string>,
+  options: DomMetadataOptions,
 ): {
   readonly urls: WebPageInspection["metadata"]["dom_urls"];
   readonly agentHints: WebPageInspection["metadata"]["agent_hints"];
 } => {
+  const {
+    strings,
+    attributes,
+    documentUrl,
+    nodeIndex,
+    nodeName,
+    allowedOrigins,
+  } = options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
     const name = indexedString(strings, attributes[index]).toLowerCase();
@@ -402,15 +414,6 @@ const boundedUtf8 = (
   }
   return { text, bytes, truncated: true };
 };
-
-const exclusionReasonForUrl = (
-  value: string | undefined,
-): "disallowed_origin" | "unsupported_url" | "unattributed_origin" =>
-  value === undefined || value === ""
-    ? "unattributed_origin"
-    : isHttpUrl(value)
-      ? "disallowed_origin"
-      : "unsupported_url";
 
 const domUrlAttributes = [
   "href",

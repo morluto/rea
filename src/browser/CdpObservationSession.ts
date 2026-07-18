@@ -34,6 +34,14 @@ interface ObservationContext {
 type EndReason = WebObservationSession["window"]["end_reason"];
 type TimelineEvent = WebObservationSession["timeline"][number];
 
+interface TimelineEntryOptions {
+  readonly type: TimelineEvent["type"];
+  readonly params: UnknownRecord;
+  readonly rawUrl?: string | null;
+  readonly requestId?: string | null;
+  readonly detail?: string | null;
+}
+
 /** Observe external user actions without rejecting approved same-origin navigation. */
 export const observeCdpSession = async (
   context: ObservationContext,
@@ -190,7 +198,13 @@ class TimelineCapture {
 
   targetTerminated(): void {
     if (this.#endReason !== undefined) return;
-    this.#add("target_terminated", {}, null, null, "target_terminated");
+    this.#add({
+      type: "target_terminated",
+      params: {},
+      rawUrl: null,
+      requestId: null,
+      detail: "target_terminated",
+    });
     this.end("target_terminated");
   }
 
@@ -203,13 +217,13 @@ class TimelineCapture {
     if (stringValue(params.frameId) !== this.mainFrameId) return;
     const reason = safeDetail(params.reason);
     this.#pendingReload = reason === "reload";
-    this.#add(
-      "navigation_requested",
+    this.#add({
+      type: "navigation_requested",
       params,
-      stringValue(params.url),
-      null,
-      reason,
-    );
+      rawUrl: stringValue(params.url) ?? null,
+      requestId: null,
+      detail: reason,
+    });
   }
 
   #navigationCommitted(params: UnknownRecord): void {
@@ -217,13 +231,13 @@ class TimelineCapture {
     if (stringValue(frame?.id) !== this.mainFrameId) return;
     const rawUrl = stringValue(frame?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
-    this.#add(
-      this.#pendingReload ? "same_origin_reload" : "navigation_committed",
-      { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
-      rawUrl,
-      null,
-      safeDetail(frame?.transitionType),
-    );
+    this.#add({
+      type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
+      params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
+      rawUrl: rawUrl ?? null,
+      requestId: null,
+      detail: safeDetail(frame?.transitionType),
+    });
     this.#pendingReload = false;
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
@@ -237,7 +251,13 @@ class TimelineCapture {
     if (stringValue(params.frameId) !== this.mainFrameId) return;
     const rawUrl = stringValue(params.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
-    this.#add("same_document_navigation", params, rawUrl, null, null);
+    this.#add({
+      type: "same_document_navigation",
+      params,
+      rawUrl: rawUrl ?? null,
+      requestId: null,
+      detail: null,
+    });
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
       this.finalUrl = null;
@@ -255,13 +275,13 @@ class TimelineCapture {
     const request = recordValue(params.request);
     const rawUrl = stringValue(request?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
-    this.#add(
-      "redirect",
+    this.#add({
+      type: "redirect",
       params,
-      rawUrl,
-      stringValue(params.requestId) ?? null,
-      null,
-    );
+      rawUrl: rawUrl ?? null,
+      requestId: stringValue(params.requestId) ?? null,
+      detail: null,
+    });
     if (destination.scope !== "approved") {
       this.completeness.exclude("timeline", "out_of_target_scope");
       this.end("target_left_scope");
@@ -271,27 +291,34 @@ class TimelineCapture {
   #loadingFailed(params: UnknownRecord): void {
     const frame = stringValue(params.frameId);
     if (frame !== undefined && frame !== this.mainFrameId) return;
-    this.#add(
-      "load_failed",
+    this.#add({
+      type: "load_failed",
       params,
-      null,
-      stringValue(params.requestId) ?? null,
-      safeNetworkError(params.errorText),
-    );
+      rawUrl: null,
+      requestId: stringValue(params.requestId) ?? null,
+      detail: safeNetworkError(params.errorText),
+    });
   }
 
   #lifecycle(params: UnknownRecord): void {
     if (stringValue(params.frameId) !== this.mainFrameId) return;
-    this.#add("lifecycle", params, null, null, safeDetail(params.name));
+    this.#add({
+      type: "lifecycle",
+      params,
+      rawUrl: null,
+      requestId: null,
+      detail: safeDetail(params.name),
+    });
   }
 
-  #add(
-    type: TimelineEvent["type"],
-    params: UnknownRecord,
-    rawUrl: string | null | undefined,
-    requestId: string | null,
-    detail: string | null,
-  ): void {
+  #add(options: TimelineEntryOptions): void {
+    const {
+      type,
+      params,
+      rawUrl = null,
+      requestId = null,
+      detail = null,
+    } = options;
     const destination =
       rawUrl == null ? null : scopedUrl(rawUrl, this.allowedOrigins);
     if (this.timeline.length >= this.maximum) {

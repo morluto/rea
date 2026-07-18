@@ -20,6 +20,7 @@ import {
 } from "../dist/domain/webScreenshot.js";
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
 import { startPageCdpProxy } from "./fixtures/page-cdp-proxy.mjs";
+import { sourceMapSummary } from "./lib/browser-verifier-assertions.mjs";
 
 const SECRET_VALUES = [
   "network-secret-value",
@@ -334,6 +335,13 @@ async function pageTarget(provider, endpoint, origin) {
 }
 
 function assertObservation(result, origin) {
+  assertObservationInventory(result, origin);
+  assertObservationEvents(result);
+  assertObservationPrivacy(result);
+  assertObservationMetadata(result);
+}
+
+function assertObservationInventory(result, origin) {
   if (result.target.origin !== origin)
     throw new Error("Real Chrome target origin was not preserved exactly");
   if (result.frames.length < 1 || result.dom.nodes.length < 1)
@@ -353,6 +361,9 @@ function assertObservation(result, origin) {
     throw new Error("Real Chrome script metadata was missing");
   if (!result.resources.some((resource) => resource.url.includes("/app.js")))
     throw new Error("Real Chrome resource metadata was missing");
+}
+
+function assertObservationEvents(result) {
   if (!result.network.requests.some((request) => request.url.includes("/api")))
     throw new Error(
       "Real Chrome attach-window network observation was missing",
@@ -372,6 +383,9 @@ function assertObservation(result, origin) {
     );
   if (result.network.websocket_events.length < 1)
     throw new Error("Real Chrome WebSocket metadata was missing");
+}
+
+function assertObservationPrivacy(result) {
   if (
     result.console.events.some(
       (event) => event.text_capture.status !== "not_approved",
@@ -386,6 +400,9 @@ function assertObservation(result, origin) {
     throw new Error(
       "Sensitive text or payload shapes were retained without approval",
     );
+}
+
+function assertObservationMetadata(result) {
   if (!result.storage.local_storage_keys.includes("rea-storage-key"))
     throw new Error("Real Chrome local-storage key inventory was missing");
   if (!result.storage.indexed_db_names.includes("rea-browser-db"))
@@ -429,25 +446,6 @@ function assertBundleAnalysis(result) {
     throw new Error(
       `Real Chrome approved source-map reconstruction was missing: ${JSON.stringify(sourceMapSummary(result.observations.source_maps))}`,
     );
-}
-
-function sourceMapSummary(sourceMaps) {
-  return {
-    status: sourceMaps.status,
-    requested: sourceMaps.requested,
-    processed: sourceMaps.processed,
-    dropped: sourceMaps.dropped,
-    items: sourceMaps.items.map((item) => ({
-      status: item.status,
-      declaredUrl: item.declared_url,
-      sources: item.original_sources.map(({ source }) => source),
-      edgeSpecifiers: item.original_module_edges.map(({ specifier }) =>
-        specifier.slice(0, 256),
-      ),
-      mappings: item.mappings.length,
-      limitation: item.limitation,
-    })),
-  };
 }
 
 function assertSensitiveShapes(result) {

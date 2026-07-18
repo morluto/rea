@@ -153,13 +153,13 @@ const unfilter = (
         row > 0 && column >= channels
           ? (decoded[outputOffset + column - rowBytes - channels] ?? 0)
           : 0;
-      decoded[outputOffset + column] = applyFilter(
+      decoded[outputOffset + column] = applyFilter({
         filter,
         source,
         left,
         above,
         upperLeft,
-      );
+      });
     }
   }
   if (channels === 4) return decoded;
@@ -177,13 +177,16 @@ const unfilter = (
   return rgba;
 };
 
-const applyFilter = (
-  filter: number,
-  source: number,
-  left: number,
-  above: number,
-  upperLeft: number,
-): number => {
+interface ApplyFilterOptions {
+  readonly filter: number;
+  readonly source: number;
+  readonly left: number;
+  readonly above: number;
+  readonly upperLeft: number;
+}
+
+const applyFilter = (options: ApplyFilterOptions): number => {
+  const { filter, source, left, above, upperLeft } = options;
   switch (filter) {
     case 0:
       return source;

@@ -42,14 +42,10 @@ import {
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
 import { createGhidraTargetSnapshot } from "./GhidraTargetSnapshot.js";
-import {
-  attachGhidraSocket,
-  connectGhidraSocketOnce,
-} from "./GhidraSocketConnection.js";
-import {
-  observeGhidraEndpoint,
-  type GhidraEndpoint,
-} from "./GhidraTransport.js";
+import { connectGhidraSocket } from "./GhidraSocketConnection.js";
+import type { GhidraEndpoint } from "./GhidraTransport.js";
+import { GhidraWire } from "./GhidraClientWire.js";
+import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const SESSION_ROOT = tmpdir();
@@ -75,11 +71,11 @@ export class GhidraClient {
     >
   > &
     GhidraClientOptions;
+  readonly #logger: Logger;
   readonly #pending = new PendingOperations<
     number,
     Result<JsonValue, GhidraSessionError>
   >();
-  readonly #logger: Logger;
   #socket: Socket | undefined;
   #detachSocket: (() => void) | undefined;
   #launch: GhidraLaunch | undefined;
@@ -96,6 +92,7 @@ export class GhidraClient {
   #startPromise: Promise<GhidraStartResult> | undefined;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(() => this.#diagnostics());
+  readonly #wire: GhidraWire;
   readonly #requestQueue: GhidraRequestQueue;
   readonly #responseRouter = new GhidraResponseRouter({
     pending: this.#pending,
@@ -122,17 +119,26 @@ export class GhidraClient {
   };
 
   constructor(options: GhidraClientOptions) {
-    this.#logger = options.logger ?? silentLogger;
     this.#options = {
       ...options,
       requestTimeoutMs: options.requestTimeoutMs ?? GHIDRA_REQUEST_TIMEOUT_MS,
       startupTimeoutMs: options.startupTimeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
       transport: options.transport ?? "unix-socket",
     };
+    this.#logger = options.logger ?? silentLogger;
+    this.#wire = new GhidraWire({
+      getSocket: () => this.#socket,
+      getToken: () => this.#token,
+      nextId: () => this.#nextId++,
+      pending: this.#pending,
+      requestTimeoutMs: this.#options.requestTimeoutMs,
+      logger: this.#logger,
+      failure: this.#failure,
+    });
     this.#requestQueue = new GhidraRequestQueue(
       GHIDRA_MAX_QUEUED_REQUESTS,
       (method, parameters, requestOptions) =>
-        this.#request(method, parameters, requestOptions),
+        this.#wire.request(method, parameters, requestOptions),
       (kind, message, timeoutMs) =>
         this.#failure(
           kind,
@@ -176,7 +182,7 @@ export class GhidraClient {
   ): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    const result = await this.#request("ping", {}, options);
+    const result = await this.#wire.request("ping", {}, options);
     if (!result.ok) return result;
     return this.#parseSessionInfo(result.value);
   }
@@ -306,128 +312,38 @@ export class GhidraClient {
       await this.#cleanup();
       return err(failure);
     }
-    const ping = await this.#request(
-      "ping",
-      {},
-      {
-        signal: deadline.signal,
-        timeoutMs: deadline.remainingMs(),
-      },
-    );
-    if (!ping.ok) {
-      const failure = deadline.signal.aborted
-        ? this.#interruptionFailure(deadline)
-        : ping.error;
-      await this.#cleanup();
-      return err(failure);
-    }
-    const parsed = this.#parseSessionInfo(ping.value);
-    if (!parsed.ok || parsed.value.analysis_timed_out) {
-      const failure = parsed.ok
-        ? this.#failure(
-            "analysis_timeout",
-            "Ghidra auto-analysis reached its per-file deadline",
-          )
-        : parsed.error;
-      await this.#cleanup();
-      return err(failure);
-    }
-    return parsed;
+    return completeGhidraStartupHandshake({
+      deadline,
+      request: (method, params, requestOptions) =>
+        this.#wire.request(method, params, requestOptions),
+      parseSessionInfo: (value) => this.#parseSessionInfo(value),
+      cleanup: () => this.#cleanup(),
+      failure: this.#failure,
+      startupTimeoutMs: this.#options.startupTimeoutMs,
+    });
   }
 
   async #connect(
     endpoint: GhidraEndpoint,
     deadline: ProviderStartupDeadline,
   ): Promise<Result<undefined, GhidraSessionError>> {
-    while (deadline.remainingMs() > 0) {
-      if (deadline.signal.aborted)
-        return err(this.#interruptionFailure(deadline));
-      if (this.#closing)
-        return err(this.#failure("cancelled", "Ghidra startup was closed"));
-      if (this.#processSnapshot?.exitCode !== undefined)
-        return err(
-          this.#failure("process", "Ghidra exited before bridge startup"),
-        );
-      const observed = await observeGhidraEndpoint(endpoint);
-      if (!observed.ok) return observed;
-      if (observed.value === null) {
-        if ((await deadline.wait(50)) === "aborted")
-          return err(this.#interruptionFailure(deadline));
-        continue;
-      }
-      const connected = await connectGhidraSocketOnce(
-        observed.value,
-        deadline.signal,
-      );
-      if (connected.ok) {
-        this.#socket = connected.value;
-        this.#detachSocket = attachGhidraSocket(connected.value, {
-          data: this.#onSocketData,
-          error: this.#onSocketError,
-          close: this.#onSocketClose,
-        });
-        return ok(undefined);
-      }
-      if ((await deadline.wait(50)) === "aborted")
-        return err(this.#interruptionFailure(deadline));
-    }
-    return err(
-      this.#failure("timeout", "Ghidra startup deadline elapsed", undefined, {
-        timeoutMs: this.#options.startupTimeoutMs,
-      }),
-    );
-  }
-
-  async #request(
-    method: string,
-    params: JsonValue,
-    options: GhidraRequestOptions,
-  ): Promise<Result<JsonValue, GhidraSessionError>> {
-    const socket = this.#socket;
-    const token = this.#token;
-    if (socket === undefined || socket.destroyed || token === undefined)
-      return err(this.#failure("process", "Ghidra bridge is unavailable"));
-    if (options.signal?.aborted === true)
-      return err(this.#failure("cancelled", "Ghidra request was cancelled"));
-    const id = this.#nextId++;
-    const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs;
-    if (timeoutMs <= 0)
-      return err(
-        this.#failure("timeout", "Ghidra request deadline elapsed", undefined, {
-          timeoutMs,
-        }),
-      );
-    const response = this.#pending.wait(id, {
-      timeoutMs,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      timeoutValue: () =>
-        err(
-          this.#failure(
-            "timeout",
-            "Ghidra bridge request timed out",
-            undefined,
-            { timeoutMs },
-          ),
-        ),
-      cancelledValue: () =>
-        err(this.#failure("cancelled", "Ghidra request was cancelled")),
-    });
-    socket.write(
-      `${JSON.stringify({ id, token, method, params })}\n`,
-      (cause) => {
-        if (cause !== undefined && cause !== null)
-          this.#pending.settle(
-            id,
-            err(this.#failure("process", "Ghidra bridge write failed", cause)),
-          );
+    const connected = await connectGhidraSocket({
+      endpoint,
+      deadline,
+      failure: this.#failure,
+      isClosed: () => this.#closing,
+      processExited: () => this.#processSnapshot?.exitCode !== undefined,
+      startupTimeoutMs: this.#options.startupTimeoutMs,
+      handlers: {
+        data: this.#onSocketData,
+        error: this.#onSocketError,
+        close: this.#onSocketClose,
       },
-    );
-    const result = await response;
-    this.#logger[result.ok ? "debug" : "warn"](
-      { method, status: result.ok ? "ok" : "error" },
-      "Ghidra bridge request completed",
-    );
-    return result;
+    });
+    if (!connected.ok) return connected;
+    this.#socket = connected.value.socket;
+    this.#detachSocket = connected.value.detach;
+    return ok(undefined);
   }
 
   #parseSessionInfo(value: JsonValue) {
@@ -473,15 +389,11 @@ export class GhidraClient {
       );
       const socket = this.#socket;
       if (socket !== undefined && !socket.destroyed) {
-        const shutdown = await this.#request(
-          "shutdown",
-          {},
-          {
-            timeoutMs: SHUTDOWN_TIMEOUT_MS,
-          },
-        ).catch(() =>
-          err(this.#failure("process", "Ghidra shutdown request failed")),
-        );
+        const shutdown = await this.#wire
+          .request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS })
+          .catch(() =>
+            err(this.#failure("process", "Ghidra shutdown request failed")),
+          );
         if (!shutdown.ok || !isGhidraShutdownAcknowledgement(shutdown.value))
           this.#logger.warn(
             { status: shutdown.ok ? "invalid-acknowledgement" : "failed" },
