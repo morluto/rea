@@ -112,6 +112,37 @@ describe("runtime configuration", () => {
     });
   });
 
+  it("can configure a process-capture ceiling without an implicit grant", () => {
+    const result = parseConfig({
+      REA_PROCESS_CAPTURE_ENABLED: "true",
+      REA_PROCESS_CAPTURE_AUTO_GRANT: "false",
+      REA_PROCESS_EXECUTABLE_ROOTS_JSON: '["/opt/tools"]',
+      REA_PROCESS_WORKING_ROOTS_JSON: '["/tmp/work"]',
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.permissionCeilings).toContainEqual(
+      expect.objectContaining({ capability: "process_capture" }),
+    );
+    expect(result.value.administratorPermissionGrants).not.toContainEqual(
+      expect.objectContaining({ capability: "process_capture" }),
+    );
+  });
+
+  it("preserves the configured process-capture administrator grant by default", () => {
+    const result = parseConfig({
+      REA_PROCESS_CAPTURE_ENABLED: "true",
+      REA_PROCESS_EXECUTABLE_ROOTS_JSON: '["/opt/tools"]',
+      REA_PROCESS_WORKING_ROOTS_JSON: '["/tmp/work"]',
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.administratorPermissionGrants).toContainEqual(
+      expect.objectContaining({
+        capability: "process_capture",
+        lifetime: "administrator",
+      }),
+    );
+  });
+
   it("builds a no-network JavaScript replay ceiling only when enabled", () => {
     const result = parseConfig({
       REA_JAVASCRIPT_REPLAY_ENABLED: "true",

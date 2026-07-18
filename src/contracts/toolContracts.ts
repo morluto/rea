@@ -259,12 +259,12 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    "Search analyzed procedure names using literal matching by default or regex opt-in. Ghidra bounds literal work and rejects regex constructs, paths, candidates, or cumulative work outside its finite budgets. Results are deterministic and offset-paginated.",
+    "Search analyzed procedure names using literal matching by default or regex opt-in. Providers bound search work and reject regex constructs, paths, candidates, or cumulative work outside their finite budgets. Results are deterministic and offset-paginated.",
     z.object(searchInput),
   ),
   official(
     "search_strings",
-    "Search analyzed strings using literal matching by default or regex opt-in. Ghidra bounds literal work and rejects regex constructs, paths, candidates, or cumulative work outside its finite budgets. Results are deterministic, offset-paginated, and explicitly truncated.",
+    "Search analyzed strings using literal matching by default or regex opt-in. Providers bound search work and reject regex constructs, paths, candidates, or cumulative work outside their finite budgets. Results are deterministic, offset-paginated, and explicitly truncated.",
     z.object(searchInput),
   ),
   official(

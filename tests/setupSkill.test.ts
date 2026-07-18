@@ -34,8 +34,12 @@ describe("canonical skill transaction", () => {
     expect(await readFile(`${destination}.rea.backup`, "utf8")).toBe(
       "stale managed skill\n",
     );
-    expect(await readFile(destination, "utf8")).toContain('version: "21"');
-    expect(await readFile(destination, "utf8")).toContain(
+    const installedSkill = await readFile(destination, "utf8");
+    expect(installedSkill).toContain('version: "22"');
+    expect(installedSkill).toContain(
+      "use normal repository tools and skip REA readiness",
+    );
+    expect(installedSkill).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");

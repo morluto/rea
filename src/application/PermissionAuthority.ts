@@ -110,9 +110,22 @@ const errorReason = (error: unknown): PermissionPathError["reason"] =>
 /** Stateful owner for permission evaluation, consumption, reload, and revoke. */
 export class PermissionAuthority {
   private policy: PermissionPolicy;
+  private readonly configuredAuthority: PermissionAuthority | undefined;
 
-  constructor(policy: PermissionPolicy) {
+  constructor(
+    policy: PermissionPolicy,
+    configuredAuthority?: PermissionAuthority,
+  ) {
     this.policy = policy;
+    this.configuredAuthority = configuredAuthority;
+  }
+
+  /** Create a connection-owned overlay for once and session grants. */
+  createConnectionAuthority(): PermissionAuthority {
+    return new PermissionAuthority(
+      createPermissionPolicy([]),
+      this.configuredAuthority ?? this,
+    );
   }
 
   /** Canonicalize and authorize one exact operation before its side effect. */
@@ -132,11 +145,13 @@ export class PermissionAuthority {
       PermissionPathError | PermissionRequiredError
     >
   > {
-    const evaluated = await this.explain(request, access, options);
+    const canonical = await canonicalizePermissionRequest(request, access);
+    if (!canonical.ok) return canonical;
+    const evaluated = this.evaluateCanonical(canonical.value, options);
     if (!evaluated.ok) return evaluated;
-    const decision = evaluated.value;
-    this.policy = consumePermission(this.policy, decision);
-    return ok(decision);
+    const { decision, owner } = evaluated.value;
+    owner.policy = consumePermission(owner.policy, decision);
+    return ok({ ...decision, request: canonical.value });
   }
 
   /** Dry-run the exact shared evaluation without consuming a once grant. */
@@ -158,23 +173,22 @@ export class PermissionAuthority {
   > {
     const canonical = await canonicalizePermissionRequest(request, access);
     if (!canonical.ok) return canonical;
-    const decision = evaluatePermission(this.policy, canonical.value);
-    if (!decision.allowed)
-      return err(
-        new PermissionRequiredError(
-          canonical.value,
-          decision.missing,
-          ceilingFor(this.policy, canonical.value.capability),
-          options.elicitationSupported ?? false,
-          options.restartRequired ?? false,
-        ),
-      );
-    return ok({ ...decision, request: canonical.value });
+    const evaluated = this.evaluateCanonical(canonical.value, options);
+    return evaluated.ok
+      ? ok({ ...evaluated.value.decision, request: canonical.value })
+      : evaluated;
   }
 
   /** Add authority beneath the administrator ceiling. */
   grant(grant: PermissionGrant): ReturnType<typeof grantPermission> {
-    const result = grantPermission(this.policy, grant);
+    const policy =
+      this.configuredAuthority === undefined
+        ? this.policy
+        : {
+            ...this.policy,
+            ceilings: this.configuredAuthority.effectivePolicy().ceilings,
+          };
+    const result = grantPermission(policy, grant);
     if (result.ok) this.policy = result.value;
     return result;
   }
@@ -187,6 +201,69 @@ export class PermissionAuthority {
   /** Drop once/session authority when its owning connection ends. */
   clearSessionGrants(): void {
     this.policy = clearSessionPermissions(this.policy);
+  }
+
+  private effectivePolicy(): PermissionPolicy {
+    if (this.configuredAuthority === undefined) return this.policy;
+    const configured = this.configuredAuthority.effectivePolicy();
+    return {
+      ceilings: configured.ceilings,
+      grants: [...configured.grants, ...this.policy.grants],
+      revoked_grant_ids: new Set([
+        ...configured.revoked_grant_ids,
+        ...this.policy.revoked_grant_ids,
+      ]),
+      consumed_grant_ids: new Set([
+        ...configured.consumed_grant_ids,
+        ...this.policy.consumed_grant_ids,
+      ]),
+    };
+  }
+
+  private evaluateCanonical(
+    request: PermissionRequest,
+    options: {
+      readonly elicitationSupported?: boolean;
+      readonly restartRequired?: boolean;
+    },
+  ): Result<
+    {
+      readonly decision: Extract<
+        PermissionDecision,
+        { readonly allowed: true }
+      >;
+      readonly owner: PermissionAuthority;
+    },
+    PermissionRequiredError
+  > {
+    const configured = this.configuredAuthority;
+    if (configured !== undefined) {
+      const configuredDecision = evaluatePermission(
+        configured.effectivePolicy(),
+        request,
+      );
+      if (configuredDecision.allowed)
+        return ok({ decision: configuredDecision, owner: configured });
+    }
+    const localPolicy =
+      configured === undefined
+        ? this.policy
+        : { ...this.policy, ceilings: configured.effectivePolicy().ceilings };
+    const localDecision = evaluatePermission(localPolicy, request);
+    if (localDecision.allowed)
+      return ok({ decision: localDecision, owner: this });
+    const effective = this.effectivePolicy();
+    const denied = evaluatePermission(effective, request);
+    if (denied.allowed) return ok({ decision: denied, owner: this });
+    return err(
+      new PermissionRequiredError(
+        request,
+        denied.missing,
+        ceilingFor(effective, request.capability),
+        options.elicitationSupported ?? false,
+        options.restartRequired ?? false,
+      ),
+    );
   }
 
   /** Atomically replace optional persisted project grants. */

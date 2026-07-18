@@ -601,6 +601,10 @@ environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
 adapter uses host networking, it also requires
 `REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
 
+Set `REA_PROCESS_CAPTURE_AUTO_GRANT=false` to configure those process-capture
+limits as a ceiling without implicitly granting them. This mode remains
+fail-closed until a narrower grant is established.
+
 Capture a scenario or compare two saved Process Capture v4 Evidence records:
 
 ```bash

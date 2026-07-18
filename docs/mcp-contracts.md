@@ -99,9 +99,15 @@ used by MCP. Optional project grants require both
 `REA_PERMISSION_PROJECT_ROOT` and `REA_PERMISSION_PROJECT_STORE`. The store is
 atomically written with mode `0600`, bound to the canonical project root, and is
 never enabled by default. Send `SIGHUP` to the REA MCP process after a trusted
-local policy change; ceilings, administrator grants, and project grants reload
-without restarting. Revocation affects future operations; an already-running
-operation retains the decision made at its preflight boundary.
+local policy change;
+ceilings, administrator grants, and project grants reload without restarting.
+Revocation affects future operations; an already-running operation retains the
+decision made at its preflight boundary.
+Once and session grants are connection-local overlays. They cannot authorize a
+second MCP connection, be consumed by another connection, or be cleared when a
+different connection closes. Live connections evaluate those overlays against
+the current process-wide ceilings and persisted grants, including successful
+SIGHUP reloads.
 `rea policy revoke <grant-id>` displays the exact grant and requires interactive
 confirmation; automation must pass `--yes` (or `-y`) explicitly.
 

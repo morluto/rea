@@ -25,6 +25,8 @@ const MCP_CONNECTION_START_FAILED =
   "REA could not start its MCP connection. Restart REA from your MCP client; run `rea doctor` if it fails again.";
 const MCP_SHUTDOWN_FAILED =
   "REA could not close cleanly. End the REA process before starting it again.";
+const MCP_PERMISSION_RELOAD_FAILED =
+  "Reloaded permission policy failed unexpectedly";
 const SERVER_START_FAILED =
   "REA could not start. Run `rea doctor`, then restart REA from your MCP client.";
 
@@ -199,63 +201,70 @@ export const run = async (
         serverLogger.error("Reloaded permission policy is invalid");
         return;
       }
-      reloadQueue = reloadQueue.then(async () => {
-        let projectGrants: readonly PermissionGrant[] = [];
-        if (
-          refreshed.value.permissionProjectRoot !== undefined &&
-          refreshed.value.permissionProjectStore !== undefined
-        ) {
-          const project = await (
-            dependencies.readProjectPermissionStore ??
-            readProjectPermissionStore
-          )(
-            refreshed.value.permissionProjectStore,
-            refreshed.value.permissionProjectRoot,
-          );
-          if (!project.ok) {
-            serverLogger.error("Reloaded project grants could not be read");
+      reloadQueue = reloadQueue
+        .then(async () => {
+          let projectGrants: readonly PermissionGrant[] = [];
+          if (
+            refreshed.value.permissionProjectRoot !== undefined &&
+            refreshed.value.permissionProjectStore !== undefined
+          ) {
+            const project = await (
+              dependencies.readProjectPermissionStore ??
+              readProjectPermissionStore
+            )(
+              refreshed.value.permissionProjectStore,
+              refreshed.value.permissionProjectRoot,
+            );
+            if (!project.ok) {
+              serverLogger.error("Reloaded project grants could not be read");
+              return;
+            }
+            projectGrants = project.value?.grants ?? [];
+          }
+          const reloaded =
+            await permissionAuthority.value.replaceConfiguredPolicy({
+              ceilings: refreshed.value.permissionCeilings,
+              administratorGrants:
+                refreshed.value.administratorPermissionGrants,
+              projectGrants,
+            });
+          if (!reloaded.ok) {
+            serverLogger.error(
+              "Reloaded permission policy could not be applied",
+            );
             return;
           }
-          projectGrants = project.value?.grants ?? [];
-        }
-        const reloaded =
-          await permissionAuthority.value.replaceConfiguredPolicy({
-            ceilings: refreshed.value.permissionCeilings,
-            administratorGrants: refreshed.value.administratorPermissionGrants,
-            projectGrants,
-          });
-        if (!reloaded.ok) {
-          serverLogger.error("Reloaded permission policy could not be applied");
-          return;
-        }
-        currentConfig = refreshed.value;
-        Object.assign(
-          runtimeProcessPolicy,
-          refreshed.value.processExecutionPolicy,
-        );
-        Object.assign(
-          runtimeEvidencePolicy,
-          refreshed.value.evidenceFilePolicy,
-        );
-        Object.assign(
-          runtimeSnapshotPolicy,
-          refreshed.value.analysisSnapshotFilePolicy,
-        );
-        runtimeInvestigationRoots.splice(
-          0,
-          runtimeInvestigationRoots.length,
-          ...refreshed.value.investigationInputRoots,
-        );
-        Object.assign(
-          runtimeJavascriptReplayPolicy,
-          refreshed.value.javascriptReplayPolicy,
-        );
-        Object.assign(
-          runtimeManagedRuntimePolicy,
-          refreshed.value.managedRuntimePolicy,
-        );
-        for (const server of liveServers) server.sendToolListChanged();
-      });
+          currentConfig = refreshed.value;
+          Object.assign(
+            runtimeProcessPolicy,
+            refreshed.value.processExecutionPolicy,
+          );
+          Object.assign(
+            runtimeEvidencePolicy,
+            refreshed.value.evidenceFilePolicy,
+          );
+          Object.assign(
+            runtimeSnapshotPolicy,
+            refreshed.value.analysisSnapshotFilePolicy,
+          );
+          runtimeInvestigationRoots.splice(
+            0,
+            runtimeInvestigationRoots.length,
+            ...refreshed.value.investigationInputRoots,
+          );
+          Object.assign(
+            runtimeJavascriptReplayPolicy,
+            refreshed.value.javascriptReplayPolicy,
+          );
+          Object.assign(
+            runtimeManagedRuntimePolicy,
+            refreshed.value.managedRuntimePolicy,
+          );
+          for (const server of liveServers) server.sendToolListChanged();
+        })
+        .catch(() => {
+          serverLogger.error(MCP_PERMISSION_RELOAD_FAILED);
+        });
     }) ?? (() => undefined);
 
   let shutdownPromise: Promise<void> | undefined;

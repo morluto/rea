@@ -20,6 +20,7 @@ import type {
 } from "../domain/processCapture.js";
 import { processScenarioSchema } from "../domain/processCapture.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
+import { processCapturePermissionRequest } from "../application/ProcessCapturePermission.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import {
@@ -60,6 +61,11 @@ import {
 import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import {
+  authorizeProcessCaptureWithElicitation,
+  type ProcessCaptureElicitation,
+} from "./ProcessCaptureElicitation.js";
+import { isInputRequiredResult } from "@modelcontextprotocol/server";
 
 const permissionFailure = (
   failure: Awaited<ReturnType<PermissionAuthority["authorize"]>>,
@@ -121,6 +127,7 @@ interface ProcessToolRegistration {
   readonly processPolicy: ProcessExecutionPolicy;
   readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
   readonly permissionAuthority?: PermissionAuthority;
+  readonly processCaptureElicitation?: ProcessCaptureElicitation;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
@@ -134,6 +141,7 @@ const registerProcessTools = ({
   processPolicy,
   captureContract,
   permissionAuthority,
+  processCaptureElicitation,
 }: ProcessToolRegistration): void => {
   server.registerTool(
     captureContract.name,
@@ -148,21 +156,17 @@ const registerProcessTools = ({
         return toCallToolResult(parsedInput, captureContract);
       const scenario = parsedInput.value;
       if (permissionAuthority !== undefined) {
-        const authorized = await permissionAuthority.authorize(
-          {
-            capability: "process_capture",
-            roots: [scenario.working_directory, ...scenario.filesystem_roots],
-            executables: [scenario.executable],
-            environment_names: [
-              ...Object.keys(scenario.environment),
-              ...scenario.inherit_environment,
-            ],
-            network: scenario.network_access === "host" ? "external" : "none",
-            mount: false,
-            operation_identity: `capture_process_scenario:${scenario.executable}`,
-          },
-          "read",
-        );
+        const request = processCapturePermissionRequest(scenario);
+        const authorized =
+          processCaptureElicitation === undefined
+            ? await permissionAuthority.authorize(request, "read")
+            : await authorizeProcessCaptureWithElicitation(
+                permissionAuthority,
+                request,
+                context,
+                processCaptureElicitation,
+              );
+        if (isInputRequiredResult(authorized)) return authorized;
         if (!authorized.ok)
           return toCallToolResult(
             permissionFailure(authorized),
@@ -595,6 +599,7 @@ export interface SessionToolOptions {
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
   readonly startedAt?: string;
   readonly permissionAuthority?: PermissionAuthority;
+  readonly processCaptureElicitation?: ProcessCaptureElicitation;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
   readonly availabilityPolicy?: () => {
     readonly processCaptureEnabled: boolean;
@@ -677,6 +682,9 @@ export const registerSessionTools = (
     ...(options.permissionAuthority === undefined
       ? {}
       : { permissionAuthority: options.permissionAuthority }),
+    ...(options.processCaptureElicitation === undefined
+      ? {}
+      : { processCaptureElicitation: options.processCaptureElicitation }),
   });
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
