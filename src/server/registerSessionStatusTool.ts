@@ -12,21 +12,27 @@ import { buildCapabilityInventory } from "../application/CapabilityInventory.js"
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
 
-/** Register the read-only provider and target status operation. */
-export const registerSessionStatusTool = (
-  server: McpServer,
-  session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[2],
-  startedAt: string,
-  availabilityPolicy: () => {
+/** Inputs required to register the binary session status tool. */
+export interface SessionStatusToolOptions {
+  readonly server: McpServer;
+  readonly session: BinarySessionPort;
+  readonly contract: (typeof SESSION_TOOL_CONTRACTS)[2];
+  readonly startedAt: string;
+  readonly availabilityPolicy: () => {
     readonly processCaptureEnabled: boolean;
     readonly evidenceFileRoots: number;
     readonly browserObservationEnabled?: boolean;
     readonly electronObservationEnabled?: boolean;
     readonly javascriptReplayEnabled?: boolean;
     readonly managedRuntimeEnabled?: boolean;
-  },
+  };
+}
+
+/** Register the read-only provider and target status operation. */
+export const registerSessionStatusTool = (
+  options: SessionStatusToolOptions,
 ): void => {
+  const { server, session, contract, startedAt, availabilityPolicy } = options;
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),

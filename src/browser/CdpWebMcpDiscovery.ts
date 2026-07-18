@@ -74,7 +74,13 @@ export const discoverWebMcp = async (
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     if (ingestFrameScopeEvent(event, frameScope)) return;
-    ingestWebMcpEvent(event, context.input, frameUrls, tools, completeness);
+    ingestWebMcpEvent({
+      event,
+      input: context.input,
+      frames: frameUrls,
+      tools,
+      completeness,
+    });
   });
   await context.progress?.report({
     phase: "browser_observation",
@@ -100,14 +106,14 @@ export const discoverWebMcp = async (
         context.signal,
       );
     await assertStableAuthorizedFrame(context, initialUrl, origins);
-    return result(
+    return buildWebMcpResult({
       context,
       frameTree,
       tools,
       completeness,
       limitations,
       available,
-    );
+    });
   } finally {
     removeListener();
     await context.progress?.report({
@@ -139,20 +145,35 @@ const ingestFrameScopeEvent = (
 ): boolean => {
   const params = recordValue(event.params);
   if (params === undefined) return false;
-  if (event.method === "Page.frameDetached") {
-    const frameId = stringValue(params.frameId);
-    if (frameId === undefined || frameId.length > 256)
-      state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    else removeFrame(frameId, state.frames, state.tools);
+  switch (event.method) {
+    case "Page.frameDetached":
+      return handleFrameDetached(params, state);
+    case "Page.frameNavigated":
+      return handleFrameUpdate(recordValue(params.frame), state);
+    case "Page.navigatedWithinDocument":
+      return handleFrameUpdate(params, state);
+    default:
+      return false;
+  }
+};
+
+const handleFrameDetached = (
+  params: UnknownRecord,
+  state: FrameScopeState,
+): boolean => {
+  const frameId = stringValue(params.frameId);
+  if (frameId === undefined || frameId.length > 256) {
+    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
     return true;
   }
-  const frame =
-    event.method === "Page.frameNavigated" ? recordValue(params.frame) : params;
-  if (
-    event.method !== "Page.frameNavigated" &&
-    event.method !== "Page.navigatedWithinDocument"
-  )
-    return false;
+  removeFrame(frameId, state.frames, state.tools);
+  return true;
+};
+
+const handleFrameUpdate = (
+  frame: UnknownRecord | undefined,
+  state: FrameScopeState,
+): boolean => {
   const frameId = stringValue(frame?.id) ?? stringValue(frame?.frameId);
   if (frameId === undefined || frameId.length > 256) {
     state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
@@ -213,16 +234,19 @@ const assertStableAuthorizedFrame = async (
     throw new BrowserObservationError("inspect_web_page", "target_changed");
 };
 
-const ingestWebMcpEvent = (
-  event: CdpEvent,
-  input: DiscoverWebMcpToolsInput,
-  frames: ReadonlyMap<
+interface WebMcpIngestOptions {
+  readonly event: CdpEvent;
+  readonly input: DiscoverWebMcpToolsInput;
+  readonly frames: ReadonlyMap<
     string,
     { readonly url: string; readonly origin: string | null }
-  >,
-  tools: Map<string, WebMcpDiscovery["tools"]["items"][number]>,
-  completeness: CdpCaptureCompleteness,
-): void => {
+  >;
+  readonly tools: Map<string, WebMcpDiscovery["tools"]["items"][number]>;
+  readonly completeness: CdpCaptureCompleteness;
+}
+
+const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
+  const { event, input, frames, tools, completeness } = options;
   const params = recordValue(event.params);
   if (params === undefined) return;
   if (event.method === "WebMCP.toolsRemoved") {
@@ -329,14 +353,21 @@ const registrationSource = (
       };
 };
 
-const result = (
-  context: DiscoveryContext,
-  frameTree: unknown,
-  tools: ReadonlyMap<string, WebMcpDiscovery["tools"]["items"][number]>,
-  completeness: CdpCaptureCompleteness,
-  limitations: string[],
-  available: boolean,
-): WebMcpDiscovery => {
+interface WebMcpResultOptions {
+  readonly context: DiscoveryContext;
+  readonly frameTree: unknown;
+  readonly tools: ReadonlyMap<
+    string,
+    WebMcpDiscovery["tools"]["items"][number]
+  >;
+  readonly completeness: CdpCaptureCompleteness;
+  readonly limitations: string[];
+  readonly available: boolean;
+}
+
+const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
+  const { context, frameTree, tools, completeness, limitations, available } =
+    options;
   const targetUrl = mainFrameUrl(frameTree) ?? context.target.url;
   const sanitized = allowedSanitizedUrl(
     targetUrl,

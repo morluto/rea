@@ -19,29 +19,30 @@ import {
 
 const RESPONSE_KEY = "process_capture_grant";
 const STATE_VERSION = 1;
-const STATE_TTL_MS = 600_000;
-const MAX_CONSUMED_NONCES = 4_096;
 
-const grantResponseSchema = z.object({
-  lifetime: z.enum(["once", "session"]).default("session"),
+/** Shared continuation, replay, and round limits for process capture consent. */
+export const PROCESS_CAPTURE_ELICITATION_POLICY = {
+  protocolVersions: ["2026-07-28"],
+  stateTtlSeconds: 600,
+  roundTimeoutMs: 600_000,
+  maxConsumedNonces: 4_096,
+} as const;
+
+const grantResponseSchema = z.strictObject({
+  lifetime: z.enum(["once", "session"]).meta({ default: "session" }),
 });
 
-const grantResponseJsonSchema = {
-  type: "object" as const,
-  properties: {
-    lifetime: {
-      type: "string" as const,
-      enum: ["once", "session"],
-      default: "session",
-    },
-  },
-  required: ["lifetime"],
-};
+const grantResponseJsonSchema = { ...z.toJSONSchema(grantResponseSchema) };
+// MCP elicitation accepts a reduced JSON Schema subset. These generator
+// annotations do not change the schema's fields or validation semantics; the
+// Standard Schema marker would make the SDK regenerate the removed keywords.
+Reflect.deleteProperty(grantResponseJsonSchema, "$schema");
+Reflect.deleteProperty(grantResponseJsonSchema, "additionalProperties");
 
-const stateSchema = z.object({
+const stateSchema = z.strictObject({
   version: z.literal(STATE_VERSION),
   nonce: z.string().uuid(),
-  request: z.object({
+  request: z.strictObject({
     capability: z.literal("process_capture"),
     roots: z.array(z.string()),
     executables: z.array(z.string()),
@@ -58,13 +59,14 @@ export type ProcessCaptureElicitationState = z.infer<typeof stateSchema>;
 /** Connection-owned SDK state used for process-capture grant elicitation. */
 export interface ProcessCaptureElicitation {
   readonly stateCodec: RequestStateCodec<ProcessCaptureElicitationState>;
-  readonly supported: () => boolean;
-  readonly modern: () => boolean;
+  readonly supported: (context: ProcessCaptureElicitationContext) => boolean;
+  readonly now: () => number;
   readonly consumedNonces: Map<string, number>;
 }
 
 interface ProcessCaptureElicitationContext {
   readonly mcpReq: {
+    readonly envelope?: Readonly<Record<string, unknown>>;
     readonly inputResponses?: Record<string, unknown>;
     readonly requestState: () => unknown;
   };
@@ -79,7 +81,7 @@ export const authorizeProcessCaptureWithElicitation = async (
   context: ProcessCaptureElicitationContext,
   elicitation: ProcessCaptureElicitation,
 ): Promise<PermissionResult | InputRequiredResult> => {
-  const supported = elicitation.supported() && elicitation.modern();
+  const supported = elicitation.supported(context);
   const initial = await authority.authorize(request, "read", {
     elicitationSupported: supported,
   });
@@ -101,7 +103,13 @@ export const authorizeProcessCaptureWithElicitation = async (
       return initial;
     const response = inputResponse(context.mcpReq.inputResponses, RESPONSE_KEY);
     if (response.kind === "elicit") {
-      if (!consumeNonce(elicitation.consumedNonces, state.data.nonce))
+      if (
+        !consumeNonce(
+          elicitation.consumedNonces,
+          state.data.nonce,
+          elicitation.now(),
+        )
+      )
         return initial;
     }
     if (response.kind === "elicit" && response.action === "accept") {
@@ -208,12 +216,19 @@ const sameOptionalStrings = (
 const consumeNonce = (
   consumed: Map<string, number>,
   nonce: string,
+  now: number,
 ): boolean => {
-  const now = Date.now();
   for (const [candidate, expiresAt] of consumed)
     if (expiresAt <= now) consumed.delete(candidate);
-  if (consumed.has(nonce) || consumed.size >= MAX_CONSUMED_NONCES) return false;
-  consumed.set(nonce, now + STATE_TTL_MS);
+  if (
+    consumed.has(nonce) ||
+    consumed.size >= PROCESS_CAPTURE_ELICITATION_POLICY.maxConsumedNonces
+  )
+    return false;
+  consumed.set(
+    nonce,
+    now + PROCESS_CAPTURE_ELICITATION_POLICY.stateTtlSeconds * 1_000,
+  );
   return true;
 };
 

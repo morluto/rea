@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import type { z } from "zod";
 
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -32,12 +33,31 @@ import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { Result } from "../domain/result.js";
+import type { AnalysisError } from "../domain/errors.js";
+import type { ToolContract } from "../contracts/toolContracts.js";
 
 interface BrowserToolRegistration {
   readonly logger: Logger;
   readonly browser: BrowserObservationPort | undefined;
   readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+}
+
+interface BrowserToolContext {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+}
+
+interface BrowserToolSpec<Schema extends z.ZodType> {
+  readonly contract: ToolContract;
+  readonly schema: Schema;
+  readonly execute: (
+    parsed: z.output<Schema>,
+    context: BrowserToolContext,
+  ) => Promise<Result<Evidence, AnalysisError>>;
 }
 
 /** Register browser tools even when policy/provider availability denies execution. */
@@ -55,224 +75,118 @@ export const registerBrowserTools = (
     screenshotContract,
     screenshotDiffContract,
   ] = BROWSER_TOOL_CONTRACTS;
+
+  registerBrowserTool(server, options, {
+    contract: listContract,
+    schema: listBrowserTargetsInputSchema,
+    execute: (parsed, { signal }) =>
+      listBrowserTargets(options.browser, options.permissionAuthority, parsed, {
+        signal,
+      }),
+  });
+  registerBrowserTool(server, options, {
+    contract: inspectContract,
+    schema: inspectWebPageInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      inspectWebPage(options.browser, options.permissionAuthority, parsed, {
+        signal,
+        progress,
+      }),
+  });
+  registerBrowserTool(server, options, {
+    contract: analyzeContract,
+    schema: analyzeWebBundleInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      analyzeWebBundle(options.browser, options.permissionAuthority, parsed, {
+        signal,
+        progress,
+      }),
+  });
+  registerBrowserTool(server, options, {
+    contract: sessionContract,
+    schema: observeWebSessionInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      observeWebSession(options.browser, options.permissionAuthority, parsed, {
+        signal,
+        progress,
+      }),
+  });
+  registerBrowserTool(server, options, {
+    contract: webMcpContract,
+    schema: discoverWebMcpToolsInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      discoverWebMcpTools(
+        options.browser,
+        options.permissionAuthority,
+        parsed,
+        {
+          signal,
+          progress,
+        },
+      ),
+  });
+  registerBrowserTool(server, options, {
+    contract: captureDiffContract,
+    schema: compareWebCapturesInputSchema,
+    execute: (parsed, _context) =>
+      compareWebCaptureEvidence(options.browser, parsed),
+  });
+  registerBrowserTool(server, options, {
+    contract: screenshotContract,
+    schema: captureWebScreenshotInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      captureWebScreenshot(
+        options.browser,
+        options.permissionAuthority,
+        parsed,
+        {
+          signal,
+          progress,
+        },
+      ),
+  });
+  registerBrowserTool(server, options, {
+    contract: screenshotDiffContract,
+    schema: compareWebScreenshotsInputSchema,
+    execute: (parsed, _context) =>
+      compareWebScreenshotEvidence(options.browser, parsed),
+  });
+};
+
+const registerBrowserTool = <Schema extends z.ZodType>(
+  server: McpServer,
+  options: BrowserToolRegistration,
+  spec: BrowserToolSpec<Schema>,
+): void => {
   server.registerTool(
-    listContract.name,
-    toolRegistrationOptions(listContract),
+    spec.contract.name,
+    toolRegistrationOptions(spec.contract),
     async (input, context) => {
       const parsedInput = safeParseToolInput(
-        listBrowserTargetsInputSchema,
+        spec.schema,
         input,
-        listContract.name,
+        spec.contract.name,
       );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, listContract);
-      const parsed = parsedInput.value;
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, spec.contract);
       const result = await logToolExecution(
         options.logger,
-        listContract.name,
+        spec.contract.name,
         () =>
-          listBrowserTargets(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            { signal: context.mcpReq.signal },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, listContract);
-      return evidenceResult(options, listContract, result.value);
-    },
-  );
-  server.registerTool(
-    inspectContract.name,
-    toolRegistrationOptions(inspectContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        inspectWebPageInputSchema,
-        input,
-        inspectContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, inspectContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        inspectContract.name,
-        () =>
-          inspectWebPage(options.browser, options.permissionAuthority, parsed, {
+          spec.execute(parsedInput.value, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),
       );
-      if (!result.ok) return toCallToolResult(result, inspectContract);
-      return evidenceResult(options, inspectContract, result.value);
-    },
-  );
-  server.registerTool(
-    analyzeContract.name,
-    toolRegistrationOptions(analyzeContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        analyzeWebBundleInputSchema,
-        input,
-        analyzeContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, analyzeContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        analyzeContract.name,
-        () =>
-          analyzeWebBundle(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, analyzeContract);
-      return evidenceResult(options, analyzeContract, result.value);
-    },
-  );
-  server.registerTool(
-    sessionContract.name,
-    toolRegistrationOptions(sessionContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        observeWebSessionInputSchema,
-        input,
-        sessionContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, sessionContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        sessionContract.name,
-        () =>
-          observeWebSession(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, sessionContract);
-      return evidenceResult(options, sessionContract, result.value);
-    },
-  );
-  server.registerTool(
-    webMcpContract.name,
-    toolRegistrationOptions(webMcpContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        discoverWebMcpToolsInputSchema,
-        input,
-        webMcpContract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, webMcpContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        webMcpContract.name,
-        () =>
-          discoverWebMcpTools(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, webMcpContract);
-      return evidenceResult(options, webMcpContract, result.value);
-    },
-  );
-  server.registerTool(
-    captureDiffContract.name,
-    toolRegistrationOptions(captureDiffContract),
-    async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareWebCapturesInputSchema,
-        input,
-        captureDiffContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, captureDiffContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        captureDiffContract.name,
-        () => compareWebCaptureEvidence(options.browser, parsed),
-      );
-      if (!result.ok) return toCallToolResult(result, captureDiffContract);
-      return evidenceResult(options, captureDiffContract, result.value);
-    },
-  );
-  server.registerTool(
-    screenshotContract.name,
-    toolRegistrationOptions(screenshotContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        captureWebScreenshotInputSchema,
-        input,
-        screenshotContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, screenshotContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        screenshotContract.name,
-        () =>
-          captureWebScreenshot(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, screenshotContract);
-      return evidenceResult(options, screenshotContract, result.value);
-    },
-  );
-  server.registerTool(
-    screenshotDiffContract.name,
-    toolRegistrationOptions(screenshotDiffContract),
-    async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareWebScreenshotsInputSchema,
-        input,
-        screenshotDiffContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, screenshotDiffContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        screenshotDiffContract.name,
-        () => compareWebScreenshotEvidence(options.browser, parsed),
-      );
-      if (!result.ok) return toCallToolResult(result, screenshotDiffContract);
-      return evidenceResult(options, screenshotDiffContract, result.value);
+      if (!result.ok) return toCallToolResult(result, spec.contract);
+      return evidenceResult(options, spec.contract, result.value);
     },
   );
 };
 
 const evidenceResult = (
   options: BrowserToolRegistration,
-  contract: (typeof BROWSER_TOOL_CONTRACTS)[number],
-  evidence: import("../domain/evidence.js").Evidence,
+  contract: ToolContract,
+  evidence: Evidence,
 ) => {
   const recorded = options.recordEvidence?.(evidence);
   return recorded !== undefined && !recorded.ok

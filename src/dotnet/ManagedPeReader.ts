@@ -43,6 +43,29 @@ export interface ManagedPeLayout {
   rvaToOffset(rva: number, size: number, scope: string): number;
 }
 
+interface RvaMapping {
+  readonly bytes: Buffer;
+  readonly sections: readonly PeSection[];
+  readonly rva: number;
+  readonly size: number;
+  readonly scope: string;
+}
+
+interface CoffHeader {
+  readonly coff: number;
+  readonly machine: number;
+  readonly sectionCount: number;
+  readonly optionalSize: number;
+  readonly characteristics: number;
+}
+
+interface OptionalHeader {
+  readonly optionalOffset: number;
+  readonly optionalHeader: "pe32" | "pe32-plus";
+  readonly directoryCountOffset: number;
+  readonly directoryOffset: number;
+}
+
 const requireRange = (
   bytes: Buffer,
   offset: number,
@@ -95,13 +118,8 @@ const architectureFor = (machine: number): ManagedPeLayout["architecture"] => {
   }
 };
 
-const mapRva = (
-  bytes: Buffer,
-  sections: readonly PeSection[],
-  rva: number,
-  size: number,
-  scope: string,
-): number => {
+const mapRva = (mapping: RvaMapping): number => {
+  const { bytes, sections, rva, size, scope } = mapping;
   if (rva === 0 && size === 0) return 0;
   for (const section of sections) {
     const mappedSize = Math.max(section.virtualSize, section.rawSize);
@@ -144,7 +162,13 @@ const readCliHeader = (
       "cli.header",
       "CLI header is shorter than the required 72 bytes",
     );
-  const offset = mapRva(bytes, sections, directory.rva, 72, "cli.header");
+  const offset = mapRva({
+    bytes,
+    sections,
+    rva: directory.rva,
+    size: 72,
+    scope: "cli.header",
+  });
   const headerSize = bytes.readUInt32LE(offset);
   if (headerSize < 72 || headerSize > directory.size)
     throw managedFailure(
@@ -165,13 +189,13 @@ const readCliHeader = (
   const managedNativeHeader = readDirectory(bytes, offset + 64);
   let readyToRunSignature = false;
   if (managedNativeHeader.rva !== 0 && managedNativeHeader.size >= 4) {
-    const nativeOffset = mapRva(
+    const nativeOffset = mapRva({
       bytes,
       sections,
-      managedNativeHeader.rva,
-      4,
-      "cli.managed-native-header",
-    );
+      rva: managedNativeHeader.rva,
+      size: 4,
+      scope: "cli.managed-native-header",
+    });
     readyToRunSignature = bytes.readUInt32LE(nativeOffset) === 0x0052_5452;
   }
   return {
@@ -189,16 +213,7 @@ const readCliHeader = (
   };
 };
 
-/** Parse the file-backed PE and CLI layout without loading target code. */
-export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
-  requireRange(bytes, 0, 64, "pe.dos-header");
-  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a)
-    throw managedFailure(
-      "invalid-directory",
-      "pe.dos-header",
-      "Artifact does not start with an MZ header",
-      0,
-    );
+const readCoffHeader = (bytes: Buffer): CoffHeader => {
   const peOffset = bytes.readUInt32LE(0x3c);
   requireRange(bytes, peOffset, 24, "pe.coff-header");
   if (bytes.readUInt32LE(peOffset) !== 0x0000_4550)
@@ -220,9 +235,16 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     );
   const optionalSize = bytes.readUInt16LE(coff + 16);
   const characteristics = bytes.readUInt16LE(coff + 18);
-  const optionalOffset = coff + 20;
-  requireRange(bytes, optionalOffset, optionalSize, "pe.optional-header");
-  if (optionalSize < 96)
+  return { coff, machine, sectionCount, optionalSize, characteristics };
+};
+
+const readOptionalHeader = (
+  bytes: Buffer,
+  coff: CoffHeader,
+): OptionalHeader => {
+  const optionalOffset = coff.coff + 20;
+  requireRange(bytes, optionalOffset, coff.optionalSize, "pe.optional-header");
+  if (coff.optionalSize < 96)
     throw managedFailure(
       "invalid-directory",
       "pe.optional-header",
@@ -239,16 +261,28 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
       "PE optional header magic is unsupported",
       optionalOffset,
     );
-  const directoryCountOffset =
-    optionalOffset + (optionalHeader === "pe32" ? 92 : 108);
-  const directoryOffset =
-    optionalOffset + (optionalHeader === "pe32" ? 96 : 112);
-  requireRange(bytes, directoryCountOffset, 4, "pe.data-directories");
-  const directoryCount = bytes.readUInt32LE(directoryCountOffset);
-  const sectionOffset = add(optionalOffset, optionalSize, "pe.sections");
-  requireRange(bytes, sectionOffset, sectionCount * 40, "pe.sections");
+  return {
+    optionalOffset,
+    optionalHeader,
+    directoryCountOffset:
+      optionalOffset + (optionalHeader === "pe32" ? 92 : 108),
+    directoryOffset: optionalOffset + (optionalHeader === "pe32" ? 96 : 112),
+  };
+};
+
+const readSections = (
+  bytes: Buffer,
+  coff: CoffHeader,
+  optional: OptionalHeader,
+): readonly PeSection[] => {
+  const sectionOffset = add(
+    optional.optionalOffset,
+    coff.optionalSize,
+    "pe.sections",
+  );
+  requireRange(bytes, sectionOffset, coff.sectionCount * 40, "pe.sections");
   const sections: PeSection[] = [];
-  for (let index = 0; index < sectionCount; index += 1) {
+  for (let index = 0; index < coff.sectionCount; index += 1) {
     const offset = sectionOffset + index * 40;
     const section = {
       virtualSize: bytes.readUInt32LE(offset + 8),
@@ -265,11 +299,38 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
       );
     sections.push(section);
   }
-  const cliDirectory =
+  return sections;
+};
+
+const readCliDirectory = (
+  bytes: Buffer,
+  coff: CoffHeader,
+  optional: OptionalHeader,
+): PeDataDirectory => {
+  requireRange(bytes, optional.directoryCountOffset, 4, "pe.data-directories");
+  const directoryCount = bytes.readUInt32LE(optional.directoryCountOffset);
+  if (
     directoryCount <= 14 ||
-    optionalSize < directoryOffset - optionalOffset + 120
-      ? { rva: 0, size: 0 }
-      : readDirectory(bytes, directoryOffset + 14 * 8);
+    coff.optionalSize < optional.directoryOffset - optional.optionalOffset + 120
+  )
+    return { rva: 0, size: 0 };
+  return readDirectory(bytes, optional.directoryOffset + 14 * 8);
+};
+
+/** Parse the file-backed PE and CLI layout without loading target code. */
+export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
+  requireRange(bytes, 0, 64, "pe.dos-header");
+  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a)
+    throw managedFailure(
+      "invalid-directory",
+      "pe.dos-header",
+      "Artifact does not start with an MZ header",
+      0,
+    );
+  const coff = readCoffHeader(bytes);
+  const optional = readOptionalHeader(bytes, coff);
+  const sections = readSections(bytes, coff, optional);
+  const cliDirectory = readCliDirectory(bytes, coff, optional);
   const cliDirectoryPresent = cliDirectory.rva !== 0 || cliDirectory.size !== 0;
   let cli: ManagedCliHeader | null = null;
   let cliIssue: ManagedParseIssue | null = null;
@@ -281,16 +342,16 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
       cliIssue = cause.issue;
     }
   return {
-    machine,
-    architecture: architectureFor(machine),
-    optionalHeader,
-    sectionCount,
-    characteristics,
+    machine: coff.machine,
+    architecture: architectureFor(coff.machine),
+    optionalHeader: optional.optionalHeader,
+    sectionCount: coff.sectionCount,
+    characteristics: coff.characteristics,
     sections,
     cli,
     cliDirectoryPresent,
     cliIssue,
     rvaToOffset: (rva, size, scope) =>
-      mapRva(bytes, sections, rva, size, scope),
+      mapRva({ bytes, sections, rva, size, scope }),
   };
 };

@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   createRequestStateCodec,
   McpServer,
+  PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -35,7 +37,10 @@ import type {
 import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
 import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
-import type { ProcessCaptureElicitationState } from "./ProcessCaptureElicitation.js";
+import {
+  PROCESS_CAPTURE_ELICITATION_POLICY,
+  type ProcessCaptureElicitationState,
+} from "./ProcessCaptureElicitation.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -78,7 +83,7 @@ export const createServer = (
   const processCaptureStateCodec =
     createRequestStateCodec<ProcessCaptureElicitationState>({
       key: randomBytes(32),
-      ttlSeconds: 600,
+      ttlSeconds: PROCESS_CAPTURE_ELICITATION_POLICY.stateTtlSeconds,
     });
   const server = new McpServer(
     {
@@ -90,7 +95,10 @@ export const createServer = (
         tools: { listChanged: true },
         resources: { listChanged: true },
       },
-      inputRequired: { maxRounds: 3, roundTimeoutMs: 600_000 },
+      inputRequired: {
+        maxRounds: 3,
+        roundTimeoutMs: PROCESS_CAPTURE_ELICITATION_POLICY.roundTimeoutMs,
+      },
       requestState: { verify: processCaptureStateCodec.verify },
       instructions:
         session === undefined
@@ -102,6 +110,86 @@ export const createServer = (
     permissionAuthority?.clearSessionGrants();
   };
   session?.onAvailabilityChanged?.(() => server.sendToolListChanged());
+  registerServerIdentityResource(server, startedAt);
+  const toolLogger = logger.child({ layer: "server" });
+  const { activeTarget, recordEvidence, recordEvidenceWithUnknown } =
+    createSessionRecorders(server, session);
+  const toolContext = {
+    server,
+    analysis,
+    session,
+    options,
+    logger: toolLogger,
+    permissionAuthority,
+    activeTarget,
+    recordEvidence,
+    recordEvidenceWithUnknown,
+  };
+  registerBinaryAnalysisTools(toolContext);
+  registerObservationTools(toolContext);
+  registerGuidedPrompts(server, analysis, session);
+  if (session !== undefined) {
+    registerEvidenceResources(server, session);
+    registerSessionTools(server, session, toolLogger, {
+      ...options,
+      ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
+      startedAt,
+      processCaptureElicitation: {
+        stateCodec: processCaptureStateCodec,
+        supported: (context) => {
+          const envelope = context.mcpReq.envelope;
+          const version = envelope?.[PROTOCOL_VERSION_META_KEY];
+          const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+          return (
+            typeof version === "string" &&
+            PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions.some(
+              (supported) => supported === version,
+            ) &&
+            isRecord(capabilities) &&
+            isRecord(capabilities.elicitation) &&
+            capabilities.elicitation.form !== undefined
+          );
+        },
+        now: Date.now,
+        consumedNonces: new Map(),
+      },
+    });
+  }
+  return server;
+};
+
+const createSessionRecorders = (
+  server: McpServer,
+  session: BinarySessionPort | undefined,
+) => ({
+  activeTarget:
+    session === undefined ? undefined : () => session.activeTarget(),
+  recordEvidence:
+    session === undefined
+      ? undefined
+      : (evidence: Parameters<typeof session.recordEvidence>[0]) => {
+          const recorded = session.recordEvidence(evidence);
+          if (recorded.ok && recorded.value === "added")
+            server.sendResourceListChanged();
+          return recorded;
+        },
+  recordEvidenceWithUnknown:
+    session === undefined
+      ? undefined
+      : (
+          evidence: Parameters<typeof session.recordEvidenceWithUnknown>[0],
+          input: Parameters<typeof session.recordEvidenceWithUnknown>[1],
+        ) => {
+          const recorded = session.recordEvidenceWithUnknown(evidence, input);
+          if (recorded.ok) server.sendResourceListChanged();
+          return recorded;
+        },
+});
+
+const registerServerIdentityResource = (
+  server: McpServer,
+  startedAt: string,
+): void => {
   server.registerResource(
     "server-identity",
     "rea://server/identity",
@@ -112,6 +200,7 @@ export const createServer = (
     },
     (uri) => {
       const client = server.server.getClientVersion();
+      const protocolVersion = server.server.getNegotiatedProtocolVersion();
       return {
         contents: [
           {
@@ -121,12 +210,7 @@ export const createServer = (
               createServerIdentity({
                 startedAt,
                 ...(client === undefined ? {} : { client }),
-                ...(server.server.getNegotiatedProtocolVersion() === undefined
-                  ? {}
-                  : {
-                      protocolVersion:
-                        server.server.getNegotiatedProtocolVersion(),
-                    }),
+                ...(protocolVersion === undefined ? {} : { protocolVersion }),
               }),
               null,
               2,
@@ -136,68 +220,66 @@ export const createServer = (
       };
     },
   );
-  const toolLogger = logger.child({ layer: "server" });
-  const activeTarget =
-    session === undefined ? undefined : () => session.activeTarget();
-  const recordEvidence =
+};
+
+interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
+  readonly server: McpServer;
+  readonly analysis: AnalysisOperationPort;
+  readonly session: BinarySessionPort | undefined;
+  readonly options: CreateServerOptions;
+  readonly logger: Logger;
+  readonly permissionAuthority: PermissionAuthority | undefined;
+}
+
+const registerBinaryAnalysisTools = ({
+  server,
+  analysis,
+  session,
+  options,
+  logger,
+  permissionAuthority,
+  activeTarget,
+  recordEvidence,
+  recordEvidenceWithUnknown,
+}: ServerToolContext): void => {
+  const recordUnknown =
     session === undefined
       ? undefined
-      : (evidence: Parameters<typeof session.recordEvidence>[0]) => {
-          const recorded = session.recordEvidence(evidence);
-          if (recorded.ok && recorded.value === "added")
-            server.sendResourceListChanged();
-          return recorded;
-        };
-  const recordEvidenceWithUnknown =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<typeof session.recordEvidenceWithUnknown>[0],
-          input: Parameters<typeof session.recordEvidenceWithUnknown>[1],
-        ) => {
-          const recorded = session.recordEvidenceWithUnknown(evidence, input);
-          if (recorded.ok) server.sendResourceListChanged();
-          return recorded;
-        };
+      : (input: Parameters<typeof session.recordUnknown>[0]) =>
+          session.recordUnknown(input);
   registerOfficialTools(server, analysis, {
-    logger: toolLogger,
+    logger,
     activeTarget,
     recordEvidence,
-    recordUnknown:
-      session === undefined
-        ? undefined
-        : (input) => session.recordUnknown(input),
+    recordUnknown,
   });
   registerEnhancedTools(server, analysis, {
-    logger: toolLogger,
+    logger,
     activeTarget,
     analysisProfile:
       session === undefined ? undefined : () => session.analysisProfile(),
     recordEvidence,
-    recordUnknown:
-      session === undefined
-        ? undefined
-        : (input) => session.recordUnknown(input),
+    recordUnknown,
   });
   registerNativeTools(server, analysis, {
-    logger: toolLogger,
+    logger,
     activeTarget,
     recordEvidence,
   });
   registerArtifactTools(server, analysis, {
-    logger: toolLogger,
+    logger,
     activeTarget,
     recordEvidence,
     ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
   });
   registerManagedTools(server, analysis, {
-    logger: toolLogger,
+    logger,
     activeTarget,
     recordEvidence,
   });
   if (session !== undefined)
     registerManagedWorkflowTools(server, {
-      logger: toolLogger,
+      logger,
       recordEvidence,
       recordEvidenceWithUnknown,
       session,
@@ -210,20 +292,31 @@ export const createServer = (
         authority: permissionAuthority,
       },
     });
+};
+
+const registerObservationTools = ({
+  server,
+  session,
+  options,
+  logger,
+  permissionAuthority,
+  recordEvidence,
+  recordEvidenceWithUnknown,
+}: ServerToolContext): void => {
   registerBrowserTools(server, {
-    logger: toolLogger,
+    logger,
     browser: options.browserObservation,
     permissionAuthority,
     recordEvidence,
   });
   registerElectronTools(server, {
-    logger: toolLogger,
+    logger,
     electron: options.electronObservation,
     permissionAuthority,
     recordEvidence,
   });
   registerApplicationTools(server, {
-    logger: toolLogger,
+    logger,
     recordEvidence,
     recordEvidenceWithUnknown,
     evidenceFilePolicy: options.evidenceFilePolicy ?? {
@@ -259,24 +352,7 @@ export const createServer = (
       authority: permissionAuthority,
     },
   });
-  registerGuidedPrompts(server, analysis, session);
-  if (session !== undefined) {
-    registerEvidenceResources(server, session);
-    registerSessionTools(server, session, toolLogger, {
-      ...options,
-      ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
-      startedAt,
-      processCaptureElicitation: {
-        stateCodec: processCaptureStateCodec,
-        supported: () =>
-          server.server.getClientCapabilities()?.elicitation?.form !==
-          undefined,
-        modern: () =>
-          server.server.getNegotiatedProtocolVersion()?.startsWith("2026-") ===
-          true,
-        consumedNonces: new Map(),
-      },
-    });
-  }
-  return server;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);

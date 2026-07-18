@@ -21,10 +21,6 @@ const dependencies = (
     available: false,
     reason: "Windows ACL enforcement is not implemented by this REA build",
   }),
-  probeNativeAuthority: () => ({
-    available: false,
-    reason: "Windows native authority package is not installed",
-  }),
   probeUnixDomainSocket: () => ({
     available: false,
     reason: "Node path-based IPC uses named pipes on Windows",
@@ -64,10 +60,6 @@ describe("Windows host capability report", () => {
           available: false,
           reason:
             "Windows ACL enforcement is not implemented by this REA build",
-        },
-        native_authority: {
-          available: false,
-          reason: "Windows native authority package is not installed",
         },
         unix_domain_socket: {
           available: false,

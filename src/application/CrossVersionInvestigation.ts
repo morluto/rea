@@ -41,6 +41,12 @@ import {
   createChangedBehaviorEvidence,
 } from "./CrossVersionInvestigationEvidence.js";
 import { selectCompletedInvestigationReplay } from "./CrossVersionInvestigationReplay.js";
+import {
+  investigationEvidenceIds as evidenceIds,
+  mergeInvestigationEvidence as mergeEvidence,
+  recordsForInvestigationRun as recordsForRun,
+  replaceInvestigationRun as replaceRun,
+} from "./CrossVersionInvestigationCollections.js";
 
 export interface CrossVersionInvestigationOutcome {
   readonly evidence: Evidence;
@@ -497,42 +503,3 @@ const inventoryEvidence = (
         ),
       );
 };
-
-const recordsForRun = (
-  workspace: InvestigationWorkspace,
-  run: InvestigationRun,
-): Evidence[] => {
-  const ids = new Set([
-    ...run.left_inventory_evidence_ids,
-    ...run.right_inventory_evidence_ids,
-    ...(run.comparison_evidence_id === null
-      ? []
-      : [run.comparison_evidence_id]),
-    ...(run.result_evidence_id === null ? [] : [run.result_evidence_id]),
-  ]);
-  return workspace.bundle.records.filter(({ evidence_id: id }) => ids.has(id));
-};
-
-const mergeEvidence = (
-  current: readonly Evidence[],
-  additions: readonly Evidence[],
-): Evidence[] => {
-  const records = new Map(
-    current.map((record) => [record.evidence_id, record]),
-  );
-  for (const record of additions)
-    if (!records.has(record.evidence_id))
-      records.set(record.evidence_id, record);
-  return [...records.values()];
-};
-
-const replaceRun = (
-  runs: readonly InvestigationRun[],
-  replacement: InvestigationRun,
-): InvestigationRun[] => [
-  ...runs.filter(({ run_id: id }) => id !== replacement.run_id),
-  replacement,
-];
-
-const evidenceIds = (records: readonly Evidence[]): string[] =>
-  records.map(({ evidence_id: id }) => id);

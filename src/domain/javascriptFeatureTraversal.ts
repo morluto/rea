@@ -50,11 +50,23 @@ export const traverseApplicationFeature = (
     const depth = depths.get(current) ?? 0;
     for (const entry of adjacency.get(current) ?? []) {
       if (depth >= limits.max_depth) {
-        recordOmission(entry, current, omittedNodes, omittedEdges, frontier);
+        recordOmission({
+          entry,
+          current,
+          omittedNodes,
+          omittedEdges,
+          frontier,
+        });
         continue;
       }
       if (!visited.has(entry.nextNodeId) && visited.size >= limits.max_nodes) {
-        recordOmission(entry, current, omittedNodes, omittedEdges, frontier);
+        recordOmission({
+          entry,
+          current,
+          omittedNodes,
+          omittedEdges,
+          frontier,
+        });
         continue;
       }
       if (
@@ -129,15 +141,17 @@ const addAdjacency = (
   adjacency.set(nodeId, [...(adjacency.get(nodeId) ?? []), entry]);
 };
 
-const recordOmission = (
-  entry: AdjacencyEntry,
-  current: string,
-  omittedNodes: Set<string>,
-  omittedEdges: Set<string>,
-  frontier: Set<string>,
-): void => {
-  omittedNodes.add(entry.nextNodeId);
-  omittedEdges.add(entry.edge.edge_id);
-  frontier.add(current);
-  frontier.add(entry.nextNodeId);
+interface OmissionContext {
+  readonly entry: AdjacencyEntry;
+  readonly current: string;
+  readonly omittedNodes: Set<string>;
+  readonly omittedEdges: Set<string>;
+  readonly frontier: Set<string>;
+}
+
+const recordOmission = (context: OmissionContext): void => {
+  context.omittedNodes.add(context.entry.nextNodeId);
+  context.omittedEdges.add(context.entry.edge.edge_id);
+  context.frontier.add(context.current);
+  context.frontier.add(context.entry.nextNodeId);
 };

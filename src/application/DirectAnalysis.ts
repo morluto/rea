@@ -23,6 +23,7 @@ import {
   writeAnalysisSnapshot,
 } from "./AnalysisSnapshotFiles.js";
 import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
@@ -84,11 +85,13 @@ export const runDirectAnalysis = async (
 
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
-  path: string,
-  tool: NativeToolName | ArtifactToolName | ManagedToolName,
-  arguments_: Readonly<Record<string, JsonValue>>,
-  logger: Logger = silentLogger,
-  signal?: AbortSignal,
+  ...[path, tool, arguments_, logger = silentLogger, signal]: readonly [
+    path: string,
+    tool: NativeToolName | ArtifactToolName | ManagedToolName,
+    arguments_: Readonly<Record<string, JsonValue>>,
+    logger?: Logger,
+    signal?: AbortSignal,
+  ]
 ): Promise<JsonValue> =>
   withProcessCancellation(signal, (operationSignal) =>
     runAnalysis(path, tool, arguments_, {
@@ -310,60 +313,14 @@ const runAnalysis = async (
     }
     const writable = await authorizeDeferredWrite(authorization.value);
     if (!writable.ok) return cliError(writable.error);
-    let output: JsonValue;
-    let evidence: Evidence | undefined;
-    if (
-      tool === "binary_overview" ||
-      tool === "analyze_function" ||
-      tool === "trace_feature"
-    ) {
-      const result = await new EnhancedTools(session).execute(
-        tool,
-        arguments_,
-        signal,
-      );
-      if (!result.ok) output = cliError(result.error);
-      else {
-        evidence = createEvidence(
-          opened.value,
-          tool === "analyze_function"
-            ? session.providerIdentity(tool)
-            : REA_WORKFLOW_PROVIDER,
-          {
-            operation: tool,
-            parameters: arguments_,
-            result: result.value,
-            ...(evidenceProfile === undefined
-              ? {}
-              : { analysisProfile: evidenceProfile }),
-            confidence: "derived",
-            limitations: ["Derived by an REA composed workflow."],
-          },
-        );
-        output = evidence;
-      }
-    } else {
-      const result = await session.execute(tool, arguments_, { signal });
-      if (!result.ok) output = cliError(result.error);
-      else {
-        evidence = createEvidence(
-          result.value.subject ?? opened.value,
-          result.value.provider,
-          {
-            operation: tool,
-            parameters: arguments_,
-            result: result.value.result,
-            ...(result.value.analysisProfile === undefined
-              ? {}
-              : { analysisProfile: result.value.analysisProfile }),
-            rawResult: result.value.rawResult,
-            limitations: result.value.limitations,
-            locations: result.value.locations,
-          },
-        );
-        output = evidence;
-      }
-    }
+    const { output, evidence } = await executeAnalysisTool({
+      session,
+      openedTarget: opened.value,
+      tool,
+      arguments: arguments_,
+      signal,
+      evidenceProfile,
+    });
     if (evidence !== undefined) session.recordEvidence(evidence);
     if (snapshotPath !== undefined && evidence !== undefined) {
       const snapshot = session.exportAnalysisSnapshot();
@@ -380,6 +337,68 @@ const runAnalysis = async (
   } finally {
     await session.close();
   }
+};
+
+const executeAnalysisTool = async (input: {
+  readonly session: ReturnType<typeof createBinarySession>;
+  readonly openedTarget: BinaryTarget;
+  readonly tool:
+    | NativeToolName
+    | ArtifactToolName
+    | ManagedToolName
+    | DirectAnalysisTool;
+  readonly arguments: Readonly<Record<string, JsonValue>>;
+  readonly signal: AbortSignal;
+  readonly evidenceProfile: AnalysisProfileCommitment | undefined;
+}): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
+  const { session, tool, signal, evidenceProfile } = input;
+  if (
+    tool === "binary_overview" ||
+    tool === "analyze_function" ||
+    tool === "trace_feature"
+  ) {
+    const result = await new EnhancedTools(session).execute(
+      tool,
+      input.arguments,
+      signal,
+    );
+    if (!result.ok) return { output: cliError(result.error) };
+    const evidence = createEvidence(
+      input.openedTarget,
+      tool === "analyze_function"
+        ? session.providerIdentity(tool)
+        : REA_WORKFLOW_PROVIDER,
+      {
+        operation: tool,
+        parameters: input.arguments,
+        result: result.value,
+        ...(evidenceProfile === undefined
+          ? {}
+          : { analysisProfile: evidenceProfile }),
+        confidence: "derived",
+        limitations: ["Derived by an REA composed workflow."],
+      },
+    );
+    return { output: evidence, evidence };
+  }
+  const result = await session.execute(tool, input.arguments, { signal });
+  if (!result.ok) return { output: cliError(result.error) };
+  const evidence = createEvidence(
+    result.value.subject ?? input.openedTarget,
+    result.value.provider,
+    {
+      operation: tool,
+      parameters: input.arguments,
+      result: result.value.result,
+      ...(result.value.analysisProfile === undefined
+        ? {}
+        : { analysisProfile: result.value.analysisProfile }),
+      rawResult: result.value.rawResult,
+      limitations: result.value.limitations,
+      locations: result.value.locations,
+    },
+  );
+  return { output: evidence, evidence };
 };
 
 const withProcessCancellation = async <Value>(

@@ -289,69 +289,103 @@ const normalizeFactorySource = (source: string): string =>
     ? source.replace(/^\s*\d+\s*\(/u, "function(")
     : source;
 
+interface ProjectionContext {
+  readonly maximumDepth: number;
+  readonly maximumNodes: number;
+  nodes: number;
+}
+
 const projectValue = (
   value: unknown,
   maximumDepth: number,
   maximumNodes: number,
+): unknown =>
+  projectValueRecursive(value, 0, new Set(), {
+    maximumDepth,
+    maximumNodes,
+    nodes: 0,
+  });
+
+const projectValueRecursive = (
+  candidate: unknown,
+  depth: number,
+  ancestors: Set<object>,
+  context: ProjectionContext,
 ): unknown => {
-  let nodes = 0;
-  const visit = (
-    candidate: unknown,
-    depth: number,
-    ancestors: Set<object>,
-  ): unknown => {
-    nodes += 1;
-    if (nodes > maximumNodes || depth > maximumDepth)
-      throw new RangeError("Replay result projection limit exceeded");
-    if (
-      candidate === null ||
-      typeof candidate === "string" ||
-      typeof candidate === "boolean"
-    )
-      return candidate;
-    if (typeof candidate === "number") {
-      if (!Number.isFinite(candidate))
-        throw new TypeError("Non-finite replay result number");
-      return candidate;
-    }
-    if (typeof candidate !== "object")
-      throw new TypeError(
-        `Unsupported replay result type: ${typeof candidate}`,
+  context.nodes += 1;
+  if (context.nodes > context.maximumNodes || depth > context.maximumDepth)
+    throw new RangeError("Replay result projection limit exceeded");
+  const leaf = projectLeaf(candidate);
+  if (leaf !== undefined) return leaf;
+  if (typeof candidate !== "object" || candidate === null)
+    throw new TypeError(`Unsupported replay result type: ${typeof candidate}`);
+  if (types.isProxy(candidate))
+    throw new TypeError("Proxy replay results are unavailable");
+  if (ancestors.has(candidate)) throw new TypeError("Cyclic replay result");
+  ancestors.add(candidate);
+  try {
+    assertSupportedPrototype(candidate);
+    return projectComplexValue(candidate, depth, ancestors, context);
+  } finally {
+    ancestors.delete(candidate);
+  }
+};
+
+const projectLeaf = (candidate: unknown): unknown => {
+  if (
+    candidate === null ||
+    typeof candidate === "string" ||
+    typeof candidate === "boolean"
+  )
+    return candidate;
+  if (typeof candidate === "number") {
+    if (!Number.isFinite(candidate))
+      throw new TypeError("Non-finite replay result number");
+    return candidate;
+  }
+  return undefined;
+};
+
+const assertSupportedPrototype = (candidate: object): void => {
+  if (Array.isArray(candidate)) return;
+  const prototype = Object.getPrototypeOf(candidate) as object | null;
+  if (prototype !== null && Object.getPrototypeOf(prototype) !== null)
+    throw new TypeError("Unsupported replay result prototype");
+};
+
+const projectComplexValue = (
+  candidate: object,
+  depth: number,
+  ancestors: Set<object>,
+  context: ProjectionContext,
+): unknown[] | Record<string, unknown> => {
+  const descriptors = Object.getOwnPropertyDescriptors(candidate);
+  const output: unknown[] | Record<string, unknown> = Array.isArray(candidate)
+    ? []
+    : {};
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (key === "length" && Array.isArray(candidate)) continue;
+    if (!("value" in descriptor))
+      throw new TypeError("Replay result accessors are unavailable");
+    if (Array.isArray(output)) {
+      if (!/^\d+$/u.test(key))
+        throw new TypeError("Replay arrays may only contain indexed values");
+      output[Number(key)] = projectValueRecursive(
+        descriptor.value,
+        depth + 1,
+        ancestors,
+        context,
       );
-    if (types.isProxy(candidate))
-      throw new TypeError("Proxy replay results are unavailable");
-    if (ancestors.has(candidate)) throw new TypeError("Cyclic replay result");
-    ancestors.add(candidate);
-    try {
-      const descriptors = Object.getOwnPropertyDescriptors(candidate);
-      const output: unknown[] | Record<string, unknown> = Array.isArray(
-        candidate,
-      )
-        ? []
-        : {};
-      if (!Array.isArray(candidate)) {
-        const prototype = Object.getPrototypeOf(candidate) as object | null;
-        if (prototype !== null && Object.getPrototypeOf(prototype) !== null)
-          throw new TypeError("Unsupported replay result prototype");
-      }
-      for (const [key, descriptor] of Object.entries(descriptors)) {
-        if (key === "length" && Array.isArray(candidate)) continue;
-        if (!("value" in descriptor))
-          throw new TypeError("Replay result accessors are unavailable");
-        if (Array.isArray(output)) {
-          if (!/^\d+$/u.test(key))
-            throw new TypeError(
-              "Replay arrays may only contain indexed values",
-            );
-          output[Number(key)] = visit(descriptor.value, depth + 1, ancestors);
-        } else output[key] = visit(descriptor.value, depth + 1, ancestors);
-      }
-      return output;
-    } finally {
-      ancestors.delete(candidate);
+    } else {
+      output[key] = projectValueRecursive(
+        descriptor.value,
+        depth + 1,
+        ancestors,
+        context,
+      );
     }
-  };
-  return visit(value, 0, new Set());
+  }
+  return output;
 };
 
 const exceptionOutcome = (

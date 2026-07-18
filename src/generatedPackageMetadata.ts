@@ -6,11 +6,4 @@ export const PACKAGE_METADATA = {
   clientSdkVersion: "2.0.0-beta.4",
   coreSdkVersion: "2.0.0-beta.4",
   skillVersion: "22",
-  windowsNativeAuthority: {
-    packageName: "@rea/windows-x64",
-    packageVersion: "2.0.0",
-    contractVersion: 1,
-    nodeApiVersion: 9,
-    artifactSha256: null,
-  },
 } as const;

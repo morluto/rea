@@ -20,6 +20,10 @@ import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
+import {
+  electronPageInspectionOptions,
+  javascriptApplicationOptions,
+} from "./cliObservationOptions.js";
 
 const scopeOptions = {
   allowedFileRoots: z
@@ -74,6 +78,14 @@ const registerElectronObservationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
+  registerElectronTargetList(cli, logger);
+  registerElectronPageInspection(cli, logger);
+};
+
+const registerElectronTargetList = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
   cli.command(CLI_COMMANDS.listElectronTargets, {
     description: "List root-confined file pages from Electron CDP",
     args: z.object({
@@ -118,6 +130,12 @@ const registerElectronObservationCommands = (
         return result.ok ? result.value : cliError(result.error);
       }),
   });
+};
+
+const registerElectronPageInspection = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
   cli.command(CLI_COMMANDS.inspectElectronPage, {
     description: "Passively inspect one root-confined Electron file page",
     args: z.object({
@@ -126,73 +144,7 @@ const registerElectronObservationCommands = (
         .describe("Configured loopback Electron CDP endpoint"),
       targetId: z.string().describe("Target ID from list-electron-targets"),
     }),
-    options: z.object({
-      ...scopeOptions,
-      observationMs: z
-        .number()
-        .int()
-        .min(0)
-        .max(10_000)
-        .default(100)
-        .describe("Observation duration in milliseconds"),
-      includeScriptSources: z
-        .boolean()
-        .default(false)
-        .describe("Include bounded JavaScript source text"),
-      sourceCaptureApproved: z
-        .boolean()
-        .default(false)
-        .describe("Approve capturing bounded script source text"),
-      maxFrames: z
-        .number()
-        .int()
-        .min(1)
-        .max(1_000)
-        .default(200)
-        .describe("Maximum page frames"),
-      maxDomNodes: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
-        .default(2_000)
-        .describe("Maximum DOM nodes"),
-      maxScripts: z
-        .number()
-        .int()
-        .min(1)
-        .max(2_000)
-        .default(500)
-        .describe("Maximum scripts"),
-      maxResources: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
-        .default(2_000)
-        .describe("Maximum resources"),
-      maxWorkers: z
-        .number()
-        .int()
-        .min(1)
-        .max(5_000)
-        .default(500)
-        .describe("Maximum workers"),
-      maxScriptSourceBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(4 * 1_024 * 1_024)
-        .default(1_024 * 1_024)
-        .describe("Maximum size of one captured script source"),
-      maxTotalScriptSourceBytes: z
-        .number()
-        .int()
-        .min(1)
-        .max(16 * 1_024 * 1_024)
-        .default(4 * 1_024 * 1_024)
-        .describe("Maximum total captured script source size"),
-    }),
+    options: electronPageInspectionOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-electron-page", async () => {
         const context = await electronContext();
@@ -237,107 +189,7 @@ const registerJavaScriptApplicationCommand = (
     args: z.object({
       path: z.string().describe("Absolute ASAR or extracted application path"),
     }),
-    options: z.object({
-      approved: z
-        .boolean()
-        .default(false)
-        .describe("Approve reading the application artifact"),
-      format: z
-        .enum(["auto", "asar", "directory"])
-        .default("auto")
-        .describe("Application artifact format"),
-      sourceMapReadApproved: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Approve reading local source maps referenced by the application",
-        ),
-      maxEntries: z
-        .number()
-        .int()
-        .min(1)
-        .default(8_000)
-        .describe("Maximum artifact entries to inspect"),
-      maxTotalArtifactBytes: z
-        .number()
-        .int()
-        .min(1)
-        .default(512 * 1_024 * 1_024)
-        .describe("Maximum total uncompressed artifact content to inspect"),
-      maxArtifactEntryBytes: z
-        .number()
-        .int()
-        .min(1)
-        .default(128 * 1_024 * 1_024)
-        .describe("Maximum uncompressed content for one artifact entry"),
-      maxCompressionRatio: z
-        .number()
-        .min(1)
-        .default(1_000)
-        .describe(
-          "Maximum accepted compressed-to-uncompressed expansion ratio",
-        ),
-      maxDepth: z
-        .number()
-        .int()
-        .min(1)
-        .default(64)
-        .describe("Maximum artifact directory depth"),
-      maxPathBytes: z
-        .number()
-        .int()
-        .min(1)
-        .default(4_096)
-        .describe("Maximum encoded artifact path length"),
-      maxTextFiles: z
-        .number()
-        .int()
-        .min(1)
-        .default(5_000)
-        .describe("Maximum text files to parse"),
-      maxTotalTextBytes: z
-        .number()
-        .int()
-        .min(1)
-        .default(128 * 1_024 * 1_024)
-        .describe("Maximum total text content to parse"),
-      maxTextFileBytes: z
-        .number()
-        .int()
-        .min(1)
-        .default(8 * 1_024 * 1_024)
-        .describe("Maximum size of one parsed text file"),
-      maxAstNodes: z
-        .number()
-        .int()
-        .min(1)
-        .default(2_000_000)
-        .describe("Maximum JavaScript AST nodes to parse"),
-      maxFindings: z
-        .number()
-        .int()
-        .min(1)
-        .default(8_000)
-        .describe("Maximum static-analysis findings to return"),
-      maxModules: z
-        .number()
-        .int()
-        .min(1)
-        .default(20_000)
-        .describe("Maximum application modules to project"),
-      maxSourceMapSources: z
-        .number()
-        .int()
-        .min(1)
-        .default(5_000)
-        .describe("Maximum original sources from source maps"),
-      maxParseMilliseconds: z
-        .number()
-        .int()
-        .min(1)
-        .default(30_000)
-        .describe("Maximum JavaScript parsing time in milliseconds"),
-    }),
+    options: javascriptApplicationOptions,
     run: ({ args, options }) =>
       logCliCommand(
         logger,

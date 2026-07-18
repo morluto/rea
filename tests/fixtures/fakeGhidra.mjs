@@ -30,105 +30,17 @@ else {
   await rm(endpointPath, { force: true });
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
-    let buffer = "";
-    let pings = 0;
-    socket.on("data", (chunk) => {
-      buffer += chunk;
-      let newline = buffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
-        const request = JSON.parse(line);
-        if (request.token !== token) {
-          socket.end(
-            `${JSON.stringify({
-              id: request.id,
-              ok: false,
-              error: { code: "auth", message: "Authentication failed" },
-            })}\n`,
-          );
-          continue;
-        }
-        if (request.method === "ping") {
-          pings += 1;
-          if (mode === "malformed") {
-            socket.write("{invalid\n");
-            continue;
-          }
-          if (mode === "contradictory") {
-            socket.write(
-              `${JSON.stringify({
-                id: request.id,
-                ok: false,
-                result: { unexpected: true },
-                error: { code: "failure", message: "Failed" },
-              })}\n`,
-            );
-            continue;
-          }
-          if (mode === "oversized_whitespace") {
-            socket.write(`${" ".repeat(1024 * 1024 + 1)}\n`);
-            continue;
-          }
-          if (mode === "future_id") {
-            socket.write(
-              `${JSON.stringify({ id: request.id + 10, ok: true, result: null })}\n`,
-            );
-            continue;
-          }
-          if (mode === "hang_after_start" && pings > 1) continue;
-          const result = sessionInfo({
-            runId,
-            providerVersion:
-              mode === "wrong_identity" ? "0.0.0" : providerVersion,
-            profileDigest,
-            targetSha256,
-            timedOut: mode === "analysis_timeout",
-          });
-          const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
-          if (mode === "fragmented") {
-            const split = Math.floor(response.length / 2);
-            socket.write(response.slice(0, split));
-            setTimeout(() => socket.write(response.slice(split)), 5);
-          } else socket.write(response);
-          continue;
-        }
-        if (mode === "remote_error" && request.method === "list_procedures") {
-          socket.write(
-            `${JSON.stringify({
-              id: request.id,
-              ok: false,
-              error: {
-                code: "not_found",
-                message: "Unknown Ghidra procedure name",
-              },
-            })}\n`,
-          );
-          continue;
-        }
-        if (mode === "exit_tools" && request.method !== "shutdown")
-          process.exit(74);
-        if (mode === "hang_tools" && request.method !== "shutdown") continue;
-        const inventory = inventoryResult(request.method);
-        if (inventory !== undefined) {
-          socket.write(
-            `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`,
-          );
-          continue;
-        }
-        if (request.method === "shutdown") {
-          socket.end(
-            `${JSON.stringify({
-              id: request.id,
-              ok: true,
-              result: { shutdown: true, project_ephemeral: true },
-            })}\n`,
-          );
-          server.close(() => process.exit(0));
-        }
-      }
-    });
+    const state = {
+      buffer: { value: "" },
+      pings: { value: 0 },
+      mode,
+      token,
+      runId,
+      providerVersion,
+      profileDigest,
+      targetSha256,
+    };
+    socket.on("data", (chunk) => onSocketData(socket, server, chunk, state));
   });
   if (transport === "unix-socket") server.listen(endpointPath);
   else {
@@ -149,6 +61,112 @@ else {
     });
   }
 }
+
+const onSocketData = (socket, server, chunk, state) => {
+  state.buffer.value += chunk;
+  let newline = state.buffer.value.indexOf("\n");
+  while (newline >= 0) {
+    const line = state.buffer.value.slice(0, newline);
+    state.buffer.value = state.buffer.value.slice(newline + 1);
+    newline = state.buffer.value.indexOf("\n");
+    const request = JSON.parse(line);
+    if (request.token !== state.token) {
+      socket.end(
+        `${JSON.stringify({
+          id: request.id,
+          ok: false,
+          error: { code: "auth", message: "Authentication failed" },
+        })}\n`,
+      );
+      continue;
+    }
+    handleRequest(socket, server, request, state);
+  }
+};
+
+const handleRequest = (socket, server, request, state) => {
+  if (request.method === "ping") {
+    handlePing(socket, request, state);
+    return;
+  }
+  if (state.mode === "remote_error" && request.method === "list_procedures") {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "not_found",
+          message: "Unknown Ghidra procedure name",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (state.mode === "exit_tools" && request.method !== "shutdown")
+    process.exit(74);
+  if (state.mode === "hang_tools" && request.method !== "shutdown") return;
+  const inventory = inventoryResultFor(request.method);
+  if (inventory !== undefined) {
+    socket.write(
+      `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`,
+    );
+    return;
+  }
+  if (request.method === "shutdown") {
+    socket.end(
+      `${JSON.stringify({
+        id: request.id,
+        ok: true,
+        result: { shutdown: true, project_ephemeral: true },
+      })}\n`,
+    );
+    server.close(() => process.exit(0));
+  }
+};
+
+const handlePing = (socket, request, state) => {
+  state.pings.value += 1;
+  if (state.mode === "malformed") {
+    socket.write("{invalid\n");
+    return;
+  }
+  if (state.mode === "contradictory") {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        result: { unexpected: true },
+        error: { code: "failure", message: "Failed" },
+      })}\n`,
+    );
+    return;
+  }
+  if (state.mode === "oversized_whitespace") {
+    socket.write(`${" ".repeat(1024 * 1024 + 1)}\n`);
+    return;
+  }
+  if (state.mode === "future_id") {
+    socket.write(
+      `${JSON.stringify({ id: request.id + 10, ok: true, result: null })}\n`,
+    );
+    return;
+  }
+  if (state.mode === "hang_after_start" && state.pings.value > 1) return;
+  const result = sessionInfo({
+    runId: state.runId,
+    providerVersion:
+      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+    profileDigest: state.profileDigest,
+    targetSha256: state.targetSha256,
+    timedOut: state.mode === "analysis_timeout",
+  });
+  const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
+  if (state.mode === "fragmented") {
+    const split = Math.floor(response.length / 2);
+    socket.write(response.slice(0, split));
+    setTimeout(() => socket.write(response.slice(split)), 5);
+  } else socket.write(response);
+};
 
 const sessionInfo = ({
   runId: sessionRunId,
@@ -197,109 +215,112 @@ const sessionInfo = ({
   },
 });
 
-const inventoryResult = (method) => {
-  const page = (items) => ({
-    items,
-    offset: 0,
-    limit: method.startsWith("search_") ? 100 : 500,
-    total: items.length,
-    next_offset: null,
-    has_more: false,
-  });
+const inventoryResultFor = (method) => {
   switch (method) {
     case "address_name":
       return "fixture_main";
     case "list_documents":
       return ["fixture"];
     case "list_names":
-      return page([
-        {
-          address: "0x1000",
-          value: "fixture_main",
-          value_truncated: false,
-          symbol: {
-            primary: true,
-            dynamic: false,
-            external: false,
-            type: "function",
-            source: "analysis",
-          },
-        },
-      ]);
+      return page(method, [nameItem()]);
     case "list_procedures":
-      return page([
-        {
-          address: "0x1000",
-          value: "fixture_main",
-          value_truncated: false,
-          procedure: { external: false, thunk: false, thunk_target: null },
-        },
-      ]);
+      return page(method, [procedureItem()]);
     case "list_segments":
-      return [
-        {
-          name: ".text",
-          start: "0x1000",
-          end: "0x1100",
-          readable: true,
-          writable: false,
-          executable: true,
-          permissions: { available: true, source: "ghidra-memory-block" },
-          provenance: "ghidra-memory-block",
-          address_space: "ram",
-          image_base: "0x1000",
-          initialized: true,
-          overlay: false,
-          sections: [],
-        },
-      ];
+      return [segmentItem()];
     case "list_strings":
-      return page([
-        {
-          address: "0x2000",
-          value: "fixture value",
-          value_truncated: false,
-          string: {
-            encoding: "UTF-8",
-            termination: "present_or_not_required",
-            byte_length: 14,
-          },
-        },
-      ]);
+      return page(method, [stringItem("0x2000", "fixture value")]);
     case "procedure_address":
       return "0x1000";
     case "resolve_containing_procedure":
-      return {
-        query_address: "0x1001",
-        found: true,
-        procedure: {
-          address: "0x1000",
-          name: "fixture_main",
-          classification: {
-            external: false,
-            thunk: false,
-            thunk_target: null,
-            provenance: "ghidra-function-manager",
-          },
-        },
-      };
+      return containingProcedureResult();
     case "search_procedures":
-      return page([
-        {
-          address: "0x1000",
-          value: "fixture_main",
-          value_truncated: false,
-        },
-      ]);
+      return page(method, [procedureSearchItem()]);
     case "search_strings":
-      return page([
-        {
-          address: "0x2000",
-          value: "fixture value",
-          value_truncated: false,
-        },
-      ]);
+      return page(method, [stringSearchItem()]);
     default:
       return undefined;
   }
 };
+
+const page = (method, items) => ({
+  items,
+  offset: 0,
+  limit: method.startsWith("search_") ? 100 : 500,
+  total: items.length,
+  next_offset: null,
+  has_more: false,
+});
+
+const nameItem = () => ({
+  address: "0x1000",
+  value: "fixture_main",
+  value_truncated: false,
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "analysis",
+  },
+});
+
+const procedureItem = () => ({
+  address: "0x1000",
+  value: "fixture_main",
+  value_truncated: false,
+  procedure: { external: false, thunk: false, thunk_target: null },
+});
+
+const segmentItem = () => ({
+  name: ".text",
+  start: "0x1000",
+  end: "0x1100",
+  readable: true,
+  writable: false,
+  executable: true,
+  permissions: { available: true, source: "ghidra-memory-block" },
+  provenance: "ghidra-memory-block",
+  address_space: "ram",
+  image_base: "0x1000",
+  initialized: true,
+  overlay: false,
+  sections: [],
+});
+
+const stringItem = (address, value) => ({
+  address,
+  value,
+  value_truncated: false,
+  string: {
+    encoding: "UTF-8",
+    termination: "present_or_not_required",
+    byte_length: value.length + 1,
+  },
+});
+
+const containingProcedureResult = () => ({
+  query_address: "0x1001",
+  found: true,
+  procedure: {
+    address: "0x1000",
+    name: "fixture_main",
+    classification: {
+      external: false,
+      thunk: false,
+      thunk_target: null,
+      provenance: "ghidra-function-manager",
+    },
+  },
+});
+
+const procedureSearchItem = () => ({
+  address: "0x1000",
+  value: "fixture_main",
+  value_truncated: false,
+});
+
+const stringSearchItem = () => ({
+  address: "0x2000",
+  value: "fixture value",
+  value_truncated: false,
+});

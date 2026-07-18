@@ -54,7 +54,7 @@ export const matchJavaScriptApplicationVersions = (
   const rightCandidates = new Map<string, Set<string>>();
   const pairs: ApplicationVersionNodePair[] = [];
   for (const tier of matchTiers())
-    applyTier(left, right, pairs, leftCandidates, rightCandidates, tier);
+    applyTier({ left, right, pairs, leftCandidates, rightCandidates, tier });
   const remainingLeft = sortedNodes(left.values());
   const remainingRight = sortedNodes(right.values());
   const leftIds = new Set(remainingLeft.map(({ node_id: id }) => id));
@@ -73,28 +73,35 @@ export const matchJavaScriptApplicationVersions = (
   };
 };
 
-const applyTier = (
-  left: Map<string, ApplicationNode>,
-  right: Map<string, ApplicationNode>,
-  pairs: ApplicationVersionNodePair[],
-  leftCandidates: Map<string, Set<string>>,
-  rightCandidates: Map<string, Set<string>>,
-  tier: MatchTier,
-): void => {
-  const leftByKey = nodesByKey(left.values(), tier.key);
-  const rightByKey = nodesByKey(right.values(), tier.key);
+interface TierContext {
+  readonly left: Map<string, ApplicationNode>;
+  readonly right: Map<string, ApplicationNode>;
+  readonly pairs: ApplicationVersionNodePair[];
+  readonly leftCandidates: Map<string, Set<string>>;
+  readonly rightCandidates: Map<string, Set<string>>;
+  readonly tier: MatchTier;
+}
+
+const applyTier = (context: TierContext): void => {
+  const leftByKey = nodesByKey(context.left.values(), context.tier.key);
+  const rightByKey = nodesByKey(context.right.values(), context.tier.key);
   for (const key of [...leftByKey.keys()].sort(compareCodePoints)) {
     const leftGroup = leftByKey.get(key) ?? [];
     const rightGroup = rightByKey.get(key) ?? [];
     if (rightGroup.length === 0) continue;
-    recordCandidates(leftGroup, rightGroup, leftCandidates, rightCandidates);
+    recordCandidates(
+      leftGroup,
+      rightGroup,
+      context.leftCandidates,
+      context.rightCandidates,
+    );
     if (leftGroup.length !== 1 || rightGroup.length !== 1) continue;
     const leftNode = leftGroup[0];
     const rightNode = rightGroup[0];
     if (leftNode === undefined || rightNode === undefined) continue;
-    pairs.push({ left: leftNode, right: rightNode, ...tier });
-    left.delete(leftNode.node_id);
-    right.delete(rightNode.node_id);
+    context.pairs.push({ left: leftNode, right: rightNode, ...context.tier });
+    context.left.delete(leftNode.node_id);
+    context.right.delete(rightNode.node_id);
   }
 };
 

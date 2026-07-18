@@ -36,25 +36,29 @@ import { SystemJavaScriptReplayHost } from "./replay/SystemJavaScriptReplayHost.
 import type { AppConfig } from "./config.js";
 import type { PermissionAuthority } from "./application/PermissionAuthority.js";
 
+type CliInstance = ReturnType<typeof Cli.create>;
+
 /** Register CLI equivalents of provider-neutral application graph workflows. */
 export const registerApplicationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  registerJsonCommand(
+  registerJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.traceApplicationFeature,
-    "Trace a typed seed through authenticated application Evidence JSON",
-    traceApplicationFeatureEvidence,
-  );
-  registerJsonCommand(
+    name: CLI_COMMANDS.traceApplicationFeature,
+    description:
+      "Trace a typed seed through authenticated application Evidence JSON",
+    workflow: traceApplicationFeatureEvidence,
+  });
+  registerJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.compareApplicationVersions,
-    "Compare two authenticated JavaScript Application Graph versions",
-    compareApplicationVersionsEvidence,
-  );
+    name: CLI_COMMANDS.compareApplicationVersions,
+    description:
+      "Compare two authenticated JavaScript Application Graph versions",
+    workflow: compareApplicationVersionsEvidence,
+  });
   cli.command(CLI_COMMANDS.runControlledReplay, {
     description:
       "Plan or execute an approved extracted-module replay in the Linux sandbox",
@@ -84,39 +88,49 @@ export const registerApplicationCommands = (
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
-  registerAuthorizedJsonCommand(
+  registerAuthorizedJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.prepareNodeCharacterization,
-    "Prepare one exact Node/JavaScript characterization without execution",
-    (config, authority, input) =>
+    name: CLI_COMMANDS.prepareNodeCharacterization,
+    description:
+      "Prepare one exact Node/JavaScript characterization without execution",
+    workflow: (config, authority, input) =>
       prepareNodeCharacterization(replayDependencies(config, authority), input),
-  );
-  registerAuthorizedJsonCommand(
+  });
+  registerAuthorizedJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.executeNodeCharacterization,
-    "Execute one separately approved exact Node/JavaScript characterization",
-    (config, authority, input) =>
+    name: CLI_COMMANDS.executeNodeCharacterization,
+    description:
+      "Execute one separately approved exact Node/JavaScript characterization",
+    workflow: (config, authority, input) =>
       executeNodeCharacterization(replayDependencies(config, authority), input),
-  );
+  });
   registerCoverageCommands(cli, logger);
 };
 
-const registerAuthorizedJsonCommand = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-  name: string,
-  description: string,
-  workflow: (
+interface AuthorizedJsonCommandOptions {
+  readonly cli: CliInstance;
+  readonly logger: Logger;
+  readonly name: string;
+  readonly description: string;
+  readonly workflow: (
     config: AppConfig,
     authority: PermissionAuthority,
     input: unknown,
   ) => Promise<
     | { readonly ok: true; readonly value: JsonValue }
     | { readonly ok: false; readonly error: AnalysisError }
-  >,
-): void => {
+  >;
+}
+
+const registerAuthorizedJsonCommand = ({
+  cli,
+  logger,
+  name,
+  description,
+  workflow,
+}: AuthorizedJsonCommandOptions): void => {
   cli.command(name, {
     description,
     args: z.object({
@@ -142,12 +156,13 @@ const registerCoverageCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  registerAuthorizedJsonCommand(
+  registerAuthorizedJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.commitReconstructionCoverage,
-    "Commit one canonical reconstruction coverage workspace revision",
-    async (config, authority, input) => {
+    name: CLI_COMMANDS.commitReconstructionCoverage,
+    description:
+      "Commit one canonical reconstruction coverage workspace revision",
+    workflow: async (config, authority, input) => {
       const parsed = reconstructionCoverageCommitInputSchema.safeParse(input);
       if (!parsed.success)
         return {
@@ -174,13 +189,13 @@ const registerCoverageCommands = (
         config.evidenceFilePolicy,
       );
     },
-  );
-  registerAuthorizedJsonCommand(
+  });
+  registerAuthorizedJsonCommand({
     cli,
     logger,
-    CLI_COMMANDS.queryReconstructionCoverage,
-    "Evaluate one fail-closed reconstruction coverage boundary",
-    async (config, authority, input) => {
+    name: CLI_COMMANDS.queryReconstructionCoverage,
+    description: "Evaluate one fail-closed reconstruction coverage boundary",
+    workflow: async (config, authority, input) => {
       const parsed = reconstructionCoverageQueryInputSchema.safeParse(input);
       if (!parsed.success)
         return {
@@ -203,7 +218,7 @@ const registerCoverageCommands = (
         Date.now(),
       );
     },
-  );
+  });
 };
 
 const configuredAuthority = async (): Promise<
@@ -236,17 +251,25 @@ const replayDependencies = (
   authority,
 });
 
-const registerJsonCommand = (
-  cli: ReturnType<typeof Cli.create>,
-  logger: Logger,
-  name: string,
-  description: string,
-  workflow: (
+interface JsonCommandOptions {
+  readonly cli: CliInstance;
+  readonly logger: Logger;
+  readonly name: string;
+  readonly description: string;
+  readonly workflow: (
     input: unknown,
   ) =>
     | { readonly ok: true; readonly value: JsonValue }
-    | { readonly ok: false; readonly error: Error },
-): void => {
+    | { readonly ok: false; readonly error: Error };
+}
+
+const registerJsonCommand = ({
+  cli,
+  logger,
+  name,
+  description,
+  workflow,
+}: JsonCommandOptions): void => {
   cli.command(name, {
     description,
     args: z.object({

@@ -42,7 +42,7 @@ export interface ManagedGraphProjectionOmissions {
 }
 
 /** Complete application-graph fact coverage. */
-export const completeManagedGraphCoverage =
+const completeManagedGraphCoverage =
   (): ApplicationGraphEvidence["coverage"] => ({
     status: "complete",
     truncated: false,

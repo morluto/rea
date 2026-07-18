@@ -21,7 +21,6 @@ export interface WindowsCapabilityDependencies {
   probeSymlinkCreation(): Promise<WindowsCapabilityOutcome>;
   probeNoFollowOpen(): WindowsCapabilityOutcome;
   probePrivateAcl(): WindowsCapabilityOutcome;
-  probeNativeAuthority(): WindowsCapabilityOutcome;
   probeUnixDomainSocket(): WindowsCapabilityOutcome;
   probePty(): Promise<ProcessCaptureCapability>;
 }
@@ -34,7 +33,6 @@ export interface WindowsCapabilityReport {
     symlink_creation: WindowsCapabilityOutcome;
     no_follow_open: WindowsCapabilityOutcome;
     private_acl: WindowsCapabilityOutcome;
-    native_authority: WindowsCapabilityOutcome;
     unix_domain_socket: WindowsCapabilityOutcome;
     pty: WindowsCapabilityOutcome;
   }>;
@@ -55,7 +53,6 @@ export const probeWindowsCapabilities = async (
       symlink_creation: symlinkCreation,
       no_follow_open: dependencies.probeNoFollowOpen(),
       private_acl: dependencies.probePrivateAcl(),
-      native_authority: dependencies.probeNativeAuthority(),
       unix_domain_socket: dependencies.probeUnixDomainSocket(),
       pty: {
         available: pty.available,
@@ -74,11 +71,6 @@ const systemDependencies = (): WindowsCapabilityDependencies => ({
   probePrivateAcl: () => ({
     available: false,
     reason: "Windows ACL enforcement is not implemented by this REA build",
-  }),
-  probeNativeAuthority: () => ({
-    available: false,
-    reason:
-      "Windows native authority package is not implemented by this REA build",
   }),
   probeUnixDomainSocket: () =>
     process.platform === "win32"

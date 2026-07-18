@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import type { z } from "zod";
 
 import {
   EnhancedTools,
@@ -6,7 +7,10 @@ import {
 } from "../application/EnhancedTools.js";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { enhancedToolNameSchema } from "../contracts/enhancedInputs.js";
+import {
+  enhancedInputSchemas,
+  enhancedToolNameSchema,
+} from "../contracts/enhancedInputs.js";
 import {
   ENHANCED_TOOL_CONTRACTS,
   type ToolContract,
@@ -17,7 +21,6 @@ import { logToolExecution } from "./toolLogging.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { AnalysisInputError, UnknownRegistryError } from "../domain/errors.js";
 import { ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -147,93 +150,144 @@ const jsonParameters = (
     ),
   );
 
+type EnhancedToolName = ValidatedEnhancedCall["name"];
+
+type EnhancedInputOf<Name extends EnhancedToolName> = z.output<
+  (typeof enhancedInputSchemas)[Name]
+>;
+
+type EnhancedInputParser<Name extends EnhancedToolName> = (
+  input: unknown,
+) => Result<EnhancedInputOf<Name>, AnalysisInputError>;
+
+const ENHANCED_INPUT_PARSERS: {
+  [Name in EnhancedToolName]: EnhancedInputParser<Name>;
+} = {
+  swift_classes: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.swift_classes,
+      input,
+      "swift_classes",
+    ),
+  get_objc_classes: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.get_objc_classes,
+      input,
+      "get_objc_classes",
+    ),
+  get_objc_protocols: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.get_objc_protocols,
+      input,
+      "get_objc_protocols",
+    ),
+  batch_decompile: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.batch_decompile,
+      input,
+      "batch_decompile",
+    ),
+  get_call_graph: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.get_call_graph,
+      input,
+      "get_call_graph",
+    ),
+  analyze_swift_types: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.analyze_swift_types,
+      input,
+      "analyze_swift_types",
+    ),
+  find_xrefs_to_name: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.find_xrefs_to_name,
+      input,
+      "find_xrefs_to_name",
+    ),
+  binary_overview: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.binary_overview,
+      input,
+      "binary_overview",
+    ),
+  analyze_function: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.analyze_function,
+      input,
+      "analyze_function",
+    ),
+  trace_feature: (input) =>
+    safeParseToolInput(
+      enhancedInputSchemas.trace_feature,
+      input,
+      "trace_feature",
+    ),
+};
+
 const parseEnhancedCall = (
   name: ValidatedEnhancedCall["name"],
   input: unknown,
 ): Result<ValidatedEnhancedCall, AnalysisInputError> => {
   switch (name) {
-    case "swift_classes": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.swift_classes,
-        input,
-        name,
+    case "swift_classes":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.swift_classes(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "get_objc_classes": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.get_objc_classes,
-        input,
-        name,
+    case "get_objc_classes":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.get_objc_classes(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "get_objc_protocols": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.get_objc_protocols,
-        input,
-        name,
+    case "get_objc_protocols":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.get_objc_protocols(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "batch_decompile": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.batch_decompile,
-        input,
-        name,
+    case "batch_decompile":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.batch_decompile(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "get_call_graph": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.get_call_graph,
-        input,
-        name,
+    case "get_call_graph":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.get_call_graph(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "analyze_swift_types": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.analyze_swift_types,
-        input,
-        name,
+    case "analyze_swift_types":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.analyze_swift_types(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "find_xrefs_to_name": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.find_xrefs_to_name,
-        input,
-        name,
+    case "find_xrefs_to_name":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.find_xrefs_to_name(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "binary_overview": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.binary_overview,
-        input,
-        name,
+    case "binary_overview":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.binary_overview(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "analyze_function": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.analyze_function,
-        input,
-        name,
+    case "analyze_function":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.analyze_function(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
-    case "trace_feature": {
-      const parsed = safeParseToolInput(
-        enhancedInputSchemas.trace_feature,
-        input,
-        name,
+    case "trace_feature":
+      return mapEnhancedCall(
+        ENHANCED_INPUT_PARSERS.trace_feature(input),
+        (value) => ({ name, input: value }),
       );
-      return parsed.ok ? ok({ name, input: parsed.value }) : parsed;
-    }
   }
 };
+
+const mapEnhancedCall = <Input, Call extends ValidatedEnhancedCall>(
+  parsed: Result<Input, AnalysisInputError>,
+  project: (input: Input) => Call,
+): Result<Call, AnalysisInputError> =>
+  parsed.ok ? ok(project(parsed.value)) : parsed;
 
 interface WorkflowUnknownInput {
   readonly name: string;

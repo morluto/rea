@@ -324,16 +324,17 @@ const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   },
 });
 
-const resultFor = (
-  operation: GhidraOperation,
+type GhidraResultBuilder = (
   input: Readonly<Record<string, JsonValue>>,
-): JsonValue => {
-  const limit = typeof input.limit === "number" ? input.limit : 100;
-  switch (operation) {
-    case "list_documents":
-      return ["fixture"];
-    case "list_procedures":
-      return page(
+  limit: number,
+) => JsonValue;
+
+const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
+  ["list_documents", () => ["fixture"]],
+  [
+    "list_procedures",
+    (_input, limit) =>
+      page(
         [
           {
             address: "0x401000",
@@ -347,35 +348,43 @@ const resultFor = (
           },
         ],
         limit,
-      );
-    case "list_strings":
-      return page(
+      ),
+  ],
+  [
+    "list_strings",
+    (_input, limit) =>
+      page(
         [
           stringItem("0x402000", "inventory fixture"),
           stringItem("0x402020", "external fixture"),
         ],
         limit,
-      );
-    case "list_segments":
-      return [
-        {
-          name: ".text",
-          start: "0x401000",
-          end: "0x401100",
-          readable: true,
-          writable: false,
-          executable: true,
-          permissions: { available: true, source: "ghidra-memory-block" },
-          provenance: "ghidra-memory-block",
-          address_space: "ram",
-          image_base: "0x400000",
-          initialized: true,
-          overlay: false,
-          sections: [],
-        },
-      ];
-    case "list_names":
-      return page(
+      ),
+  ],
+  [
+    "list_segments",
+    () => [
+      {
+        name: ".text",
+        start: "0x401000",
+        end: "0x401100",
+        readable: true,
+        writable: false,
+        executable: true,
+        permissions: { available: true, source: "ghidra-memory-block" },
+        provenance: "ghidra-memory-block",
+        address_space: "ram",
+        image_base: "0x400000",
+        initialized: true,
+        overlay: false,
+        sections: [],
+      },
+    ],
+  ],
+  [
+    "list_names",
+    (_input, limit) =>
+      page(
         [
           {
             address: "0x401000",
@@ -391,50 +400,62 @@ const resultFor = (
           },
         ],
         limit,
-      );
-    case "search_procedures":
-    case "search_strings":
-      return page([], limit);
-    case "address_name":
-      return "fixture_main";
-    case "procedure_address":
-      return "0x401000";
-    case "resolve_containing_procedure":
-      return {
-        query_address: "0x401001",
-        found: true,
-        procedure: ghidraFunctionIdentity(),
-      };
-    case "procedure_assembly":
-      return "0x401000: CALL 0x401020\n0x401005: RET";
-    case "procedure_callees":
-    case "procedure_callers":
-      return [];
-    case "procedure_info":
-      return {
-        name: "fixture_main",
-        entrypoint: "0x401000",
-        basicblock_count: 1,
-        length: 6,
-        signature: "int fixture_main(void)",
-        locals: [],
-        classification: ghidraFunctionClassification(),
-      };
-    case "procedure_pseudo_code":
-      return "int fixture_main(void) { return 42; }";
-    case "procedure_references":
-      return {
-        procedure: ghidraFunctionIdentity(),
-        direction: input.direction ?? "outgoing",
-        references: ghidraBounded([ghidraReferenceEdge()]),
-        instructions_scanned: 2,
-        instruction_scan_truncated: false,
-      };
-    case "xrefs":
-      return ["0x401001"];
-    case "analyze_function":
-      return ghidraFunctionDossier(input.include_assembly === true);
-  }
+      ),
+  ],
+  ["search_procedures", (_input, limit) => page([], limit)],
+  ["search_strings", (_input, limit) => page([], limit)],
+  ["address_name", () => "fixture_main"],
+  ["procedure_address", () => "0x401000"],
+  [
+    "resolve_containing_procedure",
+    () => ({
+      query_address: "0x401001",
+      found: true,
+      procedure: ghidraFunctionIdentity(),
+    }),
+  ],
+  ["procedure_assembly", () => "0x401000: CALL 0x401020\n0x401005: RET"],
+  ["procedure_callees", () => []],
+  ["procedure_callers", () => []],
+  [
+    "procedure_info",
+    () => ({
+      name: "fixture_main",
+      entrypoint: "0x401000",
+      basicblock_count: 1,
+      length: 6,
+      signature: "int fixture_main(void)",
+      locals: [],
+      classification: ghidraFunctionClassification(),
+    }),
+  ],
+  ["procedure_pseudo_code", () => "int fixture_main(void) { return 42; }"],
+  [
+    "procedure_references",
+    (input, _limit) => ({
+      procedure: ghidraFunctionIdentity(),
+      direction: input.direction ?? "outgoing",
+      references: ghidraBounded([ghidraReferenceEdge()]),
+      instructions_scanned: 2,
+      instruction_scan_truncated: false,
+    }),
+  ],
+  ["xrefs", () => ["0x401001"]],
+  [
+    "analyze_function",
+    (input, _limit) => ghidraFunctionDossier(input.include_assembly === true),
+  ],
+]);
+
+const resultFor = (
+  operation: GhidraOperation,
+  input: Readonly<Record<string, JsonValue>>,
+): JsonValue => {
+  const limit = typeof input.limit === "number" ? input.limit : 100;
+  const builder = resultBuilders.get(operation);
+  if (builder === undefined)
+    throw new TypeError(`Unexpected Ghidra operation: ${operation}`);
+  return builder(input, limit);
 };
 
 const page = (items: readonly JsonValue[], limit: number): JsonValue => ({

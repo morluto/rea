@@ -3,44 +3,22 @@
 import { pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
 
-import {
-  serveStdio,
-  type StdioServerHandle,
-} from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
-import { createServer } from "./server/createServer.js";
 import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/errors.js";
-import { readProjectPermissionStore } from "./application/ProjectPermissionStore.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
-import type { PermissionGrant } from "./domain/permissionPolicy.js";
-
-const MCP_CONNECTION_LOST =
-  "REA lost its MCP client connection. Restart REA from your MCP client.";
-const MCP_CONNECTION_START_FAILED =
-  "REA could not start its MCP connection. Restart REA from your MCP client; run `rea doctor` if it fails again.";
-const MCP_SHUTDOWN_FAILED =
-  "REA could not close cleanly. End the REA process before starting it again.";
-const MCP_PERMISSION_RELOAD_FAILED =
-  "Reloaded permission policy failed unexpectedly";
-const SERVER_START_FAILED =
-  "REA could not start. Run `rea doctor`, then restart REA from your MCP client.";
-
-/** Process boundaries owned by the MCP executable adapter. */
-interface RuntimeDependencies {
-  readonly env: NodeJS.ProcessEnv;
-  readonly serve: typeof serveStdio;
-  readonly writeStderr: (text: string) => void;
-  readonly setExitCode: (code: number) => void;
-  readonly registerShutdown: (handler: () => void) => () => void;
-  readonly registerReload?: (handler: () => void) => () => void;
-  readonly createServer?: typeof createServer;
-  readonly readProjectPermissionStore?: typeof readProjectPermissionStore;
-}
+import type { RuntimeDependencies } from "./main/types.js";
+import { SERVER_START_FAILED } from "./main/messages.js";
+import { createRuntimeState } from "./main/state.js";
+import { openInitialTarget } from "./main/startup.js";
+import { startMcpTransport } from "./main/transport.js";
+import { registerConfigReload } from "./main/reload.js";
+import { createShutdown } from "./main/shutdown.js";
 
 const runtimeDependencies = (): RuntimeDependencies => ({
   env: process.env,
@@ -95,199 +73,38 @@ export const run = async (
   const session = createBinarySession(config.value, logger);
   const browserObservation = new CdpBrowserProvider();
   const electronObservation = new CdpElectronProvider();
-  if (config.value.hopperTargetPath !== undefined) {
-    const opened = await session.open(config.value.hopperTargetPath, {
-      targetKind: config.value.hopperTargetKind,
-    });
-    if (!opened.ok) {
-      await session.close();
-      serverLogger.error(
-        { errorTag: opened.error._tag },
-        "Initial target failed to open",
-      );
-      dependencies.writeStderr(
-        `${projectAnalysisError(opened.error).message}\n`,
-      );
-      return 1;
-    }
-  }
-  let currentConfig = config.value;
-  const runtimeProcessPolicy = {
-    ...config.value.processExecutionPolicy,
-    executableRoots: [...config.value.processExecutionPolicy.executableRoots],
-    workingRoots: [...config.value.processExecutionPolicy.workingRoots],
-    allowedEnvironment: [
-      ...config.value.processExecutionPolicy.allowedEnvironment,
-    ],
-  };
-  const runtimeEvidencePolicy = {
-    ...config.value.evidenceFilePolicy,
-    roots: [...config.value.evidenceFilePolicy.roots],
-  };
-  const runtimeSnapshotPolicy = {
-    ...config.value.analysisSnapshotFilePolicy,
-    roots: [...config.value.analysisSnapshotFilePolicy.roots],
-  };
-  const runtimeInvestigationRoots = [...config.value.investigationInputRoots];
-  const runtimeJavascriptReplayPolicy = {
-    ...config.value.javascriptReplayPolicy,
-    roots: [...config.value.javascriptReplayPolicy.roots],
-  };
-  const runtimeManagedRuntimePolicy = {
-    ...config.value.managedRuntimePolicy,
-    roots: [...config.value.managedRuntimePolicy.roots],
-  };
-  const liveServers = new Set<ReturnType<typeof createServer>>();
-  let handle: StdioServerHandle;
-  try {
-    handle = dependencies.serve(
-      () => {
-        const server = (dependencies.createServer ?? createServer)(
-          session,
-          session,
-          {
-            logger,
-            processPolicy: runtimeProcessPolicy,
-            evidenceFilePolicy: runtimeEvidencePolicy,
-            investigationInputRoots: runtimeInvestigationRoots,
-            analysisSnapshotFilePolicy: runtimeSnapshotPolicy,
-            permissionAuthority: permissionAuthority.value,
-            browserObservation,
-            electronObservation,
-            artifactIntegrityContinueEnabled: () =>
-              currentConfig.artifactIntegrityContinueEnabled,
-            javascriptReplayPolicy: runtimeJavascriptReplayPolicy,
-            managedRuntimePolicy: runtimeManagedRuntimePolicy,
-            availabilityPolicy: () => ({
-              processCaptureEnabled:
-                currentConfig.processExecutionPolicy.enabled,
-              evidenceFileRoots: currentConfig.evidenceFilePolicy.roots.length,
-              browserObservationEnabled:
-                currentConfig.browserObservationEnabled &&
-                currentConfig.browserCdpEndpoints.length > 0 &&
-                currentConfig.browserAllowedOrigins.length > 0,
-              electronObservationEnabled:
-                currentConfig.electronObservationEnabled &&
-                currentConfig.electronCdpEndpoints.length > 0 &&
-                currentConfig.electronFileRoots.length > 0,
-              javascriptReplayEnabled:
-                currentConfig.javascriptReplayPolicy.enabled,
-              managedRuntimeEnabled: currentConfig.managedRuntimePolicy.enabled,
-            }),
-          },
-        );
-        liveServers.add(server);
-        return server;
-      },
-      {
-        onerror: () => {
-          serverLogger.error(MCP_CONNECTION_LOST);
-          dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
-        },
-      },
-    );
-  } catch {
-    await session.close();
-    serverLogger.error(MCP_CONNECTION_START_FAILED);
-    dependencies.writeStderr(`${MCP_CONNECTION_START_FAILED}\n`);
-    return 1;
-  }
-
-  let reloadQueue = Promise.resolve();
-  const unregisterReload =
-    dependencies.registerReload?.(() => {
-      const refreshed = parseConfig(dependencies.env);
-      if (!refreshed.ok) {
-        serverLogger.error("Reloaded permission policy is invalid");
-        return;
-      }
-      reloadQueue = reloadQueue
-        .then(async () => {
-          let projectGrants: readonly PermissionGrant[] = [];
-          if (
-            refreshed.value.permissionProjectRoot !== undefined &&
-            refreshed.value.permissionProjectStore !== undefined
-          ) {
-            const project = await (
-              dependencies.readProjectPermissionStore ??
-              readProjectPermissionStore
-            )(
-              refreshed.value.permissionProjectStore,
-              refreshed.value.permissionProjectRoot,
-            );
-            if (!project.ok) {
-              serverLogger.error("Reloaded project grants could not be read");
-              return;
-            }
-            projectGrants = project.value?.grants ?? [];
-          }
-          const reloaded =
-            await permissionAuthority.value.replaceConfiguredPolicy({
-              ceilings: refreshed.value.permissionCeilings,
-              administratorGrants:
-                refreshed.value.administratorPermissionGrants,
-              projectGrants,
-            });
-          if (!reloaded.ok) {
-            serverLogger.error(
-              "Reloaded permission policy could not be applied",
-            );
-            return;
-          }
-          currentConfig = refreshed.value;
-          Object.assign(
-            runtimeProcessPolicy,
-            refreshed.value.processExecutionPolicy,
-          );
-          Object.assign(
-            runtimeEvidencePolicy,
-            refreshed.value.evidenceFilePolicy,
-          );
-          Object.assign(
-            runtimeSnapshotPolicy,
-            refreshed.value.analysisSnapshotFilePolicy,
-          );
-          runtimeInvestigationRoots.splice(
-            0,
-            runtimeInvestigationRoots.length,
-            ...refreshed.value.investigationInputRoots,
-          );
-          Object.assign(
-            runtimeJavascriptReplayPolicy,
-            refreshed.value.javascriptReplayPolicy,
-          );
-          Object.assign(
-            runtimeManagedRuntimePolicy,
-            refreshed.value.managedRuntimePolicy,
-          );
-          for (const server of liveServers) server.sendToolListChanged();
-        })
-        .catch(() => {
-          serverLogger.error(MCP_PERMISSION_RELOAD_FAILED);
-        });
-    }) ?? (() => undefined);
-
-  let shutdownPromise: Promise<void> | undefined;
-  let unregisterShutdown = (): void => undefined;
-  const shutdown = (): Promise<void> => {
-    shutdownPromise ??= (async () => {
-      unregisterReload();
-      unregisterShutdown();
-      await handle.close();
-      await session.close();
-      permissionAuthority.value.clearSessionGrants();
-    })();
-    return shutdownPromise;
-  };
-  const requestShutdown = (): void => {
-    shutdown().catch(() => {
-      dependencies.setExitCode(1);
-      serverLogger.error(MCP_SHUTDOWN_FAILED);
-      dependencies.writeStderr(`${MCP_SHUTDOWN_FAILED}\n`);
-    });
-  };
-
-  unregisterShutdown = dependencies.registerShutdown(requestShutdown);
+  const opened = await openInitialTarget(
+    session,
+    config.value,
+    serverLogger,
+    dependencies.writeStderr,
+  );
+  if (!opened.ok) return opened.exitCode;
+  const runtimeState = createRuntimeState(config.value);
+  const transport = await startMcpTransport(dependencies, session, {
+    logger,
+    serverLogger,
+    browserObservation,
+    electronObservation,
+    permissionAuthority: permissionAuthority.value,
+    runtimeState,
+  });
+  if (!transport.ok) return 1;
+  const unregisterReload = registerConfigReload({
+    dependencies,
+    permissionAuthority: permissionAuthority.value,
+    runtimeState,
+    liveServers: transport.liveServers,
+    serverLogger,
+  });
+  createShutdown({
+    handle: transport.handle,
+    session,
+    permissionAuthority: permissionAuthority.value,
+    unregisterReload,
+    dependencies,
+    serverLogger,
+  });
   return 0;
 };
 

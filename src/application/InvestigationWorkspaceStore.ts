@@ -65,6 +65,12 @@ export const readRevisionedWorkspace = async <Document>(
   }
 };
 
+export interface RevisionedWorkspaceWriteInput<Document> {
+  readonly document: Document;
+  readonly expectedRevision: number | null;
+  readonly codec: RevisionedWorkspaceCodec<Document>;
+}
+
 /** Atomically append one CAS-linked workspace revision under an exclusive lock. */
 export const writeInvestigationWorkspace = async (
   workspace: InvestigationWorkspace,
@@ -74,24 +80,21 @@ export const writeInvestigationWorkspace = async (
 ): Promise<
   WorkspaceResult<{ readonly path: string; readonly bytes: number }>
 > =>
-  writeRevisionedWorkspace(
-    workspace,
-    path,
+  writeRevisionedWorkspace(path, policy, {
+    document: workspace,
     expectedRevision,
-    policy,
-    investigationWorkspaceCodec,
-  );
+    codec: investigationWorkspaceCodec,
+  });
 
 /** Atomically append one validated CAS-linked revision under an exclusive lock. */
 export const writeRevisionedWorkspace = async <Document>(
-  document: Document,
   path: string,
-  expectedRevision: number | null,
   policy: EvidenceFilePolicy,
-  codec: RevisionedWorkspaceCodec<Document>,
+  input: RevisionedWorkspaceWriteInput<Document>,
 ): Promise<
   WorkspaceResult<{ readonly path: string; readonly bytes: number }>
 > => {
+  const { document, expectedRevision, codec } = input;
   if (policy.roots.length === 0)
     return err(new InvestigationWorkspaceError("update", "disabled"));
   let encoded: string;

@@ -284,48 +284,13 @@ export const systemDoctorHost = (
   ...(process.env.REA_ILSPY_CMD_PATH === undefined
     ? {}
     : { configuredIlspyCmdPath: process.env.REA_ILSPY_CMD_PATH }),
-  async macosVersion() {
-    try {
-      return (
-        await execFileAsync("sw_vers", ["-productVersion"])
-      ).stdout.trim();
-    } catch {
-      return undefined;
-    }
-  },
+  macosVersion: readMacosVersion,
   linuxDistribution: readLinuxDistribution,
   async validTarget(path) {
     return (await parseBinaryTarget(path)).ok;
   },
-  async executable(path) {
-    try {
-      await access(path, constants.X_OK);
-      if (process.platform === "linux") {
-        const linked = await execFileAsync("ldd", [path]);
-        if (
-          !linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`)
-        )
-          return false;
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  async linuxDemoRuntimeReady() {
-    try {
-      await access("/usr/bin/Xvfb", constants.X_OK);
-      await access("/usr/bin/xauth", constants.X_OK);
-      await access("/usr/bin/python3", constants.X_OK);
-      await execFileAsync("/usr/bin/python3", [
-        "-c",
-        "import ctypes; ctypes.CDLL('libX11.so.6'); ctypes.CDLL('libXtst.so.6')",
-      ]);
-      return true;
-    } catch {
-      return false;
-    }
-  },
+  executable: executableAvailable,
+  linuxDemoRuntimeReady,
   supportedLinuxHopper: linuxHopperBinarySupported,
   async brewHopperPath() {
     return probeHomebrew(async (command) => {
@@ -343,21 +308,7 @@ export const systemDoctorHost = (
       }
     });
   },
-  async manualHopperPaths() {
-    const roots = ["/Applications", join(homedir(), "Applications")];
-    const paths: string[] = [];
-    for (const root of roots) {
-      try {
-        for (const entry of await readdir(root, { withFileTypes: true })) {
-          if (entry.isDirectory() && /^Hopper.*\.app$/i.test(entry.name))
-            paths.push(join(root, entry.name, "Contents/MacOS/hopper"));
-        }
-      } catch {
-        // A missing or unreadable optional application directory is not fatal.
-      }
-    }
-    return paths;
-  },
+  manualHopperPaths,
   ...(options.providerInspections === undefined
     ? {}
     : { providerInspections: options.providerInspections }),
@@ -392,51 +343,94 @@ export const systemDoctorHost = (
       return [];
     }
   },
-  async installedSkillVersion() {
-    try {
-      const content = await readFile(
-        join(
-          homedir(),
-          ".agents/skills",
-          PRODUCT_IDENTITY.skillName,
-          "SKILL.md",
-        ),
-        "utf8",
-      );
-      return /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1];
-    } catch {
-      return undefined;
-    }
-  },
-  async installedSkillIdentity() {
-    try {
-      const content = await readFile(
-        join(
-          homedir(),
-          ".agents/skills",
-          PRODUCT_IDENTITY.skillName,
-          "SKILL.md",
-        ),
-        "utf8",
-      );
-      const version =
-        /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null;
-      const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
-      const catalogDigest =
-        /^\s{2}catalog_digest:\s*"([a-f0-9]{64})"\s*$/mu.exec(content)?.[1] ??
-        null;
-      return {
-        version,
-        toolCount:
-          countText === undefined ? null : Number.parseInt(countText, 10),
-        catalogDigest,
-      };
-    } catch {
-      return undefined;
-    }
-  },
+  installedSkillVersion,
+  installedSkillIdentity,
   clientRegistrations: () => readClientRegistrationStatuses(homedir()),
 });
+
+const readMacosVersion = async (): Promise<string | undefined> => {
+  try {
+    return (await execFileAsync("sw_vers", ["-productVersion"])).stdout.trim();
+  } catch {
+    return undefined;
+  }
+};
+
+const executableAvailable = async (path: string): Promise<boolean> => {
+  try {
+    await access(path, constants.X_OK);
+    if (process.platform !== "linux") return true;
+    const linked = await execFileAsync("ldd", [path]);
+    return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);
+  } catch {
+    return false;
+  }
+};
+
+const linuxDemoRuntimeReady = async (): Promise<boolean> => {
+  try {
+    await access("/usr/bin/Xvfb", constants.X_OK);
+    await access("/usr/bin/xauth", constants.X_OK);
+    await access("/usr/bin/python3", constants.X_OK);
+    await execFileAsync("/usr/bin/python3", [
+      "-c",
+      "import ctypes; ctypes.CDLL('libX11.so.6'); ctypes.CDLL('libXtst.so.6')",
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const manualHopperPaths = async (): Promise<readonly string[]> => {
+  const paths: string[] = [];
+  for (const root of ["/Applications", join(homedir(), "Applications")]) {
+    try {
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        if (entry.isDirectory() && /^Hopper.*\.app$/i.test(entry.name))
+          paths.push(join(root, entry.name, "Contents/MacOS/hopper"));
+      }
+    } catch {
+      // A missing or unreadable optional application directory is not fatal.
+    }
+  }
+  return paths;
+};
+
+const readInstalledSkill = (): Promise<string> =>
+  readFile(
+    join(homedir(), ".agents/skills", PRODUCT_IDENTITY.skillName, "SKILL.md"),
+    "utf8",
+  );
+
+const installedSkillVersion = async (): Promise<string | undefined> => {
+  try {
+    return /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(
+      await readInstalledSkill(),
+    )?.[1];
+  } catch {
+    return undefined;
+  }
+};
+
+const installedSkillIdentity = async (): Promise<
+  InstalledSkillIdentity | undefined
+> => {
+  try {
+    const content = await readInstalledSkill();
+    const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
+    return {
+      version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
+      toolCount:
+        countText === undefined ? null : Number.parseInt(countText, 10),
+      catalogDigest:
+        /^\s{2}catalog_digest:\s*"([a-f0-9]{64})"\s*$/mu.exec(content)?.[1] ??
+        null,
+    };
+  } catch {
+    return undefined;
+  }
+};
 
 const uniqueLines = (value: string): string[] => [
   ...new Set(

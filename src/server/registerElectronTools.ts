@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import type { z } from "zod";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
@@ -22,12 +23,31 @@ import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { Result } from "../domain/result.js";
+import type { AnalysisError } from "../domain/errors.js";
+import type { ToolContract } from "../contracts/toolContracts.js";
 
 interface ElectronToolRegistration {
   readonly logger: Logger;
   readonly electron: ElectronObservationPort | undefined;
   readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+}
+
+interface ElectronToolContext {
+  readonly signal: AbortSignal;
+  readonly progress: ProgressReporter;
+}
+
+interface ElectronToolSpec<Schema extends z.ZodType> {
+  readonly contract: ToolContract;
+  readonly schema: Schema;
+  readonly execute: (
+    parsed: z.output<Schema>,
+    context: ElectronToolContext,
+  ) => Promise<Result<Evidence, AnalysisError>>;
 }
 
 /** Register Electron tools even when provider or permission policy is absent. */
@@ -37,127 +57,86 @@ export const registerElectronTools = (
 ): void => {
   const [listContract, inspectContract, analyzeContract, reconcileContract] =
     ELECTRON_TOOL_CONTRACTS;
+
+  registerElectronTool(server, options, {
+    contract: listContract,
+    schema: listElectronTargetsInputSchema,
+    execute: (parsed, { signal }) =>
+      listElectronTargets(
+        options.electron,
+        options.permissionAuthority,
+        parsed,
+        {
+          signal,
+        },
+      ),
+  });
+  registerElectronTool(server, options, {
+    contract: inspectContract,
+    schema: inspectElectronPageInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      inspectElectronPage(
+        options.electron,
+        options.permissionAuthority,
+        parsed,
+        {
+          signal,
+          progress,
+        },
+      ),
+  });
+  registerElectronTool(server, options, {
+    contract: analyzeContract,
+    schema: analyzeJavaScriptApplicationInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      analyzeJavaScriptApplicationValidated(
+        options.permissionAuthority,
+        parsed,
+        { signal, progress },
+      ),
+  });
+  registerElectronTool(server, options, {
+    contract: reconcileContract,
+    schema: reconcileJavaScriptRuntimeInputSchema,
+    execute: (parsed, _context) =>
+      Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
+  });
+};
+
+const registerElectronTool = <Schema extends z.ZodType>(
+  server: McpServer,
+  options: ElectronToolRegistration,
+  spec: ElectronToolSpec<Schema>,
+): void => {
   server.registerTool(
-    listContract.name,
-    toolRegistrationOptions(listContract),
+    spec.contract.name,
+    toolRegistrationOptions(spec.contract),
     async (input, context) => {
       const parsedInput = safeParseToolInput(
-        listElectronTargetsInputSchema,
+        spec.schema,
         input,
-        listContract.name,
+        spec.contract.name,
       );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, listContract);
-      const parsed = parsedInput.value;
+      if (!parsedInput.ok) return toCallToolResult(parsedInput, spec.contract);
       const result = await logToolExecution(
         options.logger,
-        listContract.name,
+        spec.contract.name,
         () =>
-          listElectronTargets(
-            options.electron,
-            options.permissionAuthority,
-            parsed,
-            { signal: context.mcpReq.signal },
-          ),
+          spec.execute(parsedInput.value, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+          }),
       );
-      if (!result.ok) return toCallToolResult(result, listContract);
-      return evidenceResult(options, listContract, result.value);
-    },
-  );
-  server.registerTool(
-    inspectContract.name,
-    toolRegistrationOptions(inspectContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        inspectElectronPageInputSchema,
-        input,
-        inspectContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, inspectContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        inspectContract.name,
-        () =>
-          inspectElectronPage(
-            options.electron,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, inspectContract);
-      return evidenceResult(options, inspectContract, result.value);
-    },
-  );
-  server.registerTool(
-    analyzeContract.name,
-    toolRegistrationOptions(analyzeContract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        analyzeJavaScriptApplicationInputSchema,
-        input,
-        analyzeContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, analyzeContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        analyzeContract.name,
-        () =>
-          analyzeJavaScriptApplicationValidated(
-            options.permissionAuthority,
-            parsed,
-            {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-            },
-          ),
-      );
-      if (!result.ok) return toCallToolResult(result, analyzeContract);
-      return evidenceResult(options, analyzeContract, result.value);
-    },
-  );
-  server.registerTool(
-    reconcileContract.name,
-    toolRegistrationOptions(reconcileContract),
-    async (input) => {
-      const parsedInput = safeParseToolInput(
-        reconcileJavaScriptRuntimeInputSchema,
-        input,
-        reconcileContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, reconcileContract);
-      const parsed = parsedInput.value;
-      const result = await logToolExecution(
-        options.logger,
-        reconcileContract.name,
-        () =>
-          Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
-      );
-      if (!result.ok) return toCallToolResult(result, reconcileContract);
-      for (const source of [
-        ...parsed.static_layers.map(({ analysis }) => analysis),
-        ...parsed.runtime_observations,
-      ]) {
-        const recorded = options.recordEvidence?.(source);
-        if (recorded !== undefined && !recorded.ok)
-          return toCallToolResult(recorded, reconcileContract);
-      }
-      return evidenceResult(options, reconcileContract, result.value);
+      if (!result.ok) return toCallToolResult(result, spec.contract);
+      return evidenceResult(options, spec.contract, result.value);
     },
   );
 };
 
 const evidenceResult = (
   options: ElectronToolRegistration,
-  contract: (typeof ELECTRON_TOOL_CONTRACTS)[number],
-  evidence: import("../domain/evidence.js").Evidence,
+  contract: ToolContract,
+  evidence: Evidence,
 ) => {
   const recorded = options.recordEvidence?.(evidence);
   return recorded !== undefined && !recorded.ok

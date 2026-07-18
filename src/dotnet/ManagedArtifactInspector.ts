@@ -161,16 +161,21 @@ const unavailableResult = (
   });
 };
 
-const runtimeClassification = (
-  layout: ManagedPeLayout,
-  metadata: ManagedMetadataLayout,
+interface RuntimeClassificationInput {
+  readonly layout: ManagedPeLayout;
+  readonly metadata: ManagedMetadataLayout;
+  readonly inventory: ManagedMetadataInventory;
+}
+
+const runtimeFamilyFor = (
+  cli: ManagedCliHeader,
   inventory: ManagedMetadataInventory,
+  metadata: ManagedMetadataLayout,
+  layout: ManagedPeLayout,
 ): Pick<
   ManagedArtifactInspection["classification"],
-  "runtime_family" | "implementation" | "managed_architecture" | "evidence"
+  "runtime_family" | "evidence"
 > => {
-  const cli = layout.cli;
-  if (cli === null) throw new TypeError("Managed classification requires CLI");
   const evidence: ManagedArtifactInspection["classification"]["evidence"] = [
     {
       code: "cli-header-observed",
@@ -232,22 +237,47 @@ const runtimeClassification = (
         : (metadata.table(12)?.offset ?? null),
     });
   }
-  const implementation =
-    (cli.flags & 1) === 0
-      ? ("cpp-cli-mixed" as const)
-      : cli.readyToRunSignature
-        ? ("cil-and-ready-to-run" as const)
-        : (metadata.rowCounts[6] ?? 0) === 0
-          ? ("metadata-only" as const)
-          : ("cil" as const);
-  const managedArchitecture =
-    layout.architecture === "x86" && (cli.flags & 1) !== 0
-      ? (cli.flags & 0x0000_0002) !== 0
-        ? "x86"
-        : (cli.flags & 0x0002_0000) !== 0
-          ? "anycpu-prefer-32"
-          : "anycpu"
-      : layout.architecture;
+  return { runtime_family: runtimeFamily, evidence };
+};
+
+const implementationFor = (
+  cli: ManagedCliHeader,
+  metadata: ManagedMetadataLayout,
+): ManagedArtifactInspection["classification"]["implementation"] => {
+  if ((cli.flags & 1) === 0) return "cpp-cli-mixed";
+  if (cli.readyToRunSignature) return "cil-and-ready-to-run";
+  return (metadata.rowCounts[6] ?? 0) === 0 ? "metadata-only" : "cil";
+};
+
+const managedArchitectureFor = (
+  layout: ManagedPeLayout,
+  cli: ManagedCliHeader,
+): ManagedArtifactInspection["classification"]["managed_architecture"] => {
+  if (layout.architecture !== "x86" || (cli.flags & 1) === 0)
+    return layout.architecture;
+  if ((cli.flags & 0x0000_0002) !== 0) return "x86";
+  if ((cli.flags & 0x0002_0000) !== 0) return "anycpu-prefer-32";
+  return "anycpu";
+};
+
+const runtimeClassification = ({
+  layout,
+  metadata,
+  inventory,
+}: RuntimeClassificationInput): Pick<
+  ManagedArtifactInspection["classification"],
+  "runtime_family" | "implementation" | "managed_architecture" | "evidence"
+> => {
+  const cli = layout.cli;
+  if (cli === null) throw new TypeError("Managed classification requires CLI");
+  const { runtime_family: runtimeFamily, evidence } = runtimeFamilyFor(
+    cli,
+    inventory,
+    metadata,
+    layout,
+  );
+  const implementation = implementationFor(cli, metadata);
+  const managedArchitecture = managedArchitectureFor(layout, cli);
   evidence.push({
     code: "managed-architecture-derived",
     detail: `Managed architecture ${managedArchitecture} is derived from PE machine and CLI flags.`,
@@ -261,13 +291,21 @@ const runtimeClassification = (
   };
 };
 
-const partialMetadataResult = (
-  target: BinaryTarget,
-  bytes: Buffer,
-  layout: ManagedPeLayout,
-  limits: ManagedInspectionLimits,
-  issue: ManagedParseIssue,
-): ManagedArtifactInspection => ({
+interface PartialMetadataContext {
+  readonly target: BinaryTarget;
+  readonly bytes: Buffer;
+  readonly layout: ManagedPeLayout;
+  readonly limits: ManagedInspectionLimits;
+  readonly issue: ManagedParseIssue;
+}
+
+const partialMetadataResult = ({
+  target,
+  bytes,
+  layout,
+  limits,
+  issue,
+}: PartialMetadataContext): ManagedArtifactInspection => ({
   ...base(target, bytes, layout),
   classification: {
     status: "malformed",
@@ -326,6 +364,13 @@ const mapResources = (
   }
 };
 
+const inventoryPagesComplete = (
+  inventory: ReturnType<typeof readManagedMetadataInventory>,
+): boolean =>
+  inventory.references.complete &&
+  inventory.resources.complete &&
+  inventory.attributes.complete;
+
 /** Inspect PE/CLI identity directly from bounded bytes without CLR loading. */
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
@@ -338,11 +383,17 @@ export const inspectManagedArtifactBytes = (
   const cli = layout.cli;
   if (cli.metadata.size > limits.maxMetadataBytes)
     return managedArtifactInspectionSchema.parse(
-      partialMetadataResult(target, bytes, layout, limits, {
-        code: "limit-exceeded",
-        scope: "cli.metadata",
-        offset: cli.headerOffset + 8,
-        detail: `CLI metadata size exceeds max_metadata_bytes ${String(limits.maxMetadataBytes)}`,
+      partialMetadataResult({
+        target,
+        bytes,
+        layout,
+        limits,
+        issue: {
+          code: "limit-exceeded",
+          scope: "cli.metadata",
+          offset: cli.headerOffset + 8,
+          detail: `CLI metadata size exceeds max_metadata_bytes ${String(limits.maxMetadataBytes)}`,
+        },
       }),
     );
   let metadata: ManagedMetadataLayout;
@@ -361,7 +412,13 @@ export const inspectManagedArtifactBytes = (
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return managedArtifactInspectionSchema.parse(
-      partialMetadataResult(target, bytes, layout, limits, cause.issue),
+      partialMetadataResult({
+        target,
+        bytes,
+        layout,
+        limits,
+        issue: cause.issue,
+      }),
     );
   }
   const resourceIssues: ManagedParseIssue[] = [];
@@ -373,10 +430,7 @@ export const inspectManagedArtifactBytes = (
     resourceDirectory,
   );
   const issues = [...resourceIssues, ...inventory.issues];
-  const pagesComplete =
-    inventory.references.complete &&
-    inventory.resources.complete &&
-    inventory.attributes.complete;
+  const pagesComplete = inventoryPagesComplete(inventory);
   const limitations = [
     ...(pagesComplete
       ? []
@@ -395,7 +449,7 @@ export const inspectManagedArtifactBytes = (
     classification: {
       status: "managed",
       container: "pe",
-      ...runtimeClassification(layout, metadata, inventory),
+      ...runtimeClassification({ layout, metadata, inventory }),
     },
     metadata: {
       status: issues.length === 0 ? "complete" : "partial",
