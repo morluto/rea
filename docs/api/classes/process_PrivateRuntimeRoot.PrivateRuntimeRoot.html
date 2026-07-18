@@ -12,12 +12,13 @@
 <li><a href="" aria-current="page">PrivateRuntimeRoot</a></li></ul>
 <h1>Class PrivateRuntimeRoot</h1></div>
 <section class="tsd-panel tsd-comment">
-<div class="tsd-comment tsd-typography"><p>Owns one mode-0700 temporary runtime root and removes it idempotently.</p>
+<div class="tsd-comment tsd-typography"><p>Owns one POSIX mode-0700 temporary runtime root and removes it idempotently.</p>
 <p>Protocol adapters decide what belongs inside the directory; this primitive
-only establishes a private filesystem boundary and deterministic cleanup.</p>
+establishes a private filesystem boundary on POSIX and deterministic cleanup.
+Windows privacy requires the separately verified native DACL boundary.</p>
 </div></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L17">src/process/PrivateRuntimeRoot.ts:17</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L18">src/process/PrivateRuntimeRoot.ts:18</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -39,7 +40,7 @@ only establishes a private filesystem boundary and deterministic cleanup.</p>
 <h3 class="tsd-anchor-link" id="path"><code class="tsd-tag">Readonly</code><span>path</span><a href="#path" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L20">src/process/PrivateRuntimeRoot.ts:20</a></li></ul></aside></section></section></details>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L21">src/process/PrivateRuntimeRoot.ts:21</a></li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -53,7 +54,7 @@ only establishes a private filesystem boundary and deterministic cleanup.</p>
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L39">src/process/PrivateRuntimeRoot.ts:39</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L40">src/process/PrivateRuntimeRoot.ts:40</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="create"><code class="tsd-tag">Static</code><span>create</span><a href="#create" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -68,7 +69,7 @@ only establishes a private filesystem boundary and deterministic cleanup.</p>
 <li><span><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/process_PrivateRuntimeRoot.PrivateRuntimeRootOptions.html" class="tsd-signature-type tsd-kind-interface">PrivateRuntimeRootOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="" class="tsd-signature-type tsd-kind-class">PrivateRuntimeRoot</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L23">src/process/PrivateRuntimeRoot.ts:23</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/process/PrivateRuntimeRoot.ts#L24">src/process/PrivateRuntimeRoot.ts:24</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

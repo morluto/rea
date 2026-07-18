@@ -16,6 +16,7 @@ import {
   parseProcessCapture,
 } from "../domain/processCapture.js";
 import { captureProcessScenario } from "./ProcessHarness.js";
+import { processCapturePermissionRequest } from "./ProcessCapturePermission.js";
 import {
   PROCESS_PROVIDER,
   createProcessCaptureEvidence,
@@ -49,18 +50,7 @@ export const captureProcessScenarioFile = async (path: string) => {
     const authority = await loadConfiguredPermissionAuthority(config.value);
     if (!authority.ok) return cliAnalysisError(authority.error);
     const authorized = await authority.value.authorize(
-      {
-        capability: "process_capture",
-        roots: [scenario.working_directory, ...scenario.filesystem_roots],
-        executables: [scenario.executable],
-        environment_names: [
-          ...Object.keys(scenario.environment),
-          ...scenario.inherit_environment,
-        ],
-        network: scenario.network_access === "host" ? "external" : "none",
-        mount: false,
-        operation_identity: `capture_process_scenario:${scenario.executable}`,
-      },
+      processCapturePermissionRequest(scenario),
       "read",
     );
     if (!authorized.ok)

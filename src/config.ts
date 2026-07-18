@@ -100,6 +100,7 @@ const environmentSchema = z
       .enum(["trace", "debug", "info", "warn", "error", "fatal", "silent"])
       .default("info"),
     REA_PROCESS_CAPTURE_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_PROCESS_CAPTURE_AUTO_GRANT: z.enum(["true", "false"]).default("true"),
     REA_ARTIFACT_NATIVE_MOUNT_ENABLED: z
       .enum(["true", "false"])
       .default("false"),
@@ -546,7 +547,13 @@ export const parseConfig = (
         parsedEnvironment.data.REA_MANAGED_RUNTIME_EXECUTABLE_PATH,
     },
     permissionCeilings,
-    administratorPermissionGrants: administratorGrants(permissionCeilings),
+    administratorPermissionGrants: administratorGrants(
+      parsedEnvironment.data.REA_PROCESS_CAPTURE_AUTO_GRANT === "true"
+        ? permissionCeilings
+        : permissionCeilings.filter(
+            ({ capability }) => capability !== "process_capture",
+          ),
+    ),
     permissionProjectRoot: parsedEnvironment.data.REA_PERMISSION_PROJECT_ROOT,
     permissionProjectStore: parsedEnvironment.data.REA_PERMISSION_PROJECT_STORE,
   });

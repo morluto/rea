@@ -1,7 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { readdir, realpath } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -10,17 +8,21 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import {
   firstProcedureAddress,
-  requireDistinctTargetHashes,
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
 } from "../dist/application/RealHopperAssertions.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProvider.js";
 import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
-
+import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
+import {
+  requireCurrentDocument,
+  requireSafeDiagnostics,
+  verifyRealHopperFixture,
+} from "./lib/real-hopper-semantic.mjs";
+import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
-
 const parseServerArgs = (encoded) => {
   const parsed = JSON.parse(encoded);
   if (
@@ -34,7 +36,6 @@ const parseServerArgs = (encoded) => {
 const sessionsBefore = new Set(
   (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
 );
-
 const textValue = (result) => {
   const text = result.content?.find((item) => item.type === "text")?.text;
   if (typeof text !== "string") throw new Error("Tool result omitted text");
@@ -285,49 +286,15 @@ const verifyCurrentTarget = async (client, options) => {
   };
 };
 
-const requireSafeDiagnostics = (chunks) => {
-  const lines = chunks
-    .join("")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  for (const line of lines) {
-    let diagnostic;
-    try {
-      diagnostic = JSON.parse(line);
-    } catch {
-      throw new Error(`The MCP runtime emitted malformed stderr: ${line}`);
-    }
-    if (
-      diagnostic === null ||
-      typeof diagnostic !== "object" ||
-      diagnostic.application !== "rea" ||
-      typeof diagnostic.level !== "number" ||
-      diagnostic.level >= 40
-    ) {
-      throw new Error(`The MCP runtime emitted unsafe stderr: ${line}`);
-    }
-  }
-  return lines.length;
-};
-
-const targetPath = process.env.HOPPER_TARGET_PATH;
-const secondTargetPath = process.env.HOPPER_SECOND_TARGET_PATH;
-if (!targetPath || !secondTargetPath)
-  throw new Error(
-    "HOPPER_TARGET_PATH and HOPPER_SECOND_TARGET_PATH are required and must name distinct binaries",
-  );
-const [targetA, targetB] = await Promise.all([
-  realpath(targetPath),
-  realpath(secondTargetPath),
-]);
-if (targetA === targetB)
-  throw new Error("Real-Hopper verification requires two distinct targets");
-const [targetHashA, targetHashB] = await Promise.all([
-  sha256File(targetA),
-  sha256File(targetB),
-]);
-requireDistinctTargetHashes(targetHashA, targetHashB);
+const fixtureManifestPath = process.env.REA_HOPPER_CONFORMANCE_MANIFEST_PATH;
+if (!fixtureManifestPath)
+  throw new Error("REA_HOPPER_CONFORMANCE_MANIFEST_PATH is required");
+const fixtureTargets = await loadRealHopperFixtureTargets(fixtureManifestPath);
+const targetA = fixtureTargets.primary.path;
+const targetB = fixtureTargets.secondary.path;
+const largeTarget = fixtureTargets.large.path;
+const targetHashA = fixtureTargets.primary.sha256;
+const targetHashB = fixtureTargets.secondary.sha256;
 const serverEnvironment = { ...process.env };
 serverEnvironment.REA_ANALYSIS_PROVIDER = "auto";
 delete serverEnvironment.HOPPER_TARGET_PATH;
@@ -409,13 +376,30 @@ try {
     requireSuccessfulTool(segments, "list_segments"),
   );
   const firstDocuments = requireSuccessfulTool(documents, "list_documents");
-  if (!Array.isArray(firstDocuments) || firstDocuments.length === 0)
+  if (
+    !Array.isArray(firstDocuments) ||
+    firstDocuments.length === 0 ||
+    typeof firstDocuments[0] !== "string"
+  )
     throw new Error("list_documents returned no real Hopper document");
+  const currentDocument = await requireCurrentDocument(
+    client,
+    options,
+    firstDocuments,
+    requireSuccessfulTool,
+  );
   const firstOverview = requireOverview(
     requireSuccessfulTool(overview, "binary_overview"),
     "binary_overview",
   );
   const firstAnalysis = await verifyCurrentTarget(client, options);
+  const fixtureAnalysis = await verifyRealHopperFixture({
+    client,
+    options,
+    document: currentDocument,
+    oracle: fixtureTargets.oracle,
+    normalizedResult: requireSuccessfulTool,
+  });
   const switched = await client.callTool(
     { name: "open_binary", arguments: { path: targetB } },
     options,
@@ -439,6 +423,15 @@ try {
     "binary_overview after target switch",
   );
   const secondAnalysis = await verifyCurrentTarget(client, options);
+  const largePagination = await openAndVerifyLargeFixture({
+    client,
+    options,
+    normalizedResult: requireSuccessfulTool,
+    path: largeTarget,
+    expectedCount: fixtureTargets.largeOracle.symbolCount,
+    symbolPrefix: fixtureTargets.largeOracle.symbolPrefix,
+    stringPrefix: fixtureTargets.largeOracle.stringPrefix,
+  });
 
   const processList = await execFileAsync("ps", ["-ax", "-o", "command="]);
   const bundledMcpRunning = processList.stdout
@@ -468,13 +461,16 @@ try {
     overview: firstOverview,
     segmentCount: firstOverview.segment_count,
     analyses: [firstAnalysis, secondAnalysis],
+    fixtureAnalysis,
+    largePagination,
+    fixtureManifest: fixtureTargets.manifestPath,
     bundledMcpRunning,
     stderrBytes,
     diagnosticCount,
     dynamicSession: true,
     providerBinding,
-    targets: [targetA, targetB],
-    targetHashes: [targetHashA, targetHashB],
+    targets: [targetA, targetB, largeTarget],
+    targetHashes: [targetHashA, targetHashB, fixtureTargets.large.sha256],
     switched: true,
     secondOverview: verifiedSecondOverview,
   };
@@ -520,9 +516,3 @@ await new Promise((resolve, reject) => {
     },
   );
 });
-
-async function sha256File(path) {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-}

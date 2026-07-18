@@ -36,6 +36,14 @@
     "node": "^22.19.0 || >=24.11.0"
   },
   "packageManager": "npm@11.16.0",
+  "rea": {
+    "windowsNativeAuthority": {
+      "packageName": "@rea/windows-x64",
+      "contractVersion": 1,
+      "nodeApiVersion": 9,
+      "artifactSha256": null
+    }
+  },
   "files": [
     "dist",
     "install.sh",

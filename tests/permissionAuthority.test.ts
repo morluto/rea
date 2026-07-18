@@ -147,6 +147,131 @@ describe("permission authority", () => {
     expect(await canRead(authority.value, oldRoot)).toBe(false);
     expect(await canRead(authority.value, newRoot)).toBe(true);
   });
+
+  it("isolates transient grants and consumption between live connections", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-session-"));
+    const scope = evidenceScope(sandbox);
+    const configured = await createPermissionAuthority([scope]);
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+    const connectionA = configured.value.createConnectionAuthority();
+    const connectionB = configured.value.createConnectionAuthority();
+    const request = {
+      ...scope,
+      operation_identity: "read:connection-owned",
+    };
+
+    expect(
+      connectionA.grant({
+        ...request,
+        grant_id: "session:a",
+        lifetime: "session",
+        operation_identity: null,
+        expires_at: null,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(await connectionA.authorize(request, "read")).toMatchObject({
+      ok: true,
+    });
+    expect(await connectionB.authorize(request, "read")).toMatchObject({
+      ok: false,
+    });
+
+    connectionB.clearSessionGrants();
+    expect(await connectionA.authorize(request, "read")).toMatchObject({
+      ok: true,
+    });
+
+    connectionA.clearSessionGrants();
+    const onceRequest = {
+      ...request,
+      operation_identity: "read:once-on-a",
+    };
+    expect(
+      connectionA.grant({
+        ...onceRequest,
+        grant_id: "once:a",
+        lifetime: "once",
+        expires_at: null,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      connectionB.grant({
+        ...onceRequest,
+        grant_id: "once:a",
+        lifetime: "once",
+        expires_at: null,
+      }),
+    ).toMatchObject({ ok: true });
+    const concurrent = await Promise.all([
+      connectionA.authorize(onceRequest, "read"),
+      connectionA.authorize(onceRequest, "read"),
+    ]);
+    expect(concurrent.filter(({ ok }) => ok)).toHaveLength(1);
+    expect(await connectionB.authorize(onceRequest, "read")).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("applies configured policy reloads to existing connections", async () => {
+    const sandbox = await mkdtemp(
+      join(tmpdir(), "rea-permission-live-reload-"),
+    );
+    const allowedRoot = join(sandbox, "allowed");
+    const replacementRoot = join(sandbox, "replacement");
+    await Promise.all([mkdir(allowedRoot), mkdir(replacementRoot)]);
+    const configured = await createPermissionAuthority([
+      evidenceScope(allowedRoot),
+    ]);
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+    const connection = configured.value.createConnectionAuthority();
+    expect(
+      connection.grant({
+        ...evidenceScope(allowedRoot),
+        grant_id: "session:before-reload",
+        lifetime: "session",
+        operation_identity: null,
+        expires_at: null,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(await canRead(connection, allowedRoot)).toBe(true);
+
+    const collisionRequest = {
+      ...evidenceScope(allowedRoot),
+      operation_identity: "read:reload-collision",
+    };
+    expect(
+      connection.grant({
+        ...collisionRequest,
+        grant_id: "shared-id",
+        lifetime: "once",
+        expires_at: null,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(await connection.authorize(collisionRequest, "read")).toMatchObject({
+      ok: true,
+    });
+    expect(
+      await configured.value.replaceAdministratorGrants([
+        {
+          ...evidenceScope(allowedRoot),
+          grant_id: "shared-id",
+          lifetime: "administrator",
+          operation_identity: null,
+          expires_at: null,
+        },
+      ]),
+    ).toEqual({ ok: true, value: null });
+    expect(await connection.authorize(collisionRequest, "read")).toMatchObject({
+      ok: true,
+    });
+
+    expect(
+      await configured.value.reload([evidenceScope(replacementRoot)]),
+    ).toEqual({ ok: true, value: null });
+    expect(await canRead(connection, allowedRoot)).toBe(false);
+  });
 });
 
 const evidenceScope = (root: string): PermissionScope => ({

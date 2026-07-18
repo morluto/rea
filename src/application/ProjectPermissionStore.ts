@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
   open,
   readFile,
   realpath,
-  stat,
   unlink,
   type FileHandle,
 } from "node:fs/promises";
@@ -35,6 +35,7 @@ const grantSchema = z.object({
     "native_mount",
     "reference_read",
     "javascript_replay",
+    "managed_runtime",
   ]),
   roots: z.array(z.string()),
   executables: z.array(z.string()),
@@ -102,11 +103,15 @@ export const readProjectPermissionStore = async (
 > => {
   const project = await identifyPermissionProject(projectRoot);
   if (!project.ok) return project;
+  if (process.getuid === undefined)
+    return err(new ProjectPermissionStoreError("not_owner_only"));
+  let handle: FileHandle | undefined;
   try {
-    const metadata = await stat(path);
-    if ((metadata.mode & 0o077) !== 0)
-      return err(new ProjectPermissionStoreError("not_owner_only"));
-    const encoded = await readFile(path, "utf8");
+    const opened = await openPrivateStore(path);
+    if (!opened.ok) return opened;
+    if (opened.value === null) return ok(null);
+    handle = opened.value;
+    const encoded = await handle.readFile("utf8");
     let decoded: unknown;
     try {
       decoded = JSON.parse(encoded);
@@ -124,6 +129,8 @@ export const readProjectPermissionStore = async (
   } catch (cause: unknown) {
     if (isNotFound(cause)) return ok(null);
     return err(new ProjectPermissionStoreError("io", { cause }));
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 };
 
@@ -145,6 +152,8 @@ export const writeProjectPermissionStore = async (
     return err(
       new ProjectPermissionStoreError("invalid", { cause: candidate.error }),
     );
+  if (process.getuid === undefined)
+    return err(new ProjectPermissionStoreError("not_owner_only"));
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await writeFileAtomic(
@@ -155,10 +164,13 @@ export const writeProjectPermissionStore = async (
         mode: 0o600,
       },
     );
-    const metadata = await stat(path);
-    if ((metadata.mode & 0o077) !== 0) {
-      return err(new ProjectPermissionStoreError("not_owner_only"));
-    }
+    const verified = await readProjectPermissionStore(path, projectRoot);
+    if (!verified.ok) return verified;
+    if (
+      verified.value === null ||
+      JSON.stringify(verified.value) !== JSON.stringify(candidate.data)
+    )
+      return err(new ProjectPermissionStoreError("invalid"));
     return ok(candidate.data);
   } catch (cause: unknown) {
     return err(new ProjectPermissionStoreError("io", { cause }));
@@ -269,6 +281,39 @@ const releasePermissionStoreLock = async (
 
 const isNotFound = (cause: unknown): boolean => errorCode(cause) === "ENOENT";
 
+const openPrivateStore = async (
+  path: string,
+): Promise<Result<FileHandle | null, ProjectPermissionStoreError>> => {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = await handle.stat();
+    if (!privateRegularFile(metadata)) {
+      await handle.close();
+      return err(new ProjectPermissionStoreError("not_owner_only"));
+    }
+    return ok(handle);
+  } catch (cause: unknown) {
+    await handle?.close().catch(() => undefined);
+    if (isNotFound(cause)) return ok(null);
+    return err(
+      new ProjectPermissionStoreError(
+        isSymlinkRefusal(cause) ? "not_owner_only" : "io",
+        { cause },
+      ),
+    );
+  }
+};
+
+const privateRegularFile = (
+  metadata: Awaited<ReturnType<typeof lstat>>,
+): boolean =>
+  metadata.isFile() &&
+  !metadata.isSymbolicLink() &&
+  (Number(metadata.mode) & 0o077) === 0 &&
+  process.getuid !== undefined &&
+  metadata.uid === process.getuid();
+
 const isAlreadyExists = (cause: unknown): boolean =>
   errorCode(cause) === "EEXIST";
 
@@ -276,3 +321,6 @@ const errorCode = (cause: unknown): unknown =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? cause.code
     : undefined;
+
+const isSymlinkRefusal = (cause: unknown): boolean =>
+  errorCode(cause) === "ELOOP" || errorCode(cause) === "EMLINK";

@@ -1,13 +1,30 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import {
   generateLargeFixture,
+  HOPPER_C_ORACLE,
   LARGE_FIXTURE_COUNT,
   sha256,
   sourceDigest,
 } from "../scripts/lib/conformance-fixtures.mjs";
 
 describe("source-built conformance fixtures", () => {
+  it("grounds the Hopper semantic oracle in the source-owned C fixture", async () => {
+    const source = await readFile("tests/conformance/c/fixture.c", "utf8");
+    for (const procedure of [
+      HOPPER_C_ORACLE.mainProcedure,
+      HOPPER_C_ORACLE.entryProcedure,
+      HOPPER_C_ORACLE.branchProcedure,
+      HOPPER_C_ORACLE.leafProcedure,
+    ])
+      expect(source).toContain(`int ${procedure}`);
+    expect(source).toContain(HOPPER_C_ORACLE.entryString);
+    expect(source).toContain(HOPPER_C_ORACLE.leafString);
+    expect(source).toContain(HOPPER_C_ORACLE.globalName);
+  });
+
   it("generates a deterministic large pagination fixture", () => {
     const first = generateLargeFixture();
     const second = generateLargeFixture();

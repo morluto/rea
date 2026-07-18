@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,6 +59,46 @@ describe("project permission store", () => {
     expect(await readProjectPermissionStore(path, second)).toMatchObject({
       ok: false,
       error: { reason: "invalid" },
+    });
+  });
+
+  it("rejects a symlink even when its target is owner-only", async () => {
+    const project = await mkdtemp(join(tmpdir(), "rea-policy-symlink-"));
+    const target = join(project, "target.json");
+    const path = join(project, "permissions.json");
+    expect((await writeProjectPermissionStore(target, project, [])).ok).toBe(
+      true,
+    );
+    await symlink(target, path);
+
+    expect(await readProjectPermissionStore(path, project)).toMatchObject({
+      ok: false,
+      error: { reason: "not_owner_only" },
+    });
+  });
+
+  it("round-trips managed runtime project grants", async () => {
+    const project = await mkdtemp(join(tmpdir(), "rea-policy-managed-"));
+    const path = join(project, "permissions.json");
+    const grant = {
+      grant_id: "project:managed-runtime",
+      capability: "managed_runtime" as const,
+      roots: [project],
+      executables: [process.execPath],
+      environment_names: [],
+      network: "none" as const,
+      mount: false,
+      lifetime: "project" as const,
+      operation_identity: null,
+      expires_at: null,
+    };
+
+    expect(
+      await writeProjectPermissionStore(path, project, [grant]),
+    ).toMatchObject({ ok: true, value: { grants: [grant] } });
+    expect(await readProjectPermissionStore(path, project)).toMatchObject({
+      ok: true,
+      value: { grants: [grant] },
     });
   });
 

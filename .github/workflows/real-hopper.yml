@@ -2,15 +2,6 @@ name: Real Hopper E2E
 
 on:
   workflow_dispatch:
-    inputs:
-      first_target:
-        description: Absolute path to first test binary on the runner
-        required: true
-        type: string
-      second_target:
-        description: Absolute path to distinct second test binary on the runner
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -27,6 +18,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Build source-owned Hopper conformance fixtures
+        run: npm run verify:fixtures
       - name: Install packed CLI in isolation
         shell: bash
         run: |
@@ -35,8 +28,7 @@ jobs:
           npm install --global --ignore-scripts --prefix "${prefix}" "./${tarball}"
           echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
           echo 'REA_VERIFY_SERVER_ARGS_JSON=["mcp"]' >> "${GITHUB_ENV}"
-      - name: Verify two real binaries
+      - name: Verify source-owned fixtures with real Hopper
         env:
-          HOPPER_TARGET_PATH: ${{ inputs.first_target }}
-          HOPPER_SECOND_TARGET_PATH: ${{ inputs.second_target }}
+          REA_HOPPER_CONFORMANCE_MANIFEST_PATH: ${{ github.workspace }}/build/conformance/manifest.json
         run: npm run verify:hopper

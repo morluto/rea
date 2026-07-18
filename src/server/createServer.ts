@@ -1,4 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import { randomBytes } from "node:crypto";
+
+import {
+  createRequestStateCodec,
+  McpServer,
+} from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -30,6 +35,7 @@ import type {
 import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
 import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
+import type { ProcessCaptureElicitationState } from "./ProcessCaptureElicitation.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -67,6 +73,13 @@ export const createServer = (
 ): McpServer => {
   const startedAt = new Date().toISOString();
   const logger = options.logger ?? silentLogger;
+  const permissionAuthority =
+    options.permissionAuthority?.createConnectionAuthority();
+  const processCaptureStateCodec =
+    createRequestStateCodec<ProcessCaptureElicitationState>({
+      key: randomBytes(32),
+      ttlSeconds: 600,
+    });
   const server = new McpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
@@ -77,12 +90,17 @@ export const createServer = (
         tools: { listChanged: true },
         resources: { listChanged: true },
       },
+      inputRequired: { maxRounds: 3, roundTimeoutMs: 600_000 },
+      requestState: { verify: processCaptureStateCodec.verify },
       instructions:
         session === undefined
           ? "Reverse-engineering tools for an active analysis target. Start with binary_overview."
           : "Reverse-engineering tools for configured analysis providers. Open a target with open_binary, then start with binary_overview.",
     },
   );
+  server.server.onclose = () => {
+    permissionAuthority?.clearSessionGrants();
+  };
   session?.onAvailabilityChanged?.(() => server.sendToolListChanged());
   server.registerResource(
     "server-identity",
@@ -170,9 +188,7 @@ export const createServer = (
     logger: toolLogger,
     activeTarget,
     recordEvidence,
-    ...(options.permissionAuthority === undefined
-      ? {}
-      : { permissionAuthority: options.permissionAuthority }),
+    ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
   });
   registerManagedTools(server, analysis, {
     logger: toolLogger,
@@ -191,19 +207,19 @@ export const createServer = (
           roots: [],
           executablePath: "/usr/bin/dotnet",
         },
-        authority: options.permissionAuthority,
+        authority: permissionAuthority,
       },
     });
   registerBrowserTools(server, {
     logger: toolLogger,
     browser: options.browserObservation,
-    permissionAuthority: options.permissionAuthority,
+    permissionAuthority,
     recordEvidence,
   });
   registerElectronTools(server, {
     logger: toolLogger,
     electron: options.electronObservation,
-    permissionAuthority: options.permissionAuthority,
+    permissionAuthority,
     recordEvidence,
   });
   registerApplicationTools(server, {
@@ -217,7 +233,7 @@ export const createServer = (
       maxStringLength: 1,
       maxNodes: 1,
     },
-    permissionAuthority: options.permissionAuthority,
+    permissionAuthority,
     retainCoverageWorkspace:
       session === undefined
         ? undefined
@@ -240,7 +256,7 @@ export const createServer = (
       host: options.javascriptReplayHost ?? new SystemJavaScriptReplayHost(),
       runner:
         options.javascriptReplayRunner ?? new LinuxJavaScriptReplayRunner(),
-      authority: options.permissionAuthority,
+      authority: permissionAuthority,
     },
   });
   registerGuidedPrompts(server, analysis, session);
@@ -248,7 +264,18 @@ export const createServer = (
     registerEvidenceResources(server, session);
     registerSessionTools(server, session, toolLogger, {
       ...options,
+      ...(permissionAuthority === undefined ? {} : { permissionAuthority }),
       startedAt,
+      processCaptureElicitation: {
+        stateCodec: processCaptureStateCodec,
+        supported: () =>
+          server.server.getClientCapabilities()?.elicitation?.form !==
+          undefined,
+        modern: () =>
+          server.server.getNegotiatedProtocolVersion()?.startsWith("2026-") ===
+          true,
+        consumedNonces: new Map(),
+      },
     });
   }
   return server;

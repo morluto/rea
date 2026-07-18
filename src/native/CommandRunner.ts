@@ -41,16 +41,19 @@ export class NativeCommandFailure extends Error {
   }
 }
 
+/** Bounds and cancellation applied to one allowlisted native command. */
+export interface NativeCommandOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs: number;
+  readonly maxOutputBytes: number;
+  readonly acceptNonZero?: boolean;
+}
+
 export interface NativeCommandRunner {
   run(
     tool: string,
     arguments_: readonly string[],
-    options: {
-      readonly signal?: AbortSignal;
-      readonly timeoutMs: number;
-      readonly maxOutputBytes: number;
-      readonly acceptNonZero?: boolean;
-    },
+    options: NativeCommandOptions,
   ): Promise<Result<NativeCommandCapture, NativeCommandFailure>>;
 }
 
@@ -74,12 +77,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
   run(
     tool: string,
     arguments_: readonly string[],
-    options: {
-      readonly signal?: AbortSignal;
-      readonly timeoutMs: number;
-      readonly maxOutputBytes: number;
-      readonly acceptNonZero?: boolean;
-    },
+    options: NativeCommandOptions,
   ): Promise<Result<NativeCommandCapture, NativeCommandFailure>> {
     if (!ALLOWED_TOOLS.has(tool))
       return Promise.resolve(

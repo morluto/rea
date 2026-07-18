@@ -1,10 +1,10 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, Electron/JavaScript, and web applications with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project.
+description: Reverse engineer native, Electron/JavaScript, and web application artifacts or runtimes with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project. Skip REA setup for ordinary source-repository architecture analysis.
 metadata:
-  version: "21"
+  version: "22"
   tool_count: 95
-  catalog_digest: "b6840d7c79ffdfe8a2ef65fb66c1694f3631bacbc22a0456abbe12aca2d53969"
+  catalog_digest: "e0c341749f488a869b62ab9b48c9236c60c91317ac60c8427f12a830cb900ae0"
 ---
 
 # REA
@@ -95,11 +95,24 @@ literal approval and `evidence_write` authority after sandbox cleanup.
 
 Identify the app and what the user wants to understand or build. Do not ask for information they already provided.
 
+First decide whether REA evidence is needed. When the complete source repository
+is available and the request is ordinary source-level architecture, code-flow,
+or implementation analysis, use normal repository tools and skip REA readiness,
+setup, and binary-provider commands. Use REA only when the request needs evidence
+from a binary, package, built artifact, decompilation, passive application
+runtime, controlled replay, or comparison against behavior not established by
+the available source. If the source is available but the requested claim still
+depends on built or runtime behavior, explain that distinction and continue with
+the relevant REA workflow.
+
 If the app is missing, ask which app they want to reverse engineer. If the app is known but the goal is unclear, ask what they want to understand or build, and offer to start with an overview. Never require the user to supply a program path, address, architecture, or reverse-engineering terminology.
 
 Notes is only a documentation example. Never select an app unless the user names it or confirms it.
 
 ## Ensure REA is ready
+
+Run this section only after the request-routing decision establishes that REA
+evidence is needed.
 
 1. Run `npx -y rea-agents@latest doctor`.
 2. If setup is needed, tell the user REA needs to install its local binary-analysis tools. Do not lead with implementation details or assume the user knows reverse-engineering products.

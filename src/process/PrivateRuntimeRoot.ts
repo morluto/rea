@@ -9,10 +9,11 @@ export interface PrivateRuntimeRootOptions {
 }
 
 /**
- * Owns one mode-0700 temporary runtime root and removes it idempotently.
+ * Owns one POSIX mode-0700 temporary runtime root and removes it idempotently.
  *
  * Protocol adapters decide what belongs inside the directory; this primitive
- * only establishes a private filesystem boundary and deterministic cleanup.
+ * establishes a private filesystem boundary on POSIX and deterministic cleanup.
+ * Windows privacy requires the separately verified native DACL boundary.
  */
 export class PrivateRuntimeRoot {
   #closePromise: Promise<void> | undefined;

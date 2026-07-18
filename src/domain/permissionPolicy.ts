@@ -175,6 +175,13 @@ export const evaluatePermission = (
   };
 };
 
+/** Test whether one exact request is wholly contained by one ceiling. */
+export const isPermissionRequestWithinCeiling = (
+  request: PermissionRequest,
+  ceiling: PermissionCeiling,
+): boolean =>
+  !hasMissing(missingFromScopes(normalizeRequest(request), [ceiling]));
+
 /** Consume an allowed one-shot decision; longer-lived grants are unchanged. */
 export const consumePermission = (
   policy: PermissionPolicy,

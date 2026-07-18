@@ -112,6 +112,30 @@ describe("runtime permission reload", () => {
     expect(await canRead(runtime.authority, fixture.newRoot)).toBe(false);
     expect(await canRead(runtime.authority, fixture.latestRoot)).toBe(true);
   });
+
+  it("continues with later reloads after an unexpected reload rejection", async () => {
+    const fixture = await reloadFixture();
+    let reads = 0;
+    const runtime = await startRuntime(fixture.env, async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("synthetic unexpected read failure");
+      return ok(projectStore(fixture.projectRoot, []));
+    });
+
+    configure(fixture.env, fixture.newRoot, true);
+    runtime.reload();
+    runtime.reload();
+    await runtime.notificationCount(1);
+
+    expect(reads).toBe(2);
+    expect(runtime.options.processPolicy?.enabled).toBe(true);
+    expect(runtime.options.evidenceFilePolicy?.roots).toEqual([
+      fixture.newRoot,
+    ]);
+    expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
+    expect(await canRead(runtime.authority, fixture.oldRoot)).toBe(false);
+    expect(await canRead(runtime.authority, fixture.newRoot)).toBe(true);
+  });
 });
 
 const reloadFixture = async () => {
