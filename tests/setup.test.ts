@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   runSetup,
+  type ClientConfigurationInspection,
   type ClientConfigurationResult,
   type SetupClient,
   type SetupHost,
   type SetupOptions,
   type SetupHopperInstallResult,
+  type SetupProgressEvent,
   type SetupProviderEnvironment,
 } from "../src/application/Setup.js";
 import type { DoctorCheck } from "../src/application/Doctor.js";
@@ -24,6 +26,7 @@ class FakeSetupHost implements SetupHost {
   skill: "installed" | "unchanged" | "failed" = "installed";
   clients: readonly SetupClient[] = [];
   clientResults = new Map<string, ClientConfigurationResult>();
+  clientInspections = new Map<string, ClientConfigurationInspection>();
   hopperInstalls = 0;
   hopperReplaceRequests: boolean[] = [];
   configurations = 0;
@@ -91,6 +94,12 @@ class FakeSetupHost implements SetupHost {
       this.clientResults.get(client.name)?.status !== "unchanged",
     );
   };
+  inspectClientConfiguration = (
+    client: SetupClient,
+  ): Promise<ClientConfigurationInspection> =>
+    Promise.resolve(
+      this.clientInspections.get(client.name) ?? { status: "update" },
+    );
   skillNeedsInstall = (): Promise<boolean> =>
     Promise.resolve(this.skill !== "unchanged");
   installSkill = (): Promise<"installed" | "unchanged" | "failed"> => {
@@ -251,6 +260,41 @@ describe("setup workflow", () => {
     expect(host.hopperInstalls).toBe(0);
   });
 
+  it("reports append-only lifecycle progress for each selected action", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      {
+        name: "codex",
+        displayName: "Codex",
+        configPath: "/codex.toml",
+      },
+    ];
+    const progress: SetupProgressEvent[] = [];
+    await runSetup(
+      { ...options(true), onProgress: (event) => progress.push(event) },
+      host,
+    );
+    expect(progress).toEqual([
+      { actionId: "configure_client:codex", label: "Codex", state: "started" },
+      {
+        actionId: "configure_client:codex",
+        label: "Codex",
+        state: "completed",
+      },
+      {
+        actionId: "install_skill",
+        label: "REA reverse-engineering skill",
+        state: "started",
+      },
+      {
+        actionId: "install_skill",
+        label: "REA reverse-engineering skill",
+        state: "completed",
+      },
+    ]);
+  });
+
   it("plans and propagates BYO Ghidra without installing software", async () => {
     const host = new FakeSetupHost("linux");
     host.distribution = {
@@ -371,6 +415,98 @@ describe("setup workflow", () => {
     expect(result.code).toBe("download_failed");
     expect(result.remediation).toBe("Download failed.");
     expect(host.configurations).toBe(0);
+  });
+
+  it("blocks malformed client configuration before Hopper or file mutation", async () => {
+    const host = new FakeSetupHost();
+    host.clients = [
+      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+    ];
+    host.clientInspections.set("codex", {
+      status: "invalid",
+      remediation: "Repair the existing TOML.",
+    });
+
+    const result = await runSetup(options(true, true), host);
+
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toBe("Codex: Repair the existing TOML.");
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configurations).toBe(0);
+    expect(host.skillInstalls).toBe(0);
+  });
+
+  it("blocks malformed configuration before unrelated writes with an existing provider", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      {
+        name: "claude_desktop",
+        displayName: "Claude Desktop",
+        configPath: "/claude.json",
+      },
+      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+    ];
+    host.clientInspections.set("claude_desktop", {
+      status: "invalid",
+      remediation: "Repair the existing JSON.",
+    });
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toBe(
+      "Claude Desktop: Repair the existing JSON.",
+    );
+    expect(host.configurations).toBe(0);
+    expect(host.skillInstalls).toBe(0);
+  });
+
+  it("plans a client update when Hopper installation changes its desired environment", async () => {
+    const host = new FakeSetupHost();
+    host.clients = [
+      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+    ];
+    host.clientInspections.set("codex", { status: "already_current" });
+
+    const result = await runSetup(options(false), host);
+
+    expect(
+      result.plannedActions.map(({ id, operation }) => ({
+        id,
+        operation,
+      })),
+    ).toContainEqual({
+      id: "configure_client:codex",
+      operation: "update",
+    });
+    expect(host.configurations).toBe(0);
+  });
+
+  it("executes only actions selected by the interactive adapter", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), structured: false },
+      host,
+      () =>
+        Promise.resolve({
+          approved: true,
+          selectedActionIds: ["configure_client:codex"],
+        }),
+    );
+
+    expect(result.plannedActions.map(({ id }) => id)).toEqual([
+      "configure_client:codex",
+    ]);
+    expect(result.clients).toEqual({ codex: { status: "configured" } });
+    expect(host.configurations).toBe(1);
+    expect(host.skillInstalls).toBe(0);
   });
 
   it.each([

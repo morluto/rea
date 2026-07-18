@@ -88,15 +88,21 @@ describe("doctor", () => {
     });
   });
   it("detects a manual configured Hopper before Homebrew", async () => {
+    let brewProbes = 0;
     const result = await runDoctor(
       undefined,
       host({
         configuredHopperPath: "/manual/Hopper",
         executable: (path) => Promise.resolve(path === "/manual/Hopper"),
+        brewHopperPath: () => {
+          brewProbes += 1;
+          return Promise.resolve(undefined);
+        },
       }),
     );
     expect(result.hopperPath).toBe("/manual/Hopper");
     expect(result.healthy).toBe(true);
+    expect(brewProbes).toBe(0);
   });
 
   it("reports optional BYO ilspycmd diagnostics only when configured", async () => {

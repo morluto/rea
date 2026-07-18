@@ -38,6 +38,32 @@ const SUPPORTED_RELEASES: Readonly<
 
 export type LinuxPackageFamily = "deb" | "rpm" | "arch";
 
+/** Exact stable external effects disclosed before a Linux Hopper installation. */
+export interface LinuxHopperInstallDisclosure {
+  readonly downloadUrl: string;
+  readonly expectedBytes: number;
+  readonly expectedSha1: string;
+  readonly commands: readonly string[];
+}
+
+/** Describe the release and package-manager commands without downloading or writing. */
+export const linuxHopperInstallDisclosure = (
+  family: LinuxPackageFamily,
+  isRoot: boolean,
+): LinuxHopperInstallDisclosure => {
+  const release = SUPPORTED_RELEASES[family];
+  return {
+    downloadUrl: release.filename,
+    expectedBytes: Number(release.file_length),
+    expectedSha1: release.file_hash,
+    commands: linuxPackageManagerCommands(
+      family,
+      `<verified-hopper.${family}>`,
+      isRoot,
+    ).map(({ executable, args }) => `${executable} ${args.join(" ")}`),
+  };
+};
+
 /** Parsed Linux distribution information used for support and package selection. */
 export interface LinuxDistribution {
   readonly id: string;

@@ -66,6 +66,18 @@ export type ClientConfigurationResult =
       readonly status: "failed";
       readonly reason: "path" | "backup" | "write" | "readback";
     };
+
+/** Read-only state used to block unsafe setup plans before any mutation. */
+export type ClientConfigurationInspection =
+  | { readonly status: "already_current" }
+  | {
+      readonly status: "create" | "update";
+      readonly backupPath?: string;
+    }
+  | {
+      readonly status: "invalid";
+      readonly remediation: string;
+    };
 /**
  * Effects required by the idempotent setup workflow.
  * Implementations report interrupted installers as values: setup must not wait
@@ -90,6 +102,11 @@ export interface SetupHost {
     providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],
   ): Promise<boolean>;
+  inspectClientConfiguration?(
+    client: SetupClient,
+    providerEnvironment: SetupProviderEnvironment,
+    command: readonly string[],
+  ): Promise<ClientConfigurationInspection>;
   skillNeedsInstall(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
@@ -111,10 +128,17 @@ export interface SetupResult {
 
 /** One concrete setup mutation disclosed before approval. */
 export interface SetupAction {
+  readonly id: string;
   readonly kind: "install_hopper" | "configure_client" | "install_skill";
+  readonly label: string;
   readonly target: string;
   readonly detail: string;
   readonly external: boolean;
+  readonly operation: "create" | "update" | "install";
+  readonly backupPath?: string;
+  readonly networkOrigins?: readonly string[];
+  readonly commands?: readonly string[];
+  readonly integrity?: string;
 }
 
 /** Explicit authorization supplied by an interactive or unattended CLI adapter. */
@@ -122,12 +146,30 @@ export interface SetupOptions {
   readonly approved: boolean;
   readonly installHopper: boolean;
   readonly structured: boolean;
+  readonly proposeHopper?: boolean;
+  readonly clientIds?: readonly string[];
+  readonly installSkill?: boolean;
+  readonly onProgress?: (event: SetupProgressEvent) => void;
+}
+
+/** One settled or active setup operation projected to the interactive adapter. */
+export interface SetupProgressEvent {
+  readonly actionId: string;
+  readonly label: string;
+  readonly state: "started" | "completed" | "warning" | "failed";
+  readonly detail?: string;
+}
+
+/** Interactive selection and final consent returned by the CLI adapter. */
+export interface SetupConfirmationDecision {
+  readonly approved: boolean;
+  readonly selectedActionIds: readonly string[];
 }
 
 /** Adapter-owned interactive confirmation for a fully discovered setup plan. */
 export type SetupConfirmation = (
   actions: readonly SetupAction[],
-) => Promise<boolean>;
+) => Promise<boolean | SetupConfirmationDecision>;
 
 /**
  * Install prerequisites and configure detected clients idempotently.
@@ -154,19 +196,40 @@ export const runSetup = async (
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
   let providerEnvironment = await initialProviderEnvironment(host, hopperPath);
-  const discovery = await discoverSetupActions(
+  const discovery = await discoverSetupActions({
     host,
     providerEnvironment,
-    options.installHopper,
-  );
-  const { installHopper, installSkill } = discovery;
-  let { detectedClients } = discovery;
+    forceHopperInstall: options.installHopper,
+    proposeHopper: options.proposeHopper ?? true,
+    selectedClientIds: options.clientIds,
+    installSkillSelection: options.installSkill,
+  });
+  if (discovery.blocker !== undefined) return fail(discovery.blocker);
+  let { installHopper, installSkill } = discovery;
+  let detectedClients: readonly SetupClient[] = discovery.detectedClients;
   plannedActions = discovery.plannedActions;
   let approved = options.approved || plannedActions.length === 0;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
-    interactiveApproval = await confirm(plannedActions);
-    approved = interactiveApproval;
+    const decision = await confirm(plannedActions);
+    if (typeof decision === "boolean") {
+      interactiveApproval = decision;
+      approved = decision;
+    } else {
+      const selected = new Set(decision.selectedActionIds);
+      plannedActions = plannedActions.filter(({ id }) => selected.has(id));
+      installHopper = plannedActions.some(
+        ({ kind }) => kind === "install_hopper",
+      );
+      installSkill = plannedActions.some(
+        ({ kind }) => kind === "install_skill",
+      );
+      detectedClients = detectedClients.filter((client) =>
+        selected.has(`configure_client:${client.name}`),
+      );
+      interactiveApproval = decision.approved;
+      approved = decision.approved || plannedActions.length === 0;
+    }
   }
   if (!approved)
     return {
@@ -180,8 +243,21 @@ export const runSetup = async (
     };
 
   if (installHopper && (interactiveApproval || options.installHopper)) {
+    emitProgress(
+      options,
+      "install_hopper",
+      "Hopper deep-analysis provider",
+      "started",
+    );
     const installed = await host.installHopper(options.installHopper);
-    if (installed.status === "failed")
+    if (installed.status === "failed") {
+      emitProgress(
+        options,
+        "install_hopper",
+        "Hopper deep-analysis provider",
+        "failed",
+        installed.remediation,
+      );
       return {
         status: "needs_human",
         plannedActions,
@@ -191,12 +267,20 @@ export const runSetup = async (
         code: installed.code,
         remediation: installed.remediation,
       };
+    }
     hopperPath = installed.launcherPath;
     providerEnvironment = {
       ...providerEnvironment,
       HOPPER_LAUNCHER_PATH: installed.launcherPath,
     };
     appliedActions.push("installed_hopper");
+    emitProgress(
+      options,
+      "install_hopper",
+      "Hopper deep-analysis provider",
+      "completed",
+      installed.launcherPath,
+    );
     detectedClients = await filterClientsNeedingConfigure(
       host,
       detectedClients,
@@ -211,15 +295,38 @@ export const runSetup = async (
     command: registrationCommand(),
     clients,
     appliedActions,
+    ...(options.onProgress === undefined
+      ? {}
+      : { onProgress: options.onProgress }),
   });
   if (clientFailure !== undefined) return fail(clientFailure);
   if (installSkill) {
+    emitProgress(
+      options,
+      "install_skill",
+      "REA reverse-engineering skill",
+      "started",
+    );
     const skill = await host.installSkill();
-    if (skill === "failed")
+    if (skill === "failed") {
+      emitProgress(
+        options,
+        "install_skill",
+        "REA reverse-engineering skill",
+        "failed",
+      );
       return fail(
         "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
       );
+    }
     if (skill === "installed") appliedActions.push("installed_skill");
+    emitProgress(
+      options,
+      "install_skill",
+      "REA reverse-engineering skill",
+      skill === "installed" ? "completed" : "warning",
+      skill === "unchanged" ? "Already current" : undefined,
+    );
   }
   const doctor = await host.doctor();
   const remediation = finalSetupRemediation(
@@ -238,11 +345,15 @@ export const runSetup = async (
   };
 };
 
-const discoverSetupActions = async (
-  host: SetupHost,
-  providerEnvironment: SetupProviderEnvironment,
-  forceHopperInstall: boolean,
-) => {
+const discoverSetupActions = async (input: {
+  readonly host: SetupHost;
+  readonly providerEnvironment: SetupProviderEnvironment;
+  readonly forceHopperInstall: boolean;
+  readonly proposeHopper: boolean;
+  readonly selectedClientIds: readonly string[] | undefined;
+  readonly installSkillSelection: boolean | undefined;
+}) => {
+  const { host, providerEnvironment } = input;
   const initialDoctor = await host.doctor();
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
     ({ name, ok, detail }) =>
@@ -251,13 +362,24 @@ const discoverSetupActions = async (
         (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
   );
   const installHopper =
-    forceHopperInstall ||
-    Object.keys(providerEnvironment).length === 0 ||
-    linuxHopperRepairNeeded;
-  const [detectedClients, installSkill] = await Promise.all([
+    input.forceHopperInstall ||
+    (input.proposeHopper &&
+      (Object.keys(providerEnvironment).length === 0 ||
+        linuxHopperRepairNeeded));
+  const [allDetectedClients, skillNeedsInstall] = await Promise.all([
     host.detectedClients(),
     host.skillNeedsInstall(),
   ]);
+  const selectedClientIdSet =
+    input.selectedClientIds === undefined
+      ? undefined
+      : new Set(input.selectedClientIds);
+  const detectedClients = allDetectedClients.filter(
+    ({ name }) =>
+      selectedClientIdSet === undefined || selectedClientIdSet.has(name),
+  );
+  const installSkill =
+    input.installSkillSelection === false ? false : skillNeedsInstall;
   const command = registrationCommand();
   const clients = installHopper
     ? detectedClients
@@ -267,20 +389,90 @@ const discoverSetupActions = async (
         providerEnvironment,
         command,
       );
-  const plannedActions = setupPlan(
-    host.platform,
-    installHopper,
-    installSkill,
+  const inspections = await inspectClients(
+    host,
     clients,
     providerEnvironment,
+    command,
   );
+  const invalid = inspections.find(
+    ({ inspection }) => inspection.status === "invalid",
+  );
+  const blocker =
+    invalid?.inspection.status === "invalid"
+      ? `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`
+      : undefined;
+  const clientPlans = inspections.flatMap(({ client, inspection }) =>
+    inspection.status === "create" ||
+    inspection.status === "update" ||
+    (installHopper && inspection.status === "already_current")
+      ? [
+          {
+            client,
+            operation:
+              inspection.status === "already_current"
+                ? ("update" as const)
+                : inspection.status,
+            ...(inspection.status !== "already_current" &&
+            inspection.backupPath !== undefined
+              ? { backupPath: inspection.backupPath }
+              : {}),
+          },
+        ]
+      : [],
+  );
+  const linuxDistribution =
+    host.platform === "linux" ? await host.linuxDistribution() : undefined;
+  const plannedActions = setupPlan({
+    platform: host.platform,
+    installHopper,
+    installSkill,
+    clients: clientPlans,
+    providerEnvironment,
+    ...(linuxDistribution?.packageFamily === undefined
+      ? {}
+      : { linuxPackageFamily: linuxDistribution.packageFamily }),
+  });
   return {
     installHopper,
     installSkill,
-    detectedClients: clients,
+    detectedClients: clientPlans.map(({ client }) => client),
     plannedActions,
+    blocker,
   };
 };
+
+const inspectClients = async (
+  host: SetupHost,
+  clients: readonly SetupClient[],
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+) =>
+  Promise.all(
+    clients.map(async (client) => ({
+      client,
+      inspection:
+        (await host.inspectClientConfiguration?.(
+          client,
+          providerEnvironment,
+          command,
+        )) ?? ({ status: "update" } as const),
+    })),
+  );
+
+const emitProgress = (
+  options: SetupOptions,
+  actionId: string,
+  label: string,
+  state: SetupProgressEvent["state"],
+  detail?: string,
+): void =>
+  options.onProgress?.({
+    actionId,
+    label,
+    state,
+    ...(detail === undefined ? {} : { detail }),
+  });
 
 const filterClientsNeedingConfigure = async (
   host: SetupHost,
@@ -381,6 +573,7 @@ export const systemSetupHost = (
       clientConfigurationAligned(client, providerEnvironment, command).then(
         (aligned) => !aligned,
       ),
+    inspectClientConfiguration: inspectClientConfiguration,
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
     doctor: () => runDoctor(undefined, doctorHost),
@@ -634,6 +827,59 @@ const clientConfigurationAligned = async (
   } catch {
     return false;
   }
+};
+
+const inspectClientConfiguration = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+): Promise<ClientConfigurationInspection> => {
+  if (client.format === "unsupported") return { status: "already_current" };
+  const transactionPath = await resolveClientConfigTransactionPath(
+    client.configPath,
+  );
+  if (transactionPath === undefined)
+    return {
+      status: "invalid",
+      remediation:
+        "The configuration path is unsafe or unresolved. Check ownership and symbolic links before rerunning setup.",
+    };
+  let original: string;
+  try {
+    original = await readFile(transactionPath, "utf8");
+  } catch (cause: unknown) {
+    if (isMissing(cause)) return { status: "create" };
+    return {
+      status: "invalid",
+      remediation:
+        "The configuration file could not be read. Check its permissions before rerunning setup.",
+    };
+  }
+  const desired = clientConfigurationDesired(providerEnvironment, command);
+  try {
+    const document =
+      client.format === "toml"
+        ? objectSchema.parse(parseToml(original))
+        : parseObject(original);
+    const servers = parseOptionalObject(
+      client.format === "toml" ? document.mcp_servers : document.mcpServers,
+    );
+    if (
+      JSON.stringify(servers[PRODUCT_IDENTITY.mcpServerKey]) ===
+      JSON.stringify(desired)
+    )
+      return { status: "already_current" };
+  } catch {
+    return {
+      status: "invalid",
+      remediation:
+        "The existing configuration is malformed. Repair it before setup applies any other changes.",
+    };
+  }
+  return {
+    status: "update",
+    backupPath: `${client.configPath}.rea.backup`,
+  };
 };
 
 const normalizeProviderEnvironment = (

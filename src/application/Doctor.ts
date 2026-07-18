@@ -195,15 +195,16 @@ export const runDoctor = async (
           SYSTEM_LINUX_HOPPER,
           linuxHopperLauncherPath(homedir()),
           ...(await host.manualHopperPaths()),
-          await host.brewHopperPath(),
-        ].filter((value): value is string => value !== undefined)
+        ]
       : [host.configuredHopperPath];
-  let hopperPath: string | undefined;
-  for (const candidate of new Set(candidates))
-    if (await host.executable(candidate)) {
-      hopperPath = candidate;
-      break;
-    }
+  let hopperPath = await firstExecutable(host, candidates);
+  if (hopperPath === undefined && host.configuredHopperPath === undefined) {
+    const brewCandidate = await host.brewHopperPath();
+    hopperPath = await firstExecutable(
+      host,
+      brewCandidate === undefined ? [] : [brewCandidate],
+    );
+  }
   checks.push(
     check(
       "hopper",
@@ -561,6 +562,15 @@ const uniqueLines = (value: string): string[] => [
       .filter((line) => line.length > 0),
   ),
 ];
+
+const firstExecutable = async (
+  host: DoctorHost,
+  candidates: readonly string[],
+): Promise<string | undefined> => {
+  for (const candidate of new Set(candidates))
+    if (await host.executable(candidate)) return candidate;
+  return undefined;
+};
 
 const firstIlspyVersionLine = (value: string): string | undefined =>
   uniqueLines(value).find((line) => line.startsWith("ilspycmd:"));

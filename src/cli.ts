@@ -1,6 +1,5 @@
 import { Cli, z } from "incur";
 import { fileURLToPath } from "node:url";
-import { createInterface } from "node:readline/promises";
 
 import { runDoctor } from "./application/Doctor.js";
 import {
@@ -13,11 +12,7 @@ import { projectManagedApplicationGraphEvidence } from "./application/ManagedApp
 import { verifyManagedNativeBoundariesEvidence } from "./application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "./application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
-import {
-  runSetup,
-  systemSetupHost,
-  type SetupAction,
-} from "./application/Setup.js";
+import { runSetup, systemSetupHost } from "./application/Setup.js";
 import { runUninstall } from "./application/Uninstall.js";
 import { runUpgrade, systemUpgradeHost } from "./application/Upgrade.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -47,6 +42,12 @@ import {
   type AnalysisProviderSelector,
 } from "./contracts/providerSelection.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
+import {
+  conciseSetupResult,
+  confirmInteractiveSetup,
+  renderInteractiveSetupResult,
+  renderSetupProgress,
+} from "./cliSetup.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -188,6 +189,7 @@ const registerSetupCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.setup, {
     description: "Install requirements and configure agents",
+    outputPolicy: "agent-only",
     options: z.object({
       yes: z
         .boolean()
@@ -197,21 +199,42 @@ const registerSetupCommands = (
         .boolean()
         .default(false)
         .describe("Also approve Hopper installation with --yes"),
+      client: z
+        .array(
+          z.enum([
+            "claude_code",
+            "claude_desktop",
+            "codex",
+            "cursor",
+            "gemini_cli",
+            "windsurf",
+          ]),
+        )
+        .default([])
+        .describe("Agent integration to configure; repeat for multiple agents"),
+      allDetected: z
+        .boolean()
+        .default(false)
+        .describe("Configure every detected supported agent"),
+      skill: z
+        .boolean()
+        .optional()
+        .describe("Install or skip the bundled REA skill"),
+      dryRun: z
+        .boolean()
+        .default(false)
+        .describe("Print the resolved plan without applying it"),
+      accessible: z
+        .boolean()
+        .default(false)
+        .describe("Use sequential accessible setup prompts"),
     }),
-    alias: { yes: "y", installHopper: "install-hopper" },
-    run: ({ options, formatExplicit }) =>
+    alias: {
+      yes: "y",
+    },
+    run: ({ options, formatExplicit, agent }) =>
       logCliCommand(logger, "setup", () =>
-        runSetup(
-          {
-            approved: options.yes,
-            installHopper: options.installHopper,
-            structured: formatExplicit,
-          },
-          systemSetupHost(createSystemDoctorHost()),
-          options.yes || formatExplicit || process.stdin.isTTY !== true
-            ? undefined
-            : confirmSetup,
-        ),
+        runSetupCommand({ options, formatExplicit, agent }),
       ),
   });
   cli.command(CLI_COMMANDS.doctor, {
@@ -249,26 +272,54 @@ const registerSetupCommands = (
   });
 };
 
-const confirmSetup = async (
-  actions: readonly SetupAction[],
-): Promise<boolean> => {
-  process.stdout.write("\nREA setup plan\n");
-  for (const action of actions)
-    process.stdout.write(
-      `  - ${action.detail}\n    ${action.target}${action.external ? " (external software)" : ""}\n`,
+const runSetupCommand = async (input: {
+  readonly options: {
+    readonly yes: boolean;
+    readonly installHopper: boolean;
+    readonly client: readonly string[];
+    readonly allDetected: boolean;
+    readonly skill?: boolean | undefined;
+    readonly dryRun: boolean;
+    readonly accessible: boolean;
+  };
+  readonly formatExplicit: boolean;
+  readonly agent: boolean;
+}) => {
+  const { options } = input;
+  const interactive =
+    !options.yes &&
+    !options.dryRun &&
+    !input.formatExplicit &&
+    process.stdin.isTTY === true &&
+    process.stderr.isTTY === true;
+  const hasExplicitScope =
+    options.allDetected ||
+    options.client.length > 0 ||
+    options.skill !== undefined ||
+    options.installHopper;
+  if (options.yes && !hasExplicitScope)
+    process.stderr.write(
+      "!  Implicit `rea setup --yes` scope is deprecated; use `--all-detected --skill` to retain it.\n",
     );
-  const prompt = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const answer = (await prompt.question("Continue? [Y/n] "))
-      .trim()
-      .toLowerCase();
-    return answer === "" || answer === "y" || answer === "yes";
-  } finally {
-    prompt.close();
-  }
+  const result = await runSetup(
+    {
+      approved: options.yes && !options.dryRun,
+      installHopper: options.installHopper,
+      structured: input.formatExplicit || options.dryRun,
+      proposeHopper: !hasExplicitScope || options.installHopper,
+      ...(!hasExplicitScope || options.allDetected
+        ? {}
+        : { clientIds: options.client }),
+      ...(!hasExplicitScope ? {} : { installSkill: options.skill ?? false }),
+      ...(interactive ? { onProgress: renderSetupProgress } : {}),
+    },
+    systemSetupHost(createSystemDoctorHost()),
+    interactive
+      ? (actions) => confirmInteractiveSetup(actions, options.accessible)
+      : undefined,
+  );
+  if (interactive) renderInteractiveSetupResult(result);
+  return input.formatExplicit ? result : conciseSetupResult(result);
 };
 
 const registerXrefsCommand = (
