@@ -8,6 +8,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import type {
+  ClientConfigurationInspection,
   ClientConfigurationResult,
   SetupProviderEnvironment,
 } from "./Setup.js";
@@ -185,6 +186,57 @@ export const clientConfigurationAligned = async (
   } catch {
     return false;
   }
+};
+
+/** Preflight one client configuration before setup presents any mutations. */
+export const inspectClientConfiguration = async (
+  client: SetupClient,
+  providerEnvironment: SetupProviderEnvironment,
+  command: readonly string[],
+): Promise<ClientConfigurationInspection> => {
+  if (client.format === "unsupported") return { status: "already_current" };
+  const transactionPath = await resolveClientConfigTransactionPath(
+    client.configPath,
+  );
+  if (transactionPath === undefined)
+    return {
+      status: "invalid",
+      remediation:
+        "The configuration path is unsafe or unresolved. Check ownership and symbolic links before rerunning setup.",
+    };
+  let original: string;
+  try {
+    original = await readFile(transactionPath, "utf8");
+  } catch (cause: unknown) {
+    if (isMissing(cause)) return { status: "create" };
+    return {
+      status: "invalid",
+      remediation:
+        "The configuration file could not be read. Check its permissions before rerunning setup.",
+    };
+  }
+  const desired = clientConfigurationDesired(providerEnvironment, command);
+  try {
+    const document =
+      client.format === "toml"
+        ? objectSchema.parse(parseToml(original))
+        : parseObject(original);
+    const servers = parseOptionalObject(
+      client.format === "toml" ? document.mcp_servers : document.mcpServers,
+    );
+    if (sameConfiguration(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
+      return { status: "already_current" };
+  } catch {
+    return {
+      status: "invalid",
+      remediation:
+        "The existing configuration is malformed. Repair it before setup applies any other changes.",
+    };
+  }
+  return {
+    status: "update",
+    backupPath: `${client.configPath}.rea.backup`,
+  };
 };
 
 const objectSchema = z.record(z.string(), z.unknown());

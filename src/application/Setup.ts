@@ -23,16 +23,14 @@ import {
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
 } from "./SetupSkill.js";
-import { setupPlan } from "./SetupPlan.js";
+import { discoverSetupActions } from "./SetupPlan.js";
 import {
   clientConfigurationAligned,
   configureJsonClient,
   configureTomlClient,
+  inspectClientConfiguration,
 } from "./SetupClientConfiguration.js";
-export {
-  configureJsonClient,
-  configureTomlClient,
-} from "./SetupClientConfiguration.js";
+export { configureJsonClient, configureTomlClient };
 import {
   setupInstallFailure,
   type SetupFailureCode,
@@ -43,10 +41,7 @@ export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 /** Exact non-secret provider variables propagated into managed registrations. */
 export type SetupProviderEnvironment = Readonly<Record<string, string>>;
 
-export {
-  canonicalSkillNeedsInstall,
-  installCanonicalSkill,
-} from "./SetupSkill.js";
+export { canonicalSkillNeedsInstall, installCanonicalSkill };
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
@@ -75,11 +70,7 @@ export type ClientConfigurationInspection =
       readonly status: "invalid";
       readonly remediation: string;
     };
-/**
- * Effects required by the idempotent setup workflow.
- * Implementations report interrupted installers as values: setup must not wait
- * indefinitely for stdin or a GUI response in an unattended agent invocation.
- */
+/** Effects required by the idempotent, non-blocking setup workflow. */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly nodeVersion: string;
@@ -108,11 +99,7 @@ export interface SetupHost {
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
   doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
-/**
- * Structured setup outcome intended to travel back through an agent to a human.
- * `needs_human` carries remediation text instead of initiating an interactive
- * prompt, avoiding deadlocks in stdio and other unattended environments.
- */
+/** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
   readonly status: "planned" | "needs_confirmation" | "ready" | "needs_human";
   readonly plannedActions: readonly SetupAction[];
@@ -168,11 +155,7 @@ export type SetupConfirmation = (
   actions: readonly SetupAction[],
 ) => Promise<boolean | SetupConfirmationDecision>;
 
-/**
- * Install prerequisites and configure detected clients idempotently.
- * Discovery always precedes mutation. Interactive confirmation or explicit
- * unattended options authorize only the actions represented in the result.
- */
+/** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
   options: SetupOptions,
   host: SetupHost = systemSetupHost(),
@@ -190,15 +173,86 @@ export const runSetup = async (
   const discovery = await discoverSetupActions({
     host,
     providerEnvironment,
+    command: registrationCommand(),
     forceHopperInstall: options.installHopper,
     proposeHopper: options.proposeHopper ?? true,
     selectedClientIds: options.clientIds,
     installSkillSelection: options.installSkill,
   });
   if (discovery.blocker !== undefined) return fail(discovery.blocker);
-  let { installHopper, installSkill } = discovery;
-  let detectedClients: readonly SetupClient[] = discovery.detectedClients;
-  plannedActions = discovery.plannedActions;
+  const selection = await resolveSetupSelection(options, discovery, confirm);
+  plannedActions = selection.plannedActions;
+  if (!selection.approved)
+    return {
+      status: confirm === undefined ? "needs_confirmation" : "planned",
+      plannedActions,
+      appliedActions,
+      clients,
+      doctor: await host.doctor(),
+      remediation:
+        "Review the setup plan, then rerun interactively or with --yes.",
+    };
+
+  let detectedClients: readonly SetupClient[] = selection.detectedClients;
+  if (
+    selection.installHopper &&
+    (selection.interactiveApproval || options.installHopper)
+  ) {
+    const install = await installHopperAction({
+      host,
+      options,
+      plannedActions,
+      appliedActions,
+      clients,
+      detectedClients,
+      providerEnvironment,
+    });
+    if ("failure" in install) return install.failure;
+    ({ hopperPath, providerEnvironment, detectedClients } = install);
+  }
+  const clientFailure = await configureDetectedClients({
+    host,
+    detectedClients,
+    providerEnvironment,
+    command: registrationCommand(),
+    clients,
+    appliedActions,
+    ...(options.onProgress === undefined
+      ? {}
+      : { onProgress: options.onProgress }),
+  });
+  if (clientFailure !== undefined) return fail(clientFailure);
+  if (
+    selection.installSkill &&
+    !(await installSkillAction(host, options, appliedActions))
+  )
+    return fail(
+      "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
+    );
+  const doctor = await host.doctor();
+  const remediation = finalSetupRemediation(
+    host.platform,
+    appliedActions.includes("installed_hopper"),
+    doctor.healthy,
+    hopperPath,
+  );
+  return {
+    status: remediation === undefined ? "ready" : "needs_human",
+    plannedActions,
+    appliedActions,
+    clients,
+    doctor,
+    ...(remediation === undefined ? {} : { remediation }),
+  };
+};
+
+const resolveSetupSelection = async (
+  options: SetupOptions,
+  discovery: Awaited<ReturnType<typeof discoverSetupActions>>,
+  confirm: SetupConfirmation | undefined,
+) => {
+  let { installHopper, installSkill, detectedClients, plannedActions } =
+    discovery;
   let approved = options.approved || plannedActions.length === 0;
   let interactiveApproval = false;
   if (!approved && confirm !== undefined && !options.structured) {
@@ -222,118 +276,102 @@ export const runSetup = async (
       approved = decision.approved || plannedActions.length === 0;
     }
   }
-  if (!approved)
-    return {
-      status: confirm === undefined ? "needs_confirmation" : "planned",
-      plannedActions,
-      appliedActions,
-      clients,
-      doctor: await host.doctor(),
-      remediation:
-        "Review the setup plan, then rerun interactively or with --yes.",
-    };
+  return {
+    approved,
+    interactiveApproval,
+    installHopper,
+    installSkill,
+    detectedClients,
+    plannedActions,
+  };
+};
 
-  if (installHopper && (interactiveApproval || options.installHopper)) {
-    emitProgress(
-      options,
-      "install_hopper",
-      "Hopper deep-analysis provider",
-      "started",
-    );
-    const installed = await host.installHopper(options.installHopper);
-    if (installed.status === "failed") {
-      emitProgress(
-        options,
-        "install_hopper",
-        "Hopper deep-analysis provider",
-        "failed",
-        installed.remediation,
-      );
-      return {
-        status: "needs_human",
-        plannedActions,
-        appliedActions,
-        clients,
-        doctor: await host.doctor(),
+const installHopperAction = async (input: {
+  readonly host: SetupHost;
+  readonly options: SetupOptions;
+  readonly plannedActions: readonly SetupAction[];
+  readonly appliedActions: string[];
+  readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
+  readonly detectedClients: readonly SetupClient[];
+  readonly providerEnvironment: SetupProviderEnvironment;
+}) => {
+  const label = "Hopper deep-analysis provider";
+  emitProgress(input.options, {
+    actionId: "install_hopper",
+    label,
+    state: "started",
+  });
+  const installed = await input.host.installHopper(input.options.installHopper);
+  if (installed.status === "failed") {
+    emitProgress(input.options, {
+      actionId: "install_hopper",
+      label,
+      state: "failed",
+      detail: installed.remediation,
+    });
+    return {
+      failure: {
+        status: "needs_human" as const,
+        plannedActions: input.plannedActions,
+        appliedActions: input.appliedActions,
+        clients: input.clients,
+        doctor: await input.host.doctor(),
         code: installed.code,
         remediation: installed.remediation,
-      };
-    }
-    hopperPath = installed.launcherPath;
-    providerEnvironment = {
-      ...providerEnvironment,
-      HOPPER_LAUNCHER_PATH: installed.launcherPath,
+      },
     };
-    appliedActions.push("installed_hopper");
-    emitProgress(
-      options,
-      "install_hopper",
-      "Hopper deep-analysis provider",
-      "completed",
-      installed.launcherPath,
-    );
-    detectedClients = await filterClientsNeedingConfigure(
-      host,
-      detectedClients,
+  }
+  input.appliedActions.push("installed_hopper");
+  emitProgress(input.options, {
+    actionId: "install_hopper",
+    label,
+    state: "completed",
+    detail: installed.launcherPath,
+  });
+  const providerEnvironment = {
+    ...input.providerEnvironment,
+    HOPPER_LAUNCHER_PATH: installed.launcherPath,
+  };
+  return {
+    hopperPath: installed.launcherPath,
+    providerEnvironment,
+    detectedClients: await filterClientsNeedingConfigure(
+      input.host,
+      input.detectedClients,
       providerEnvironment,
       registrationCommand(),
-    );
-  }
-  const clientFailure = await configureDetectedClients({
-    host,
-    detectedClients,
-    providerEnvironment,
-    command: registrationCommand(),
-    clients,
-    appliedActions,
-    ...(options.onProgress === undefined
-      ? {}
-      : { onProgress: options.onProgress }),
-  });
-  if (clientFailure !== undefined) return fail(clientFailure);
-  if (installSkill) {
-    emitProgress(
-      options,
-      "install_skill",
-      "REA reverse-engineering skill",
-      "started",
-    );
-    const skill = await host.installSkill();
-    if (skill === "failed") {
-      emitProgress(
-        options,
-        "install_skill",
-        "REA reverse-engineering skill",
-        "failed",
-      );
-      return fail(
-        "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
-      );
-    }
-    if (skill === "installed") appliedActions.push("installed_skill");
-    emitProgress(
-      options,
-      "install_skill",
-      "REA reverse-engineering skill",
-      skill === "installed" ? "completed" : "warning",
-      skill === "unchanged" ? "Already current" : undefined,
-    );
-  }
-  const doctor = await host.doctor();
-  const remediation = finalSetupRemediation(
-    host.platform,
-    appliedActions.includes("installed_hopper"),
-    doctor.healthy,
-    hopperPath,
-  );
-  return {
-    status: remediation === undefined ? "ready" : "needs_human",
-    plannedActions,
-    appliedActions,
-    clients,
-    doctor,
-    ...(remediation === undefined ? {} : { remediation }),
+    ),
   };
+};
+
+const installSkillAction = async (
+  host: SetupHost,
+  options: SetupOptions,
+  appliedActions: string[],
+): Promise<boolean> => {
+  const label = "REA reverse-engineering skill";
+  emitProgress(options, {
+    actionId: "install_skill",
+    label,
+    state: "started",
+  });
+  const skill = await host.installSkill();
+  if (skill === "failed") {
+    emitProgress(options, {
+      actionId: "install_skill",
+      label,
+      state: "failed",
+    });
+    return false;
+  }
+  if (skill === "installed") appliedActions.push("installed_skill");
+  emitProgress(options, {
+    actionId: "install_skill",
+    label,
+    state: skill === "installed" ? "completed" : "warning",
+    ...(skill === "unchanged" ? { detail: "Already current" } : {}),
+  });
+  return true;
 };
 
 const setupFailure = async (
@@ -353,92 +391,8 @@ const setupFailure = async (
   remediation,
 });
 
-const discoverSetupActions = async (
-  host: SetupHost,
-  providerEnvironment: SetupProviderEnvironment,
-  forceHopperInstall: boolean,
-) => {
-  const initialDoctor = await host.doctor();
-  const linuxHopperRepairNeeded = initialDoctor.checks.some(
-    ({ name, ok, detail }) =>
-      !ok &&
-      (name === "hopper-demo-runtime" ||
-        (name === "hopper-version" && detail === "/opt/hopper/bin/Hopper")),
-  );
-  const installHopper =
-    input.forceHopperInstall ||
-    (input.proposeHopper &&
-      (Object.keys(providerEnvironment).length === 0 ||
-        linuxHopperRepairNeeded));
-  const [allDetectedClients, skillNeedsInstall] = await Promise.all([
-    host.detectedClients(),
-    host.skillNeedsInstall(),
-  ]);
-  const selectedClientIdSet =
-    input.selectedClientIds === undefined
-      ? undefined
-      : new Set(input.selectedClientIds);
-  const detectedClients = allDetectedClients.filter(
-    ({ name }) =>
-      selectedClientIdSet === undefined || selectedClientIdSet.has(name),
-  );
-  const installSkill =
-    input.installSkillSelection === false ? false : skillNeedsInstall;
-  const command = registrationCommand();
-  const clients = installHopper
-    ? detectedClients
-    : await filterClientsNeedingConfigure(
-        host,
-        detectedClients,
-        providerEnvironment,
-        command,
-      );
-  const plannedActions = setupPlan(host.platform, {
-    installHopper,
-    installSkill,
-    clients,
-    providerEnvironment,
-  });
-  return {
-    installHopper,
-    installSkill,
-    detectedClients: clientPlans.map(({ client }) => client),
-    plannedActions,
-    blocker,
-  };
-};
-
-const inspectClients = async (
-  host: SetupHost,
-  clients: readonly SetupClient[],
-  providerEnvironment: SetupProviderEnvironment,
-  command: readonly string[],
-) =>
-  Promise.all(
-    clients.map(async (client) => ({
-      client,
-      inspection:
-        (await host.inspectClientConfiguration?.(
-          client,
-          providerEnvironment,
-          command,
-        )) ?? ({ status: "update" } as const),
-    })),
-  );
-
-const emitProgress = (
-  options: SetupOptions,
-  actionId: string,
-  label: string,
-  state: SetupProgressEvent["state"],
-  detail?: string,
-): void =>
-  options.onProgress?.({
-    actionId,
-    label,
-    state,
-    ...(detail === undefined ? {} : { detail }),
-  });
+const emitProgress = (options: SetupOptions, event: SetupProgressEvent): void =>
+  options.onProgress?.(event);
 
 const filterClientsNeedingConfigure = async (
   host: SetupHost,
