@@ -50,24 +50,23 @@ mechanics:
 - recover evidence through an available deep-analysis provider;
 - use the bundled skill for a repeatable investigation workflow.
 
-REA then summarizes the detected clients and presents one gateway:
+REA then summarizes the detected clients and asks which independent
+capabilities to set up. The capability picker starts empty and labels each
+choice by its role: `MCP` for coding-agent access, `provider` for Hopper, and
+`skill` for the shared REA investigation workflow. Selecting MCP access opens a
+second empty checklist for the exact detected agents that should receive a
+registration. Detection provides context; it does not preselect or authorize a
+configuration write.
 
-- **Set up all available capabilities (recommended)** selects the complete
-  resolved plan;
-- **Customize** opens the concrete action picker;
-- **No thanks** exits without making changes.
+Choosing no capabilities exits without changes. Selecting the skill or provider
+does not implicitly select an agent, and selecting agent access does not include
+every detected agent. The picker keeps its navigation, selection, confirmation,
+and cancellation keys visible instead of relying on a transient hint.
 
-The custom picker labels each target by its role: `MCP` for an agent
-registration, `provider` for Hopper or a validated bring-your-own provider, and
-`skill` for the REA investigation skill. These labels describe different setup
-modalities rather than suggesting that every target is an MCP registration.
-The picker keeps its navigation, selection, confirmation, and cancellation keys
-visible instead of relying on a transient hint.
-
-Both recommended and custom paths converge on the same exact preflight. REA
-validates the current state, prints the proposed effects, and asks for final
-approval with **No** as the default. Selection alone never authorizes a
-mutation. The plan identifies:
+Every selected path converges on the same exact preflight. REA validates the
+current state, prints the proposed effects, and asks for final approval with
+**No** as the default. Selection alone never authorizes a mutation. The plan
+identifies:
 
 - an existing Hopper installation, a validated bring-your-own Ghidra environment, or the official Hopper package it proposes to install;
 - each detected agent configuration path;

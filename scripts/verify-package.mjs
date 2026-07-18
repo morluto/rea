@@ -1192,7 +1192,7 @@ async function verifyInteractiveSetup(command, env) {
 
     terminal.onData((data) => {
       output += data;
-      if (!cancelled && output.includes("Choose a setup")) {
+      if (!cancelled && output.includes("What should REA set up?")) {
         cancelled = true;
         terminal.write("\u0003");
       }
