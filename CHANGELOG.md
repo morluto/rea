@@ -1,5 +1,114 @@
 # Changelog
 
+## [2.1.0](https://github.com/morluto/rea/compare/rea-agents-2.0.0...rea-agents-2.1.0) (2026-07-18)
+
+
+### Features
+
+* add managed characterization and coverage closure ([1943496](https://github.com/morluto/rea/commit/194349683a19ee8b35c1bd9b124d032e83e6867a))
+* add managed characterization and reconstruction coverage ([02c913b](https://github.com/morluto/rea/commit/02c913bcdab5904e1b6ce8a24940b75ddc20c826))
+* **cli:** add explicit package-runner setup wizard ([891a11f](https://github.com/morluto/rea/commit/891a11f315d02628bbf04f290d211e48d1916a1d))
+* **cli:** improve setup onboarding ([4851449](https://github.com/morluto/rea/commit/4851449f715af122d02e5517b4f6b925962f2a01))
+* **cli:** improve setup onboarding ([16002ff](https://github.com/morluto/rea/commit/16002ff3c216ecd91e9c28bab8de288f3b553e57))
+* **cli:** support package-name setup wizard ([1b90e7f](https://github.com/morluto/rea/commit/1b90e7f992276e4e05644823583f77c27ccac702))
+* **doctor:** admit the Windows x64 Ghidra boundary ([32dda0c](https://github.com/morluto/rea/commit/32dda0c19eee5ddf91a35d9e21374f9cb111b07d))
+* **dotnet:** add BYO ILSpy oracle diagnostics ([aa200ce](https://github.com/morluto/rea/commit/aa200ce8ca5690113a39259e91ab1ae9edc0b436))
+* **ghidra:** add authenticated Windows loopback transport ([629ffc3](https://github.com/morluto/rea/commit/629ffc3872cdf2f3dabbe053890ac6a4103fdd1c))
+* **ghidra:** bind imports to admitted target bytes ([be19c3f](https://github.com/morluto/rea/commit/be19c3fd12da55df84d92c5ec2641fe739df0438))
+* **ghidra:** define the Windows P0 admission boundary ([6b1fd16](https://github.com/morluto/rea/commit/6b1fd166b0a6d37af9d42c38c5fd587fe3989659))
+* **ghidra:** inspect Windows headless installations ([86e44be](https://github.com/morluto/rea/commit/86e44bef08d36cc1b56e44b7b544d5d6d21d141d))
+* **ghidra:** launch bounded Windows headless sessions ([bc0fb45](https://github.com/morluto/rea/commit/bc0fb45f16db97d3f79860d850c9f2fe0f6b7b22))
+* harden authority and runtime conformance boundaries ([b537ebf](https://github.com/morluto/rea/commit/b537ebfa3460f782c2aee4996ced2e726f7d6328))
+* **javascript:** add binding and constant-value semantic IR ([3ea8523](https://github.com/morluto/rea/commit/3ea852323aa9a0509691105d47f5e5622c24050b))
+* **javascript:** add binding and constant-value semantic IR ([3d71bb5](https://github.com/morluto/rea/commit/3d71bb551e3353df23afa5832883e5074fe0f2d0))
+* **javascript:** add webpack and rspack runtime adapters ([7bccb7c](https://github.com/morluto/rea/commit/7bccb7c6ae2f48a37e053cfd871309971e81bbc4))
+* **javascript:** add webpack and rspack runtime adapters ([44c7017](https://github.com/morluto/rea/commit/44c70176b845e2900244151aaadb7a4dc3f8b302))
+* **javascript:** recover commonjs and esm module relationships ([9766fc0](https://github.com/morluto/rea/commit/9766fc04c13a366fa449f60cccabb1c97d68e84d))
+* **javascript:** recover commonjs and esm module relationships ([6c41791](https://github.com/morluto/rea/commit/6c41791519069811d0be0115c450801432f96660))
+* **permissions:** add scoped process capture elicitation ([e6cfce3](https://github.com/morluto/rea/commit/e6cfce3902a8f0c403caa07e2c597e8156aa5498))
+* **skill:** rename skill to reverse-engineer-anything ([9356634](https://github.com/morluto/rea/commit/9356634ccba8d913a376798dae47bb3c4a86c07a))
+* **target:** classify Windows PE admission metadata ([24274fe](https://github.com/morluto/rea/commit/24274fe6b694c5bf08ae21fd7f4afa1846f67ef2))
+* **windows:** define native authority boundary ([a1a6b42](https://github.com/morluto/rea/commit/a1a6b4200ed638b1ea4d186ae1253805032d002a))
+
+
+### Bug Fixes
+
+* **build:** preserve native generated-file line endings ([00a3078](https://github.com/morluto/rea/commit/00a3078148e90a2d45648891f96158378c2561ce))
+* **ci:** remove retired native rebuild steps ([2d22731](https://github.com/morluto/rea/commit/2d22731ebb3f81483ec8a561ed8b1cb313b4eac1))
+* **ci:** validate packaged Windows CLI commands exactly ([43418ee](https://github.com/morluto/rea/commit/43418ee9112358d81d56d78b5cbe1ca37f6099be))
+* **cli:** require explicit setup selections ([992ec50](https://github.com/morluto/rea/commit/992ec505b279114dcb13230fcd008db8668578af))
+* **contracts:** make agent-facing schemas self-describing ([0df11dd](https://github.com/morluto/rea/commit/0df11dd4d1de4cb1c4fab6562d874e3be285aeec))
+* **dotnet:** admit real CLI GUID and fat CIL bodies ([735973b](https://github.com/morluto/rea/commit/735973b08b364d45a8e2a551e17ad96c31b039c9))
+* **dotnet:** correct CLI pointer and byref signatures ([1387be0](https://github.com/morluto/rea/commit/1387be08dd398ca8ef92410307fe35faa8936ed5))
+* **dotnet:** correct CLI pointer and byref signatures ([fb9ff56](https://github.com/morluto/rea/commit/fb9ff5659dffb6af5185c9465ddac6e86eca7dd2))
+* **dotnet:** downgrade truncated CIL identity and coverage ([736a4e1](https://github.com/morluto/rea/commit/736a4e1480fb34df12b00372c697acc327b0046c))
+* **dotnet:** downgrade truncated CIL identity and coverage ([dae6807](https://github.com/morluto/rea/commit/dae6807c4a4aad7a20c4b9da085e39dcfb58430a))
+* **electron:** keep missing unpacked ASAR entries unavailable ([fb6964a](https://github.com/morluto/rea/commit/fb6964a74ea60751560a6d10366bfdad3dab4535))
+* **electron:** resolve package and dirname entrypoints by context ([4847fc4](https://github.com/morluto/rea/commit/4847fc4fc14114cbb15350a23f6db4a2ad7962fe))
+* **electron:** resolve package and dirname entrypoints by context ([1ac9a09](https://github.com/morluto/rea/commit/1ac9a09ce1574b202d98177392628ba468a568df))
+* **ghidra:** preserve native endpoint diagnostics ([5970a71](https://github.com/morluto/rea/commit/5970a7182481656e30a8ad51e4855d4c8e50eed7))
+* **ghidra:** preserve Windows batch invocation semantics ([0ac418d](https://github.com/morluto/rea/commit/0ac418dd8be62357f852767a64f0d5b5c78495cc))
+* **ghidra:** validate Windows control characters explicitly ([4dccbec](https://github.com/morluto/rea/commit/4dccbecf064b56b0d33c7d8c926772353667c739))
+* **managed:** emit valid x64 conformance PE ([dcd94f1](https://github.com/morluto/rea/commit/dcd94f1472cbdfd5fff90eb26bbac68f5fb2b06b))
+* **managed:** emit valid x64 conformance PE ([c52a822](https://github.com/morluto/rea/commit/c52a8223c62ab85373eb86a68dbdc626648aa40f))
+* **managed:** preserve page incompleteness in graph and comparison ([a6f02a0](https://github.com/morluto/rea/commit/a6f02a05a48254e46a6485cedfadda426ab60e21))
+* **managed:** preserve page incompleteness in graph and comparison ([8ee0f04](https://github.com/morluto/rea/commit/8ee0f04562814e44f77fd8a0f19184c127bcf92e))
+* **mcp:** clarify advertised schema fields ([1581e40](https://github.com/morluto/rea/commit/1581e40fce733c19e11b460b47722e4121e9fd0e))
+* **npm:** use latest entry points without install scripts ([34252f5](https://github.com/morluto/rea/commit/34252f55e963fcd63c0fd127dc249ba2c8398082))
+* **npm:** use latest entry points, remove install scripts, and rename skill ([bf85ee6](https://github.com/morluto/rea/commit/bf85ee62c976dd06fdc47429a9b3c7f3d99b7f3b))
+* preserve optional unknown filters ([db1efef](https://github.com/morluto/rea/commit/db1efef9d285d1726f56c288593161434b9f322f))
+* remove unused boundary exports ([49f1ec1](https://github.com/morluto/rea/commit/49f1ec14fe4f5b67345ff9dde8af8ef1066fb3c8))
+* satisfy dead-code and generated-doc checks ([b15a9ec](https://github.com/morluto/rea/commit/b15a9ecfef55dec00b92babf92883f6dedaa2209))
+* **setup:** preserve onboarding after refactor ([da48033](https://github.com/morluto/rea/commit/da48033c191f491f47b9933f65806f0f0a223643))
+* **skill:** disclose retired skill cleanup ([4c69e61](https://github.com/morluto/rea/commit/4c69e6120a2c0a630272e845cda2112724c4be7b))
+
+
+### Code Refactoring
+
+* **adapters:** split oversized provider workflows ([1a99a60](https://github.com/morluto/rea/commit/1a99a60a29c231c7a104c5900c2c20a7d10268d5))
+* **app:** split session and CLI workflows ([c6ee004](https://github.com/morluto/rea/commit/c6ee0049c4bffe2880ddb8cf5a2a6c4195ae18f6))
+* **domain:** split analysis boundaries ([e2c868c](https://github.com/morluto/rea/commit/e2c868c4bdd4f83f1e33a50bca0e3d91d4605387))
+* finish lint cleanup ([2bea405](https://github.com/morluto/rea/commit/2bea40571d47f8b3454cdb9b467839521d3174b4))
+* **managed:** split metadata analysis ([20c88dd](https://github.com/morluto/rea/commit/20c88dd5676a3081e13bef26cfa38d8a69856842))
+* **setup:** keep planner helpers private ([2d1f961](https://github.com/morluto/rea/commit/2d1f9616b76b9e383d0196b820a377573def836d))
+* simplify authorization boundaries ([2e5b443](https://github.com/morluto/rea/commit/2e5b44365fd1ea3c515efd03b56fee0083a20a31))
+* simplify doctor and error projections ([37f4ac6](https://github.com/morluto/rea/commit/37f4ac6d7073693fb4d2290b5aff6bcb6b36cd19))
+* **skill:** keep only the canonical skill identity ([a7c1e87](https://github.com/morluto/rea/commit/a7c1e87365cec0333bc9431ec5d7418cb7a54be1))
+* **skill:** remove legacy skill compatibility ([8cf0dd2](https://github.com/morluto/rea/commit/8cf0dd2bf645d18afe6a9c8493178bdd905c0647))
+* split oversized analysis workflows ([af2399e](https://github.com/morluto/rea/commit/af2399eeacbca5f1af344c7d7ef747f3d976bcf7))
+* split oversized analysis workflows ([3e61a63](https://github.com/morluto/rea/commit/3e61a63a104859e1c8ca3bcdc6bad0511d1f1735))
+* **windows:** keep capability outcomes module-private ([585f523](https://github.com/morluto/rea/commit/585f52389107c79cea99ecd26ea87cbcda08d245))
+
+
+### Documentation
+
+* **cli:** describe every command input ([d4be3e7](https://github.com/morluto/rea/commit/d4be3e7f9a609050303c82aa83d4884bb6daae77))
+* **ghidra:** define the experimental Windows P0 ([8b5ae41](https://github.com/morluto/rea/commit/8b5ae417f3a69e679ad69574f13d1d179ebb22c3))
+* **managed:** align normalized CIL claims with shipped v1 semantics ([9a92a79](https://github.com/morluto/rea/commit/9a92a7958cceedafe184b48ca93ab094386401a7))
+* **managed:** align normalized CIL claims with shipped v1 semantics ([3f788e9](https://github.com/morluto/rea/commit/3f788e9065d5ce457ba174c13bc8e4e0b74d5156))
+* normalize inherited source paths ([d33213a](https://github.com/morluto/rea/commit/d33213a99c824b5834323c924dac6b7852df5831))
+* preserve generated source links ([2ea375f](https://github.com/morluto/rea/commit/2ea375f8ea413aba05baab0d9af3e3401d8b2956))
+* prioritize agent usability in tool design ([ad17fe7](https://github.com/morluto/rea/commit/ad17fe7aa71f5cbffcdff3e27b08bc4538e73c7d))
+* refresh Electron path resolution API ([734a4ef](https://github.com/morluto/rea/commit/734a4ef04fce7bbff76b3fbf9c3f1250d7ab8963))
+* refresh generated API reference ([f5f653b](https://github.com/morluto/rea/commit/f5f653bd8dba8d441efe13f2404b8677dc6dd8f3))
+* regenerate managed coverage API with Node 24 ([e47c00e](https://github.com/morluto/rea/commit/e47c00ef04b537bd67caff69d27f48a81bdf04e3))
+
+
+### Tests
+
+* add limit monotonicity and partial-evidence regressions ([2cce98c](https://github.com/morluto/rea/commit/2cce98cca29ab8752c34281c4b439a0150308b2c))
+* add limit monotonicity and partial-evidence regressions ([4afd970](https://github.com/morluto/rea/commit/4afd97029c3eebc0c755b0c9dee2fd74217a1305))
+* **ci:** guard Windows Ghidra workflow isolation ([81ed68f](https://github.com/morluto/rea/commit/81ed68f67d8332b3013131dc6d86a001d1dc55a3))
+* **ci:** guard Windows Ghidra workflow isolation ([98540c8](https://github.com/morluto/rea/commit/98540c8a12722aaa005102518746916018107ccb))
+* **cli:** cover package-name binary alias ([40e2f94](https://github.com/morluto/rea/commit/40e2f943a52cbf957db2ae898c3624e5ac5faec6))
+* **hopper:** add semantic runtime conformance ([da1da3b](https://github.com/morluto/rea/commit/da1da3bfb83e2fdd2a7a0a84a6a70aa73a4a68d6))
+* **package:** align setup preflight contract ([b33ebb1](https://github.com/morluto/rea/commit/b33ebb1627423a09fa56b628284362118e68ca40))
+
+
+### Continuous Integration
+
+* **ghidra:** add Windows P0 acceptance and real-engine lanes ([0b35510](https://github.com/morluto/rea/commit/0b3551076d591be04efbb829d3eb1d17bcc828a9))
+
 ## [2.0.0](https://github.com/morluto/rea/compare/rea-agents-1.7.0...rea-agents-2.0.0) (2026-07-16)
 
 
