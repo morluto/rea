@@ -27,7 +27,10 @@ describe("package identity", () => {
         ),
       );
     expect(packageJson.name).toBe(PRODUCT_IDENTITY.packageName);
-    expect(Object.keys(packageJson.bin)).toEqual([PRODUCT_IDENTITY.cliBinary]);
+    expect(packageJson.bin).toEqual({
+      [PRODUCT_IDENTITY.cliBinary]: "scripts/rea.mjs",
+      [PRODUCT_IDENTITY.packageName]: "scripts/rea.mjs",
+    });
     expect(PRODUCT_IDENTITY.packageSpecifier).toBe(
       `${packageJson.name}@latest`,
     );

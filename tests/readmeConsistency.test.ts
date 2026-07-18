@@ -61,7 +61,7 @@ describe("localized README product facts", () => {
       expect(content).toContain(
         "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
       );
-      expect(content).toContain("npx -y rea-agents@latest setup");
+      expect(content).toContain("npx rea-agents setup");
       expect(content).toContain("npx -y rea-agents@latest doctor");
       expect(content).toContain("rea uninstall");
       expect(content).toContain('"args": ["-y", "rea-agents@latest", "mcp"]');

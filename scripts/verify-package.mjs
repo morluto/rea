@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { spawn } from "@lydell/node-pty";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -48,6 +49,11 @@ try {
     packedManifest.dependencies?.["@lydell/node-pty"] !== "1.1.0"
   )
     throw new Error("package retained a lifecycle-dependent PTY installation");
+  if (
+    packedManifest.bin?.rea !== "scripts/rea.mjs" ||
+    packedManifest.bin?.["rea-agents"] !== "scripts/rea.mjs"
+  )
+    throw new Error("package did not expose both rea command entry points");
   if (
     packedFiles.some(
       (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
@@ -143,6 +149,7 @@ try {
     { env: environment },
   );
   const cli = join(prefix, "bin", "rea");
+  const packageRunnerCli = join(prefix, "bin", "rea-agents");
   const processCaptureCapabilityUrl = pathToFileURL(
     join(
       prefix,
@@ -216,6 +223,12 @@ try {
       `packaged CLI did not degrade without the optional PTY binary: ${JSON.stringify(noOptionalCapability)}`,
     );
   const help = await run(cli, ["--help"], environment);
+  const packageRunnerHelp = await run(
+    packageRunnerCli,
+    ["--help"],
+    environment,
+  );
+  await verifyInteractiveSetup(packageRunnerCli, environment);
   const llms = await run(cli, ["--llms"], environment);
   const doctorExecution = await runWithStatus(
     cli,
@@ -228,6 +241,7 @@ try {
   const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
   if (
     !help.includes("setup") ||
+    !packageRunnerHelp.includes("setup") ||
     !help.includes("upgrade") ||
     !help.includes("inventory-artifact") ||
     !help.includes("extract-artifact") ||
@@ -1156,6 +1170,53 @@ async function runWithStatus(command, args, env) {
       return { stdout: cause.stdout, status: 1 };
     throw cause;
   }
+}
+async function verifyInteractiveSetup(command, env) {
+  await new Promise((resolvePromise, reject) => {
+    let output = "";
+    let cancelled = false;
+    let settled = false;
+    const terminal = spawn(command, ["setup"], {
+      cwd: root,
+      env: { ...env, NO_COLOR: "1", TERM: "xterm-256color" },
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+    });
+    const timeout = setTimeout(() => {
+      terminal.kill();
+      finish(
+        new Error(`packaged setup wizard timed out after output: ${output}`),
+      );
+    }, 20_000);
+
+    terminal.onData((data) => {
+      output += data;
+      if (!cancelled && output.includes("What should REA set up?")) {
+        cancelled = true;
+        terminal.write("\u0003");
+      }
+    });
+    terminal.onExit(() => {
+      if (!cancelled || !output.includes("No changes were made.")) {
+        finish(
+          new Error(
+            `packaged rea-agents setup did not open and cancel the wizard: ${output}`,
+          ),
+        );
+        return;
+      }
+      finish();
+    });
+
+    function finish(error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error === undefined) resolvePromise();
+      else reject(error);
+    }
+  });
 }
 function json(text) {
   return JSON.parse(text);
