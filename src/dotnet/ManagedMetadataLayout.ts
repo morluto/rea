@@ -1,4 +1,8 @@
 import { managedFailure } from "./ManagedReaderFailure.js";
+import {
+  computeRowSize,
+  type RowSizeContext,
+} from "./ManagedMetadataRowSizes.js";
 
 export const METADATA_TABLE_NAMES = [
   "Module",
@@ -80,7 +84,7 @@ export interface ManagedMetadataLayout {
   codedIndexSize(name: CodedIndexName): 2 | 4;
 }
 
-type CodedIndexName = keyof typeof CODED_INDEXES;
+export type CodedIndexName = keyof typeof CODED_INDEXES;
 
 const CODED_INDEXES = {
   TypeDefOrRef: { bits: 2, tables: [2, 1, 27] },
@@ -196,129 +200,15 @@ const codedSize = (
 const tableSize = (index: number, rows: readonly number[]): 2 | 4 =>
   (rows[index] ?? 0) < 0x1_0000 ? 2 : 4;
 
-const rowSize = (
-  table: number,
-  rowCounts: readonly number[],
-  heaps: { readonly string: 2 | 4; readonly guid: 2 | 4; readonly blob: 2 | 4 },
-): number => {
-  const t = (index: number): number => tableSize(index, rowCounts);
-  const c = (name: CodedIndexName): number => codedSize(name, rowCounts);
-  const { string: s, guid: g, blob: b } = heaps;
-  switch (table) {
-    case 0:
-      return 2 + s + g * 3;
-    case 1:
-      return c("ResolutionScope") + s * 2;
-    case 2:
-      return 4 + s * 2 + c("TypeDefOrRef") + t(4) + t(6);
-    case 3:
-      return t(4);
-    case 4:
-      return 2 + s + b;
-    case 5:
-      return t(6);
-    case 6:
-      return 8 + s + b + t(8);
-    case 7:
-      return t(8);
-    case 8:
-      return 4 + s;
-    case 9:
-      return t(2) + c("TypeDefOrRef");
-    case 10:
-      return c("MemberRefParent") + s + b;
-    case 11:
-      return 2 + c("HasConstant") + b;
-    case 12:
-      return c("HasCustomAttribute") + c("CustomAttributeType") + b;
-    case 13:
-      return c("HasFieldMarshal") + b;
-    case 14:
-      return 2 + c("HasDeclSecurity") + b;
-    case 15:
-      return 6 + t(2);
-    case 16:
-      return 4 + t(4);
-    case 17:
-      return b;
-    case 18:
-      return t(2) + t(20);
-    case 19:
-      return t(20);
-    case 20:
-      return 2 + s + c("TypeDefOrRef");
-    case 21:
-      return t(2) + t(23);
-    case 22:
-      return t(23);
-    case 23:
-      return 2 + s + b;
-    case 24:
-      return 2 + t(6) + c("HasSemantics");
-    case 25:
-      return t(2) + c("MethodDefOrRef") * 2;
-    case 26:
-      return s;
-    case 27:
-      return b;
-    case 28:
-      return 2 + c("MemberForwarded") + s + t(26);
-    case 29:
-      return 4 + t(4);
-    case 30:
-      return 8;
-    case 31:
-      return 4;
-    case 32:
-      return 16 + b + s * 2;
-    case 33:
-      return 4;
-    case 34:
-      return 12;
-    case 35:
-      return 12 + b * 2 + s * 2;
-    case 36:
-      return 4 + t(35);
-    case 37:
-      return 12 + t(35);
-    case 38:
-      return 4 + s + b;
-    case 39:
-      return 8 + s * 2 + c("Implementation");
-    case 40:
-      return 8 + s + c("Implementation");
-    case 41:
-      return t(2) * 2;
-    case 42:
-      return 4 + c("TypeOrMethodDef") + s;
-    case 43:
-      return c("MethodDefOrRef") + b;
-    case 44:
-      return t(42) + c("TypeDefOrRef");
-    default:
-      throw managedFailure(
-        "invalid-tables",
-        "metadata.tables",
-        `Metadata table ${String(table)} is unsupported`,
-      );
-  }
-};
+interface ParsedStreams {
+  readonly streams: ReadonlyMap<string, MetadataStream>;
+  readonly version: string;
+}
 
-/** Parse ECMA-335 stream and table layout with checked byte extents. */
-export const readManagedMetadataLayout = (
-  artifact: Buffer,
+const readMetadataStreams = (
+  bytes: Buffer,
   rootOffset: number,
-  size: number,
-  maxTableRows: number,
-): ManagedMetadataLayout => {
-  if (size < 20 || rootOffset < 0 || rootOffset > artifact.length - size)
-    throw managedFailure(
-      "invalid-metadata-root",
-      "metadata.root",
-      "CLI metadata directory leaves the artifact byte range",
-      rootOffset,
-    );
-  const bytes = artifact.subarray(rootOffset, rootOffset + size);
+): ParsedStreams => {
   if (bytes.readUInt32LE(0) !== 0x424a_5342)
     throw managedFailure(
       "invalid-metadata-root",
@@ -365,6 +255,26 @@ export const readManagedMetadataLayout = (
     });
     cursor = named.next;
   }
+  return { streams, version };
+};
+
+interface HeapSizes {
+  readonly string: 2 | 4;
+  readonly guid: 2 | 4;
+  readonly blob: 2 | 4;
+}
+
+interface ParsedTablesHeader {
+  readonly tableBytes: Buffer;
+  readonly tablesOffset: number;
+  readonly heaps: HeapSizes;
+  readonly valid: bigint;
+}
+
+const readTablesHeader = (
+  bytes: Buffer,
+  streams: ReadonlyMap<string, MetadataStream>,
+): ParsedTablesHeader => {
   const tablesStream = streamByName(streams, ["#~", "#-"]);
   if (tablesStream === undefined)
     throw managedFailure(
@@ -372,7 +282,7 @@ export const readManagedMetadataLayout = (
       "metadata.tables",
       "Required metadata table stream #~ or #- is absent",
     );
-  const tableBytes = artifact.subarray(
+  const tableBytes = bytes.subarray(
     tablesStream.offset,
     tablesStream.offset + tablesStream.size,
   );
@@ -391,6 +301,15 @@ export const readManagedMetadataLayout = (
       "Metadata valid mask names unsupported tables outside the admitted ECMA-335 range",
       tablesStream.offset + 8,
     );
+  return { tableBytes, tablesOffset: tablesStream.offset, heaps, valid };
+};
+
+const readRowCounts = (
+  tableBytes: Buffer,
+  valid: bigint,
+  maxTableRows: number,
+  tablesOffset: number,
+): readonly number[] => {
   const rowCounts = Array<number>(METADATA_TABLE_NAMES.length).fill(0);
   let tableCursor = 24;
   for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
@@ -402,23 +321,56 @@ export const readManagedMetadataLayout = (
         "limit-exceeded",
         `metadata.${METADATA_TABLE_NAMES[index] ?? String(index)}`,
         `Metadata table row count ${String(count)} exceeds max_table_rows ${String(maxTableRows)}`,
-        tablesStream.offset + tableCursor,
+        tablesOffset + tableCursor,
       );
     rowCounts[index] = count;
     tableCursor += 4;
   }
+  return rowCounts;
+};
+
+const buildRowSizeContext = (
+  rowCounts: readonly number[],
+  heaps: HeapSizes,
+): RowSizeContext => ({
+  tableSize: (index) => tableSize(index, rowCounts),
+  codedSize: (name) => codedSize(name, rowCounts),
+  stringSize: heaps.string,
+  guidSize: heaps.guid,
+  blobSize: heaps.blob,
+});
+
+const buildMetadataTables = ({
+  tableBytes,
+  rowCounts,
+  heaps,
+  valid,
+  tablesOffset,
+}: {
+  readonly tableBytes: Buffer;
+  readonly rowCounts: readonly number[];
+  readonly heaps: HeapSizes;
+  readonly valid: bigint;
+  readonly tablesOffset: number;
+}): ReadonlyMap<number, MetadataTableLayout> => {
   const tables = new Map<number, MetadataTableLayout>();
+  const context = buildRowSizeContext(rowCounts, heaps);
+  let tableCursor = 24;
+  for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
+    if ((valid & (1n << BigInt(index))) === 0n) continue;
+    tableCursor += 4;
+  }
   for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
     const count = rowCounts[index] ?? 0;
     if ((valid & (1n << BigInt(index))) === 0n) continue;
-    const sizeOfRow = rowSize(index, rowCounts, heaps);
+    const sizeOfRow = computeRowSize(index, context);
     const byteLength = count * sizeOfRow;
     if (!Number.isSafeInteger(byteLength))
       throw managedFailure(
         "invalid-tables",
         "metadata.tables",
         "Metadata table byte size overflowed",
-        tablesStream.offset + tableCursor,
+        tablesOffset + tableCursor,
       );
     requireRange(tableBytes, tableCursor, byteLength, "metadata.table-data");
     tables.set(index, {
@@ -426,11 +378,47 @@ export const readManagedMetadataLayout = (
       name: METADATA_TABLE_NAMES[index] ?? `Table${String(index)}`,
       rowCount: count,
       rowSize: sizeOfRow,
-      offset: tablesStream.offset + tableCursor,
+      offset: tablesOffset + tableCursor,
     });
     tableCursor += byteLength;
   }
-  const layout: ManagedMetadataLayout = {
+  return tables;
+};
+
+/** Parse ECMA-335 stream and table layout with checked byte extents. */
+export const readManagedMetadataLayout = (
+  artifact: Buffer,
+  rootOffset: number,
+  size: number,
+  maxTableRows: number,
+): ManagedMetadataLayout => {
+  if (size < 20 || rootOffset < 0 || rootOffset > artifact.length - size)
+    throw managedFailure(
+      "invalid-metadata-root",
+      "metadata.root",
+      "CLI metadata directory leaves the artifact byte range",
+      rootOffset,
+    );
+  const bytes = artifact.subarray(rootOffset, rootOffset + size);
+  const { streams, version } = readMetadataStreams(bytes, rootOffset);
+  const { tableBytes, tablesOffset, heaps, valid } = readTablesHeader(
+    artifact,
+    streams,
+  );
+  const rowCounts = readRowCounts(
+    tableBytes,
+    valid,
+    maxTableRows,
+    tablesOffset,
+  );
+  const tables = buildMetadataTables({
+    tableBytes,
+    rowCounts,
+    heaps,
+    valid,
+    tablesOffset,
+  });
+  return {
     rootOffset,
     size,
     version,
@@ -447,7 +435,6 @@ export const readManagedMetadataLayout = (
     tableIndexSize: (index) => tableSize(index, rowCounts),
     codedIndexSize: (name) => codedSize(name, rowCounts),
   };
-  return layout;
 };
 
 /** Resolve a one-based metadata row to its exact file offset. */
