@@ -25,6 +25,37 @@ export type ToolAvailabilityReason =
   | "unsupported_host"
   | "policy_disabled";
 
+type ToolKind = (typeof TOOL_CONTRACTS)[number]["kind"];
+type ProviderDescriptor = {
+  readonly available: boolean;
+  readonly reason: string | null;
+};
+type AvailabilityPolicy = {
+  readonly processCaptureEnabled: boolean;
+  readonly evidenceFileRoots: number;
+  readonly browserObservationEnabled?: boolean;
+  readonly electronObservationEnabled?: boolean;
+  readonly javascriptReplayEnabled?: boolean;
+  readonly managedRuntimeEnabled?: boolean;
+};
+type Availability = {
+  readonly reason: ToolAvailabilityReason;
+  readonly remediation: string | null;
+};
+type AvailabilityContext = {
+  readonly name: string;
+  readonly kind: ToolKind;
+  readonly targetOpen: boolean;
+  readonly targetKind:
+    | "executable"
+    | "database"
+    | "archive"
+    | "artifact"
+    | undefined;
+  readonly descriptors: ReadonlyMap<string, ProviderDescriptor>;
+  readonly policy: AvailabilityPolicy;
+};
+
 const ENHANCED_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
   swift_classes: ["list_procedures"],
   get_objc_classes: ["list_names"],
@@ -51,28 +82,21 @@ const ENHANCED_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
 /** Build stable per-operation availability without hiding familiar tools. */
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
-  policy: {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  },
+  policy: AvailabilityPolicy,
 ) => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
   return TOOL_CONTRACTS.map((contract) => {
-    const availability = availabilityFor(
-      contract.name,
-      contract.kind,
-      status.open,
-      status.kind,
+    const availability = availabilityFor({
+      name: contract.name,
+      kind: contract.kind,
+      targetOpen: status.open,
+      targetKind: status.kind,
       descriptors,
       policy,
-    );
+    });
     return {
       name: contract.name,
       surface: contract.kind,
@@ -90,27 +114,19 @@ export const buildCapabilityInventory = (
   }).sort((left, right) => left.name.localeCompare(right.name));
 };
 
-const availabilityFor = (
-  name: string,
-  kind: (typeof TOOL_CONTRACTS)[number]["kind"],
-  targetOpen: boolean,
-  targetKind: "executable" | "database" | "archive" | "artifact" | undefined,
-  descriptors: ReadonlyMap<
-    string,
-    { readonly available: boolean; readonly reason: string | null }
-  >,
-  policy: {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  },
-): {
-  readonly reason: ToolAvailabilityReason;
-  readonly remediation: string | null;
-} => {
+const availabilityFor = (context: AvailabilityContext): Availability => {
+  const policyDecision = policyAvailability(context);
+  if (policyDecision !== null) return policyDecision;
+  const targetDecision = targetAvailability(context);
+  if (targetDecision !== null) return targetDecision;
+  return providerAvailability(context);
+};
+
+const policyAvailability = ({
+  name,
+  kind,
+  policy,
+}: AvailabilityContext): Availability | null => {
   if (name === "capture_process_scenario" && !policy.processCaptureEnabled)
     return {
       reason: "policy_disabled",
@@ -159,6 +175,14 @@ const availabilityFor = (
             "Enable Electron observation and configure a loopback CDP endpoint and canonical file roots.",
         };
   if (kind === "session") return { reason: "available", remediation: null };
+  return null;
+};
+
+const targetAvailability = ({
+  kind,
+  targetKind,
+  targetOpen,
+}: AvailabilityContext): Availability | null => {
   if (!targetOpen)
     return {
       reason: "target_required",
@@ -175,6 +199,14 @@ const availabilityFor = (
       remediation:
         "Inventory or extract a native executable, then call open_binary on that executable.",
     };
+  return null;
+};
+
+const providerAvailability = ({
+  descriptors,
+  kind,
+  name,
+}: AvailabilityContext): Availability => {
   if (kind === "enhanced") return composedAvailability(name, descriptors);
   const descriptor = descriptors.get(name);
   if (descriptor === undefined)

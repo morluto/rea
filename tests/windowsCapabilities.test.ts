@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   probeWindowsCapabilities,
+  systemNoFollowOpenCapability,
   type WindowsCapabilityDependencies,
 } from "../src/application/WindowsCapabilities.js";
 
@@ -20,6 +21,10 @@ const dependencies = (
     available: false,
     reason: "Windows ACL enforcement is not implemented by this REA build",
   }),
+  probeNativeAuthority: () => ({
+    available: false,
+    reason: "Windows native authority package is not installed",
+  }),
   probeUnixDomainSocket: () => ({
     available: false,
     reason: "Node path-based IPC uses named pipes on Windows",
@@ -34,6 +39,17 @@ const dependencies = (
 });
 
 describe("Windows host capability report", () => {
+  it("never treats a numeric POSIX flag as Windows reparse authority", () => {
+    expect(systemNoFollowOpenCapability("win32", 0x20_000)).toEqual({
+      available: false,
+      reason: "Windows reparse-safe handle admission is not implemented",
+    });
+    expect(systemNoFollowOpenCapability("linux", 0x20_000)).toEqual({
+      available: true,
+      reason: null,
+    });
+  });
+
   it("keeps unavailable security controls explicit", async () => {
     await expect(probeWindowsCapabilities(dependencies())).resolves.toEqual({
       platform: "win32",
@@ -48,6 +64,10 @@ describe("Windows host capability report", () => {
           available: false,
           reason:
             "Windows ACL enforcement is not implemented by this REA build",
+        },
+        native_authority: {
+          available: false,
+          reason: "Windows native authority package is not installed",
         },
         unix_domain_socket: {
           available: false,
