@@ -15,14 +15,14 @@ import type {
 } from "./Setup.js";
 
 /** Preflighted client mutation admitted into the setup plan. */
-export type SetupClientPlan = Readonly<{
+type SetupClientPlan = Readonly<{
   client: SetupClient;
   operation: "create" | "update";
   backupPath?: string;
 }>;
 
 /** Inputs used to build the setup mutation plan. */
-export interface SetupPlanOptions {
+interface SetupPlanOptions {
   readonly platform: NodeJS.Platform;
   readonly installHopper: boolean;
   readonly installSkill: boolean;
@@ -32,7 +32,7 @@ export interface SetupPlanOptions {
 }
 
 /** Build the complete setup mutation plan before approval. */
-export const setupPlan = (input: SetupPlanOptions): readonly SetupAction[] => [
+const setupPlan = (input: SetupPlanOptions): readonly SetupAction[] => [
   ...(input.installHopper
     ? [
         {
