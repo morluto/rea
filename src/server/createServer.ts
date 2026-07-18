@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   createRequestStateCodec,
   McpServer,
+  PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -35,7 +37,10 @@ import type {
 import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
 import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
-import type { ProcessCaptureElicitationState } from "./ProcessCaptureElicitation.js";
+import {
+  PROCESS_CAPTURE_ELICITATION_POLICY,
+  type ProcessCaptureElicitationState,
+} from "./ProcessCaptureElicitation.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -78,7 +83,7 @@ export const createServer = (
   const processCaptureStateCodec =
     createRequestStateCodec<ProcessCaptureElicitationState>({
       key: randomBytes(32),
-      ttlSeconds: 600,
+      ttlSeconds: PROCESS_CAPTURE_ELICITATION_POLICY.stateTtlSeconds,
     });
   const server = new McpServer(
     {
@@ -90,7 +95,10 @@ export const createServer = (
         tools: { listChanged: true },
         resources: { listChanged: true },
       },
-      inputRequired: { maxRounds: 3, roundTimeoutMs: 600_000 },
+      inputRequired: {
+        maxRounds: 3,
+        roundTimeoutMs: PROCESS_CAPTURE_ELICITATION_POLICY.roundTimeoutMs,
+      },
       requestState: { verify: processCaptureStateCodec.verify },
       instructions:
         session === undefined
@@ -268,15 +276,27 @@ export const createServer = (
       startedAt,
       processCaptureElicitation: {
         stateCodec: processCaptureStateCodec,
-        supported: () =>
-          server.server.getClientCapabilities()?.elicitation?.form !==
-          undefined,
-        modern: () =>
-          server.server.getNegotiatedProtocolVersion()?.startsWith("2026-") ===
-          true,
+        supported: (context) => {
+          const envelope = context.mcpReq.envelope;
+          const version = envelope?.[PROTOCOL_VERSION_META_KEY];
+          const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+          return (
+            typeof version === "string" &&
+            PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions.some(
+              (supported) => supported === version,
+            ) &&
+            isRecord(capabilities) &&
+            isRecord(capabilities.elicitation) &&
+            capabilities.elicitation.form !== undefined
+          );
+        },
+        now: Date.now,
         consumedNonces: new Map(),
       },
     });
   }
   return server;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);

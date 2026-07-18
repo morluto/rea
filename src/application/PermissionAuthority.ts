@@ -107,6 +107,26 @@ const isNotFound = (error: unknown): boolean =>
 const errorReason = (error: unknown): PermissionPathError["reason"] =>
   isNotFound(error) ? "not_found" : "io";
 
+interface PermissionEvaluationOptions {
+  readonly elicitationSupported?: boolean;
+  readonly restartRequired?: boolean;
+}
+
+interface CanonicalPermissionDecision {
+  readonly decision: Extract<PermissionDecision, { readonly allowed: true }>;
+  readonly owner: PermissionAuthority;
+  readonly request: PermissionRequest;
+}
+
+type AuthorizedPermission = PermissionDecision & {
+  readonly allowed: true;
+  readonly request: PermissionRequest;
+};
+
+type PermissionAuthorizationResult = Promise<
+  Result<AuthorizedPermission, PermissionPathError | PermissionRequiredError>
+>;
+
 /** Stateful owner for permission evaluation, consumption, reload, and revoke. */
 export class PermissionAuthority {
   private policy: PermissionPolicy;
@@ -132,42 +152,37 @@ export class PermissionAuthority {
   async authorize(
     request: PermissionRequest,
     access: "read" | "write",
-    options: {
-      readonly elicitationSupported?: boolean;
-      readonly restartRequired?: boolean;
-    } = {},
-  ): Promise<
-    Result<
-      PermissionDecision & {
-        readonly allowed: true;
-        readonly request: PermissionRequest;
-      },
-      PermissionPathError | PermissionRequiredError
-    >
-  > {
-    const canonical = await canonicalizePermissionRequest(request, access);
-    if (!canonical.ok) return canonical;
-    const evaluated = this.evaluateCanonical(canonical.value, options);
+    options: PermissionEvaluationOptions = {},
+  ): PermissionAuthorizationResult {
+    const evaluated = await this.evaluateRequest(request, access, options);
     if (!evaluated.ok) return evaluated;
-    const { decision, owner } = evaluated.value;
+    const { decision, owner, request: canonicalRequest } = evaluated.value;
     owner.policy = consumePermission(owner.policy, decision);
-    return ok({ ...decision, request: canonical.value });
+    return ok({ ...decision, request: canonicalRequest });
   }
 
   /** Dry-run the exact shared evaluation without consuming a once grant. */
   async explain(
     request: PermissionRequest,
     access: "read" | "write",
-    options: {
-      readonly elicitationSupported?: boolean;
-      readonly restartRequired?: boolean;
-    } = {},
+    options: PermissionEvaluationOptions = {},
+  ): PermissionAuthorizationResult {
+    const evaluated = await this.evaluateRequest(request, access, options);
+    return evaluated.ok
+      ? ok({
+          ...evaluated.value.decision,
+          request: evaluated.value.request,
+        })
+      : evaluated;
+  }
+
+  private async evaluateRequest(
+    request: PermissionRequest,
+    access: "read" | "write",
+    options: PermissionEvaluationOptions,
   ): Promise<
     Result<
-      PermissionDecision & {
-        readonly allowed: true;
-        readonly request: PermissionRequest;
-      },
+      CanonicalPermissionDecision,
       PermissionPathError | PermissionRequiredError
     >
   > {
@@ -175,7 +190,7 @@ export class PermissionAuthority {
     if (!canonical.ok) return canonical;
     const evaluated = this.evaluateCanonical(canonical.value, options);
     return evaluated.ok
-      ? ok({ ...evaluated.value.decision, request: canonical.value })
+      ? ok({ ...evaluated.value, request: canonical.value })
       : evaluated;
   }
 
@@ -222,10 +237,7 @@ export class PermissionAuthority {
 
   private evaluateCanonical(
     request: PermissionRequest,
-    options: {
-      readonly elicitationSupported?: boolean;
-      readonly restartRequired?: boolean;
-    },
+    options: PermissionEvaluationOptions,
   ): Result<
     {
       readonly decision: Extract<
@@ -270,51 +282,33 @@ export class PermissionAuthority {
   async replaceProjectGrants(
     grants: readonly PermissionGrant[],
   ): Promise<Result<null, PermissionPathError>> {
-    let candidate: PermissionPolicy = {
-      ...this.policy,
-      grants: this.policy.grants.filter(
-        ({ lifetime }) => lifetime !== "project",
-      ),
-    };
-    for (const grant of grants) {
-      const canonical = await canonicalizeGrant(grant);
-      if (!canonical.ok) return canonical;
-      const added = grantPermission(candidate, canonical.value);
-      if (!added.ok)
-        return err(
-          new PermissionPathError(grant.grant_id, "io", {
-            cause: added.error,
-          }),
-        );
-      candidate = added.value;
-    }
-    this.policy = candidate;
-    return ok(null);
+    return this.replaceGrants(grants, "project");
   }
 
   /** Replace grants derived from the currently loaded administrator ceiling. */
   async replaceAdministratorGrants(
     grants: readonly PermissionGrant[],
   ): Promise<Result<null, PermissionPathError>> {
-    let candidate: PermissionPolicy = {
-      ...this.policy,
-      grants: this.policy.grants.filter(
-        ({ lifetime }) => lifetime !== "administrator",
-      ),
-    };
-    for (const grant of grants) {
-      const canonical = await canonicalizeGrant(grant);
-      if (!canonical.ok) return canonical;
-      const added = grantPermission(candidate, canonical.value);
-      if (!added.ok)
-        return err(
-          new PermissionPathError(grant.grant_id, "io", {
-            cause: added.error,
-          }),
-        );
-      candidate = added.value;
-    }
-    this.policy = candidate;
+    return this.replaceGrants(grants, "administrator");
+  }
+
+  private async replaceGrants(
+    grants: readonly PermissionGrant[],
+    lifetime: "administrator" | "project",
+  ): Promise<Result<null, PermissionPathError>> {
+    const canonical = await canonicalizeGrants(grants);
+    if (!canonical.ok) return canonical;
+    const replaced = addGrantsToPolicy(
+      {
+        ...this.policy,
+        grants: this.policy.grants.filter(
+          (grant) => grant.lifetime !== lifetime,
+        ),
+      },
+      canonical.value,
+    );
+    if (!replaced.ok) return replaced;
+    this.policy = replaced.value;
     return ok(null);
   }
 
@@ -328,33 +322,21 @@ export class PermissionAuthority {
       configuration.ceilings,
     );
     if (!ceilings.ok) return ceilings;
-    const grants: PermissionGrant[] = [];
-    for (const grant of [
+    const grants = await canonicalizeGrants([
       ...configuration.administratorGrants,
       ...configuration.projectGrants,
-    ]) {
-      const canonical = await canonicalizeGrant(grant);
-      if (!canonical.ok) return canonical;
-      grants.push(canonical.value);
-    }
-    let candidate: PermissionPolicy = {
+    ]);
+    if (!grants.ok) return grants;
+    const candidate: PermissionPolicy = {
       ...reloadPermissionCeilings(this.policy, ceilings.value),
       grants: this.policy.grants.filter(
         ({ lifetime }) =>
           lifetime !== "administrator" && lifetime !== "project",
       ),
     };
-    for (const grant of grants) {
-      const added = grantPermission(candidate, grant);
-      if (!added.ok)
-        return err(
-          new PermissionPathError(grant.grant_id, "io", {
-            cause: added.error,
-          }),
-        );
-      candidate = added.value;
-    }
-    this.policy = candidate;
+    const replaced = addGrantsToPolicy(candidate, grants.value);
+    if (!replaced.ok) return replaced;
+    this.policy = replaced.value;
     return ok(null);
   }
 
@@ -376,18 +358,41 @@ export const createPermissionAuthority = async (
 ): Promise<Result<PermissionAuthority, PermissionPathError>> => {
   const canonical = await canonicalizePermissionCeilings(ceilings);
   if (!canonical.ok) return canonical;
-  let policy = createPermissionPolicy(canonical.value);
+  const canonicalGrants = await canonicalizeGrants(grants);
+  if (!canonicalGrants.ok) return canonicalGrants;
+  const policy = addGrantsToPolicy(
+    createPermissionPolicy(canonical.value),
+    canonicalGrants.value,
+  );
+  return policy.ok ? ok(new PermissionAuthority(policy.value)) : policy;
+};
+
+const canonicalizeGrants = async (
+  grants: readonly PermissionGrant[],
+): Promise<Result<readonly PermissionGrant[], PermissionPathError>> => {
+  const canonical: PermissionGrant[] = [];
   for (const grant of grants) {
     const canonicalGrant = await canonicalizeGrant(grant);
     if (!canonicalGrant.ok) return canonicalGrant;
-    const added = grantPermission(policy, canonicalGrant.value);
+    canonical.push(canonicalGrant.value);
+  }
+  return ok(canonical);
+};
+
+const addGrantsToPolicy = (
+  initial: PermissionPolicy,
+  grants: readonly PermissionGrant[],
+): Result<PermissionPolicy, PermissionPathError> => {
+  let policy = initial;
+  for (const grant of grants) {
+    const added = grantPermission(policy, grant);
     if (!added.ok)
       return err(
         new PermissionPathError(grant.grant_id, "io", { cause: added.error }),
       );
     policy = added.value;
   }
-  return ok(new PermissionAuthority(policy));
+  return ok(policy);
 };
 
 const canonicalizeGrant = async (

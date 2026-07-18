@@ -30,16 +30,6 @@ const versionOf = (name) => {
     throw new Error(`Missing locked ${name} version`);
   return value;
 };
-const windowsNativeAuthority = packageJson.rea?.windowsNativeAuthority;
-if (
-  typeof windowsNativeAuthority?.packageName !== "string" ||
-  !Number.isInteger(windowsNativeAuthority.contractVersion) ||
-  !Number.isInteger(windowsNativeAuthority.nodeApiVersion) ||
-  (windowsNativeAuthority.artifactSha256 !== null &&
-    (typeof windowsNativeAuthority.artifactSha256 !== "string" ||
-      !/^[0-9a-f]{64}$/u.test(windowsNativeAuthority.artifactSha256)))
-)
-  throw new Error("Invalid Windows native authority package metadata");
 const source = `/** Generated from package.json and package-lock.json; do not edit. */
 export const PACKAGE_METADATA = {
   name: ${JSON.stringify(packageJson.name)},
@@ -48,13 +38,6 @@ export const PACKAGE_METADATA = {
   clientSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/client"))},
   coreSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/core"))},
   skillVersion: ${JSON.stringify(skillVersion)},
-  windowsNativeAuthority: {
-    packageName: ${JSON.stringify(windowsNativeAuthority.packageName)},
-    packageVersion: ${JSON.stringify(packageJson.version)},
-    contractVersion: ${JSON.stringify(windowsNativeAuthority.contractVersion)},
-    nodeApiVersion: ${JSON.stringify(windowsNativeAuthority.nodeApiVersion)},
-    artifactSha256: ${JSON.stringify(windowsNativeAuthority.artifactSha256)},
-  },
 } as const;
 `;
 const outputPath = join(root, "src/generatedPackageMetadata.ts");

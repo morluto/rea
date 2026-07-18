@@ -1,13 +1,20 @@
 import { isInputRequiredResult } from "@modelcontextprotocol/server";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { BinarySession } from "../src/application/BinarySession.js";
 import { PermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { createPermissionPolicy } from "../src/domain/permissionPolicy.js";
+import { silentLogger } from "../src/logger.js";
+import { createServer } from "../src/server/createServer.js";
+import { observed } from "./fixtures/analysisExecution.js";
 import {
   authorizeProcessCaptureWithElicitation,
+  PROCESS_CAPTURE_ELICITATION_POLICY,
   type ProcessCaptureElicitationState,
 } from "../src/server/ProcessCaptureElicitation.js";
 
@@ -20,8 +27,84 @@ const request = {
   mount: false,
   operation_identity: "capture:test",
 };
+const now = Date.parse("2026-07-18T00:00:00.000Z");
 
 describe("process-capture MCP elicitation", () => {
+  it("completes signed consent through the modern MCP client and server", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-elicit-mcp-"));
+    const authority = new PermissionAuthority(
+      createPermissionPolicy([
+        {
+          capability: "process_capture",
+          roots: [root],
+          executables: [process.execPath],
+          environment_names: [],
+          network: "external",
+          mount: false,
+        },
+      ]),
+    );
+    const session = new BinarySession(() => ({
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const createTestServer = () =>
+      createServer(session, session, {
+        logger: silentLogger,
+        permissionAuthority: authority,
+        processPolicy: {
+          enabled: true,
+          executableRoots: [dirname(process.execPath)],
+          workingRoots: [root],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      });
+    const client = new Client(
+      { name: "process-elicit", version: "1" },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: {
+          mode: {
+            pin: PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions[0],
+          },
+        },
+        inputRequired: { autoFulfill: true, maxRounds: 3 },
+      },
+    );
+    let prompts = 0;
+    client.setRequestHandler("elicitation/create", () => {
+      prompts += 1;
+      return Promise.resolve({
+        action: "accept" as const,
+        content: { lifetime: "session" },
+      });
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const server = serveStdio(createTestServer, {
+      transport: serverTransport,
+      legacy: "reject",
+    });
+    try {
+      await client.connect(clientTransport);
+      const captured = await client.callTool({
+        name: "capture_process_scenario",
+        arguments: {
+          approved: true,
+          executable: process.execPath,
+          arguments: ["-e", "process.exit(0)"],
+          working_directory: root,
+        },
+      });
+      expect(captured.isError).not.toBe(true);
+      expect(prompts).toBe(1);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("grants and reuses a signed session scope on the modern protocol", async () => {
     const authority = ceilingOnlyAuthority();
     let state: ProcessCaptureElicitationState | undefined;
@@ -34,7 +117,7 @@ describe("process-capture MCP elicitation", () => {
         verify: () => verifiedState(state),
       },
       supported: () => true,
-      modern: () => true,
+      now: () => now,
       consumedNonces: new Map<string, number>(),
     };
     const first = await authorizeProcessCaptureWithElicitation(
@@ -90,8 +173,8 @@ describe("process-capture MCP elicitation", () => {
         },
         verify: () => verifiedState(state),
       },
-      supported: () => true,
-      modern: () => false,
+      supported: () => false,
+      now: () => now,
       consumedNonces: new Map<string, number>(),
     };
     const legacy = await authorizeProcessCaptureWithElicitation(
@@ -103,7 +186,7 @@ describe("process-capture MCP elicitation", () => {
     expect(isInputRequiredResult(legacy)).toBe(false);
     if (!isInputRequiredResult(legacy)) expect(legacy.ok).toBe(false);
 
-    const modern = { ...elicitation, modern: () => true };
+    const modern = { ...elicitation, supported: () => true };
     await authorizeProcessCaptureWithElicitation(
       authority,
       request,
@@ -138,7 +221,7 @@ describe("process-capture MCP elicitation", () => {
         verify: () => verifiedState(state),
       },
       supported: () => true,
-      modern: () => true,
+      now: () => now,
       consumedNonces: new Map<string, number>(),
     };
     const scoped = { ...request, origins: ["https://example.test"] };
@@ -184,7 +267,7 @@ describe("process-capture MCP elicitation", () => {
         verify: () => verifiedState(state),
       },
       supported: () => true,
-      modern: () => true,
+      now: () => now,
       consumedNonces: new Map<string, number>(),
     };
     await authorizeProcessCaptureWithElicitation(
@@ -257,7 +340,7 @@ describe("process-capture MCP elicitation", () => {
         verify: () => verifiedState(state),
       },
       supported: () => true,
-      modern: () => true,
+      now: () => now,
       consumedNonces,
     };
     await authorizeProcessCaptureWithElicitation(
@@ -266,7 +349,7 @@ describe("process-capture MCP elicitation", () => {
       requestContext(),
       elicitation,
     );
-    const future = Date.now() + 600_000;
+    const future = now + 600_000;
     for (let index = 0; index < 4_096; index += 1)
       consumedNonces.set(`occupied-${String(index)}`, future);
 
@@ -283,7 +366,7 @@ describe("process-capture MCP elicitation", () => {
     if (!isInputRequiredResult(rejectedAtCapacity))
       expect(rejectedAtCapacity.ok).toBe(false);
 
-    consumedNonces.set("occupied-0", Date.now() - 1);
+    consumedNonces.set("occupied-0", now - 1);
     const acceptedAfterPrune = await authorizeProcessCaptureWithElicitation(
       authority,
       request,
@@ -341,7 +424,7 @@ describe("process-capture MCP elicitation", () => {
           verify: () => verifiedState(state),
         },
         supported: () => true,
-        modern: () => true,
+        now: () => now,
         consumedNonces: new Map<string, number>(),
       };
       await authorizeProcessCaptureWithElicitation(
