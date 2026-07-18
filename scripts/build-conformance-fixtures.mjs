@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import {
   generateLargeFixture,
+  HOPPER_C_ORACLE,
   LARGE_FIXTURE_COUNT,
   sha256,
   sourceDigest,
@@ -47,6 +48,7 @@ await build(
     expectations: {
       symbols: ["_rea_entry", "_rea_branch", "_rea_leaf", "_rea_c_global"],
       strings: ["REA_C_ENTRY", "REA_C_LEAF"],
+      hopperOracle: HOPPER_C_ORACLE,
     },
   },
 );
