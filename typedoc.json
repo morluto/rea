@@ -23,5 +23,8 @@
   "includeVersion": true,
   "readme": "none",
   "plugin": [],
-  "gitRevision": "main"
+  "gitRevision": "main",
+  "disableGit": true,
+  "basePath": "src",
+  "sourceLinkTemplate": "https://github.com/morluto/rea/blob/{gitRevision}/src/{path}#L{line}"
 }
