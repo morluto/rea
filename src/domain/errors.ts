@@ -596,117 +596,155 @@ export const projectAnalysisError = (
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
   if (error instanceof ReplayPlanStaleError) return "plan_stale";
   if (error instanceof PermissionRequiredError) return "permission_required";
-  if (
-    error instanceof ProviderSelectionError &&
-    error.reason === "provider_unavailable"
-  )
-    return "provider_unavailable";
-  if (error instanceof BrowserObservationError) {
-    if (error.reason === "payload_limit") return "truncated";
-    if (
-      error.reason === "target_not_found" ||
-      error.reason === "target_not_allowed" ||
-      error.reason === "target_changed"
-    )
-      return "target_unavailable";
-    if (
-      error.reason === "endpoint_unreachable" ||
-      error.reason === "disconnected"
-    )
-      return "provider_unavailable";
-    return "unreadable_output";
-  }
+  if (error instanceof ProviderSelectionError)
+    return error.reason === "provider_unavailable"
+      ? "provider_unavailable"
+      : "capability_unavailable";
+  if (error instanceof BrowserObservationError)
+    return browserErrorCode(error.reason);
   if (error instanceof ArtifactOperationError)
-    return error.reason === "integrity" && error.artifactDetails !== undefined
-      ? "artifact_integrity_mismatch"
-      : error.reason === "limit"
-        ? "truncated"
-        : error.reason === "cancelled"
-          ? "cancelled"
-          : "artifact_operation_failed";
-  if (error instanceof EvidenceFileError)
-    return error.reason === "outside-root"
-      ? "outside_approved_root"
-      : error.reason === "too-large"
-        ? "truncated"
-        : error.reason === "disabled"
-          ? "capability_unavailable"
-          : "execution_failure";
-  if (error instanceof InvestigationWorkspaceError) {
-    if (
-      error.reason === "revision-conflict" ||
-      error.reason === "name-conflict"
-    )
-      return "revision_conflict";
-    if (error.reason === "too-large") return "truncated";
-    if (error.reason === "disabled") return "capability_unavailable";
-    if (error.reason === "outside-root") return "outside_approved_root";
-    if (error.reason === "integrity" || error.reason === "invalid-json")
-      return "evidence_integrity_mismatch";
-    return "execution_failure";
-  }
+    return artifactOperationCode(error);
+  if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
+  if (error instanceof InvestigationWorkspaceError)
+    return investigationWorkspaceCode(error.reason);
   if (error instanceof UnknownRegistryError)
-    return error.reason === "revision-conflict" ||
-      error.reason === "already-exists"
-      ? "revision_conflict"
-      : error.reason === "limit"
-        ? "truncated"
-        : error.reason === "integrity"
-          ? "evidence_integrity_mismatch"
-          : "execution_failure";
-  if (error._tag === "ProcessCaptureError")
-    return error.cleanupIncomplete
-      ? "cleanup_incomplete"
-      : error.userCategory === "cancelled"
-        ? "cancelled"
-        : error.userCategory === "permission_required"
-          ? "permission_required"
-          : "process_capture_failed";
-  switch (error._tag) {
-    case "AnalysisProtocolError":
-    case "AnalysisOutputError":
-    case "HopperProtocolError":
-      return "unreadable_output";
-    case "AnalysisInputError":
-      return "invalid_request";
-    case "AnalysisCapabilityUnavailableError":
-    case "ProviderSelectionError":
-      return "capability_unavailable";
-    case "AnalysisCancelledError":
-    case "HopperCancelledError":
-      return "cancelled";
-    case "AnalysisTimeoutError":
-    case "HopperTimeoutError":
-      return "provider_timeout";
-    case "HopperProcessError":
-    case "HopperStartError":
-      return "provider_unavailable";
-    case "ConfigurationError":
-      return "configuration_invalid";
-    case "NoBinaryOpenError":
-    case "BinaryTargetError":
-      return "target_unavailable";
-    case "EvidenceIntegrityError":
-      return "evidence_integrity_mismatch";
-    case "EvidenceLimitError":
-      return "truncated";
-    case "ProviderAdapterError":
-    case "HopperRemoteError":
-      return "execution_failure";
-    case "BrowserObservationError":
-      throw new TypeError("Unhandled specialized browser error");
+    return unknownRegistryCode(error.reason);
+  if (error._tag === "ProcessCaptureError") return processCaptureCode(error);
+  return staticErrorCode(error._tag);
+};
+
+const browserErrorCode = (
+  reason: BrowserObservationError["reason"],
+): AnalysisErrorProjection["code"] => {
+  if (reason === "payload_limit") return "truncated";
+  if (
+    reason === "target_not_found" ||
+    reason === "target_not_allowed" ||
+    reason === "target_changed"
+  )
+    return "target_unavailable";
+  if (reason === "endpoint_unreachable" || reason === "disconnected")
+    return "provider_unavailable";
+  return "unreadable_output";
+};
+
+const artifactOperationCode = (
+  error: ArtifactOperationError,
+): AnalysisErrorProjection["code"] => {
+  if (error.reason === "integrity" && error.artifactDetails !== undefined)
+    return "artifact_integrity_mismatch";
+  if (error.reason === "limit") return "truncated";
+  if (error.reason === "cancelled") return "cancelled";
+  return "artifact_operation_failed";
+};
+
+const evidenceFileCode = (
+  reason: EvidenceFileError["reason"],
+): AnalysisErrorProjection["code"] => {
+  if (reason === "outside-root") return "outside_approved_root";
+  if (reason === "too-large") return "truncated";
+  if (reason === "disabled") return "capability_unavailable";
+  return "execution_failure";
+};
+
+const investigationWorkspaceCode = (
+  reason: InvestigationWorkspaceError["reason"],
+): AnalysisErrorProjection["code"] => {
+  if (reason === "revision-conflict" || reason === "name-conflict")
+    return "revision_conflict";
+  if (reason === "too-large") return "truncated";
+  if (reason === "disabled") return "capability_unavailable";
+  if (reason === "outside-root") return "outside_approved_root";
+  if (reason === "integrity" || reason === "invalid-json")
+    return "evidence_integrity_mismatch";
+  return "execution_failure";
+};
+
+const unknownRegistryCode = (
+  reason: UnknownRegistryError["reason"],
+): AnalysisErrorProjection["code"] => {
+  if (reason === "revision-conflict" || reason === "already-exists")
+    return "revision_conflict";
+  if (reason === "limit") return "truncated";
+  if (reason === "integrity") return "evidence_integrity_mismatch";
+  return "execution_failure";
+};
+
+const processCaptureCode = (
+  error: AnalysisError,
+): AnalysisErrorProjection["code"] => {
+  if (error.cleanupIncomplete) return "cleanup_incomplete";
+  if (error.userCategory === "cancelled") return "cancelled";
+  if (error.userCategory === "permission_required")
+    return "permission_required";
+  return "process_capture_failed";
+};
+
+type SpecializedErrorTag =
+  | "ArtifactOperationError"
+  | "BrowserObservationError"
+  | "EvidenceFileError"
+  | "InvestigationWorkspaceError"
+  | "PermissionRequiredError"
+  | "ProcessCaptureError"
+  | "ProviderSelectionError"
+  | "ReplayPlanStaleError"
+  | "UnknownRegistryError";
+
+const STATIC_ERROR_CODES = {
+  AnalysisProtocolError: "unreadable_output",
+  AnalysisOutputError: "unreadable_output",
+  HopperProtocolError: "unreadable_output",
+  AnalysisInputError: "invalid_request",
+  AnalysisCapabilityUnavailableError: "capability_unavailable",
+  AnalysisCancelledError: "cancelled",
+  HopperCancelledError: "cancelled",
+  AnalysisTimeoutError: "provider_timeout",
+  HopperTimeoutError: "provider_timeout",
+  HopperProcessError: "provider_unavailable",
+  HopperStartError: "provider_unavailable",
+  ConfigurationError: "configuration_invalid",
+  NoBinaryOpenError: "target_unavailable",
+  BinaryTargetError: "target_unavailable",
+  EvidenceIntegrityError: "evidence_integrity_mismatch",
+  EvidenceLimitError: "truncated",
+  ProviderAdapterError: "execution_failure",
+  HopperRemoteError: "execution_failure",
+} as const satisfies Readonly<
+  Record<
+    Exclude<AnalysisErrorTag, SpecializedErrorTag>,
+    AnalysisErrorProjection["code"]
+  >
+>;
+
+const staticErrorCode = (
+  tag: AnalysisErrorTag,
+): AnalysisErrorProjection["code"] => {
+  switch (tag) {
     case "ArtifactOperationError":
+    case "BrowserObservationError":
     case "EvidenceFileError":
     case "InvestigationWorkspaceError":
-    case "UnknownRegistryError":
     case "PermissionRequiredError":
-      throw new TypeError("Unhandled specialized analysis error");
+    case "ProcessCaptureError":
+    case "ProviderSelectionError":
     case "ReplayPlanStaleError":
-      throw new TypeError("Unhandled specialized replay error");
+    case "UnknownRegistryError":
+      throw new TypeError(`Unhandled specialized analysis error: ${tag}`);
+    default:
+      return STATIC_ERROR_CODES[tag];
   }
 };
 
 const errorDetails = (
+  error: AnalysisError,
+): Readonly<Record<string, JsonValue>> | undefined =>
+  requestErrorDetails(error) ??
+  artifactStateErrorDetails(error) ??
+  providerErrorDetails(error) ??
+  lifecycleErrorDetails(error);
+
+const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof AnalysisInputError && error.issues.length > 0)
@@ -740,6 +778,12 @@ const errorDetails = (
       missing: missingScopeDetails(error.missing),
       ceiling: error.ceiling === null ? null : scopeDetails(error.ceiling),
     };
+  return undefined;
+};
+
+const artifactStateErrorDetails = (
+  error: AnalysisError,
+): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
     return {
       logical_path: error.artifactDetails.logicalPath,
@@ -753,14 +797,6 @@ const errorDetails = (
       reason: error.reason,
       ...(error.reason === "limit" ? { truncated: true } : {}),
     };
-  if (error instanceof AnalysisCancelledError)
-    return { operation: error.operation, cleanup: "complete" };
-  if (error instanceof HopperCancelledError)
-    return { operation: "hopper", cleanup: "complete" };
-  if (error instanceof AnalysisTimeoutError)
-    return { operation: error.operation, timeout_ms: error.timeoutMs };
-  if (error instanceof HopperTimeoutError)
-    return { operation: "hopper", timeout_ms: error.timeoutMs };
   if (error instanceof EvidenceLimitError)
     return { limit: error.limit, maximum: error.maximum, truncated: true };
   if (error instanceof InvestigationWorkspaceError)
@@ -768,6 +804,12 @@ const errorDetails = (
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof EvidenceFileError)
     return { operation: error.operation, reason: error.reason };
+  return undefined;
+};
+
+const providerErrorDetails = (
+  error: AnalysisError,
+): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof AnalysisCapabilityUnavailableError)
     return { provider_id: error.providerId, operation: error.operation };
   if (error instanceof ProviderSelectionError)
@@ -797,6 +839,20 @@ const errorDetails = (
     return { provider_code: error.code, diagnostic_type: error.diagnosticType };
   if (error instanceof HopperProcessError && error.failureCode !== undefined)
     return { failure_code: error.failureCode, exit_code: error.exitCode };
+  return undefined;
+};
+
+const lifecycleErrorDetails = (
+  error: AnalysisError,
+): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisCancelledError)
+    return { operation: error.operation, cleanup: "complete" };
+  if (error instanceof HopperCancelledError)
+    return { operation: "hopper", cleanup: "complete" };
+  if (error instanceof AnalysisTimeoutError)
+    return { operation: error.operation, timeout_ms: error.timeoutMs };
+  if (error instanceof HopperTimeoutError)
+    return { operation: "hopper", timeout_ms: error.timeoutMs };
   if (error._tag === "ProcessCaptureError" && error.cleanupIncomplete)
     return {
       cleanup: "incomplete",
@@ -870,17 +926,8 @@ const errorCategory = (
     return "unavailable";
   if (error._tag === "ProcessCaptureError")
     return error.userCategory ?? "execution_failure";
-  if (error instanceof BrowserObservationError) {
-    if (error.reason === "payload_limit") return "truncated";
-    if (
-      error.reason === "target_not_found" ||
-      error.reason === "target_not_allowed" ||
-      error.reason === "target_changed" ||
-      error.reason === "endpoint_unreachable" ||
-      error.reason === "disconnected"
-    )
-      return "unavailable";
-  }
+  if (error instanceof BrowserObservationError)
+    return browserErrorCategory(error.reason);
   if (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"
@@ -893,6 +940,21 @@ const errorCategory = (
   if (error instanceof InvestigationWorkspaceError)
     return investigationWorkspaceCategory(error.reason);
   return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
+};
+
+const browserErrorCategory = (
+  reason: BrowserObservationError["reason"],
+): AnalysisErrorProjection["category"] => {
+  if (reason === "payload_limit") return "truncated";
+  if (
+    reason === "target_not_found" ||
+    reason === "target_not_allowed" ||
+    reason === "target_changed" ||
+    reason === "endpoint_unreachable" ||
+    reason === "disconnected"
+  )
+    return "unavailable";
+  return "execution_failure";
 };
 
 const investigationWorkspaceCategory = (
@@ -944,18 +1006,8 @@ const userMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
   if (error.userMessage !== undefined) return error.userMessage;
-  if (UNREADABLE_OUTPUT_TAGS.has(error._tag))
-    return "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.";
-  if (UNSUPPORTED_PROVIDER_TAGS.has(error._tag))
-    return "This analysis is unavailable for the current target. Choose another analysis or target.";
-  if (CANCELLED_TAGS.has(error._tag))
-    return "Analysis was cancelled. Start it again when ready.";
-  if (TIMEOUT_TAGS.has(error._tag))
-    return "Analysis took too long. Try a smaller request, then run `rea doctor` if it continues.";
-  if (ADAPTER_FAILURE_TAGS.has(error._tag))
-    return "Analysis could not complete. Retry once; if it continues, run `rea doctor`.";
-  if (START_FAILURE_TAGS.has(error._tag))
-    return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
+  const standardMessage = standardErrorMessage(error._tag);
+  if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError)
     return artifactMessage(error.reason);
   if (error instanceof EvidenceIntegrityError)
@@ -979,6 +1031,22 @@ const userMessage = (error: AnalysisError): string => {
       "Process capture could not complete. Run `rea doctor`, then review capture policy and try again."
     );
   return "Analysis could not complete. Run `rea doctor`, then try again.";
+};
+
+const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {
+  if (UNREADABLE_OUTPUT_TAGS.has(tag))
+    return "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.";
+  if (UNSUPPORTED_PROVIDER_TAGS.has(tag))
+    return "This analysis is unavailable for the current target. Choose another analysis or target.";
+  if (CANCELLED_TAGS.has(tag))
+    return "Analysis was cancelled. Start it again when ready.";
+  if (TIMEOUT_TAGS.has(tag))
+    return "Analysis took too long. Try a smaller request, then run `rea doctor` if it continues.";
+  if (ADAPTER_FAILURE_TAGS.has(tag))
+    return "Analysis could not complete. Retry once; if it continues, run `rea doctor`.";
+  if (START_FAILURE_TAGS.has(tag))
+    return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
+  return undefined;
 };
 
 const UNREADABLE_OUTPUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([

@@ -6,11 +6,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../domain/binaryTarget.js";
-import { supportsNodeVersion } from "../domain/runtimeVersion.js";
 import { probeHomebrew } from "./homebrew.js";
 import {
   linuxHopperBinarySupported,
-  linuxHopperLauncherPath,
   linuxSharedLibrariesAvailable,
   readLinuxDistribution,
   type LinuxDistribution,
@@ -25,12 +23,12 @@ import {
   inspectRuntimeExecutables,
   type RuntimeExecutableInventory,
 } from "./RuntimeExecutableDiagnostics.js";
+import {
+  collectDoctorDiagnostics,
+  doctorHealthy,
+} from "./DoctorDiagnostics.js";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_HOPPER =
-  "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-const SYSTEM_LINUX_HOPPER = "/opt/hopper/bin/Hopper";
-
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
   readonly name: string;
@@ -97,6 +95,40 @@ interface InstalledSkillIdentity {
   readonly catalogDigest: string | null;
 }
 
+/** Structured result returned by the read-only doctor workflow. */
+export interface DoctorReport {
+  readonly healthy: boolean;
+  readonly hopperPath?: string;
+  readonly providerInspections?: readonly DoctorProviderInspection[];
+  readonly checks: readonly DoctorCheck[];
+  readonly identity?: DoctorIdentity;
+}
+
+/** Installed-package, skill, client, and runtime identity observations. */
+export interface DoctorIdentity {
+  readonly cli_package_version: string;
+  readonly expected_skill_version: string;
+  readonly sdk: typeof SDK_IDENTITY;
+  readonly catalog: typeof CATALOG_IDENTITY;
+  readonly live_server: {
+    readonly state: "unknown";
+    readonly remediation: string;
+  };
+  readonly installations: {
+    readonly paths: readonly string[];
+    readonly state: "single" | "multiple" | "unknown";
+  };
+  readonly skill: {
+    readonly installed_version: string | null;
+    readonly installed_tool_count: number | null;
+    readonly installed_catalog_digest: string | null;
+    readonly state: "aligned" | "stale" | "missing";
+    readonly remediation: string | null;
+  };
+  readonly registrations: readonly ClientRegistrationStatus[];
+  readonly runtime_executables: RuntimeExecutableInventory | null;
+}
+
 /**
  * Check requirements and an optional target without mutating the host.
  * Every failed check includes remediation suitable for either the one-shot CLI
@@ -105,221 +137,15 @@ interface InstalledSkillIdentity {
 export const runDoctor = async (
   target?: string,
   host: DoctorHost = systemDoctorHost(),
-): Promise<{
-  readonly healthy: boolean;
-  readonly hopperPath?: string;
-  readonly providerInspections?: readonly DoctorProviderInspection[];
-  readonly checks: readonly DoctorCheck[];
-  readonly identity?: {
-    readonly cli_package_version: string;
-    readonly expected_skill_version: string;
-    readonly sdk: typeof SDK_IDENTITY;
-    readonly catalog: typeof CATALOG_IDENTITY;
-    readonly live_server: {
-      readonly state: "unknown";
-      readonly remediation: string;
-    };
-    readonly installations: {
-      readonly paths: readonly string[];
-      readonly state: "single" | "multiple" | "unknown";
-    };
-    readonly skill: {
-      readonly installed_version: string | null;
-      readonly installed_tool_count: number | null;
-      readonly installed_catalog_digest: string | null;
-      readonly state: "aligned" | "stale" | "missing";
-      readonly remediation: string | null;
-    };
-    readonly registrations: readonly ClientRegistrationStatus[];
-    readonly runtime_executables: RuntimeExecutableInventory | null;
-  };
-}> => {
-  const checks: DoctorCheck[] = [];
-  checks.push(
-    check("node", supportsNodeVersion(host.nodeVersion), host.nodeVersion, {
-      remediation: "Install Node.js 22.19+ or 24.11+.",
-      classification: "missing_dependency",
-    }),
-  );
-  const runtimeExecutables = await host.runtimeExecutables?.();
-  if (runtimeExecutables !== undefined) {
-    const broken = runtimeExecutables.candidates.filter(
-      ({ healthy }) => !healthy,
-    );
-    checks.push(
-      check(
-        "node-toolchains",
-        broken.length === 0,
-        broken.length === 0
-          ? `${String(runtimeExecutables.candidates.length)} runtime executable candidates passed bounded version probes.`
-          : `${String(broken.length)} of ${String(runtimeExecutables.candidates.length)} runtime executable candidates failed bounded version probes: ${broken
-              .slice(0, 5)
-              .map(({ lexical_path: path }) => path)
-              .join(", ")}${broken.length > 5 ? ", …" : ""}`,
-        {
-          remediation:
-            "Select a verified healthy Node toolchain or repair the failing installation, then rerun rea doctor. Do not create compatibility-library symlinks.",
-          classification: "missing_dependency",
-        },
-      ),
-    );
-  }
-  const macosVersion =
-    host.platform === "darwin" ? await host.macosVersion() : undefined;
-  const macosMajor = macosVersion === undefined ? 0 : parseMajor(macosVersion);
-  const linuxDistribution =
-    host.platform === "linux" ? await host.linuxDistribution() : undefined;
-  const supportedHost =
-    (host.platform === "darwin" && macosMajor >= 12) ||
-    (host.platform === "linux" && linuxDistribution?.supported === true) ||
-    (host.platform === "win32" && host.architecture === "x64");
-  checks.push(
-    check(
-      "host",
-      supportedHost,
-      macosVersion ??
-        (linuxDistribution === undefined
-          ? `${host.platform} ${host.architecture}`
-          : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`),
-      {
-        remediation:
-          "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and the experimental Windows x64 Ghidra P0 boundary.",
-        classification: "unsupported_host",
-      },
-    ),
-  );
-  const candidates =
-    host.configuredHopperPath === undefined
-      ? [
-          DEFAULT_HOPPER,
-          SYSTEM_LINUX_HOPPER,
-          linuxHopperLauncherPath(homedir()),
-          ...(await host.manualHopperPaths()),
-        ]
-      : [host.configuredHopperPath];
-  let hopperPath = await firstExecutable(host, candidates);
-  if (hopperPath === undefined && host.configuredHopperPath === undefined) {
-    const brewCandidate = await host.brewHopperPath();
-    hopperPath = await firstExecutable(
-      host,
-      brewCandidate === undefined ? [] : [brewCandidate],
-    );
-  }
-  checks.push(
-    check(
-      "hopper",
-      hopperPath !== undefined,
-      hopperPath ?? host.configuredHopperPath,
-      {
-        remediation:
-          host.configuredHopperPath === undefined
-            ? "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH."
-            : "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
-        classification:
-          host.configuredHopperPath === undefined
-            ? "missing_analysis_engine"
-            : "config_drift",
-      },
-    ),
-  );
-  if (host.platform === "linux" && hopperPath !== undefined)
-    checks.push(
-      check(
-        "hopper-version",
-        await host.supportedLinuxHopper(hopperPath),
-        hopperPath,
-        {
-          remediation: unsupportedHopperRemediation(
-            host.configuredHopperPath === hopperPath,
-          ),
-          classification: "config_drift",
-        },
-      ),
-    );
-  const providerInspections = await inspectDoctorProviders(host, checks);
-  const javascriptReplayCheck = await host.javascriptReplayCheck?.();
-  if (javascriptReplayCheck !== undefined) checks.push(javascriptReplayCheck);
-  if (host.configuredIlspyCmdPath !== undefined) {
-    const version = await host.ilspyCmdVersion?.(host.configuredIlspyCmdPath);
-    checks.push(
-      check(
-        "ilspycmd",
-        version !== undefined,
-        version === undefined
-          ? host.configuredIlspyCmdPath
-          : `${host.configuredIlspyCmdPath} (${version})`,
-        {
-          remediation:
-            "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
-          classification: "config_drift",
-        },
-      ),
-    );
-  }
-  if (host.platform === "linux" && hopperPath !== undefined)
-    checks.push(
-      check(
-        "hopper-demo-runtime",
-        await host.linuxDemoRuntimeReady(),
-        undefined,
-        {
-          remediation:
-            "Rerun rea setup to install the Xvfb, xauth, Python, X11, and XTEST packages required for Linux demo sessions.",
-          classification: "missing_dependency",
-        },
-      ),
-    );
-  if (target !== undefined)
-    checks.push(
-      check("target", await host.validTarget(target), target, {
-        remediation: "Supply a readable local app or program path.",
-        classification: "config_drift",
-      }),
-    );
-  const installationPaths = (await host.installationPaths?.()) ?? [];
-  const observedSkillIdentity = await host.installedSkillIdentity?.();
-  const legacySkillVersion =
-    observedSkillIdentity === undefined
-      ? await host.installedSkillVersion?.()
-      : undefined;
-  const installedSkillIdentity =
-    observedSkillIdentity ??
-    (legacySkillVersion === undefined
-      ? undefined
-      : {
-          version: legacySkillVersion,
-          toolCount: null,
-          catalogDigest: null,
-        });
-  const installedSkillVersion = installedSkillIdentity?.version ?? undefined;
-  const skillAligned =
-    installedSkillIdentity?.version === PRODUCT_IDENTITY.skillVersion &&
-    installedSkillIdentity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
-    installedSkillIdentity.catalogDigest ===
-      CATALOG_IDENTITY.digests.combined_sha256;
-  if (!skillAligned)
-    checks.push({
-      name: "skill:identity",
-      ok: false,
-      classification: "config_drift",
-      detail:
-        installedSkillIdentity === undefined
-          ? "Installed REA skill identity is missing."
-          : "Installed REA skill identity is stale.",
-      remediation: "Run rea setup to update the installed REA skill.",
-    });
-  const registrations = (await host.clientRegistrations?.()) ?? [];
-  for (const registration of registrations)
-    if (registration.state !== "aligned")
-      checks.push({
-        name: `registration:${registration.client}`,
-        ok: false,
-        classification: "config_drift",
-        detail: registration.config_path,
-        remediation:
-          registration.remediation ??
-          "Run rea setup, then restart the affected client.",
-      });
+): Promise<DoctorReport> => {
+  const {
+    checks: diagnosticChecks,
+    hopperPath,
+    providerInspections,
+    runtimeExecutables,
+  } = await collectDoctorDiagnostics(target, host);
+  const identity = await collectDoctorIdentity(host, runtimeExecutables);
+  const checks = [...diagnosticChecks, ...identity.checks];
   return {
     healthy: doctorHealthy(checks, {
       hopperAvailable:
@@ -333,7 +159,29 @@ export const runDoctor = async (
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,
-    identity: {
+    identity: identity.value,
+  };
+};
+
+const collectDoctorIdentity = async (
+  host: DoctorHost,
+  runtimeExecutables: RuntimeExecutableInventory | undefined,
+): Promise<{
+  readonly checks: readonly DoctorCheck[];
+  readonly value: DoctorIdentity;
+}> => {
+  const installationPaths = (await host.installationPaths?.()) ?? [];
+  const installedSkillIdentity = await readInstalledSkillIdentity(host);
+  const skillAligned = skillIdentityAligned(installedSkillIdentity);
+  const registrations = (await host.clientRegistrations?.()) ?? [];
+  return {
+    checks: [
+      ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
+      ...registrations
+        .filter(({ state }) => state !== "aligned")
+        .map(registrationCheck),
+    ],
+    value: {
       cli_package_version: PRODUCT_IDENTITY.packageVersion,
       expected_skill_version: PRODUCT_IDENTITY.skillVersion,
       sdk: SDK_IDENTITY,
@@ -345,15 +193,10 @@ export const runDoctor = async (
       },
       installations: {
         paths: installationPaths,
-        state:
-          installationPaths.length === 0
-            ? "unknown"
-            : installationPaths.length === 1
-              ? "single"
-              : "multiple",
+        state: installationState(installationPaths),
       },
       skill: {
-        installed_version: installedSkillVersion ?? null,
+        installed_version: installedSkillIdentity?.version ?? null,
         installed_tool_count: installedSkillIdentity?.toolCount ?? null,
         installed_catalog_digest: installedSkillIdentity?.catalogDigest ?? null,
         state:
@@ -372,10 +215,53 @@ export const runDoctor = async (
   };
 };
 
-const unsupportedHopperRemediation = (configured: boolean): string =>
-  configured
-    ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
-    : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
+const readInstalledSkillIdentity = async (
+  host: DoctorHost,
+): Promise<InstalledSkillIdentity | undefined> => {
+  const observed = await host.installedSkillIdentity?.();
+  if (observed !== undefined) return observed;
+  const legacyVersion = await host.installedSkillVersion?.();
+  return legacyVersion === undefined
+    ? undefined
+    : { version: legacyVersion, toolCount: null, catalogDigest: null };
+};
+
+const skillIdentityAligned = (
+  identity: InstalledSkillIdentity | undefined,
+): boolean =>
+  identity?.version === PRODUCT_IDENTITY.skillVersion &&
+  identity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
+  identity.catalogDigest === CATALOG_IDENTITY.digests.combined_sha256;
+
+const skillIdentityCheck = (
+  identity: InstalledSkillIdentity | undefined,
+): DoctorCheck => ({
+  name: "skill:identity",
+  ok: false,
+  classification: "config_drift",
+  detail:
+    identity === undefined
+      ? "Installed REA skill identity is missing."
+      : "Installed REA skill identity is stale.",
+  remediation: "Run rea setup to update the installed REA skill.",
+});
+
+const registrationCheck = (
+  registration: ClientRegistrationStatus,
+): DoctorCheck => ({
+  name: `registration:${registration.client}`,
+  ok: false,
+  classification: "config_drift",
+  detail: registration.config_path,
+  remediation:
+    registration.remediation ??
+    "Run rea setup, then restart the affected client.",
+});
+
+const installationState = (
+  paths: readonly string[],
+): DoctorIdentity["installations"]["state"] =>
+  paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
@@ -552,8 +438,6 @@ export const systemDoctorHost = (
   clientRegistrations: () => readClientRegistrationStatuses(homedir()),
 });
 
-const parseMajor = (version: string): number =>
-  Number.parseInt(version.split(".")[0] ?? "0", 10);
 const uniqueLines = (value: string): string[] => [
   ...new Set(
     value
@@ -563,99 +447,5 @@ const uniqueLines = (value: string): string[] => [
   ),
 ];
 
-const firstExecutable = async (
-  host: DoctorHost,
-  candidates: readonly string[],
-): Promise<string | undefined> => {
-  for (const candidate of new Set(candidates))
-    if (await host.executable(candidate)) return candidate;
-  return undefined;
-};
-
 const firstIlspyVersionLine = (value: string): string | undefined =>
   uniqueLines(value).find((line) => line.startsWith("ilspycmd:"));
-
-const check = (
-  name: string,
-  ok: boolean,
-  detail: string | undefined,
-  failure: {
-    readonly remediation: string;
-    readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
-  },
-): DoctorCheck => ({
-  name,
-  ok,
-  classification: ok ? "healthy" : failure.classification,
-  ...(detail === undefined ? {} : { detail }),
-  ...(ok ? {} : { remediation: failure.remediation }),
-});
-
-const providerDoctorChecks = (
-  inspection: DoctorProviderInspection,
-): readonly DoctorCheck[] =>
-  inspection.checks.map((candidate) => ({
-    name:
-      candidate.name === "configuration"
-        ? inspection.id
-        : `${inspection.id}-${candidate.name}`,
-    ok: candidate.ok,
-    classification: candidate.ok ? "healthy" : candidate.classification,
-    detail: candidate.detail,
-    ...(candidate.remediation === null
-      ? {}
-      : { remediation: candidate.remediation }),
-  }));
-
-const inspectDoctorProviders = async (
-  host: DoctorHost,
-  checks: DoctorCheck[],
-): Promise<readonly DoctorProviderInspection[] | undefined> => {
-  const inspections = await host.providerInspections?.();
-  if (inspections === undefined) return undefined;
-  for (const inspection of inspections)
-    checks.push(...providerDoctorChecks(inspection));
-  return inspections;
-};
-
-const doctorHealthy = (
-  checks: readonly DoctorCheck[],
-  providers: {
-    readonly hopperAvailable: boolean;
-    readonly hopperConfigured: boolean;
-    readonly providerInspections:
-      | readonly DoctorProviderInspection[]
-      | undefined;
-  },
-): boolean => {
-  if (providers.providerInspections === undefined)
-    return checks.every(({ ok }) => ok);
-  const providerChecks = checks.filter(
-    ({ name }) =>
-      name.startsWith("hopper") ||
-      providers.providerInspections?.some((inspection) =>
-        providerCheckName(inspection.id, name),
-      ) === true,
-  );
-  const coreHealthy = checks
-    .filter((candidate) => !providerChecks.includes(candidate))
-    .every(({ ok }) => ok);
-  const configuredProvidersHealthy = providerChecks
-    .filter(({ name }) => {
-      if (name.startsWith("hopper")) return providers.hopperConfigured;
-      return providers.providerInspections?.some(
-        (inspection) =>
-          inspection.configured && providerCheckName(inspection.id, name),
-      );
-    })
-    .every(({ ok }) => ok);
-  return (
-    coreHealthy &&
-    configuredProvidersHealthy &&
-    (providers.hopperAvailable ||
-      providers.providerInspections.some(({ available }) => available))
-  );
-};
-
-const providerCheckName = (providerId: string, name: string): boolean =>
-  name === providerId || name.startsWith(`${providerId}-`);
