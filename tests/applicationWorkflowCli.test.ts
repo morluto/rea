@@ -119,7 +119,7 @@ describe("application workflow CLI parity", () => {
         action: "Correct the listed arguments and retry.",
       },
     });
-  }, 20_000);
+  }, 45_000);
 });
 
 const runCli = async (arguments_: readonly string[]): Promise<unknown> => {

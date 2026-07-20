@@ -8,9 +8,12 @@ const TEST_FILES = ["tests/**/*.test.ts"];
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
 const SERIAL_INTEGRATION_TESTS = [
+  "tests/applicationWorkflowCli.test.ts",
   "tests/browserCli.test.ts",
   "tests/cliOutput.test.ts",
+  "tests/electronCli.test.ts",
   "tests/ghidraClient.test.ts",
+  "tests/javascriptArtifactReconstruction.test.ts",
   PROCESS_CAPTURE_TEST,
   "tests/runtime.test.ts",
   "tests/sessionMcp.test.ts",
