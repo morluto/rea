@@ -31,7 +31,7 @@ export const TOOL_KINDS = [
 ] as const;
 
 /** Adapter family responsible for implementing a public MCP tool. */
-export type ToolKind = (typeof TOOL_KINDS)[number];
+type ToolKind = (typeof TOOL_KINDS)[number];
 
 /** Single source of truth for a public MCP tool. */
 export interface ToolContract<Name extends string = string> {
