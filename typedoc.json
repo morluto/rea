@@ -20,7 +20,7 @@
   "excludeExternals": true,
   "excludePrivate": true,
   "excludeProtected": false,
-  "includeVersion": true,
+  "includeVersion": false,
   "readme": "none",
   "plugin": [],
   "gitRevision": "main"

@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.2.0](https://github.com/morluto/rea/compare/rea-agents-2.1.0...rea-agents-2.2.0) (2026-07-20)
+
+
+### Features
+
+* **artifacts:** project mobile application inventories ([c6a1a93](https://github.com/morluto/rea/commit/c6a1a93a9aff1efa06a39aae9911f6c704c350f5))
+* **artifacts:** project mobile application inventories ([d36b385](https://github.com/morluto/rea/commit/d36b38537821dd2d74d99a9e49eccd569cfaf341))
+* **process:** add bounded replay state machines ([fea965b](https://github.com/morluto/rea/commit/fea965b1b82a858fe423df2ef8fb004524f1934e))
+* **process:** add bounded replay state machines ([dc0c2e5](https://github.com/morluto/rea/commit/dc0c2e5ac31387138ec47b027bac6a4cbf007ba0))
+* **process:** compare repeatable paired experiments ([e9899c0](https://github.com/morluto/rea/commit/e9899c003b72c2799c67d74bd9553c9a03d083dd))
+* **process:** compare repeatable paired experiments ([9ab7aa3](https://github.com/morluto/rea/commit/9ab7aa320c2f234e86d16ff8535b11768a0e080e))
+* streamline agent integration and MCP routing ([02cb20b](https://github.com/morluto/rea/commit/02cb20b54682bc334077d8e247841e179a26abd7))
+* streamline agent integration and MCP routing ([3e3d458](https://github.com/morluto/rea/commit/3e3d45856ede849371027b62ad1a7b0687798951))
+
+
+### Bug Fixes
+
+* align session filters and Hopper verification ([d7d6bdf](https://github.com/morluto/rea/commit/d7d6bdf474a1672a9b33888044a38672d28ab0ee))
+* **artifacts:** align projection provider targets ([560dbda](https://github.com/morluto/rea/commit/560dbda76d9a07ea9291c00bec8a383456ad0e03))
+* **artifacts:** bound mobile projection candidates ([0cc9d46](https://github.com/morluto/rea/commit/0cc9d468c4d6f3036b5888d12173157b487371c3))
+* **ci:** keep tool kind type internal ([b9bead2](https://github.com/morluto/rea/commit/b9bead2809eca4448ac28f3e2465f8021a109983))
+* **ci:** retry published package verification ([0810486](https://github.com/morluto/rea/commit/0810486f636a99b492f26758f6cd0fa65935f5aa))
+* **ci:** retry published package verification ([c379455](https://github.com/morluto/rea/commit/c379455da7b32069c861addfbf8d19bb432ddb84))
+
+
+### Documentation
+
+* refresh generated API links ([a2089a4](https://github.com/morluto/rea/commit/a2089a40671b3edae7db98ce37587da87f093d1b))
+* update application projection API ([b0cb28a](https://github.com/morluto/rea/commit/b0cb28a9bf04f849e792346306bb42ed4fac6b29))
+* update paired process experiment API ([a222327](https://github.com/morluto/rea/commit/a222327f304555104b51370d0955dc6c8ca4d0ce))
+* update replay machine API ([d74f897](https://github.com/morluto/rea/commit/d74f89754fe4e5c19a757893a3fe388f2c64372f))
+
+
+### Tests
+
+* budget CLI output variant subprocesses ([8d3587b](https://github.com/morluto/rea/commit/8d3587bbcac18e90652cc95e5853158a4f9aef18))
+* cap workers across all hosts ([bc80359](https://github.com/morluto/rea/commit/bc8035918b1d6a3eac7fc2307867d4dc2787d3b5))
+* inherit root options in Vitest projects ([168100e](https://github.com/morluto/rea/commit/168100e5326958fc89431a26a1f3cca762516133))
+* isolate slow filesystem and CLI suites ([c2e134b](https://github.com/morluto/rea/commit/c2e134b8e46d780b61faab1021772704380e6a37))
+* stabilize subprocess-heavy integration suites ([a556e94](https://github.com/morluto/rea/commit/a556e945096fd9430fc48217a2f4b6dc3d06518c))
+
 ## [2.1.0](https://github.com/morluto/rea/compare/rea-agents-2.0.0...rea-agents-2.1.0) (2026-07-18)
 
 

@@ -175,16 +175,20 @@ rea uninstall --purge-data
 
 يكتشف Setup كلاً من Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin، ويهيئ تلقائيًا أول ستة عملاء. أما Devin فيُبلّغ عن اكتشافه فقط ولا يُعدّله. يمكن لأي وكيل برمجة يدعم خوادم MCP المحلية استخدام REA بالإعداد التالي:
 
+<!-- x-release-please-start-version -->
+
 ```json
 {
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@2.1.0", "mcp"]
+      "args": ["-y", "rea-agents@2.2.0", "mcp"]
     }
   }
 }
 ```
+
+<!-- x-release-please-end -->
 
 ## كيف يعمل؟
 
