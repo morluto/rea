@@ -81,9 +81,9 @@ type RuntimeProvider = {
 
 const PROVIDERS: Readonly<Record<RuntimeFamily, RuntimeProvider>> = {
   android: {
-    inspection: "provider-missing",
-    id: null,
-    reason: "Install or configure an Android semantic-analysis provider.",
+    inspection: "available",
+    id: "rea-android-application",
+    reason: null,
   },
   apple: { inspection: "available", id: "rea-apple-application", reason: null },
   javascript: {

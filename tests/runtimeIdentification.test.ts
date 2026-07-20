@@ -79,6 +79,11 @@ describe("runtime identification", () => {
     expect(first.runtimes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          family: "android",
+          inspection: "available",
+          provider_id: "rea-android-application",
+        }),
+        expect.objectContaining({
           family: "jvm",
           inspection: "provider-missing",
           provider_id: null,

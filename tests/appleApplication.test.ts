@@ -111,4 +111,34 @@ describe("Apple application projection", () => {
       error: { _tag: "AnalysisInputError" },
     });
   });
+
+  it("infers an application root when the IPA omits directory entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-apple-root-"));
+    const path = join(root, "Fixture.ipa");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "Payload/Fixture.app/Fixture",
+      new Uint8ArrayReader(
+        Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
+      ),
+    );
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    const result = projectAppleApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      appleApplicationProjectionResultSchema.parse(
+        result.value.normalized_result,
+      ),
+    ).toMatchObject({
+      application_roots: ["Payload/Fixture.app"],
+      components: { executables: [expect.any(Object)] },
+    });
+  });
 });

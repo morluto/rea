@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import { projectBoundedCartesian } from "./boundedCartesianProjection.js";
 import { evidenceSchema } from "./evidence.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -114,13 +115,14 @@ export const projectAppleApplication = (
         format: node.format,
       } satisfies Component;
     });
-  const roots = inventory.occurrences
-    .filter(
-      ({ logical_path: path, entry_kind: kind }) =>
-        kind === "directory" && /^Payload\/[^/]+\.app$/u.test(path),
-    )
-    .map(({ logical_path: path }) => path)
-    .sort(compare);
+  const roots = [
+    ...new Set(
+      inventory.occurrences.flatMap(({ logical_path: path }) => {
+        const match = /^(Payload\/[^/]+\.app)(?:\/|$)/u.exec(path);
+        return match?.[1] === undefined ? [] : [match[1]];
+      }),
+    ),
+  ].sort(compare);
   const classified = classifyComponents(all, roots);
   const retained = retainComponents(classified, parsed.limits.max_components);
   const omitted = componentCount(classified) - componentCount(retained);
@@ -249,16 +251,19 @@ const identifyBridgeCandidates = (
   native: readonly Component[],
   maximum: number,
 ) => {
-  const candidates = scripts.flatMap((script) =>
-    native.map((item) => ({
+  const projection = projectBoundedCartesian(
+    scripts,
+    native,
+    maximum,
+    (script, item) => ({
       source_path: script.path,
       native_path: item.path,
       basis: bridgeBasis(item.path),
-    })),
+    }),
   );
   return {
-    candidates: candidates.slice(0, maximum),
-    omitted: Math.max(0, candidates.length - maximum),
+    candidates: projection.values,
+    omitted: projection.omitted,
   };
 };
 

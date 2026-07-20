@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
+import { projectBoundedCartesian } from "./boundedCartesianProjection.js";
 import { evidenceSchema } from "./evidence.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -248,16 +249,19 @@ const bridgeCandidates = (
   native: readonly Component[],
   maximum: number,
 ) => {
-  const candidates = managed.flatMap((source) =>
-    native.map((target) => ({
+  const projection = projectBoundedCartesian(
+    managed,
+    native,
+    maximum,
+    (source, target) => ({
       managed_path: source.path,
       native_path: target.path,
       basis: bridgeBasis(target.path),
-    })),
+    }),
   );
   return {
-    candidates: candidates.slice(0, maximum),
-    omitted: Math.max(0, candidates.length - maximum),
+    candidates: projection.values,
+    omitted: projection.omitted,
   };
 };
 
