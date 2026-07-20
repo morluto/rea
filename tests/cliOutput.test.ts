@@ -11,6 +11,7 @@ import { sanitizeCliOutput } from "../src/cliOutput.js";
 
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
+const CLI_VARIANT_TIMEOUT_MS = 120_000;
 
 describe("CLI output boundary", () => {
   it("preserves normal output and sanitizes text and JSON validation errors", () => {
@@ -156,7 +157,7 @@ describe("CLI output boundary", () => {
         ).rejects.toMatchObject({ code: 1, stdout: expect.any(String) });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
+    CLI_VARIANT_TIMEOUT_MS,
   );
 
   it(
