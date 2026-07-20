@@ -20,6 +20,7 @@ const isolatedProjects = {
   maxWorkers: Math.min(2, availableParallelism()),
   projects: [
     {
+      extends: true as const,
       test: {
         name: "parallel",
         include: TEST_FILES,
@@ -28,6 +29,7 @@ const isolatedProjects = {
       },
     },
     {
+      extends: true as const,
       test: {
         name: "serial-integration",
         include: SERIAL_INTEGRATION_TESTS,
