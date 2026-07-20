@@ -17,6 +17,7 @@ const responseSchema = z.union([
       type: z
         .enum([
           "remote",
+          "analysis_in_progress",
           "authorization",
           "invalid_request",
           "bridge_exception",

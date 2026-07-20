@@ -11,7 +11,7 @@
     "skill_version": "22"
   },
   "tools": {
-    "total": 95,
+    "total": 98,
     "families": [
       {
         "id": "direct",
@@ -102,6 +102,24 @@
           "project_managed_application_graph",
           "verify_managed_native_boundaries"
         ]
+      },
+      {
+        "id": "apple",
+        "surface": "apple-application-workflow",
+        "count": 1,
+        "tools": ["project_apple_application_graph"]
+      },
+      {
+        "id": "android",
+        "surface": "android-application-workflow",
+        "count": 1,
+        "tools": ["project_android_application_graph"]
+      },
+      {
+        "id": "runtime",
+        "surface": "runtime-identification",
+        "count": 1,
+        "tools": ["identify_runtime"]
       },
       {
         "id": "browser",
@@ -250,6 +268,18 @@
       ]
     },
     {
+      "id": "rea-android-application",
+      "name": "REA Android application workflows",
+      "version": "1",
+      "capabilities": ["project_android_application_graph"]
+    },
+    {
+      "id": "rea-apple-application",
+      "name": "REA Apple application workflows",
+      "version": "1",
+      "capabilities": ["project_apple_application_graph"]
+    },
+    {
       "id": "rea-artifact-graph",
       "name": "REA safe artifact graph provider",
       "version": "1",
@@ -323,6 +353,12 @@
       "name": "REA JavaScript runtime reconciliation",
       "version": "1",
       "capabilities": ["reconcile_javascript_runtime"]
+    },
+    {
+      "id": "rea-runtime-identification",
+      "name": "REA runtime identification",
+      "version": "1",
+      "capabilities": ["identify_runtime"]
     }
   ],
   "setup_clients": [
@@ -492,11 +528,14 @@
     }
   ],
   "cli": {
-    "primary_count": 55,
+    "primary_count": 65,
     "commands": [
       "analyze",
       "analyze-javascript-application",
+      "analyze-swift-types",
       "analyze-web-bundle",
+      "batch-decompile",
+      "call-graph",
       "capabilities",
       "capture-process",
       "capture-web-screenshot",
@@ -516,6 +555,7 @@
       "execute-node-characterization",
       "extract-artifact",
       "function",
+      "identify-runtime",
       "import-managed-reconstruction",
       "import-reference-source",
       "inspect",
@@ -532,10 +572,14 @@
       "list-architectures",
       "list-browser-targets",
       "list-electron-targets",
+      "objc-classes",
+      "objc-protocols",
       "observe-web-session",
       "plan-managed-runtime-correlation",
       "policy",
       "prepare-node-characterization",
+      "project-android-application-graph",
+      "project-apple-application-graph",
       "project-managed-application-graph",
       "providers",
       "query-reconstruction-coverage",
@@ -543,12 +587,14 @@
       "run-controlled-replay",
       "search",
       "setup",
+      "swift-classes",
       "trace",
       "trace-application-feature",
       "uninstall",
       "upgrade",
       "verify-managed-native-boundaries",
-      "xrefs"
+      "xrefs",
+      "xrefs-to-name"
     ],
     "aliases": [
       {
@@ -559,17 +605,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 55,
-      "mcp_tools": 95,
+      "cli_commands": 65,
+      "mcp_tools": 98,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 8
     },
     "digests": {
-      "tools_sha256": "b0a3ec201a314394264ff45ba6b2ed151833f1b13701e3d07279b665d771e35e",
+      "tools_sha256": "ab19588c01924fb90b66b45123502fda6ef19eafa66b96a52b973fbe353614bb",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "5dca0fcdad3e78d71a1b6ef7b4f0c12bdcd8e3ec11fcbdd9ccd3a68edadf5c80",
-      "combined_sha256": "e0c341749f488a869b62ab9b48c9236c60c91317ac60c8427f12a830cb900ae0"
+      "combined_sha256": "4094ad04e0199a3d520c3a1a3a3b5dc5812978868d99d0f752cc25529dd27d7e"
     }
   }
 }

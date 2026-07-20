@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { rm, writeFile } from "node:fs/promises";
 
 const mode = process.argv[2];
 
@@ -42,6 +43,22 @@ if (mode === "interactive") {
   spawn(process.execPath, [process.argv[1], "tree-child"], { stdio: "ignore" });
   process.stdout.write("tree-ready\n");
   setInterval(() => undefined, 1_000);
+} else if (mode === "reexec-child") {
+  process.stdout.write("reexec-child-ready\n");
+  setInterval(() => undefined, 1_000);
+} else if (mode === "reexec") {
+  const child = spawn(process.execPath, [process.argv[1], "reexec-child"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  process.stdout.write("supervisor-exit\n");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+} else if (mode === "filesystem-effects") {
+  await writeFile("modified.txt", "after");
+  await rm("deleted.txt");
+  await writeFile("created.txt", "created");
+  process.stdout.write("filesystem-effects-ready\n");
 } else if (mode === "crash") {
   process.stderr.write("intentional-crash\n");
   process.exit(23);

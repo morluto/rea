@@ -160,7 +160,7 @@ const EXPECTED = {
     "REA function comparison",
   ],
   compare_process_captures: [
-    "rea.process-comparison/v3",
+    "rea.process-comparison/v4",
     "rea-process",
     "REA deterministic process harness",
   ],
@@ -409,7 +409,7 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
     evidence.provider.id !== expected[1] ||
     evidence.provider.name !== expected[2] ||
     evidence.provider.version !==
-      (evidence.operation === "compare_process_captures" ? "3" : "1") ||
+      (evidence.operation === "compare_process_captures" ? "4" : "1") ||
     evidence.confidence !== "derived" ||
     evidence.authority !== "analyst-inference" ||
     evidence.subject !== null ||

@@ -12,7 +12,7 @@ import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+import { resolveSessionEvidencePair } from "./sessionEvidence.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
@@ -38,22 +38,26 @@ export const registerFunctionComparisonTool = (
         operation: "analyze_function",
         predicate: "rea.analysis/v2",
       };
-      const left = resolveSessionEvidenceIds(
+      const evidencePair = resolveSessionEvidencePair(
         session,
-        parsed.left_evidence_ids,
+        {
+          left: parsed.left_evidence_ids,
+          right: parsed.right_evidence_ids,
+        },
         expected,
       );
-      if (!left.ok) return toCallToolResult(left, contract);
-      const right = resolveSessionEvidenceIds(
-        session,
-        parsed.right_evidence_ids,
-        expected,
+      if (!evidencePair.ok) return toCallToolResult(evidencePair, contract);
+      const leftIds = evidencePair.value.left.map(({ evidence_id: id }) => id);
+      const rightIds = evidencePair.value.right.map(
+        ({ evidence_id: id }) => id,
       );
-      if (!right.ok) return toCallToolResult(right, contract);
-      const leftIds = left.value.map(({ evidence_id: id }) => id);
-      const rightIds = right.value.map(({ evidence_id: id }) => id);
       const computed = await runDerivedOperation(context, contract.name, () =>
-        compareFunctions(left.value, right.value, parsed.offset, parsed.limit),
+        compareFunctions(
+          evidencePair.value.left,
+          evidencePair.value.right,
+          parsed.offset,
+          parsed.limit,
+        ),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const comparison = computed.value;

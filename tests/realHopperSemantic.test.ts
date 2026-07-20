@@ -4,6 +4,9 @@ import {
   analyzeFixtureProcedure,
   requireCurrentDocument,
   resolveFixtureProcedure,
+  verifyLanguageFixture,
+  verifyAbsentFixtureValues,
+  verifyNamedFixture,
 } from "../scripts/lib/real-hopper-semantic.mjs";
 
 const normalize = (value: unknown): unknown => value;
@@ -94,6 +97,107 @@ describe("real Hopper semantic fixture resolution", () => {
         normalize,
       ),
     ).rejects.toThrow(/exactly one Hopper procedure/u);
+  });
+
+  it("proves declared symbols, strings, and language semantics", async () => {
+    const requests: { name: string; arguments: unknown }[] = [];
+    const client = {
+      callTool: async (request: { name: string; arguments: unknown }) => {
+        requests.push(request);
+        if (request.name === "find_xrefs_to_name")
+          return { status: "resolved", name: "_rea_entry", xrefs: [] };
+        if (request.name === "search_strings")
+          return {
+            items: [
+              { address: "0x1000", value: "REA_ENTRY", value_truncated: false },
+            ],
+          };
+        if (request.name === "get_objc_classes")
+          return { count: 1, classes: [{ name: "REAWidget" }] };
+        return {};
+      },
+    };
+    await expect(
+      verifyLanguageFixture({
+        client,
+        options: {},
+        target: { path: "/fixture", sha256: "a".repeat(64) },
+        expectations: {
+          symbols: ["_rea_entry"],
+          strings: ["REA_ENTRY"],
+        },
+        operations: ["get_objc_classes"],
+        semanticExpectations: { get_objc_classes: ["REAWidget"] },
+        normalizedResult: normalize,
+      }),
+    ).resolves.toMatchObject({
+      symbols: ["_rea_entry"],
+      strings: ["REA_ENTRY"],
+      semantics: {
+        get_objc_classes: {
+          count: 1,
+          classes: [{ name: "REAWidget" }],
+        },
+      },
+    });
+    expect(requests.map(({ name }) => name)).toEqual([
+      "open_binary",
+      "find_xrefs_to_name",
+      "search_strings",
+      "get_objc_classes",
+    ]);
+  });
+
+  it("rejects missing, truncated, and unavailable positive evidence", async () => {
+    const target = { path: "/fixture", sha256: "a".repeat(64) };
+    await expect(
+      verifyNamedFixture({
+        client: {
+          callTool: async ({ name }: { name: string }) =>
+            name === "find_xrefs_to_name"
+              ? { status: "unresolved" }
+              : { items: [] },
+        },
+        options: {},
+        target,
+        expectations: { symbols: ["missing"] },
+        normalizedResult: normalize,
+      }),
+    ).rejects.toThrow(/expected symbol/u);
+    await expect(
+      verifyNamedFixture({
+        client: {
+          callTool: async ({ name }: { name: string }) =>
+            name === "search_strings"
+              ? {
+                  items: [{ value: "TRUNCATED", value_truncated: true }],
+                }
+              : {},
+        },
+        options: {},
+        target,
+        expectations: { strings: ["TRUNCATED"] },
+        normalizedResult: normalize,
+      }),
+    ).rejects.toThrow(/expected string/u);
+  });
+
+  it("proves version-specific symbols and strings remain absent", async () => {
+    await expect(
+      verifyAbsentFixtureValues({
+        client: {
+          callTool: async ({ name }: { name: string }) =>
+            name === "find_xrefs_to_name"
+              ? { status: "unresolved", name: "_rea_added" }
+              : { items: [] },
+        },
+        options: {},
+        target: { path: "/v1", sha256: "a".repeat(64) },
+        symbols: ["_rea_added"],
+        strings: ["REA_VERSION_TWO"],
+        normalizedResult: normalize,
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

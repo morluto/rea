@@ -10,7 +10,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+import { resolveSessionEvidencePair } from "./sessionEvidence.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -38,20 +38,22 @@ export const registerArtifactComparisonTool = (
         operation: "inventory_artifact",
         predicate: "rea.analysis/v2",
       };
-      const left = resolveSessionEvidenceIds(
+      const evidencePair = resolveSessionEvidencePair(
         session,
-        parsed.left_evidence_ids,
+        {
+          left: parsed.left_evidence_ids,
+          right: parsed.right_evidence_ids,
+        },
         expected,
       );
-      if (!left.ok) return toCallToolResult(left, contract);
-      const right = resolveSessionEvidenceIds(
-        session,
-        parsed.right_evidence_ids,
-        expected,
-      );
-      if (!right.ok) return toCallToolResult(right, contract);
+      if (!evidencePair.ok) return toCallToolResult(evidencePair, contract);
       const computed = await runDerivedOperation(context, contract.name, () =>
-        compareArtifacts(left.value, right.value, parsed.offset, parsed.limit),
+        compareArtifacts(
+          evidencePair.value.left,
+          evidencePair.value.right,
+          parsed.offset,
+          parsed.limit,
+        ),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const comparison = computed.value;

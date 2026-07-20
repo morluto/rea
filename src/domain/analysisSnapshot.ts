@@ -57,6 +57,11 @@ const subjectSchema = z.object({
     "mach-o-universal",
     "javascript-bundle",
     "entitlements",
+    "dex",
+    "jvm-class",
+    "webassembly",
+    "android-manifest",
+    "android-resources",
   ]),
   architecture: architectureSchema.nullable(),
 });

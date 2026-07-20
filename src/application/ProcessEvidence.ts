@@ -11,7 +11,7 @@ import { parseProcessCapture } from "../domain/processCapture.js";
 export const PROCESS_PROVIDER = {
   id: "rea-process",
   name: "REA deterministic process harness",
-  version: "3",
+  version: "4",
 } as const;
 
 /** Project one process scenario into secret-free Evidence parameters. */

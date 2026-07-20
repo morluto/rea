@@ -33,6 +33,7 @@ const artifactKindSchema = z.enum([
   "resource",
   "universal-slice",
   "package-metadata",
+  "bytecode",
   "unknown",
 ]);
 
@@ -52,6 +53,11 @@ const artifactFormatSchema = z.enum([
   "analysis-database",
   "ipa",
   "apk",
+  "dex",
+  "jvm-class",
+  "webassembly",
+  "android-manifest",
+  "android-resources",
   "plist",
   "entitlements",
   "directory",

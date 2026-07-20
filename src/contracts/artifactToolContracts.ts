@@ -58,6 +58,7 @@ export const artifactInventoryInputSchema = z
 /** Exact caller boundary for approved artifact extraction. */
 export const artifactExtractionInputSchema = z.object({
   approved: z.literal(true),
+  native_mount_approved: z.boolean().default(false),
   output_root: z.string().min(1).max(4_096),
   occurrence_ids: z
     .array(z.string().regex(/^occ_[a-f0-9]{64}$/u))
@@ -73,6 +74,7 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inventory_artifact: {},
   extract_artifact: {
     approved: true,
+    native_mount_approved: false,
     output_root: "/tmp/rea-extracted",
     occurrence_ids: [`occ_${"0".repeat(64)}`],
   },
@@ -111,7 +113,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   ),
   artifact(
     "extract_artifact",
-    "Extract selected graph artifacts beneath an explicit output root. Requires approval, rejects traversal and symlink escapes, never overwrites, enforces bomb limits, and verifies cleanup.",
+    "Extract selected graph artifacts beneath an explicit output root. Requires extraction approval; DMG inputs additionally require per-call native-mount approval and operator enablement. Rejects traversal and symlink escapes, never overwrites, enforces bomb limits, and verifies cleanup.",
     artifactExtractionInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];

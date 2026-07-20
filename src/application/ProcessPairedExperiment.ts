@@ -1,0 +1,124 @@
+import {
+  processCaptureCancelled,
+  type ProcessCaptureError,
+} from "./ProcessCaptureError.js";
+import { captureProcessScenario } from "./ProcessHarness.js";
+import type {
+  ProcessCapture,
+  ProcessExecutionPolicy,
+  ProcessScenario,
+} from "../domain/processCapture.js";
+import { compareProcessCaptures } from "../domain/processComparison.js";
+import {
+  analyzeProcessRepeatability,
+  bindProcessScenario,
+  type ProcessPairedExperiment,
+} from "../domain/processPairedExperiment.js";
+import { err, ok, type Result } from "../domain/result.js";
+
+export interface ProcessCapturePort {
+  capture(
+    scenario: ProcessScenario,
+    policy: ProcessExecutionPolicy,
+    signal?: AbortSignal,
+  ): Promise<Result<ProcessCapture, ProcessCaptureError>>;
+}
+
+export interface PairedProcessExperimentResult {
+  readonly authority_runs: readonly ProcessCapture[];
+  readonly candidate_runs: readonly ProcessCapture[];
+  readonly authority_repeatability: ReturnType<
+    typeof analyzeProcessRepeatability
+  >;
+  readonly candidate_repeatability: ReturnType<
+    typeof analyzeProcessRepeatability
+  >;
+  readonly cross_side: ReturnType<typeof compareProcessCaptures> | null;
+  readonly cross_side_blocked_reason: string | null;
+}
+
+const productionCapturePort: ProcessCapturePort = {
+  capture: captureProcessScenario,
+};
+
+const captureRepeats = async (
+  scenario: ProcessScenario,
+  repeatCount: number,
+  policy: ProcessExecutionPolicy,
+  port: ProcessCapturePort,
+  signal?: AbortSignal,
+): Promise<Result<readonly ProcessCapture[], ProcessCaptureError>> => {
+  const captures: ProcessCapture[] = [];
+  for (let index = 0; index < repeatCount; index += 1) {
+    if (signal?.aborted === true) return err(processCaptureCancelled());
+    const capture = await port.capture(scenario, policy, signal);
+    if (!capture.ok) return err(capture.error);
+    captures.push(capture.value);
+  }
+  return ok(captures);
+};
+
+/** Execute repeatability-first authority/candidate captures under one contract. */
+export const runPairedProcessExperiment = async (
+  experiment: ProcessPairedExperiment,
+  policy: ProcessExecutionPolicy,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly capturePort?: ProcessCapturePort;
+    readonly now?: () => number;
+  } = {},
+): Promise<Result<PairedProcessExperimentResult, ProcessCaptureError>> => {
+  const port = options.capturePort ?? productionCapturePort;
+  const authorityScenario = bindProcessScenario(
+    experiment.shared_scenario,
+    experiment.authority,
+  );
+  const candidateScenario = bindProcessScenario(
+    experiment.shared_scenario,
+    experiment.candidate,
+  );
+  const authorityRuns = await captureRepeats(
+    authorityScenario,
+    experiment.repeat_count,
+    policy,
+    port,
+    options.signal,
+  );
+  if (!authorityRuns.ok) return authorityRuns;
+  const candidateRuns = await captureRepeats(
+    candidateScenario,
+    experiment.repeat_count,
+    policy,
+    port,
+    options.signal,
+  );
+  if (!candidateRuns.ok) return candidateRuns;
+  const authorityRepeatability = analyzeProcessRepeatability(
+    authorityRuns.value,
+    experiment.required_dimensions,
+  );
+  const candidateRepeatability = analyzeProcessRepeatability(
+    candidateRuns.value,
+    experiment.required_dimensions,
+  );
+  const stable = authorityRepeatability.stable && candidateRepeatability.stable;
+  return ok({
+    authority_runs: authorityRuns.value,
+    candidate_runs: candidateRuns.value,
+    authority_repeatability: authorityRepeatability,
+    candidate_repeatability: candidateRepeatability,
+    cross_side: stable
+      ? compareProcessCaptures(
+          authorityRuns.value[0]!,
+          candidateRuns.value[0]!,
+          {
+            maxCaptureAgeMs: experiment.freshness_policy.max_capture_age_ms,
+            ...(options.now === undefined ? {} : { now: options.now }),
+          },
+        )
+      : null,
+    cross_side_blocked_reason: stable
+      ? null
+      : "Cross-side comparison is blocked because a required same-side dimension is unstable.",
+  });
+};

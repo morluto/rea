@@ -83,6 +83,42 @@ describe("application workflow CLI parity", () => {
         ]),
       },
     });
+
+    const missingAppleInventory = await runCli([
+      "project-apple-application-graph",
+      "{}",
+      "--json",
+    ]);
+    expect(missingAppleInventory).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: "Correct the listed arguments and retry.",
+      },
+    });
+
+    const missingAndroidInventory = await runCli([
+      "project-android-application-graph",
+      "{}",
+      "--json",
+    ]);
+    expect(missingAndroidInventory).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: "Correct the listed arguments and retry.",
+      },
+    });
+
+    const missingRuntimeInventory = await runCli([
+      "identify-runtime",
+      "{}",
+      "--json",
+    ]);
+    expect(missingRuntimeInventory).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: "Correct the listed arguments and retry.",
+      },
+    });
   }, 20_000);
 });
 

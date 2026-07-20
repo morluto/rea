@@ -47,14 +47,13 @@ describe("cross-version inventory", () => {
       const right = deferred<typeof snapshot>();
       const calls: string[] = [];
       const controller = new AbortController();
-      const scanner: VersionInventoryScanner = (...arguments_) => {
-        const [path, roots, limits, signal, integrity] = arguments_;
-        calls.push(path);
-        expect(roots).toEqual([root]);
-        expect(limits).toBe(LIMITS);
-        expect(signal).toBe(controller.signal);
-        expect(integrity).toBe(INTEGRITY);
-        return path === "left" ? left.promise : right.promise;
+      const scanner: VersionInventoryScanner = (input) => {
+        calls.push(input.inputPath);
+        expect(input.roots).toEqual([root]);
+        expect(input.limits).toBe(LIMITS);
+        expect(input.signal).toBe(controller.signal);
+        expect(input.integrity).toBe(INTEGRITY);
+        return input.inputPath === "left" ? left.promise : right.promise;
       };
 
       const result = scanVersionInventories(
@@ -84,8 +83,8 @@ describe("cross-version inventory", () => {
   it("rejects promptly when either parallel scan fails", async () => {
     const left = deferred<never>();
     const failure = new Error("right scan failed");
-    const scanner: VersionInventoryScanner = (path) =>
-      path === "left" ? left.promise : Promise.reject(failure);
+    const scanner: VersionInventoryScanner = (input) =>
+      input.inputPath === "left" ? left.promise : Promise.reject(failure);
 
     await expect(
       scanVersionInventories(

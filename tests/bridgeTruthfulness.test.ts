@@ -118,6 +118,14 @@ describe("Hopper bridge truthfulness", () => {
     );
   });
 
+  it("rejects analysis queries while Hopper background analysis is active", () => {
+    expect(bridgeSource).toContain(
+      "class AnalysisInProgressError(RuntimeError)",
+    );
+    expect(bridgeSource).toContain("raise AnalysisInProgressError(");
+    expect(bridgeSource).toContain('return "analysis_in_progress"');
+  });
+
   it("returns deterministic addresses for direct procedure relationships", () => {
     expect(bridgeSource).toContain(
       "_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()",

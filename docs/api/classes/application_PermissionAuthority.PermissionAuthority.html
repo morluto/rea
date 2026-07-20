@@ -85,7 +85,7 @@
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L202">src/application/PermissionAuthority.ts:202</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L226">src/application/PermissionAuthority.ts:226</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="createconnectionauthority"><span>create<wbr/>Connection<wbr/>Authority</span><a href="#createconnectionauthority" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -113,7 +113,7 @@
 <li><span><span class="tsd-kind-parameter">options</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">elicitationSupported</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">restartRequired</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><br/>    <a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><br/>        <a href="../types/domain_permissionPolicy.PermissionDecision.html" class="tsd-signature-type tsd-kind-type-alias">PermissionDecision</a> <span class="tsd-signature-symbol">&amp;</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">allowed</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">true</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">request</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/domain_permissionPolicy.PermissionRequest.html" class="tsd-signature-type tsd-kind-interface">PermissionRequest</a> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span><br/>        <a href="domain_errors.PermissionRequiredError.html" class="tsd-signature-type tsd-kind-class">PermissionRequiredError</a> <span class="tsd-signature-symbol">|</span> <a href="application_PermissionAuthority.PermissionPathError.html" class="tsd-signature-type tsd-kind-class">PermissionPathError</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L158">src/application/PermissionAuthority.ts:158</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L156">src/application/PermissionAuthority.ts:156</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="grant"><span>grant</span><a href="#grant" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -128,7 +128,7 @@
 <li><span><span class="tsd-kind-parameter">grant</span>: <a href="../interfaces/domain_permissionPolicy.PermissionGrant.html" class="tsd-signature-type tsd-kind-interface">PermissionGrant</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/domain_permissionPolicy.PermissionPolicy.html" class="tsd-signature-type tsd-kind-interface">PermissionPolicy</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L183">src/application/PermissionAuthority.ts:183</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L207">src/application/PermissionAuthority.ts:207</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="reload"><span>reload</span><a href="#reload" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -158,7 +158,7 @@
 <li><span><span class="tsd-kind-parameter">grants</span>: <span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_permissionPolicy.PermissionGrant.html" class="tsd-signature-type tsd-kind-interface">PermissionGrant</a><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span> <a href="application_PermissionAuthority.PermissionPathError.html" class="tsd-signature-type tsd-kind-class">PermissionPathError</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L296">src/application/PermissionAuthority.ts:296</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L301">src/application/PermissionAuthority.ts:301</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="replaceconfiguredpolicy"><span>replace<wbr/>Configured<wbr/>Policy</span><a href="#replaceconfiguredpolicy" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -173,7 +173,7 @@
 <li><span><span class="tsd-kind-parameter">configuration</span>: <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">administratorGrants</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_permissionPolicy.PermissionGrant.html" class="tsd-signature-type tsd-kind-interface">PermissionGrant</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">ceilings</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_permissionPolicy.PermissionScope.html" class="tsd-signature-type tsd-kind-interface">PermissionScope</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">projectGrants</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_permissionPolicy.PermissionGrant.html" class="tsd-signature-type tsd-kind-interface">PermissionGrant</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span> <a href="application_PermissionAuthority.PermissionPathError.html" class="tsd-signature-type tsd-kind-class">PermissionPathError</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L322">src/application/PermissionAuthority.ts:322</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L327">src/application/PermissionAuthority.ts:327</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="replaceprojectgrants"><span>replace<wbr/>Project<wbr/>Grants</span><a href="#replaceprojectgrants" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -188,7 +188,7 @@
 <li><span><span class="tsd-kind-parameter">grants</span>: <span class="tsd-signature-keyword">readonly</span> <a href="../interfaces/domain_permissionPolicy.PermissionGrant.html" class="tsd-signature-type tsd-kind-interface">PermissionGrant</a><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/domain_result.Result.html" class="tsd-signature-type tsd-kind-type-alias">Result</a><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span> <a href="application_PermissionAuthority.PermissionPathError.html" class="tsd-signature-type tsd-kind-class">PermissionPathError</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L270">src/application/PermissionAuthority.ts:270</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L294">src/application/PermissionAuthority.ts:294</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="revoke"><span>revoke</span><a href="#revoke" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -203,7 +203,7 @@
 <li><span><span class="tsd-kind-parameter">grantId</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L197">src/application/PermissionAuthority.ts:197</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/PermissionAuthority.ts#L221">src/application/PermissionAuthority.ts:221</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -18,7 +18,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
   schema_version: 4,
   manifest: {
     rea_version: "1.1.0",
-    provider_version: "3",
+    provider_version: "4",
     platform: "fixture",
     architecture: "fixture",
     pty_backend: "node-pty",
@@ -46,6 +46,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
     cleanup_outcome: "not_required",
   },
   process_samples: [],
+  process_events: [],
   filesystem_checkpoints: [
     { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
     {

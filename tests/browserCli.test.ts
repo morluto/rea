@@ -16,24 +16,32 @@ afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
 
+const startBrowserContext = async (): Promise<{
+  readonly browser: FakeCdpBrowser;
+  readonly environment: NodeJS.ProcessEnv;
+}> => {
+  const browser = await startFakeCdpBrowser({
+    sessionTimeline: "same_origin",
+    webMcpTools: true,
+    sensitiveShapes: true,
+  });
+  browsers.push(browser);
+  return {
+    browser,
+    environment: {
+      ...process.env,
+      REA_BROWSER_OBSERVE_ENABLED: "true",
+      REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
+      REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([browser.allowedOrigin]),
+    },
+  };
+};
+
 describe("browser CLI parity", () => {
   it(
-    "returns the same Evidence v2 discovery and inspection contracts",
+    "returns matching discovery, inspection, and comparison contracts",
     async () => {
-      const browser = await startFakeCdpBrowser({
-        sessionTimeline: "same_origin",
-        webMcpTools: true,
-        sensitiveShapes: true,
-      });
-      browsers.push(browser);
-      const environment = {
-        ...process.env,
-        REA_BROWSER_OBSERVE_ENABLED: "true",
-        REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-        REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-          browser.allowedOrigin,
-        ]),
-      };
+      const { browser, environment } = await startBrowserContext();
       const listed = await runCli(
         ["list-browser-targets", browser.endpoint, "--approved", "--json"],
         environment,
@@ -97,6 +105,14 @@ describe("browser CLI parity", () => {
           },
         },
       });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "returns bundle, session, and WebMCP contracts",
+    async () => {
+      const { browser, environment } = await startBrowserContext();
       const analyzed = await runCli(
         [
           "analyze-web-bundle",
@@ -158,6 +174,14 @@ describe("browser CLI parity", () => {
           },
         },
       });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "returns screenshot, visual comparison, and policy contracts",
+    async () => {
+      const { browser, environment } = await startBrowserContext();
       const screenshot = await runCli(
         [
           "capture-web-screenshot",

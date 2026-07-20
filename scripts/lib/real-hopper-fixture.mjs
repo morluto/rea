@@ -2,33 +2,104 @@ import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
-/** Bind the real-Hopper semantic verifier to source-owned manifest artifacts. */
+const MANDATORY_FIXTURE_NAMES = [
+  "c",
+  "version-v1",
+  "version-v2",
+  "objc",
+  "napi",
+  "large",
+];
+
+const OPTIONAL_FIXTURE_NAMES = ["swift"];
+
+/**
+ * Bind the real-Hopper semantic verifier to source-owned manifest artifacts.
+ *
+ * Every present artifact is distinct and digest-bound. Swift remains optional.
+ */
 export async function loadRealHopperFixtureTargets(manifestPath) {
   const canonicalManifest = await realpath(manifestPath);
   const manifest = JSON.parse(await readFile(canonicalManifest, "utf8"));
   if (manifest?.schemaVersion !== 1 || !Array.isArray(manifest.fixtures))
     throw new Error("Invalid conformance fixture manifest");
-  const primary = fixtureEntry(manifest.fixtures, "c");
-  const secondary = fixtureEntry(manifest.fixtures, "version-v2");
-  const large = fixtureEntry(manifest.fixtures, "large");
-  const oracle = requireCOracle(primary.expectations?.hopperOracle);
-  const largeOracle = requireLargeOracle(large.expectations);
   const root = dirname(canonicalManifest);
-  const [primaryArtifact, secondaryArtifact, largeArtifact] = await Promise.all(
-    [
-      bindFixtureArtifact(root, primary),
-      bindFixtureArtifact(root, secondary),
-      bindFixtureArtifact(root, large),
-    ],
+  const entries = new Map();
+  for (const name of MANDATORY_FIXTURE_NAMES)
+    entries.set(name, fixtureEntry(manifest.fixtures, name));
+  for (const name of OPTIONAL_FIXTURE_NAMES) {
+    const matches = manifest.fixtures.filter(
+      (fixture) => fixture?.name === name,
+    );
+    if (matches.length === 1) entries.set(name, matches[0]);
+    else if (matches.length > 1) throw new Error(`Duplicate fixture ${name}`);
+  }
+  const oracle = requireCOracle(entries.get("c")?.expectations?.hopperOracle);
+  const largeOracle = requireLargeOracle(entries.get("large")?.expectations);
+  const versionV1Expectations = requireStringArrayExpectations(
+    entries.get("version-v1"),
+    "version-v1",
   );
-  requireDistinctArtifacts([primaryArtifact, secondaryArtifact, largeArtifact]);
+  const versionV2Expectations = requireStringArrayExpectations(
+    entries.get("version-v2"),
+    "version-v2",
+  );
+  const objcExpectations = requireStringArrayExpectations(
+    entries.get("objc"),
+    "objc",
+  );
+  const napiExpectations = requireStringArrayExpectations(
+    entries.get("napi"),
+    "napi",
+  );
+  const swiftExpectations = entries.has("swift")
+    ? requireStringArrayExpectations(entries.get("swift"), "swift")
+    : undefined;
+  const bound = new Map();
+  for (const [name, entry] of entries)
+    bound.set(name, await bindFixtureArtifact(root, entry));
+  requireDistinctArtifacts([...bound.values()]);
+  const compilers = Object.fromEntries(
+    [...entries].map(([name, entry]) => [name, requireCompiler(entry, name)]),
+  );
   return {
     manifestPath: canonicalManifest,
-    primary: primaryArtifact,
-    secondary: secondaryArtifact,
-    large: largeArtifact,
+    primary: bound.get("c"),
+    secondary: bound.get("version-v2"),
+    large: bound.get("large"),
+    versionV1: bound.get("version-v1"),
+    versionV2: bound.get("version-v2"),
+    objc: bound.get("objc"),
+    napi: bound.get("napi"),
+    swift: bound.get("swift"),
     oracle,
     largeOracle,
+    versionV1Expectations,
+    versionV2Expectations,
+    objcExpectations,
+    napiExpectations,
+    swiftExpectations,
+    compilers,
+  };
+}
+
+function requireCompiler(entry, name) {
+  const compiler = entry?.compiler;
+  if (
+    compiler === null ||
+    typeof compiler !== "object" ||
+    typeof compiler.path !== "string" ||
+    compiler.path.length === 0 ||
+    typeof compiler.version !== "string" ||
+    compiler.version.length === 0 ||
+    !Array.isArray(compiler.arguments) ||
+    compiler.arguments.some((argument) => typeof argument !== "string")
+  )
+    throw new Error(`Fixture ${name} omitted its compiler provenance`);
+  return {
+    path: compiler.path,
+    version: compiler.version,
+    arguments: [...compiler.arguments],
   };
 }
 
@@ -71,6 +142,31 @@ function requireLargeOracle(largeOracle) {
   )
     throw new Error("Large fixture omitted its exact pagination oracle");
   return largeOracle;
+}
+
+function requireStringArrayExpectations(entry, name) {
+  const expectations = entry?.expectations;
+  if (
+    expectations === null ||
+    typeof expectations !== "object" ||
+    Array.isArray(expectations)
+  )
+    throw new Error(`Fixture ${name} omitted its expectations`);
+  const keys = Object.keys(expectations);
+  if (keys.length === 0)
+    throw new Error(`Fixture ${name} expectations must be nonempty`);
+  for (const key of keys) {
+    const value = expectations[key];
+    if (!Array.isArray(value) || value.length === 0)
+      throw new Error(`Fixture ${name} expectation ${key} must be nonempty`);
+    for (const item of value) {
+      if (typeof item !== "string" || item.length === 0)
+        throw new Error(
+          `Fixture ${name} expectation ${key} must be nonempty strings`,
+        );
+    }
+  }
+  return expectations;
 }
 
 function requireDistinctArtifacts(artifacts) {

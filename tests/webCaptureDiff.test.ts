@@ -88,6 +88,66 @@ describe("web capture diff", () => {
     expect(result.dimensions.dom_structure.reason).toContain("incomplete");
   });
 
+  it("compares accessibility, storage, console errors, routes, and lifecycle", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const after = structuredClone(captured.value);
+    const accessibilityNode = after.accessibility.nodes[0];
+    if (accessibilityNode !== undefined) accessibilityNode.role = "dialog";
+    after.storage.local_storage_keys.push("new-key");
+    const consoleEvent = after.console.events[0];
+    if (consoleEvent !== undefined) consoleEvent.type = "error";
+    after.target.url = `${browser.allowedOrigin}/changed`;
+    after.workers.push({
+      target_id: "worker-added",
+      type: "worker",
+      url: `${browser.allowedOrigin}/worker.js`,
+      origin: browser.allowedOrigin,
+      attached: true,
+      opener_target_id: null,
+      parent_frame_id: null,
+    });
+    markSectionsComplete(captured.value, [
+      "accessibility",
+      "storage",
+      "storage_keys",
+      "console_events",
+      "frames",
+      "workers",
+    ]);
+    markSectionsComplete(after, [
+      "accessibility",
+      "storage",
+      "storage_keys",
+      "console_events",
+      "frames",
+      "workers",
+    ]);
+
+    const result = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: captured.value },
+        after: { inspection: after },
+      }),
+    );
+
+    expect(result.dimensions.accessibility.status).toBe("changed");
+    expect(result.dimensions.storage.status).toBe("changed");
+    expect(result.dimensions.console_errors.status).toBe("changed");
+    expect(result.dimensions.current_route.status).toBe("changed");
+    expect(result.dimensions.lifecycle.status).toBe("changed");
+  });
+
   it("ignores transient request IDs and capture-approval state", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);
@@ -110,8 +170,25 @@ describe("web capture diff", () => {
     const script = after.scripts.items[0];
     if (script !== undefined && !script.source.included)
       script.source.reason = "different approval explanation";
-    markSectionsComplete(captured.value, ["scripts", "metadata"]);
-    markSectionsComplete(after, ["scripts", "metadata"]);
+    const accessibilityNode = after.accessibility.nodes[0];
+    if (accessibilityNode !== undefined)
+      accessibilityNode.node_id = "different-cdp-ax-node-id";
+    const worker = after.workers[0];
+    if (worker !== undefined) worker.target_id = "different-worker-target-id";
+    markSectionsComplete(captured.value, [
+      "scripts",
+      "metadata",
+      "accessibility",
+      "frames",
+      "workers",
+    ]);
+    markSectionsComplete(after, [
+      "scripts",
+      "metadata",
+      "accessibility",
+      "frames",
+      "workers",
+    ]);
 
     const result = compareWebCaptures(
       compareWebCapturesInputSchema.parse({
@@ -122,6 +199,8 @@ describe("web capture diff", () => {
 
     expect(result.dimensions.scripts.status).toBe("unchanged");
     expect(result.dimensions.metadata.status).toBe("unchanged");
+    expect(result.dimensions.accessibility.status).toBe("unchanged");
+    expect(result.dimensions.lifecycle.status).toBe("unchanged");
     expect(result.dimensions.network.status).toBe("unknown");
     expect(result.dimensions.network.total_changes).toBe(0);
   });

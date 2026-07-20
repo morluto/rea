@@ -33,11 +33,11 @@ const comparison = (
       name: process
         ? "REA deterministic process harness"
         : "REA artifact comparison",
-      version: operation === "compare_process_captures" ? "3" : "1",
+      version: operation === "compare_process_captures" ? "4" : "1",
     },
     {
       predicateType: process
-        ? "rea.process-comparison/v3"
+        ? "rea.process-comparison/v4"
         : "rea.artifact-comparison/v1",
       operation,
       parameters: {},
@@ -64,6 +64,7 @@ const processResult = (
   exit: overrides.exit ?? "unchanged",
   filesystem: "unchanged",
   protocol: "unchanged",
+  replay_transition: "unchanged",
   process: "unchanged",
   shim: overrides.shim ?? "unchanged",
   first_divergence:

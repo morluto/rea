@@ -10,7 +10,11 @@ import {
   readProjectPermissionStore,
   writeProjectPermissionStore,
 } from "../src/application/ProjectPermissionStore.js";
-import { approvePolicyRevocation } from "../src/cliPolicyCommands.js";
+import {
+  approvePolicyRevocation,
+  policyCapabilitySchema,
+} from "../src/cliPolicyCommands.js";
+import { PERMISSION_CAPABILITIES } from "../src/domain/permissionPolicy.js";
 
 const execute = promisify(execFile);
 const roots: string[] = [];
@@ -22,6 +26,16 @@ afterEach(async () => {
 });
 
 describe("policy revocation approval", () => {
+  it("accepts every capability from the canonical permission inventory", () => {
+    expect(policyCapabilitySchema.options).toEqual(PERMISSION_CAPABILITIES);
+    expect(policyCapabilitySchema.parse("javascript_replay")).toBe(
+      "javascript_replay",
+    );
+    expect(policyCapabilitySchema.parse("managed_runtime")).toBe(
+      "managed_runtime",
+    );
+  });
+
   it("accepts --yes without invoking the interactive prompt", async () => {
     const confirm = vi.fn<() => Promise<boolean>>();
 

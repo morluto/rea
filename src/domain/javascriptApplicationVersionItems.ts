@@ -250,36 +250,44 @@ const relationshipSignature = (
   const signatures = graph.edges.flatMap((edge) => {
     if (edge.source_node_id === node.node_id)
       return [
-        edgeSignature(
-          "out",
-          edge.relation,
-          edge.target_node_id,
+        edgeSignature({
+          direction: "out",
+          relation: edge.relation,
+          neighborId: edge.target_node_id,
           paired,
           nodeById,
-        ),
+        }),
       ];
     if (edge.target_node_id === node.node_id)
       return [
-        edgeSignature(
-          "in",
-          edge.relation,
-          edge.source_node_id,
+        edgeSignature({
+          direction: "in",
+          relation: edge.relation,
+          neighborId: edge.source_node_id,
           paired,
           nodeById,
-        ),
+        }),
       ];
     return [];
   });
   return canonical(signatures.sort(compareCodePoints));
 };
 
-const edgeSignature = (
-  direction: "in" | "out",
-  relation: ApplicationEdge["relation"],
-  neighborId: string,
-  paired: ReadonlyMap<string, string>,
-  nodeById: ReadonlyMap<string, ApplicationNode>,
-): string => {
+interface EdgeSignatureInput {
+  readonly direction: "in" | "out";
+  readonly relation: ApplicationEdge["relation"];
+  readonly neighborId: string;
+  readonly paired: ReadonlyMap<string, string>;
+  readonly nodeById: ReadonlyMap<string, ApplicationNode>;
+}
+
+const edgeSignature = ({
+  direction,
+  relation,
+  neighborId,
+  paired,
+  nodeById,
+}: EdgeSignatureInput): string => {
   const mapped = paired.get(neighborId);
   const neighbor = nodeById.get(neighborId);
   return `${direction}\0${relation}\0${mapped ?? `unmatched:${neighbor?.kind ?? "unknown"}`}`;

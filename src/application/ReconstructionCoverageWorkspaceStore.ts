@@ -55,4 +55,11 @@ export const writeReconstructionCoverageWorkspace = (
     { readonly path: string; readonly bytes: number },
     InvestigationWorkspaceError
   >
-> => writeRevisionedWorkspace(workspace, path, expectedRevision, policy, codec);
+> =>
+  writeRevisionedWorkspace({
+    document: workspace,
+    path,
+    expectedRevision,
+    policy,
+    codec,
+  });

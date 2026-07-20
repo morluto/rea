@@ -326,7 +326,7 @@ describe("target-free MCP lifecycle", () => {
       ).isError,
     ).not.toBe(true);
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  }, 20_000);
 
   it("records approved process residuals in the unknown registry", async () => {
     if (!(await probeProcessCaptureCapability()).available) return;

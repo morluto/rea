@@ -433,6 +433,7 @@ export class HopperProtocolError extends HopperError {
 
 export type HopperDiagnosticType =
   | "remote"
+  | "analysis_in_progress"
   | "authorization"
   | "invalid_request"
   | "bridge_exception";
@@ -543,18 +544,38 @@ export interface AnalysisErrorProjection
 }
 
 /** Exact denied authority used by both CLI and MCP remediation. */
+export interface PermissionRequiredErrorInput {
+  readonly requested: PermissionRequest;
+  readonly missing: MissingPermissionScope;
+  readonly ceiling: PermissionScope | null;
+  readonly elicitationSupported: boolean;
+  readonly restartRequired: boolean;
+}
+
+/** Exact denied authority used by both CLI and MCP remediation. */
 export class PermissionRequiredError extends AnalysisError {
   readonly _tag = "PermissionRequiredError" as const;
 
-  constructor(
-    readonly requested: PermissionRequest,
-    readonly missing: MissingPermissionScope,
-    readonly ceiling: PermissionScope | null,
-    readonly elicitationSupported: boolean,
-    readonly restartRequired: boolean,
-  ) {
+  constructor({
+    requested,
+    missing,
+    ceiling,
+    elicitationSupported,
+    restartRequired,
+  }: PermissionRequiredErrorInput) {
     super(`Permission required for ${requested.capability}`);
+    this.requested = requested;
+    this.missing = missing;
+    this.ceiling = ceiling;
+    this.elicitationSupported = elicitationSupported;
+    this.restartRequired = restartRequired;
   }
+
+  readonly requested: PermissionRequest;
+  readonly missing: MissingPermissionScope;
+  readonly ceiling: PermissionScope | null;
+  readonly elicitationSupported: boolean;
+  readonly restartRequired: boolean;
 }
 
 /** Approved replay commitment no longer matches the immediately rebuilt plan. */

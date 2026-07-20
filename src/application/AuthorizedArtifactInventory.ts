@@ -10,14 +10,22 @@ import {
 } from "./ArtifactInventory.js";
 import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
+export interface AuthorizedArtifactInventoryInput {
+  readonly inputPath: string;
+  readonly roots: readonly string[];
+  readonly limits: ArtifactLimits;
+  readonly signal?: AbortSignal;
+  readonly integrity?: ArtifactIntegrityPolicy;
+}
+
 /** Resolve, authorize, and scan one artifact without a second path resolution. */
-export const scanAuthorizedArtifactInventory = async (
-  inputPath: string,
-  roots: readonly string[],
-  limits: ArtifactLimits,
-  signal?: AbortSignal,
-  integrity?: ArtifactIntegrityPolicy,
-): Promise<ArtifactInventorySnapshot> => {
+export const scanAuthorizedArtifactInventory = async ({
+  inputPath,
+  roots,
+  limits,
+  signal,
+  integrity,
+}: AuthorizedArtifactInventoryInput): Promise<ArtifactInventorySnapshot> => {
   if (roots.length === 0)
     throw new ArtifactReaderFailure(
       "path",

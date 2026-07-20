@@ -1,4 +1,5 @@
 import {
+  AnalysisCancelledError,
   BrowserObservationError,
   type BrowserObservationOperation,
 } from "../domain/errors.js";
@@ -30,11 +31,11 @@ export const openCdpTargetSession = async (
   );
   if (webSocket.scope === "page") return { connection, sessionId: undefined };
   try {
+    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
     const attached = await connection.send(
       "Target.attachToTarget",
       { targetId: target.id, flatten: true },
       undefined,
-      signal,
     );
     return { connection, sessionId: attachedSessionId(attached, operation) };
   } catch (cause: unknown) {

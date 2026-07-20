@@ -57,7 +57,7 @@ const emptyCapture = (): ProcessCapture => {
     schema_version: 4,
     manifest: {
       rea_version: "test",
-      provider_version: "3",
+      provider_version: "4",
       platform: process.platform,
       architecture: process.arch,
       pty_backend: "node-pty",
@@ -85,6 +85,7 @@ const emptyCapture = (): ProcessCapture => {
       cleanup_outcome: "not_required",
     },
     process_samples: [],
+    process_events: [],
     filesystem_checkpoints: [
       { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
       {
@@ -379,6 +380,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      process_events: [],
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
@@ -420,6 +422,25 @@ describe("process capture domain", () => {
         },
       }),
     ).toThrow("executable_sha256");
+  });
+
+  it("rejects malformed process lifecycle events", () => {
+    expect(() =>
+      parseProcessCapture({
+        ...emptyCapture(),
+        process_events: [
+          {
+            sequence: 0,
+            at_ms: 0,
+            type: "spawned",
+            pid: 0,
+            parent_pid: null,
+            previous_parent_pid: null,
+            signal: null,
+          },
+        ],
+      }),
+    ).toThrow();
   });
 
   it("tells agents and users to recapture unsupported v3 evidence", () => {
@@ -474,6 +495,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      process_events: [],
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
@@ -533,6 +555,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      process_events: [],
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
@@ -576,6 +599,7 @@ describe("process capture domain", () => {
       interaction_events: [],
       exit: { code: 0, signal: null, reason: "exited" as const },
       process_samples: [],
+      process_events: [],
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
@@ -648,6 +672,7 @@ describe("process capture domain", () => {
           command: "worker",
         },
       ],
+      process_events: [],
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
@@ -674,11 +699,62 @@ describe("process capture domain", () => {
           command: "worker",
         },
       ],
+      process_events: [],
     };
 
     const comparison = compareProcessCaptures(capture, changed);
     expect(comparison.process).toBe("changed");
     expect(comparison.status).toBe("changed");
+  });
+
+  it("compares replay transition order independently of wire events and timing", () => {
+    const left = {
+      ...emptyCapture(),
+      replay_transitions: [
+        {
+          sequence: 0,
+          at_ms: 10,
+          protocol_event_sequence: 0,
+          transition_id: "login",
+          state_before: "initial",
+          state_after: "authenticated",
+          sensitive_aliases: ["token"],
+        },
+      ],
+    };
+    const timingOnly = {
+      ...left,
+      replay_transitions: [
+        {
+          ...left.replay_transitions[0]!,
+          at_ms: 90,
+          protocol_event_sequence: 7,
+        },
+      ],
+    };
+    expect(compareProcessCaptures(left, timingOnly).replay_transition).toBe(
+      "unchanged",
+    );
+    const wrongSequence = {
+      ...left,
+      replay_transitions: [
+        {
+          ...left.replay_transitions[0]!,
+          transition_id: "skip_login",
+          state_after: "authenticated",
+        },
+      ],
+    };
+    const comparison = compareProcessCaptures(left, wrongSequence);
+    expect(comparison).toMatchObject({
+      status: "changed",
+      protocol: "unchanged",
+      replay_transition: "changed",
+      first_divergence: {
+        status: "found",
+        dimension: "replay_transition",
+      },
+    });
   });
 });
 
@@ -808,6 +884,312 @@ describe("process capture adapter", () => {
         socket.once("error", rejectClose);
       });
       expect(replay.events.at(-1)?.outcome).toBe("script_exhausted");
+    } finally {
+      await replay.close();
+    }
+  });
+
+  it("executes a login, guarded API, acknowledgement, and reconnect machine", async () => {
+    const transition = (
+      ...[id, from, to, trigger, actions, extra = {}]: readonly [
+        string,
+        string,
+        string,
+        Record<string, unknown>,
+        readonly Record<string, unknown>[],
+        Record<string, unknown>?,
+      ]
+    ) => ({
+      id,
+      from,
+      to,
+      priority: 10,
+      trigger,
+      actions,
+      max_uses: 1,
+      ...extra,
+    });
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        machine: {
+          initial_state: "login",
+          states: [
+            { name: "login" },
+            { name: "api" },
+            { name: "join" },
+            { name: "ack" },
+            { name: "reconnect" },
+            { name: "subscribed" },
+            { name: "done", terminal: true },
+          ],
+          transitions: [
+            transition(
+              "login",
+              "login",
+              "api",
+              { protocol: "http", method: "POST", path: "/login" },
+              [{ type: "http_response", status: 204, headers: {}, body: "" }],
+              {
+                captures: [
+                  {
+                    variable: "token",
+                    value: { source: "request_json", path: ["token"] },
+                    sensitive: true,
+                  },
+                ],
+              },
+            ),
+            transition(
+              "api",
+              "api",
+              "join",
+              { protocol: "http", method: "GET", path: "/api" },
+              [
+                {
+                  type: "http_response",
+                  status: 200,
+                  headers: {},
+                  body: "ready",
+                },
+              ],
+              {
+                guards: [
+                  {
+                    variable: "token",
+                    value: {
+                      source: "request_header",
+                      name: "authorization",
+                    },
+                  },
+                ],
+              },
+            ),
+            transition(
+              "join",
+              "join",
+              "ack",
+              { protocol: "websocket_connect", path: "/ws" },
+              [{ type: "websocket_send", data: '{"ref":"r1"}' }],
+              {
+                captures: [
+                  {
+                    variable: "ref",
+                    value: { source: "action_json", path: ["ref"] },
+                    sensitive: true,
+                  },
+                ],
+              },
+            ),
+            transition(
+              "ack",
+              "ack",
+              "reconnect",
+              { protocol: "websocket_message", path: "/ws" },
+              [{ type: "disconnect" }],
+              {
+                guards: [
+                  {
+                    variable: "ref",
+                    value: { source: "websocket_json", path: ["ack"] },
+                  },
+                ],
+              },
+            ),
+            transition(
+              "reconnect",
+              "reconnect",
+              "subscribed",
+              { protocol: "websocket_connect", path: "/ws" },
+              [{ type: "websocket_send", data: "subscribed" }],
+            ),
+            transition(
+              "done",
+              "subscribed",
+              "done",
+              { protocol: "http", method: "GET", path: "/done" },
+              [
+                {
+                  type: "http_response",
+                  status: 200,
+                  headers: {},
+                  body: "complete",
+                },
+              ],
+            ),
+          ],
+          max_transitions: 6,
+        },
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    try {
+      expect(await fetch(`${replay.httpUrl}/api`)).toMatchObject({
+        status: 409,
+      });
+      expect(replay.events.at(-1)?.outcome).toBe("invalid_state");
+      expect(
+        await fetch(`${replay.httpUrl}/login`, {
+          method: "POST",
+          body: '{"token":"secret"}',
+        }),
+      ).toMatchObject({ status: 204 });
+      expect(
+        await fetch(`${replay.httpUrl}/api`, {
+          headers: { authorization: "secret" },
+        }),
+      ).toMatchObject({ status: 200 });
+      await new Promise<void>((resolveFlow, rejectFlow) => {
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.once("message", (value) => {
+          expect(value.toString()).toBe('{"ref":"r1"}');
+          socket.send('{"ack":"r1"}');
+        });
+        socket.once("close", () => resolveFlow());
+        socket.once("error", rejectFlow);
+      });
+      await expect(
+        new Promise<string>((resolveMessage, rejectMessage) => {
+          const socket = new WebSocket(replay.websocketUrl);
+          socket.once("message", (value) => {
+            resolveMessage(value.toString());
+            socket.close();
+          });
+          socket.once("error", rejectMessage);
+        }),
+      ).resolves.toBe("subscribed");
+      expect(await (await fetch(`${replay.httpUrl}/done`)).text()).toBe(
+        "complete",
+      );
+      expect(
+        replay.transitions.map(({ transition_id }) => transition_id),
+      ).toEqual(["login", "api", "join", "ack", "reconnect", "done"]);
+      expect(JSON.stringify(replay.transitions)).not.toContain("secret");
+      expect(JSON.stringify(replay.events)).not.toContain("r1");
+      expect(replay.events.every((event) => "transition_id" in event)).toBe(
+        true,
+      );
+      const baseCapture = emptyCapture();
+      const replayCapture = {
+        ...baseCapture,
+        manifest: {
+          ...baseCapture.manifest,
+          replay_plan: scenario.replay,
+          replay_plan_sha256: digestProcessCommitment(scenario.replay),
+        },
+        protocol_events: replay.events,
+        replay_transitions: replay.transitions,
+      };
+      expect(
+        parseProcessCapture(replayCapture).replay_transitions,
+      ).toHaveLength(6);
+      expect(() =>
+        parseProcessCapture({
+          ...replayCapture,
+          replay_transitions: replay.transitions.map((entry, index) =>
+            index === 0 ? { ...entry, sensitive_aliases: [] } : entry,
+          ),
+        }),
+      ).toThrow(/secret aliases/u);
+      await new Promise<void>((resolveClose, rejectClose) => {
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.once("close", () => resolveClose());
+        socket.once("error", rejectClose);
+      });
+      expect(replay.events.at(-1)?.outcome).toBe("unexpected_reconnect");
+    } finally {
+      await replay.close();
+    }
+  });
+
+  it("rejects a wrong acknowledgement without advancing replay state", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        machine: {
+          initial_state: "login",
+          states: [
+            { name: "login" },
+            { name: "join" },
+            { name: "ack" },
+            { name: "done", terminal: true },
+          ],
+          transitions: [
+            {
+              id: "login",
+              from: "login",
+              to: "join",
+              trigger: { protocol: "http", method: "POST", path: "/login" },
+              captures: [
+                {
+                  variable: "token",
+                  value: { source: "request_json", path: ["token"] },
+                  sensitive: true,
+                },
+              ],
+              actions: [
+                { type: "http_response", status: 204, headers: {}, body: "" },
+              ],
+              max_uses: 1,
+            },
+            {
+              id: "join",
+              from: "join",
+              to: "ack",
+              trigger: { protocol: "websocket_connect", path: "/ws" },
+              captures: [
+                {
+                  variable: "ref",
+                  value: { source: "action_json", path: ["ref"] },
+                  sensitive: false,
+                },
+              ],
+              actions: [{ type: "websocket_send", data: '{"ref":"r1"}' }],
+              max_uses: 1,
+            },
+            {
+              id: "ack",
+              from: "ack",
+              to: "done",
+              trigger: { protocol: "websocket_message", path: "/ws" },
+              guards: [
+                {
+                  variable: "ref",
+                  value: { source: "websocket_json", path: ["ack"] },
+                },
+              ],
+              actions: [{ type: "disconnect" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: 3,
+        },
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    try {
+      await fetch(`${replay.httpUrl}/login`, {
+        method: "POST",
+        body: '{"token":"secret"}',
+      });
+      await new Promise<void>((resolveClose, rejectClose) => {
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.once("message", () => socket.send('{"ack":"wrong"}'));
+        socket.once("close", () => resolveClose());
+        socket.once("error", rejectClose);
+      });
+      expect(replay.events.at(-1)).toMatchObject({
+        outcome: "guard_failed",
+        state_before: "ack",
+        state_after: "ack",
+      });
+      expect(
+        replay.transitions.map(({ transition_id }) => transition_id),
+      ).toEqual(["login", "join"]);
     } finally {
       await replay.close();
     }
@@ -1114,6 +1496,13 @@ describe("process capture adapter", () => {
     expect(output).toContain("resize:100x40");
     expect(output).toContain("signal:SIGINT");
     expect(result.value.exit.code).toBe(0);
+    expect(result.value.process_events).toContainEqual(
+      expect.objectContaining({
+        type: "signal_dispatched",
+        pid: 1,
+        signal: "SIGINT",
+      }),
+    );
   });
 
   it("dispatches scheduled events before a silent PTY produces output", async () => {
@@ -1189,6 +1578,10 @@ describe("process capture adapter", () => {
     expect(
       commands.some((command) => command.includes("tree-grandchild")),
     ).toBe(true);
+    expect(
+      result.value.process_events.filter(({ type }) => type === "spawned")
+        .length,
+    ).toBeGreaterThanOrEqual(3);
     expect(JSON.stringify(result.value.process_samples)).not.toContain(
       dirname(processFixture),
     );
@@ -1196,4 +1589,85 @@ describe("process capture adapter", () => {
     expect(stdout).not.toContain(`${processFixture} tree-child`);
     expect(stdout).not.toContain(`${processFixture} tree-grandchild`);
   }, 20_000);
+
+  it("captures re-executed descendants and cleans them after supervisor exit", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        approved: true,
+        executable: process.execPath,
+        arguments: [processFixture, "reexec"],
+        working_directory: dirname(processFixture),
+        timeout_ms: 2_000,
+        idle_timeout_ms: 2_000,
+      }),
+      {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [dirname(processFixture)],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.process_samples.some(({ command }) =>
+        command.includes("reexec-child"),
+      ),
+    ).toBe(true);
+    expect(result.value.process_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "reparented" }),
+        expect.objectContaining({ type: "exited", pid: 1 }),
+      ]),
+    );
+    const { stdout } = await execFileAsync("ps", ["-axo", "command="]);
+    expect(stdout).not.toContain(`${processFixture} reexec-child`);
+  }, 20_000);
+
+  it("classifies source-owned file creation, modification, and deletion", async () => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) return;
+    const root = await mkdtemp(join(tmpdir(), "rea-effects-test-"));
+    await writeFile(join(root, "modified.txt"), "before");
+    await writeFile(join(root, "deleted.txt"), "before");
+    try {
+      const result = await captureProcessScenario(
+        parseProcessScenario({
+          approved: true,
+          executable: process.execPath,
+          arguments: [processFixture, "filesystem-effects"],
+          working_directory: root,
+          filesystem_roots: [root],
+          timeout_ms: 2_000,
+          idle_timeout_ms: 2_000,
+        }),
+        {
+          enabled: true,
+          executableRoots: [dirname(process.execPath)],
+          workingRoots: [root],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      expect(
+        result.value.filesystem_effects.map(({ path, status }) => ({
+          path: path.slice(path.lastIndexOf(":") + 1),
+          status,
+        })),
+      ).toEqual(
+        expect.arrayContaining([
+          { path: "created.txt", status: "created" },
+          { path: "deleted.txt", status: "deleted" },
+          { path: "modified.txt", status: "modified" },
+        ]),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

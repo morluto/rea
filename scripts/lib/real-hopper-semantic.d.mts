@@ -32,3 +32,31 @@ export function analyzeFixtureProcedure(
   procedure: FixtureProcedure,
   normalizedResult: (value: unknown, operation: string) => unknown,
 ): Promise<unknown>;
+
+interface NamedFixtureOptions {
+  readonly client: ToolClient;
+  readonly options: unknown;
+  readonly target: { readonly path: string; readonly sha256: string };
+  readonly expectations: Readonly<Record<string, readonly string[]>>;
+  readonly normalizedResult: (value: unknown, operation: string) => any;
+}
+
+export function verifyNamedFixture(
+  options: NamedFixtureOptions,
+): Promise<unknown>;
+
+export function verifyLanguageFixture(
+  options: NamedFixtureOptions & {
+    readonly operations: readonly string[];
+    readonly semanticExpectations?: Readonly<Record<string, readonly string[]>>;
+  },
+): Promise<unknown>;
+
+export function verifyAbsentFixtureValues(options: {
+  readonly client: ToolClient;
+  readonly options: unknown;
+  readonly target: { readonly path: string; readonly sha256: string };
+  readonly symbols?: readonly string[];
+  readonly strings?: readonly string[];
+  readonly normalizedResult: (value: unknown, operation: string) => any;
+}): Promise<void>;

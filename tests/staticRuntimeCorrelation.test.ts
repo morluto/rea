@@ -45,6 +45,7 @@ const processComparison = (
     exit: terminal === "truncated" ? "truncated" : "unchanged",
     filesystem: terminal === "truncated" ? "truncated" : "unchanged",
     protocol: terminal === "truncated" ? "truncated" : "unchanged",
+    replay_transition: terminal === "truncated" ? "truncated" : "unchanged",
     process: terminal === "truncated" ? "truncated" : "unchanged",
     shim: terminal === "truncated" ? "truncated" : "unchanged",
     first_divergence:
@@ -68,10 +69,10 @@ const processComparison = (
     {
       id: "rea-process",
       name: "REA deterministic process harness",
-      version: "3",
+      version: "4",
     },
     {
-      predicateType: "rea.process-comparison/v3",
+      predicateType: "rea.process-comparison/v4",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: leftCapture.evidence_id,

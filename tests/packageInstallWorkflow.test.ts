@@ -26,5 +26,10 @@ describe("package installation workflows", () => {
       expect(workflow).not.toContain("npm run rebuild:native");
     for (const workflow of [realHopperLinux, realHopperMac])
       expect(workflow).toContain("npm install --global --ignore-scripts");
+    expect(realHopperLinux).toContain("npm run verify:fixtures");
+    expect(realHopperLinux).toContain("actions/upload-artifact@v4");
+    expect(realHopperLinux).toContain("actions/download-artifact@v4");
+    expect(realHopperLinux).toContain("REA_HOPPER_CONFORMANCE_MANIFEST_PATH:");
+    expect(realHopperLinux).not.toContain("inputs.first_target");
   });
 });

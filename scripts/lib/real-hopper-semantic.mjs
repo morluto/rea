@@ -89,6 +89,152 @@ export async function verifyRealHopperFixture({
   };
 }
 
+/** Open one digest-bound fixture and prove every declared symbol and string. */
+export async function verifyNamedFixture({
+  client,
+  options,
+  target,
+  expectations,
+  normalizedResult,
+}) {
+  const opened = await client.callTool(
+    { name: "open_binary", arguments: { path: target.path } },
+    options,
+  );
+  if (opened?.isError === true)
+    throw new Error(`open_binary failed for ${target.path}`);
+  const symbols = [];
+  for (const name of expectations.symbols ?? []) {
+    const result = normalizedResult(
+      await client.callTool(
+        { name: "find_xrefs_to_name", arguments: { name } },
+        options,
+      ),
+      `find_xrefs_to_name ${name}`,
+    );
+    if (
+      result?.status !== "resolved" ||
+      typeof result.name !== "string" ||
+      stripSymbolPrefix(result.name) !== stripSymbolPrefix(name)
+    )
+      throw new Error(`Hopper did not resolve expected symbol ${name}`);
+    symbols.push(result.name);
+  }
+  const strings = [];
+  for (const value of expectations.strings ?? []) {
+    const page = normalizedResult(
+      await client.callTool(
+        {
+          name: "search_strings",
+          arguments: {
+            pattern: value,
+            mode: "literal",
+            case_sensitive: true,
+            limit: 100,
+          },
+        },
+        options,
+      ),
+      `search_strings ${value}`,
+    );
+    const matches = Array.isArray(page?.items)
+      ? page.items.filter(
+          (item) => item?.value === value && item.value_truncated === false,
+        )
+      : [];
+    if (matches.length === 0)
+      throw new Error(`Hopper did not resolve expected string ${value}`);
+    strings.push(value);
+  }
+  return { path: target.path, sha256: target.sha256, symbols, strings };
+}
+
+/** Prove language-specific enhanced tools against their source-owned fixture. */
+export async function verifyLanguageFixture({
+  client,
+  options,
+  target,
+  expectations,
+  operations,
+  semanticExpectations = {},
+  normalizedResult,
+}) {
+  const inventory = await verifyNamedFixture({
+    client,
+    options,
+    target,
+    expectations,
+    normalizedResult,
+  });
+  const semantics = {};
+  for (const operation of operations) {
+    const result = normalizedResult(
+      await client.callTool({ name: operation, arguments: {} }, options),
+      operation,
+    );
+    if (result === null || typeof result !== "object")
+      throw new Error(`${operation} returned no semantic result`);
+    const serialized = JSON.stringify(result);
+    for (const expected of semanticExpectations[operation] ?? [])
+      if (!serialized.includes(expected))
+        throw new Error(`${operation} omitted expected semantic ${expected}`);
+    semantics[operation] = result;
+  }
+  return { ...inventory, semantics };
+}
+
+/** Prove values intentionally absent from one version fixture. */
+export async function verifyAbsentFixtureValues({
+  client,
+  options,
+  target,
+  symbols = [],
+  strings = [],
+  normalizedResult,
+}) {
+  const opened = await client.callTool(
+    { name: "open_binary", arguments: { path: target.path } },
+    options,
+  );
+  if (opened?.isError === true)
+    throw new Error(`open_binary failed for ${target.path}`);
+  for (const name of symbols) {
+    const result = normalizedResult(
+      await client.callTool(
+        { name: "find_xrefs_to_name", arguments: { name } },
+        options,
+      ),
+      `find_xrefs_to_name ${name}`,
+    );
+    if (result?.status !== "unresolved")
+      throw new Error(`Hopper unexpectedly resolved symbol ${name}`);
+  }
+  for (const value of strings) {
+    const page = normalizedResult(
+      await client.callTool(
+        {
+          name: "search_strings",
+          arguments: {
+            pattern: value,
+            mode: "literal",
+            case_sensitive: true,
+            limit: 100,
+          },
+        },
+        options,
+      ),
+      `search_strings ${value}`,
+    );
+    if (
+      Array.isArray(page?.items) &&
+      page.items.some((item) => item?.value === value)
+    )
+      throw new Error(`Hopper unexpectedly resolved string ${value}`);
+  }
+}
+
+const stripSymbolPrefix = (value) => value.replace(/^_+/u, "");
+
 /** Reject malformed, unsafe, or error-level diagnostics from the MCP runtime. */
 export function requireSafeDiagnostics(chunks) {
   const lines = chunks

@@ -24,6 +24,9 @@ import {
   TOOL_CONTRACTS,
 } from "../../src/contracts/toolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../src/contracts/managedWorkflowToolContracts.js";
+import { APPLE_APPLICATION_TOOL_CONTRACTS } from "../../src/contracts/appleApplicationToolContracts.js";
+import { ANDROID_APPLICATION_TOOL_CONTRACTS } from "../../src/contracts/androidApplicationToolContracts.js";
+import { RUNTIME_IDENTIFICATION_TOOL_CONTRACTS } from "../../src/contracts/runtimeIdentificationToolContracts.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -460,7 +463,10 @@ describe("full MCP integration with multi-tool sequences", () => {
     expect(listed.tools).toHaveLength(
       TOOL_CONTRACTS.length -
         SESSION_TOOL_CONTRACTS.length -
-        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length -
+        APPLE_APPLICATION_TOOL_CONTRACTS.length -
+        ANDROID_APPLICATION_TOOL_CONTRACTS.length -
+        RUNTIME_IDENTIFICATION_TOOL_CONTRACTS.length,
     );
     const names = listed.tools.map((t) => t.name);
     expect(names).toContain("binary_overview");

@@ -59,6 +59,7 @@ const processResult = (
   exit: "unchanged",
   filesystem: "unchanged",
   protocol: "unchanged",
+  replay_transition: "unchanged",
   process: "unchanged",
   shim: "unchanged",
   first_divergence:
@@ -89,10 +90,10 @@ const processComparison = (
     {
       id: "rea-process",
       name: "REA deterministic process harness",
-      version: "3",
+      version: "4",
     },
     {
-      predicateType: "rea.process-comparison/v3",
+      predicateType: "rea.process-comparison/v4",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: left.evidence_id,
@@ -171,6 +172,7 @@ describe("reconstruction verification", () => {
       exit: "unchanged",
       filesystem: "unchanged",
       protocol: "unchanged",
+      replay_transition: "unchanged",
       process: "unchanged",
       shim: "unchanged",
       first_divergence: {

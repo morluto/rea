@@ -70,6 +70,7 @@ export interface DoctorHost {
   readonly nodeVersion: string;
   readonly configuredHopperPath?: string;
   readonly configuredIlspyCmdPath?: string;
+  readonly configuredJadxCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
@@ -85,6 +86,7 @@ export interface DoctorHost {
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   javascriptReplayCheck?(): Promise<DoctorCheck>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
+  jadxCmdVersion?(path: string): Promise<string | undefined>;
   runtimeExecutables?(): Promise<RuntimeExecutableInventory>;
 }
 
@@ -284,6 +286,9 @@ export const systemDoctorHost = (
   ...(process.env.REA_ILSPY_CMD_PATH === undefined
     ? {}
     : { configuredIlspyCmdPath: process.env.REA_ILSPY_CMD_PATH }),
+  ...(process.env.REA_JADX_CMD_PATH === undefined
+    ? {}
+    : { configuredJadxCmdPath: process.env.REA_JADX_CMD_PATH }),
   async macosVersion() {
     try {
       return (
@@ -374,6 +379,16 @@ export const systemDoctorHost = (
       return undefined;
     }
   },
+  async jadxCmdVersion(path) {
+    try {
+      await access(path, constants.X_OK);
+      return firstJadxVersionLine(
+        (await execFileAsync(path, ["--version"], { timeout: 10_000 })).stdout,
+      );
+    } catch {
+      return undefined;
+    }
+  },
   runtimeExecutables: () =>
     inspectRuntimeExecutables({
       platform: process.platform,
@@ -449,3 +464,6 @@ const uniqueLines = (value: string): string[] => [
 
 const firstIlspyVersionLine = (value: string): string | undefined =>
   uniqueLines(value).find((line) => line.startsWith("ilspycmd:"));
+
+const firstJadxVersionLine = (value: string): string | undefined =>
+  uniqueLines(value).find((line) => /^\d+\.\d+\.\d+(?:[-+].+)?$/u.test(line));

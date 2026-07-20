@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runtimeIdentificationResultSchema } from "../domain/runtimeIdentification.js";
 import {
   processCaptureComparisonSchema,
   processCaptureSchema,
@@ -28,6 +29,8 @@ import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
 } from "../domain/managedArtifact.js";
+import { appleApplicationProjectionResultSchema } from "../domain/appleApplication.js";
+import { androidApplicationProjectionResultSchema } from "../domain/androidApplication.js";
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
 import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportResultSchema } from "../domain/managedReconstruction.js";
@@ -580,6 +583,31 @@ export const managedWorkflowOutputSchemas: Readonly<
   project_managed_application_graph: resultOf(
     managedApplicationGraphResultSchema,
   ),
+};
+
+/** Exact Evidence v2 schema for Apple application workflows. */
+export const appleApplicationOutputSchemas: Readonly<
+  Record<string, z.ZodObject>
+> = {
+  project_apple_application_graph: resultOf(
+    appleApplicationProjectionResultSchema,
+  ),
+};
+
+/** Exact Evidence v2 schema for Android application workflows. */
+export const androidApplicationOutputSchemas: Readonly<
+  Record<string, z.ZodObject>
+> = {
+  project_android_application_graph: resultOf(
+    androidApplicationProjectionResultSchema,
+  ),
+};
+
+/** Exact Evidence v2 schema for provider-neutral runtime identification. */
+export const runtimeIdentificationOutputSchemas: Readonly<
+  Record<string, z.ZodObject>
+> = {
+  identify_runtime: resultOf(runtimeIdentificationResultSchema),
 };
 
 /** Exact structured-content schemas for target lifecycle operations. */

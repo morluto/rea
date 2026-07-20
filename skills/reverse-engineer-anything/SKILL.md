@@ -3,8 +3,8 @@ name: reverse-engineer-anything
 description: Reverse engineer native, Electron/JavaScript, and web application artifacts or runtimes with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project. Skip REA setup for ordinary source-repository architecture analysis.
 metadata:
   version: "22"
-  tool_count: 95
-  catalog_digest: "e0c341749f488a869b62ab9b48c9236c60c91317ac60c8427f12a830cb900ae0"
+  tool_count: 98
+  catalog_digest: "4094ad04e0199a3d520c3a1a3a3b5dc5812978868d99d0f752cc25529dd27d7e"
 ---
 
 # REA
@@ -138,11 +138,12 @@ extract every entry implicitly. Symlinks and encrypted entries are inventory
 facts, not extractable files. Inventory traverses discovered ASARs within the
 same graph and shared limits, including ASARs inside an approved mounted DMG.
 
-Native DMG traversal is macOS-only, read-only, and disabled by default. Use it
-only when the user approves that inventory call with
+Native DMG traversal and extraction are macOS-only, read-only, and disabled by
+default. Use either only when the user approves that call with
 `native_mount_approved: true` and the operator has separately enabled
 `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Without both gates, retain the DMG
-root-hash-only result. Never imply that approval changes extraction authority.
+root-hash-only inventory result and do not attempt extraction. Native-mount
+approval is separate from `extract_artifact`'s required extraction approval.
 
 Explain conclusions in plain language. Point to the relevant decompiled code, strings, names, and connections so the user can see how the explanation was reached. Do not claim to recover original source code or automatically clone an application.
 

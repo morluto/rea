@@ -20,6 +20,10 @@ MAX_SEARCH_PATTERN_LENGTH = 256
 MAX_SEARCH_VALUE_LENGTH = 4096
 
 
+class AnalysisInProgressError(RuntimeError):
+    """Raised when a query cannot truthfully observe unfinished analysis."""
+
+
 def _session_document():
     """Find only the document opened for this authenticated REA session."""
     target = os.path.realpath(REA_TARGET_PATH)
@@ -671,6 +675,10 @@ def _dispatch(method, params):
         return _selected_document
 
     document = _document(params.get("document"))
+    if document.backgroundProcessActive():
+        raise AnalysisInProgressError(
+            "Hopper analysis is still running; retry after analysis completes"
+        )
 
     if method == "analyze_function":
         return _analyze_function(document, params)
@@ -838,6 +846,8 @@ def _serve_connection(connection):
 
 
 def _diagnostic_type(error):
+    if isinstance(error, AnalysisInProgressError):
+        return "analysis_in_progress"
     if isinstance(error, PermissionError):
         return "authorization"
     if isinstance(error, (ValueError, TypeError, KeyError)):

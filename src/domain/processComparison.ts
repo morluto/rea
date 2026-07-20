@@ -23,6 +23,7 @@ export const PROCESS_COMPARISON_DIMENSIONS = [
   "exit",
   "filesystem",
   "protocol",
+  "replay_transition",
   "process",
   "shim",
 ] as const;
@@ -50,6 +51,7 @@ export const processCaptureComparisonSchema = z
     exit: comparisonStatusSchema,
     filesystem: comparisonStatusSchema,
     protocol: comparisonStatusSchema,
+    replay_transition: comparisonStatusSchema,
     process: comparisonStatusSchema,
     shim: comparisonStatusSchema,
     first_divergence: z.discriminatedUnion("status", [
@@ -63,6 +65,7 @@ export const processCaptureComparisonSchema = z
           "exit",
           "filesystem",
           "protocol",
+          "replay_transition",
           "process",
           "shim",
         ]),
@@ -86,7 +89,9 @@ export const processCaptureComparisonSchema = z
         path: ["status"],
       });
   });
-type ProcessCaptureComparison = z.infer<typeof processCaptureComparisonSchema>;
+export type ProcessCaptureComparison = z.infer<
+  typeof processCaptureComparisonSchema
+>;
 
 const terminalObservations = (capture: ProcessCapture): readonly unknown[] =>
   [
@@ -111,6 +116,47 @@ const filesystemObservations = (
     files: capture.files_after,
     effects: capture.filesystem_effects,
   },
+];
+
+const replayTransitionObservations = (
+  capture: ProcessCapture,
+): readonly unknown[] =>
+  (capture.replay_transitions ?? []).map(
+    ({
+      at_ms: _atMs,
+      protocol_event_sequence: _eventSequence,
+      ...transition
+    }) => transition,
+  );
+
+/** Canonical observations for one process-comparison dimension. */
+export const processDimensionObservations = (
+  capture: ProcessCapture,
+  dimension: (typeof PROCESS_COMPARISON_DIMENSIONS)[number],
+): readonly unknown[] => {
+  switch (dimension) {
+    case "terminal":
+      return terminalObservations(capture);
+    case "interaction":
+      return capture.interaction_events;
+    case "exit":
+      return [{ ...capture.exit, settlement: capture.settlement }];
+    case "filesystem":
+      return filesystemObservations(capture);
+    case "protocol":
+      return capture.protocol_events;
+    case "replay_transition":
+      return replayTransitionObservations(capture);
+    case "process":
+      return processObservations(capture);
+    case "shim":
+      return capture.shim_events;
+  }
+};
+
+const processObservations = (capture: ProcessCapture): readonly unknown[] => [
+  ...capture.process_samples.map((value) => ({ kind: "sample", value })),
+  ...capture.process_events.map((value) => ({ kind: "event", value })),
 ];
 
 const classifyCollection = (
@@ -235,6 +281,7 @@ const truncatedComparison = (): ProcessCaptureComparison => ({
   exit: "truncated",
   filesystem: "truncated",
   protocol: "truncated",
+  replay_transition: "truncated",
   process: "truncated",
   shim: "truncated",
   first_divergence: {
@@ -251,6 +298,7 @@ type ComparisonDimensions = Pick<
   | "exit"
   | "filesystem"
   | "protocol"
+  | "replay_transition"
   | "process"
   | "shim"
 >;
@@ -292,7 +340,16 @@ const compareDimensions = (
       filesystemObservations(right),
     ),
     protocol: classify("protocol", left.protocol_events, right.protocol_events),
-    process: classify("process", left.process_samples, right.process_samples),
+    replay_transition: classify(
+      "replay_transition",
+      replayTransitionObservations(left),
+      replayTransitionObservations(right),
+    ),
+    process: classify(
+      "process",
+      processObservations(left),
+      processObservations(right),
+    ),
     shim: classify("shim", left.shim_events, right.shim_events),
   };
 };
@@ -344,9 +401,14 @@ export const compareProcessCaptures = (
       right.protocol_events,
     ),
     firstCollectionDivergence(
+      "replay_transition",
+      replayTransitionObservations(left),
+      replayTransitionObservations(right),
+    ),
+    firstCollectionDivergence(
       "process",
-      left.process_samples,
-      right.process_samples,
+      processObservations(left),
+      processObservations(right),
     ),
     firstCollectionDivergence("shim", left.shim_events, right.shim_events),
   ]);

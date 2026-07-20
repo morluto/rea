@@ -1,4 +1,5 @@
 import type { ProcessCapture } from "./processCapture.js";
+import { replayMachineSchema, type ReplayMachine } from "./replayMachine.js";
 import { digestProcessCommitment } from "./processScenario.js";
 
 /** One pure semantic validation failure in an otherwise shaped v4 capture. */
@@ -52,8 +53,10 @@ const validateOrdering = (
     ["frames", capture.frames],
     ["rendered_frames", capture.rendered_frames],
     ["interaction_events", capture.interaction_events],
+    ["process_events", capture.process_events],
     ["shim_events", capture.shim_events],
     ["protocol_events", capture.protocol_events],
+    ["replay_transitions", capture.replay_transitions ?? []],
   ] as const)
     require(values.every(
       ({ sequence }, index) => sequence === index,
@@ -62,9 +65,11 @@ const validateOrdering = (
     ["frames", capture.frames],
     ["rendered_frames", capture.rendered_frames],
     ["process_samples", capture.process_samples],
+    ["process_events", capture.process_events],
     ["filesystem_checkpoints", capture.filesystem_checkpoints],
     ["shim_events", capture.shim_events],
     ["protocol_events", capture.protocol_events],
+    ["replay_transitions", capture.replay_transitions ?? []],
   ] as const)
     require(orderedTimestamps(values), name, "timestamps must be ordered");
 };
@@ -144,11 +149,77 @@ const validateShimEvents = (
   }
 };
 
-const validateReplayEvents = (
+const machineTriggerMatches = (
+  transition: ReplayMachine["transitions"][number],
+  event: ProcessCapture["protocol_events"][number],
+): boolean =>
+  transition.trigger.path === event.path &&
+  (transition.trigger.protocol === "http"
+    ? event.protocol === "http" &&
+      event.direction === "request" &&
+      transition.trigger.method === event.method
+    : event.protocol === "websocket" &&
+      ((transition.trigger.protocol === "websocket_connect" &&
+        event.direction === "request") ||
+        (transition.trigger.protocol === "websocket_message" &&
+          event.direction === "received")));
+
+const validateMachineTimeline = (
+  machine: ReplayMachine,
   capture: ProcessCapture,
   require: RequireInvariant,
 ): void => {
-  const { replay_plan: replayPlan } = capture.manifest;
+  const timeline = capture.replay_transitions;
+  require(timeline !==
+    undefined, "replay_transitions", "machine replay capture has no transition timeline");
+  if (timeline === undefined) return;
+  let expectedState = machine.initial_state;
+  for (const entry of timeline) {
+    const event = capture.protocol_events[entry.protocol_event_sequence];
+    const declared = machine.transitions.find(
+      ({ id }) => id === entry.transition_id,
+    );
+    require(event?.transition_id ===
+      entry.transition_id, "replay_transitions", "transition does not link to its triggering protocol event");
+    require(declared?.from === entry.state_before &&
+      declared.to ===
+        entry.state_after, "replay_transitions", "transition timeline entry is not declared by the replay machine");
+    require(expectedState ===
+      entry.state_before, "replay_transitions", "transition timeline state chain is discontinuous");
+    require(event !== undefined &&
+      declared !== undefined &&
+      machineTriggerMatches(
+        declared,
+        event,
+      ), "replay_transitions", "transition trigger does not match its protocol event");
+    const aliases =
+      declared?.captures
+        .filter(({ sensitive }) => sensitive)
+        .map(({ variable }) => variable)
+        .sort() ?? [];
+    require(JSON.stringify(aliases) ===
+      JSON.stringify(
+        [...entry.sensitive_aliases].sort(),
+      ), "replay_transitions", "transition secret aliases disagree with declared captures");
+    expectedState = entry.state_after;
+  }
+  for (const event of capture.protocol_events) {
+    const triggeringDirection =
+      event.direction === "request" || event.direction === "received";
+    if (event.outcome !== "matched" || !triggeringDirection) continue;
+    require(timeline.some(
+      ({ protocol_event_sequence, transition_id }) =>
+        protocol_event_sequence === event.sequence &&
+        transition_id === event.transition_id,
+    ), "protocol_events", "matched machine event has no transition timeline entry");
+  }
+};
+
+const validateQueueReplayEvents = (
+  capture: ProcessCapture,
+  require: RequireInvariant,
+): void => {
+  const replayPlan = capture.manifest.replay_plan;
   const routes =
     "http" in replayPlan && Array.isArray(replayPlan.http)
       ? replayPlan.http
@@ -160,7 +231,7 @@ const validateReplayEvents = (
       event.outcome !== "matched"
     )
       continue;
-    const declared = routes.some(
+    require(routes.some(
       (route) =>
         typeof route === "object" &&
         route !== null &&
@@ -168,9 +239,23 @@ const validateReplayEvents = (
         route.method === event.method &&
         "path" in route &&
         route.path === event.path,
-    );
-    require(declared, "protocol_events", "matched HTTP event has no declared replay route");
+    ), "protocol_events", "matched HTTP event has no declared replay route");
   }
+};
+
+const validateReplayEvents = (
+  capture: ProcessCapture,
+  require: RequireInvariant,
+): void => {
+  const replayPlan = capture.manifest.replay_plan;
+  const hasMachine = "machine" in replayPlan && replayPlan.machine !== null;
+  if (!hasMachine) {
+    validateQueueReplayEvents(capture, require);
+    return;
+  }
+  const parsed = replayMachineSchema.safeParse(replayPlan.machine);
+  require(parsed.success, "manifest.replay_plan.machine", "replay machine commitment is not a valid machine contract");
+  if (parsed.success) validateMachineTimeline(parsed.data, capture, require);
 };
 
 /** Recompute v4 commitments and cross-field invariants without side effects. */

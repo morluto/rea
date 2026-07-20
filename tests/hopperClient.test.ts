@@ -188,6 +188,17 @@ describe("HopperClient", () => {
       });
   });
 
+  it("preserves the typed unfinished-analysis diagnostic", async () => {
+    const client = await startClient();
+    const result = await client.callTool("analysis_in_progress");
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatchObject({
+        _tag: "HopperRemoteError",
+        diagnosticType: "analysis_in_progress",
+      });
+  });
+
   it("cancels and ignores late responses without corrupting the session", async () => {
     const client = await startClient();
     const controller = new AbortController();

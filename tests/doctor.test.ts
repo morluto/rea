@@ -144,6 +144,42 @@ describe("doctor", () => {
     });
   });
 
+  it("reports optional BYO jadx diagnostics only when configured", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredJadxCmdPath: "/opt/jadx/bin/jadx",
+        jadxCmdVersion: () => Promise.resolve("1.5.5"),
+      }),
+    );
+    expect(result.healthy).toBe(true);
+    expect(result.checks).toContainEqual({
+      name: "jadx",
+      ok: true,
+      classification: "healthy",
+      detail: "/opt/jadx/bin/jadx (1.5.5)",
+    });
+  });
+
+  it("reports configured jadx drift without installing it", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredJadxCmdPath: "/missing/jadx",
+        jadxCmdVersion: () => Promise.resolve(undefined),
+      }),
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.checks).toContainEqual({
+      name: "jadx",
+      ok: false,
+      classification: "config_drift",
+      detail: "/missing/jadx",
+      remediation:
+        "Unset REA_JADX_CMD_PATH or point it at a runnable jadx executable.",
+    });
+  });
+
   it("does not fall back when the configured Hopper launcher is invalid", async () => {
     const configuredPath = "/invalid/custom/hopper";
     const result = await runDoctor(

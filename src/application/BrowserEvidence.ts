@@ -172,7 +172,7 @@ const browserPredicate = (operation: BrowserEvidenceOperation): string => {
     case "discover_webmcp_tools":
       return "rea.webmcp-discovery/v1";
     case "compare_web_captures":
-      return "rea.web-capture-diff/v1";
+      return "rea.web-capture-diff/v2";
     case "capture_web_screenshot":
       return "rea.web-screenshot/v1";
     case "compare_web_screenshots":

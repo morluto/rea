@@ -124,6 +124,11 @@ const SOURCE_PATHS = {
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   managedContracts: "dist/contracts/managedToolContracts.js",
   managedWorkflowContracts: "dist/contracts/managedWorkflowToolContracts.js",
+  appleApplicationContracts: "dist/contracts/appleApplicationToolContracts.js",
+  androidApplicationContracts:
+    "dist/contracts/androidApplicationToolContracts.js",
+  runtimeIdentificationContracts:
+    "dist/contracts/runtimeIdentificationToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
   electronContracts: "dist/contracts/electronToolContracts.js",
   applicationContracts: "dist/contracts/applicationToolContracts.js",
@@ -199,6 +204,25 @@ const toolFamilyCatalog = (sources) => {
         ...sources.managedContracts.MANAGED_TOOL_CONTRACTS,
         ...sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
       ],
+    },
+    {
+      id: "apple",
+      surface: "apple-application-workflow",
+      contracts:
+        sources.appleApplicationContracts.APPLE_APPLICATION_TOOL_CONTRACTS,
+    },
+    {
+      id: "android",
+      surface: "android-application-workflow",
+      contracts:
+        sources.androidApplicationContracts.ANDROID_APPLICATION_TOOL_CONTRACTS,
+    },
+    {
+      id: "runtime",
+      surface: "runtime-identification",
+      contracts:
+        sources.runtimeIdentificationContracts
+          .RUNTIME_IDENTIFICATION_TOOL_CONTRACTS,
     },
     {
       id: "browser",
@@ -284,6 +308,22 @@ const providerCatalog = (sources) => {
       identity: sources.artifactProviders.MANAGED_WORKFLOW_PROVIDER,
       contracts:
         sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.APPLE_APPLICATION_PROVIDER,
+      contracts:
+        sources.appleApplicationContracts.APPLE_APPLICATION_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.ANDROID_APPLICATION_PROVIDER,
+      contracts:
+        sources.androidApplicationContracts.ANDROID_APPLICATION_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.RUNTIME_IDENTIFICATION_PROVIDER,
+      contracts:
+        sources.runtimeIdentificationContracts
+          .RUNTIME_IDENTIFICATION_TOOL_CONTRACTS,
     },
     {
       identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,

@@ -179,6 +179,46 @@ describe("artifact graph provider", () => {
     });
   });
 
+  it("classifies mobile and managed runtime artifacts without executing them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-mobile-artifacts-"));
+    const apkPath = join(root, "fixture.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "AndroidManifest.xml",
+      new TextReader("binary manifest placeholder"),
+    );
+    await writer.add("resources.arsc", new TextReader("resources"));
+    await writer.add(
+      "classes.dex",
+      new TextReader("dex\n035\0fixture bytecode"),
+    );
+    await writer.add(
+      "assets/Fixture.class",
+      new TextReader("\xca\xfe\xba\xbeclass bytes"),
+    );
+    await writer.add("assets/module.wasm", new TextReader("\0asm\u0001\0\0\0"));
+    await writeFile(apkPath, await writer.close());
+
+    const result = await inventory(target(apkPath, "apk"));
+    const formats = result.nodes.items.map(({ format }) => format);
+    expect(formats).toEqual(
+      expect.arrayContaining([
+        "android-manifest",
+        "android-resources",
+        "dex",
+        "jvm-class",
+        "webassembly",
+      ]),
+    );
+    expect(result.nodes.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "package-metadata" }),
+        expect.objectContaining({ kind: "bytecode", format: "dex" }),
+        expect.objectContaining({ kind: "bytecode", format: "jvm-class" }),
+      ]),
+    );
+  });
+
   it("rejects unsafe, colliding, and over-ratio entries", async () => {
     expect(() => normalizeArtifactPath("../escape", limits())).toThrow(
       /normalized/u,
@@ -299,6 +339,47 @@ describe("artifact graph provider", () => {
     expect(await readdir(root)).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^\.output\.rea-/u)]),
     );
+  });
+
+  it("requires both caller approval and operator policy before DMG extraction", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-dmg-extract-policy-"));
+    const path = join(root, "fixture.dmg");
+    await writeFile(path, "not mounted");
+    const targetValue = target(path, "dmg");
+    const occurrenceId = `occ_${"0".repeat(64)}`;
+    const outputRoot = join(root, "output");
+
+    const withoutApproval = await new ArtifactProvider(true)
+      .createClient(targetValue)
+      .execute(
+        "extract_artifact",
+        artifactExtractionInputSchema.parse({
+          approved: true,
+          output_root: outputRoot,
+          occurrence_ids: [occurrenceId],
+        }),
+      );
+    expect(withoutApproval).toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "unavailable" },
+    });
+
+    const disabledByPolicy = await new ArtifactProvider()
+      .createClient(targetValue)
+      .execute(
+        "extract_artifact",
+        artifactExtractionInputSchema.parse({
+          approved: true,
+          native_mount_approved: true,
+          output_root: outputRoot,
+          occurrence_ids: [occurrenceId],
+        }),
+      );
+    expect(disabledByPolicy).toMatchObject({
+      ok: false,
+      error: { _tag: "ArtifactOperationError", reason: "unavailable" },
+    });
+    await expect(access(outputRoot)).rejects.toThrow();
   });
 
   it("paginates wide graphs without changing manifest identity", async () => {

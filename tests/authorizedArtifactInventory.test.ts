@@ -21,11 +21,11 @@ describe("authorized artifact inventory", () => {
     try {
       const path = join(root, "artifact.js");
       await writeFile(path, "export const value = 1;\n");
-      const inventory = await scanAuthorizedArtifactInventory(
-        path,
-        [join(root, "missing"), root],
-        LIMITS,
-      );
+      const inventory = await scanAuthorizedArtifactInventory({
+        inputPath: path,
+        roots: [join(root, "missing"), root],
+        limits: LIMITS,
+      });
       expect(inventory.manifest.root_format).toBe("javascript-bundle");
     } finally {
       await rm(root, { recursive: true, force: true });

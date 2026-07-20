@@ -225,21 +225,9 @@ export class EvidenceLedger {
         existingUnknown.revision_digest !== unknown.revision_digest
       )
         return err(new UnknownRegistryError("already-exists"));
-      const checked = this.#validateCandidate(
-        pendingRecords,
-        this.#unknownRevisions,
-      );
-      if (!checked.ok) return checked;
-      this.#commit(pendingRecords, this.#unknownRevisions, checked.value);
-      return ok(null);
+      return this.#commitCandidate(pendingRecords, this.#unknownRevisions);
     }
-    pendingRecords.set(mutation.evidence_id, mutation);
-    const pendingUnknowns = new Map(this.#unknownRevisions);
-    pendingUnknowns.set(unknownRevisionKey(unknown), unknown);
-    const checked = this.#validateCandidate(pendingRecords, pendingUnknowns);
-    if (!checked.ok) return checked;
-    this.#commit(pendingRecords, pendingUnknowns, checked.value);
-    return ok(structuredClone(unknown));
+    return this.#appendUnknownCandidate(unknown, mutation, pendingRecords);
   }
 
   /** Apply one approved full-state update using optimistic revision matching. */
@@ -332,14 +320,39 @@ export class EvidenceLedger {
         }),
       );
     }
-    const pendingRecords = new Map(this.#records);
+    return this.#appendUnknownCandidate(
+      unknown,
+      mutationEvidence,
+      new Map(this.#records),
+    );
+  }
+
+  #appendUnknownCandidate(
+    unknown: ResidualUnknown,
+    mutationEvidence: Evidence,
+    pendingRecords: Map<string, Evidence>,
+  ): Result<
+    ResidualUnknown,
+    EvidenceIntegrityError | EvidenceLimitError | UnknownRegistryError
+  > {
     pendingRecords.set(mutationEvidence.evidence_id, mutationEvidence);
     const pendingUnknowns = new Map(this.#unknownRevisions);
     pendingUnknowns.set(unknownRevisionKey(unknown), unknown);
-    const checked = this.#validateCandidate(pendingRecords, pendingUnknowns);
+    const committed = this.#commitCandidate(pendingRecords, pendingUnknowns);
+    return committed.ok ? ok(structuredClone(unknown)) : err(committed.error);
+  }
+
+  #commitCandidate(
+    records: ReadonlyMap<string, Evidence>,
+    unknowns: ReadonlyMap<string, ResidualUnknown>,
+  ): Result<
+    null,
+    EvidenceIntegrityError | EvidenceLimitError | UnknownRegistryError
+  > {
+    const checked = this.#validateCandidate(records, unknowns);
     if (!checked.ok) return checked;
-    this.#commit(pendingRecords, pendingUnknowns, checked.value);
-    return ok(structuredClone(unknown));
+    this.#commit(records, unknowns, checked.value);
+    return ok(null);
   }
 
   #validateCandidate(

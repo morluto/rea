@@ -39,6 +39,26 @@ export const MANAGED_WORKFLOW_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for deterministic Apple application projections. */
+export const APPLE_APPLICATION_PROVIDER = {
+  id: "rea-apple-application",
+  name: "REA Apple application workflows",
+  version: "1",
+} as const;
+
+/** Provider identity for deterministic Android application projections. */
+export const ANDROID_APPLICATION_PROVIDER = {
+  id: "rea-android-application",
+  name: "REA Android application workflows",
+  version: "1",
+} as const;
+
+export const RUNTIME_IDENTIFICATION_PROVIDER = {
+  id: "rea-runtime-identification",
+  name: "REA runtime identification",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic static JavaScript application analysis. */
 export const JAVASCRIPT_APPLICATION_PROVIDER = {
   id: "rea-javascript-application",

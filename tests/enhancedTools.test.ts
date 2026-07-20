@@ -11,6 +11,9 @@ import {
 } from "../src/contracts/toolContracts.js";
 import { enhancedInputSchemas } from "../src/contracts/enhancedInputs.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflowToolContracts.js";
+import { APPLE_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/appleApplicationToolContracts.js";
+import { ANDROID_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/androidApplicationToolContracts.js";
+import { RUNTIME_IDENTIFICATION_TOOL_CONTRACTS } from "../src/contracts/runtimeIdentificationToolContracts.js";
 import { AnalysisOutputError } from "../src/domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../src/domain/jsonValue.js";
 import { err } from "../src/domain/result.js";
@@ -201,7 +204,10 @@ describe("enhanced MCP tools", () => {
     expect(listed.tools).toHaveLength(
       TOOL_CONTRACTS.length -
         SESSION_TOOL_CONTRACTS.length -
-        MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
+        MANAGED_WORKFLOW_TOOL_CONTRACTS.length -
+        APPLE_APPLICATION_TOOL_CONTRACTS.length -
+        ANDROID_APPLICATION_TOOL_CONTRACTS.length -
+        RUNTIME_IDENTIFICATION_TOOL_CONTRACTS.length,
     );
     expect(
       listed.tools

@@ -15,6 +15,7 @@ import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { MachOSliceArtifactReader } from "../artifacts/MachOSliceArtifactReader.js";
+import { NativeDmgArtifactReader } from "../artifacts/NativeDmgArtifactReader.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -23,7 +24,10 @@ import {
   type ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { scanArtifactInventory } from "./ArtifactInventory.js";
+import {
+  scanArtifactInventory,
+  type ArtifactNativeMountPolicy,
+} from "./ArtifactInventory.js";
 import {
   digestCanonical,
   pageOf,
@@ -41,6 +45,7 @@ export interface ArtifactExtractionInput {
   readonly offset: number;
   readonly limit: number;
   readonly limits: ArtifactLimits;
+  readonly nativeMount: ArtifactNativeMountPolicy;
 }
 
 /** Extract selected inventory occurrences into an exclusively owned absent root. */
@@ -49,14 +54,16 @@ export const extractArtifact = async (
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> => {
   validateSelection(input.occurrenceIds);
+  assertNativeMountAuthority(input.inputFormat, input.nativeMount);
   const sourcePath = await realpath(input.inputPath);
   const selectedIds = new Set(input.occurrenceIds);
-  const inventory = await loadInventory(
-    sourcePath,
-    input.limits,
+  const inventory = await loadInventory({
+    path: sourcePath,
+    limits: input.limits,
     selectedIds,
-    signal,
-  );
+    ...(signal === undefined ? {} : { signal }),
+    nativeMount: input.nativeMount,
+  });
   const selected = input.occurrenceIds.map((id) => {
     const occurrence = inventory.occurrences.get(id);
     if (occurrence === undefined)
@@ -120,7 +127,12 @@ const materializeSelection = async ({
   const byPath = new Map(
     selected.map((item) => [item.occurrence.logical_path, item]),
   );
-  const reader = await createReader(sourcePath, input.inputFormat);
+  const reader = await createReader(
+    sourcePath,
+    input.inputFormat,
+    input.nativeMount,
+    signal,
+  );
   const output = await SafeOutputTree.create(input.outputRoot, input.limits);
   let readerClosed = false;
   const extracted: ExtractedOccurrence[] = [];
@@ -166,12 +178,13 @@ const materializeSelection = async ({
     extracted.sort((left, right) =>
       left.relative_path.localeCompare(right.relative_path, "en"),
     );
-    const result = createExtractionResult(
+    const result = createExtractionResult({
       input,
       inventory,
       selected,
       extracted,
-    );
+      provenance: reader.provenance(),
+    });
     await output.commit();
     return result;
   } catch (cause: unknown) {
@@ -181,12 +194,21 @@ const materializeSelection = async ({
   }
 };
 
-const createExtractionResult = (
-  input: ArtifactExtractionInput,
-  inventory: LoadedInventory,
-  selected: readonly SelectedOccurrence[],
-  extracted: readonly ExtractedOccurrence[],
-): ArtifactExtractionResult => {
+interface ExtractionResultInput {
+  readonly input: ArtifactExtractionInput;
+  readonly inventory: LoadedInventory;
+  readonly selected: readonly SelectedOccurrence[];
+  readonly extracted: readonly ExtractedOccurrence[];
+  readonly provenance: ReturnType<ArtifactReader["provenance"]>;
+}
+
+const createExtractionResult = ({
+  input,
+  inventory,
+  selected,
+  extracted,
+  provenance,
+}: ExtractionResultInput): ArtifactExtractionResult => {
   const extractionSemantic = {
     schema_version: 1 as const,
     source_manifest_id: inventory.manifest.manifest_id,
@@ -205,11 +227,19 @@ const createExtractionResult = (
     output_root: "$OUTPUT_ROOT",
     artifacts: pageOf(extracted, input.offset, input.limit),
     containment_verified: true,
-    cleanup: { attempted: false, verified: true, residual_paths: [] },
+    cleanup:
+      input.inputFormat === "dmg"
+        ? { attempted: true, verified: true, residual_paths: [] }
+        : { attempted: false, verified: true, residual_paths: [] },
     limits: toOutputLimits(input.limits),
-    provenance: [],
+    provenance,
     limitations: [
       "Only caller-selected regular file occurrences were materialized.",
+      ...(input.inputFormat === "dmg"
+        ? [
+            "The read-only DMG mount was detached before this result was returned; the committed output tree remains caller-owned.",
+          ]
+        : []),
     ],
   });
 };
@@ -220,13 +250,27 @@ interface LoadedInventory {
   readonly nodes: ReadonlyMap<string, ArtifactNode>;
 }
 
-const loadInventory = async (
-  path: string,
-  limits: ArtifactLimits,
-  selectedIds: ReadonlySet<string>,
-  signal?: AbortSignal,
-): Promise<LoadedInventory> => {
-  const snapshot = await scanArtifactInventory(path, limits, signal);
+interface InventoryLoadInput {
+  readonly path: string;
+  readonly limits: ArtifactLimits;
+  readonly selectedIds: ReadonlySet<string>;
+  readonly signal?: AbortSignal;
+  readonly nativeMount: ArtifactNativeMountPolicy;
+}
+
+const loadInventory = async ({
+  path,
+  limits,
+  selectedIds,
+  signal,
+  nativeMount,
+}: InventoryLoadInput): Promise<LoadedInventory> => {
+  const snapshot = await scanArtifactInventory(
+    path,
+    limits,
+    signal,
+    nativeMount,
+  );
   const occurrences = new Map<string, ArtifactOccurrence>();
   const neededNodes = new Set<string>();
   collectOccurrences(
@@ -265,6 +309,8 @@ const collectNodes = (
 const createReader = async (
   path: string,
   format: BinaryTarget["format"],
+  nativeMount: ArtifactNativeMountPolicy,
+  signal?: AbortSignal,
 ): Promise<ArtifactReader> => {
   if ((await lstat(path)).isDirectory())
     return new DirectoryArtifactReader(path);
@@ -272,10 +318,31 @@ const createReader = async (
   if (format === "ipa" || format === "apk" || format === "zip")
     return new ZipArtifactReader(path, format);
   if (format === "mach-o") return new MachOSliceArtifactReader(path);
+  if (format === "dmg") {
+    assertNativeMountAuthority(format, nativeMount);
+    return NativeDmgArtifactReader.create(path, signal);
+  }
   throw new ArtifactReaderFailure(
     "unavailable",
     `Artifact format has no extraction reader: ${format}`,
   );
+};
+
+const assertNativeMountAuthority = (
+  format: BinaryTarget["format"],
+  nativeMount: ArtifactNativeMountPolicy,
+): void => {
+  if (format !== "dmg") return;
+  if (!nativeMount.nativeMountApproved)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      "DMG extraction requires explicit native mount approval",
+    );
+  if (!nativeMount.nativeMountEnabled)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      "Native DMG mounting is disabled by operator policy",
+    );
 };
 
 const validateSelection = (ids: readonly string[]): void => {

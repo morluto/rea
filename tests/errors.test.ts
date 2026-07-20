@@ -156,8 +156,8 @@ describe("analysis error projection", () => {
           cause: secretCause,
         },
       ),
-      PermissionRequiredError: new PermissionRequiredError(
-        {
+      PermissionRequiredError: new PermissionRequiredError({
+        requested: {
           capability: "evidence_read",
           roots: ["/workspace/evidence.json"],
           executables: [],
@@ -166,11 +166,11 @@ describe("analysis error projection", () => {
           mount: false,
           operation_identity: "read:evidence",
         },
-        { environment_names: ["TOKEN_NAME"] },
-        null,
-        false,
-        true,
-      ),
+        missing: { environment_names: ["TOKEN_NAME"] },
+        ceiling: null,
+        elicitationSupported: false,
+        restartRequired: true,
+      }),
       ReplayPlanStaleError: new ReplayPlanStaleError(
         "a".repeat(64),
         "b".repeat(64),
@@ -305,6 +305,7 @@ describe("analysis error projection", () => {
       ...(
         [
           "remote",
+          "analysis_in_progress",
           "authorization",
           "invalid_request",
           "bridge_exception",
@@ -312,7 +313,7 @@ describe("analysis error projection", () => {
       ).map((diagnostic) => new HopperRemoteError(9, "safe", diagnostic)),
     ];
 
-    expect(variants).toHaveLength(38);
+    expect(variants).toHaveLength(39);
     for (const variant of variants) {
       const projected = projectAnalysisError(variant);
       const parsed = analysisErrorProjectionSchema.safeParse(projected);

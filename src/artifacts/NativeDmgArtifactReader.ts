@@ -28,6 +28,7 @@ const attachOutputSchema = z.object({
 
 /** Narrow host seam for tested, shell-free hdiutil lifecycle operations. */
 export interface NativeDmgHost {
+  readonly platform: NodeJS.Platform;
   run(
     arguments_: readonly string[],
     signal?: AbortSignal,
@@ -35,6 +36,7 @@ export interface NativeDmgHost {
 }
 
 const systemHost: NativeDmgHost = {
+  platform: process.platform,
   async run(arguments_, signal) {
     try {
       const { stdout } = await execFileAsync(
@@ -76,7 +78,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     signal?: AbortSignal,
     host: NativeDmgHost = systemHost,
   ): Promise<NativeDmgArtifactReader> {
-    if (process.platform !== "darwin")
+    if (host.platform !== "darwin")
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",

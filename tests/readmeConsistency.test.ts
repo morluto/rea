@@ -14,6 +14,9 @@ import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflo
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
+import { APPLE_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/appleApplicationToolContracts.js";
+import { ANDROID_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/androidApplicationToolContracts.js";
+import { RUNTIME_IDENTIFICATION_TOOL_CONTRACTS } from "../src/contracts/runtimeIdentificationToolContracts.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
 
 const readmes = [
@@ -30,6 +33,9 @@ const expectedToolCounts = [
   NATIVE_TOOL_CONTRACTS.length,
   ARTIFACT_TOOL_CONTRACTS.length,
   MANAGED_TOOL_CONTRACTS.length + MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
+  APPLE_APPLICATION_TOOL_CONTRACTS.length,
+  ANDROID_APPLICATION_TOOL_CONTRACTS.length,
+  RUNTIME_IDENTIFICATION_TOOL_CONTRACTS.length,
   BROWSER_TOOL_CONTRACTS.length,
   ELECTRON_TOOL_CONTRACTS.length,
   APPLICATION_TOOL_CONTRACTS.length,

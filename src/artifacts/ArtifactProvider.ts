@@ -64,7 +64,7 @@ export class ArtifactProvider implements AnalysisProvider {
           timeoutMs: 120_000,
         }),
         limitations: Object.freeze([
-          "DMG child inventory is macOS-only and requires per-call approval plus operator policy; PKG remains root-hash-only.",
+          "DMG child inventory and extraction are macOS-only and require per-call approval plus operator policy; PKG remains root-hash-only.",
           "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
         ]),
       }),
@@ -122,6 +122,10 @@ class ArtifactClient implements AnalysisClient {
             offset: parsed.offset,
             limit: parsed.limit,
             limits: limitsFrom(parsed),
+            nativeMount: {
+              nativeMountApproved: parsed.native_mount_approved === true,
+              nativeMountEnabled: this.nativeMountEnabled,
+            },
           },
           options?.signal,
         );

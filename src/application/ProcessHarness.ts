@@ -3,6 +3,7 @@ import type {
   InteractionEvent,
   ProcessCapture,
   ProcessExecutionPolicy,
+  ProcessLifecycleEvent,
   ProcessSample,
   ProcessScenario,
   TerminalFrame,
@@ -192,6 +193,7 @@ const startCaptureRuntime = async (options: {
   readonly before: Awaited<ReturnType<typeof snapshotRoots>>;
   readonly frames: TerminalFrame[];
   readonly samples: ProcessSample[];
+  readonly processEvents: ProcessLifecycleEvent[];
   readonly interactions: InteractionEvent[];
   readonly timers: Set<NodeJS.Timeout>;
   readonly dispatchedEventIndexes: Set<number>;
@@ -252,6 +254,7 @@ const startCaptureRuntime = async (options: {
       started,
       limit: scenario.limits.processes,
       samples: options.samples,
+      events: options.processEvents,
     });
     return {
       replay,
@@ -362,6 +365,7 @@ const completeCapture = async (options: {
   readonly before: Awaited<ReturnType<typeof snapshotRoots>>;
   readonly frames: readonly TerminalFrame[];
   readonly samples: readonly ProcessSample[];
+  readonly processEvents: readonly ProcessLifecycleEvent[];
   readonly interactions: readonly InteractionEvent[];
   readonly exit: Awaited<ReturnType<typeof awaitTerminalExit>>;
   readonly signal?: AbortSignal;
@@ -400,6 +404,7 @@ const completeCapture = async (options: {
     frames: options.frames,
     exit: { ...options.exit, reason },
     samples: options.samples,
+    processEvents: options.processEvents,
     replay: runtime.replay,
     before: options.before,
     after,
@@ -429,6 +434,7 @@ const runProcessScenario = async (
   );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
+  const processEvents: ProcessLifecycleEvent[] = [];
   let runtime: StartedCaptureRuntime | undefined;
   const timers = new Set<NodeJS.Timeout>();
   let capture: ProcessCapture | undefined;
@@ -446,6 +452,7 @@ const runProcessScenario = async (
       before,
       frames,
       samples,
+      processEvents,
       interactions,
       timers,
       dispatchedEventIndexes,
@@ -470,6 +477,7 @@ const runProcessScenario = async (
       before,
       frames,
       samples,
+      processEvents,
       interactions,
       exit,
       initiallyTruncated: before.truncated,

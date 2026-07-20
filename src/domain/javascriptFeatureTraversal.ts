@@ -41,6 +41,12 @@ export const traverseApplicationFeature = (
   const omittedNodes = new Set<string>();
   const omittedEdges = new Set<string>();
   const frontier = new Set<string>();
+  const recordOmission = (entry: AdjacencyEntry, current: string): void => {
+    omittedNodes.add(entry.nextNodeId);
+    omittedEdges.add(entry.edge.edge_id);
+    frontier.add(current);
+    frontier.add(entry.nextNodeId);
+  };
   const depths = new Map(seedNodeIds.map((nodeId) => [nodeId, 0]));
   const predecessors = new Map<string, Predecessor>();
   const queue = [...seedNodeIds];
@@ -50,11 +56,11 @@ export const traverseApplicationFeature = (
     const depth = depths.get(current) ?? 0;
     for (const entry of adjacency.get(current) ?? []) {
       if (depth >= limits.max_depth) {
-        recordOmission(entry, current, omittedNodes, omittedEdges, frontier);
+        recordOmission(entry, current);
         continue;
       }
       if (!visited.has(entry.nextNodeId) && visited.size >= limits.max_nodes) {
-        recordOmission(entry, current, omittedNodes, omittedEdges, frontier);
+        recordOmission(entry, current);
         continue;
       }
       if (
@@ -127,17 +133,4 @@ const addAdjacency = (
   entry: AdjacencyEntry,
 ): void => {
   adjacency.set(nodeId, [...(adjacency.get(nodeId) ?? []), entry]);
-};
-
-const recordOmission = (
-  entry: AdjacencyEntry,
-  current: string,
-  omittedNodes: Set<string>,
-  omittedEdges: Set<string>,
-  frontier: Set<string>,
-): void => {
-  omittedNodes.add(entry.nextNodeId);
-  omittedEdges.add(entry.edge.edge_id);
-  frontier.add(current);
-  frontier.add(entry.nextNodeId);
 };

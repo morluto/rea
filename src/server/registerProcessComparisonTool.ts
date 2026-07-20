@@ -20,7 +20,7 @@ import { toCallToolResult } from "./toolResult.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
-import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+import { resolveSessionEvidencePair } from "./sessionEvidence.js";
 
 /** Register deterministic process-capture comparison and contradiction tracking. */
 export const registerProcessComparisonTool = (
@@ -44,27 +44,24 @@ export const registerProcessComparisonTool = (
         operation: "capture_process_scenario",
         predicate: "rea.process-capture/v4",
       };
-      const leftRecord = resolveSessionEvidenceIds(
+      const evidencePair = resolveSessionEvidencePair(
         session,
-        [parsed.left_evidence_id],
+        {
+          left: [parsed.left_evidence_id],
+          right: [parsed.right_evidence_id],
+        },
         expected,
       );
-      if (!leftRecord.ok) return toCallToolResult(leftRecord, contract);
-      const rightRecord = resolveSessionEvidenceIds(
-        session,
-        [parsed.right_evidence_id],
-        expected,
-      );
-      if (!rightRecord.ok) return toCallToolResult(rightRecord, contract);
+      if (!evidencePair.ok) return toCallToolResult(evidencePair, contract);
       let comparison: ReturnType<typeof compareProcessCaptures>;
       let leftCapture: ReturnType<typeof parseProcessCapture>;
       let rightCapture: ReturnType<typeof parseProcessCapture>;
       try {
         leftCapture = parseProcessCapture(
-          leftRecord.value[0]?.normalized_result,
+          evidencePair.value.left[0]?.normalized_result,
         );
         rightCapture = parseProcessCapture(
-          rightRecord.value[0]?.normalized_result,
+          evidencePair.value.right[0]?.normalized_result,
         );
         const computed = await runDerivedOperation(context, contract.name, () =>
           compareProcessCaptures(leftCapture, rightCapture, {
@@ -89,7 +86,7 @@ export const registerProcessComparisonTool = (
         );
       }
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-comparison/v3",
+        predicateType: "rea.process-comparison/v4",
         operation: contract.name,
         parameters: {
           left_evidence_id: parsed.left_evidence_id,

@@ -2,20 +2,29 @@ name: Real Hopper Linux E2E
 
 on:
   workflow_dispatch:
-    inputs:
-      first_target:
-        description: Absolute path to first Linux test binary
-        required: true
-        type: string
-      second_target:
-        description: Absolute path to a distinct Linux test binary
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 jobs:
+  fixtures:
+    name: Build source-owned Hopper fixtures
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:fixtures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hopper-conformance-fixtures
+          path: build/conformance
+          if-no-files-found: error
+          retention-days: 7
+
   clean-setup:
     name: Clean setup, CLI, and MCP
     runs-on: ubuntu-24.04
@@ -39,6 +48,7 @@ jobs:
 
   verify:
     name: Installed package against real Linux Hopper
+    needs: fixtures
     runs-on: [self-hosted, Linux, hopper]
     timeout-minutes: 20
     steps:
@@ -48,6 +58,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: hopper-conformance-fixtures
+          path: build/conformance
       - name: Install packed CLI in isolation
         shell: bash
         run: |
@@ -56,8 +70,7 @@ jobs:
           npm install --global --ignore-scripts --prefix "${prefix}" "./${tarball}"
           echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
           echo 'REA_VERIFY_SERVER_ARGS_JSON=["mcp"]' >> "${GITHUB_ENV}"
-      - name: Verify two binaries through an alternate launcher symlink
+      - name: Verify source-owned fixtures through an alternate launcher symlink
         env:
-          HOPPER_TARGET_PATH: ${{ inputs.first_target }}
-          HOPPER_SECOND_TARGET_PATH: ${{ inputs.second_target }}
+          REA_HOPPER_CONFORMANCE_MANIFEST_PATH: ${{ github.workspace }}/build/conformance/manifest.json
         run: npm run verify:hopper:linux

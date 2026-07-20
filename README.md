@@ -360,6 +360,9 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                                                                                                                             |
 | Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA, and ASAR inventory; explicitly selected extraction into an absent owned tree                                                                                                                        |
 | Managed PE/CLI            |     8 | PE/CLI identity, metadata members, CIL hashes, P/Invoke/native-boundary declarations and verification, application-graph projection, decompiler reconstruction import, token remapping, runtime-correlation plans, and version comparison |
+| Apple applications        |     1 | authenticated IPA inventory projection into application roots, components, runtime families, and explicit bridge hypotheses                                                                                                               |
+| Android applications      |     1 | authenticated APK inventory projection into components, runtime families, and explicit managed-to-native bridge hypotheses                                                                                                                |
+| Runtime identification    |     1 | execution-free runtime-family identification with exact artifact observations and explicit semantic-provider availability                                                                                                                 |
 | Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence                                                                                                          |
 | Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation                                                                                                                  |
 | Application workflows     |     7 | bounded cross-layer traces, unique-only version matching, approved Linux-isolated extracted-module replay, managed-runtime characterization, and reconstruction coverage closure                                                          |
@@ -384,7 +387,11 @@ REA is already useful for native application, browser, and Electron investigatio
   doctor and `verify:managed` to inspect a bring-your-own ILSpy command as a
   real reconstruction oracle. REA does not install ILSpy and does not treat
   decompiler text as canonical metadata or CIL observation.
-- Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal additionally requires `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
+- Configure `REA_JADX_CMD_PATH=/absolute/path/to/jadx` to make `rea doctor`
+  verify a bring-your-own jadx command and report its exact version. REA does
+  not install jadx or Java, and this admission check does not yet advertise a
+  semantic JVM provider.
+- Traverse content-addressed artifact graphs without extraction; on macOS, read-only DMG traversal and extraction additionally require `native_mount_approved: true` and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Materialize only approved occurrences into absent output roots.
 - Build bounded function dossiers with pseudocode, assembly, CFG edges, comments, calls, references, strings, and names.
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence v2 with artifact and provider identity, confidence, authority, limitations, and locations.

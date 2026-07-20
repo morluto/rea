@@ -152,6 +152,8 @@ const server = createServer((socket) => {
             type: "bridge_exception",
           },
         });
+      } else if (request.method === "analysis_in_progress") {
+        sendAnalysisInProgress(send, request.id);
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
       } else if (enhancedFixtureResult(request.method) !== undefined) {
@@ -193,6 +195,16 @@ const server = createServer((socket) => {
     }
   });
 });
+
+const sendAnalysisInProgress = (send, id) =>
+  send({
+    id,
+    error: {
+      code: -32000,
+      message: "Hopper analysis is still running",
+      type: "analysis_in_progress",
+    },
+  });
 
 server.listen(socketPath);
 process.on("SIGTERM", () => server.close());

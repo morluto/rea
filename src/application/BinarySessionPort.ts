@@ -26,16 +26,19 @@ import type {
   ProviderIdentity,
 } from "./AnalysisProvider.js";
 
+/** Optional cancellation, target-kind, snapshot, and provider selection for open. */
+export interface BinarySessionOpenOptions {
+  readonly signal?: AbortSignal;
+  readonly targetKind?: BinaryTarget["kind"];
+  readonly snapshot?: AnalysisSnapshot;
+  readonly providerId?: AnalysisProviderSelector;
+}
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort extends AnalysisOperationPort {
   open(
     path: string,
-    options?: {
-      readonly signal?: AbortSignal;
-      readonly targetKind?: BinaryTarget["kind"];
-      readonly snapshot?: AnalysisSnapshot;
-      readonly providerId?: AnalysisProviderSelector;
-    },
+    options?: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>>;
   close(): Promise<Result<null, AnalysisError>>;
   status(): JsonValue;

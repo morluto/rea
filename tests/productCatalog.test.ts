@@ -8,12 +8,15 @@ import { z } from "zod";
 
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
 import {
+  APPLE_APPLICATION_PROVIDER,
+  ANDROID_APPLICATION_PROVIDER,
   ARTIFACT_GRAPH_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
+  RUNTIME_IDENTIFICATION_PROVIDER,
 } from "../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../src/browser/CdpElectronProvider.js";
@@ -79,6 +82,9 @@ describe("canonical product catalog", () => {
         JAVASCRIPT_APPLICATION_PROVIDER,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
         JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
+        APPLE_APPLICATION_PROVIDER,
+        ANDROID_APPLICATION_PROVIDER,
+        RUNTIME_IDENTIFICATION_PROVIDER,
       ]
         .map(({ id }) => id)
         .sort(),
@@ -183,16 +189,20 @@ describe("canonical product catalog", () => {
 
   it("reports tool-family, setup-client, and schema fact drift", async () => {
     const catalog = await createProductCatalog(root);
-    const firstFamily = catalog.tools.families[0];
-    if (firstFamily === undefined) throw new TypeError("Missing tool family");
+    const artifactFamily = catalog.tools.families.find(
+      ({ id }) => id === "artifact",
+    );
+    if (artifactFamily === undefined)
+      throw new TypeError("Missing artifact family");
     const drifted = {
       ...catalog,
       tools: {
         ...catalog.tools,
-        families: [
-          { ...firstFamily, count: firstFamily.count + 1 },
-          ...catalog.tools.families.slice(1),
-        ],
+        families: catalog.tools.families.map((family) =>
+          family.id === artifactFamily.id
+            ? { ...family, count: family.count + 1 }
+            : family,
+        ),
       },
       setup_clients: [
         ...catalog.setup_clients,

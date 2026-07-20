@@ -18,6 +18,9 @@ import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 import {
   requireCurrentDocument,
   requireSafeDiagnostics,
+  verifyAbsentFixtureValues,
+  verifyLanguageFixture,
+  verifyNamedFixture,
   verifyRealHopperFixture,
 } from "./lib/real-hopper-semantic.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
@@ -423,6 +426,74 @@ try {
     "binary_overview after target switch",
   );
   const secondAnalysis = await verifyCurrentTarget(client, options);
+  const versionV1 = await verifyNamedFixture({
+    client,
+    options,
+    target: fixtureTargets.versionV1,
+    expectations: fixtureTargets.versionV1Expectations,
+    normalizedResult: requireSuccessfulTool,
+  });
+  const versionV2 = await verifyNamedFixture({
+    client,
+    options,
+    target: fixtureTargets.versionV2,
+    expectations: fixtureTargets.versionV2Expectations,
+    normalizedResult: requireSuccessfulTool,
+  });
+  await verifyAbsentFixtureValues({
+    client,
+    options,
+    target: fixtureTargets.versionV1,
+    symbols: ["_rea_added"],
+    strings: ["REA_VERSION_TWO"],
+    normalizedResult: requireSuccessfulTool,
+  });
+  await verifyAbsentFixtureValues({
+    client,
+    options,
+    target: fixtureTargets.versionV2,
+    strings: ["REA_VERSION_ONE"],
+    normalizedResult: requireSuccessfulTool,
+  });
+  const objc = await verifyLanguageFixture({
+    client,
+    options,
+    target: fixtureTargets.objc,
+    expectations: fixtureTargets.objcExpectations,
+    operations: ["get_objc_classes", "get_objc_protocols"],
+    semanticExpectations: {
+      get_objc_classes: ["REAWidget"],
+      get_objc_protocols: ["REAWidgetDelegate"],
+    },
+    normalizedResult: requireSuccessfulTool,
+  });
+  const napi = await verifyNamedFixture({
+    client,
+    options,
+    target: fixtureTargets.napi,
+    expectations: fixtureTargets.napiExpectations,
+    normalizedResult: requireSuccessfulTool,
+  });
+  const swift =
+    fixtureTargets.swift === undefined ||
+    fixtureTargets.swiftExpectations === undefined
+      ? null
+      : await verifyLanguageFixture({
+          client,
+          options,
+          target: fixtureTargets.swift,
+          expectations: fixtureTargets.swiftExpectations,
+          operations: ["analyze_swift_types"],
+          semanticExpectations: {
+            analyze_swift_types: [
+              "REAService",
+              "REARecord",
+              "REAState",
+              "REAProtocol",
+            ],
+          },
+          normalizedResult: requireSuccessfulTool,
+        });
   const largePagination = await openAndVerifyLargeFixture({
     client,
     options,
@@ -462,15 +533,38 @@ try {
     segmentCount: firstOverview.segment_count,
     analyses: [firstAnalysis, secondAnalysis],
     fixtureAnalysis,
+    versionFixtures: { versionV1, versionV2 },
+    languageFixtures: { objc, napi, swift },
     largePagination,
     fixtureManifest: fixtureTargets.manifestPath,
+    fixtureCompilers: fixtureTargets.compilers,
     bundledMcpRunning,
     stderrBytes,
     diagnosticCount,
     dynamicSession: true,
     providerBinding,
-    targets: [targetA, targetB, largeTarget],
-    targetHashes: [targetHashA, targetHashB, fixtureTargets.large.sha256],
+    targets: [
+      targetA,
+      fixtureTargets.versionV1.path,
+      targetB,
+      fixtureTargets.objc.path,
+      fixtureTargets.napi.path,
+      ...(fixtureTargets.swift === undefined
+        ? []
+        : [fixtureTargets.swift.path]),
+      largeTarget,
+    ],
+    targetHashes: [
+      targetHashA,
+      fixtureTargets.versionV1.sha256,
+      targetHashB,
+      fixtureTargets.objc.sha256,
+      fixtureTargets.napi.sha256,
+      ...(fixtureTargets.swift === undefined
+        ? []
+        : [fixtureTargets.swift.sha256]),
+      fixtureTargets.large.sha256,
+    ],
     switched: true,
     secondOverview: verifiedSecondOverview,
   };

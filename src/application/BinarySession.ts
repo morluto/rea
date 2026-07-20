@@ -4,7 +4,6 @@ import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import {
   AnalysisCapabilityUnavailableError,
   EvidenceIntegrityError,
@@ -57,7 +56,10 @@ import {
   unknownEvidenceLinks,
   unknownMutationEvidence,
 } from "./UnknownEvidence.js";
-import type { BinarySessionPort } from "./BinarySessionPort.js";
+import type {
+  BinarySessionOpenOptions,
+  BinarySessionPort,
+} from "./BinarySessionPort.js";
 import {
   parseInvestigationWorkspace,
   type InvestigationWorkspace,
@@ -75,6 +77,21 @@ const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
 
+interface ActiveBinarySession {
+  readonly target: BinaryTarget;
+  readonly client: AnalysisClient;
+  readonly profile: AnalysisProfileCommitment | null;
+  readonly compatibility: Readonly<Record<string, JsonValue>>;
+  readonly route: SessionProviderRoute;
+}
+
+interface ExecutionPlan {
+  readonly capability: CapabilityDescriptor | undefined;
+  readonly profile: AnalysisProfileCommitment | undefined;
+  readonly cacheable: boolean;
+  readonly cached: AnalysisExecution | undefined;
+}
+
 /**
  * Owns the single active target shared by CLI and MCP adapters.
  *
@@ -83,15 +100,7 @@ const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
  * of retaining a client whose resources were already shut down.
  */
 export class BinarySession implements BinarySessionPort {
-  #active:
-    | {
-        readonly target: BinaryTarget;
-        readonly client: AnalysisClient;
-        readonly profile: AnalysisProfileCommitment | null;
-        readonly compatibility: Readonly<Record<string, JsonValue>>;
-        readonly route: SessionProviderRoute;
-      }
-    | undefined;
+  #active: ActiveBinarySession | undefined;
   #transition: Promise<void> = Promise.resolve();
   readonly #calls = new Set<Promise<unknown>>();
   readonly #providerRouter: SessionProviderRouter;
@@ -404,12 +413,7 @@ export class BinarySession implements BinarySessionPort {
    */
   open(
     path: string,
-    options: {
-      readonly signal?: AbortSignal;
-      readonly targetKind?: BinaryTarget["kind"];
-      readonly snapshot?: AnalysisSnapshot;
-      readonly providerId?: AnalysisProviderSelector;
-    } = {},
+    options: BinarySessionOpenOptions = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async () => {
       if (isAborted(options.signal))
@@ -421,96 +425,135 @@ export class BinarySession implements BinarySessionPort {
         options.targetKind,
       );
       if (!parsed.ok) return parsed;
-      const sameTarget =
-        this.#active?.target.path === parsed.value.path &&
-        snapshotMatchesTarget(
-          snapshotTarget(this.#active.target),
-          parsed.value,
-        );
-      const resolvedRoute =
-        sameTarget &&
-        options.providerId === undefined &&
-        this.#active !== undefined
-          ? ok(this.#active.route)
-          : await this.#providerRouter.resolve(
-              parsed.value,
-              options.providerId,
-              options.signal,
-            );
-      if (!resolvedRoute.ok) return resolvedRoute;
-      const route = resolvedRoute.value;
-      const { profile, compatibility } = route;
-      if (
-        options.snapshot !== undefined &&
-        (profile === null ||
-          !snapshotMatchesBinding(options.snapshot, parsed.value, profile))
-      )
-        return err(
-          new EvidenceIntegrityError(
-            "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the requested binary",
-          ),
-        );
-      if (
-        this.#active === undefined &&
-        !this.#snapshot.matches(parsed.value, profile ?? undefined)
-      )
-        return err(
-          new EvidenceIntegrityError(
-            "Analysis snapshot profile_mismatch: staged target, provider, or analysis profile does not match",
-          ),
-        );
-      if (isAborted(options.signal))
-        return err(new AnalysisCancelledError("open_binary"));
-      const activeProfile = this.#active?.profile;
-      const sameProfile =
-        activeProfile === null || activeProfile === undefined
-          ? profile === null
-          : profile !== null && analysisProfilesEqual(activeProfile, profile);
-      if (sameTarget && sameProfile) {
-        if (options.snapshot !== undefined) {
-          const imported = this.importAnalysisSnapshot(options.snapshot);
-          if (!imported.ok) return imported;
-        }
-        return ok(parsed.value);
-      }
-      await this.#drainCalls();
-      const previous = this.#active;
-      this.#active = undefined;
-      await previous?.client.close();
-      const client = route.createClient(parsed.value);
-      const started = await client.execute("health", {}, options);
-      if (!started.ok) {
-        await client.close();
-        await this.#restore(previous);
-        return started;
-      }
-      if (isAborted(options.signal)) {
-        await client.close();
-        await this.#restore(previous);
-        return err(new AnalysisCancelledError("open_binary"));
-      }
-      this.#active = {
-        target: parsed.value,
-        client,
-        profile,
-        compatibility: structuredClone(compatibility),
-        route,
-      };
-      this.#clearRuntimeAvailability();
-      if (profile === null) this.#snapshot.clear();
-      else this.#snapshot.select(parsed.value, profile);
+      return this.#openTarget(parsed.value, options);
+    });
+  }
+
+  async #openTarget(
+    target: BinaryTarget,
+    options: BinarySessionOpenOptions,
+  ): Promise<Result<BinaryTarget, AnalysisError>> {
+    const sameTarget = this.#isSameTarget(target);
+    const resolvedRoute = await this.#resolveOpenRoute(
+      target,
+      sameTarget,
+      options,
+    );
+    if (!resolvedRoute.ok) return resolvedRoute;
+    const route = resolvedRoute.value;
+    const { profile, compatibility } = route;
+    const snapshotValidation = this.#validateOpenSnapshot(
+      target,
+      profile,
+      options.snapshot,
+    );
+    if (!snapshotValidation.ok) return snapshotValidation;
+    if (isAborted(options.signal))
+      return err(new AnalysisCancelledError("open_binary"));
+    if (sameTarget && this.#isSameProfile(profile)) {
       if (options.snapshot !== undefined) {
         const imported = this.importAnalysisSnapshot(options.snapshot);
-        if (!imported.ok) {
-          this.#active = undefined;
-          await client.close();
-          await this.#restore(previous);
-          return imported;
-        }
+        if (!imported.ok) return imported;
       }
-      this.#snapshotInvalidated = false;
-      return ok(parsed.value);
-    });
+      return ok(target);
+    }
+    await this.#drainCalls();
+    const previous = this.#active;
+    this.#active = undefined;
+    await previous?.client.close();
+    const client = route.createClient(target);
+    const started = await client.execute("health", {}, options);
+    if (!started.ok) {
+      await client.close();
+      await this.#restore(previous);
+      return started;
+    }
+    if (isAborted(options.signal)) {
+      await client.close();
+      await this.#restore(previous);
+      return err(new AnalysisCancelledError("open_binary"));
+    }
+    this.#active = {
+      target,
+      client,
+      profile,
+      compatibility: structuredClone(compatibility),
+      route,
+    };
+    this.#clearRuntimeAvailability();
+    if (profile === null) this.#snapshot.clear();
+    else this.#snapshot.select(target, profile);
+    if (options.snapshot !== undefined) {
+      const imported = this.importAnalysisSnapshot(options.snapshot);
+      if (!imported.ok) {
+        this.#active = undefined;
+        await client.close();
+        await this.#restore(previous);
+        return imported;
+      }
+    }
+    this.#snapshotInvalidated = false;
+    return ok(target);
+  }
+
+  #isSameTarget(target: BinaryTarget): boolean {
+    const active = this.#active;
+    return (
+      active !== undefined &&
+      active.target.path === target.path &&
+      snapshotMatchesTarget(snapshotTarget(active.target), target)
+    );
+  }
+
+  #resolveOpenRoute(
+    target: BinaryTarget,
+    sameTarget: boolean,
+    options: BinarySessionOpenOptions,
+  ): Promise<Result<SessionProviderRoute, AnalysisError>> {
+    if (
+      sameTarget &&
+      options.providerId === undefined &&
+      this.#active !== undefined
+    )
+      return Promise.resolve(ok(this.#active.route));
+    return this.#providerRouter.resolve(
+      target,
+      options.providerId,
+      options.signal,
+    );
+  }
+
+  #validateOpenSnapshot(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | null,
+    snapshot: AnalysisSnapshot | undefined,
+  ): Result<undefined, EvidenceIntegrityError> {
+    if (
+      snapshot !== undefined &&
+      (profile === null || !snapshotMatchesBinding(snapshot, target, profile))
+    )
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the requested binary",
+        ),
+      );
+    if (
+      this.#active === undefined &&
+      !this.#snapshot.matches(target, profile ?? undefined)
+    )
+      return err(
+        new EvidenceIntegrityError(
+          "Analysis snapshot profile_mismatch: staged target, provider, or analysis profile does not match",
+        ),
+      );
+    return ok(undefined);
+  }
+
+  #isSameProfile(profile: AnalysisProfileCommitment | null): boolean {
+    const activeProfile = this.#active?.profile;
+    if (activeProfile === null || activeProfile === undefined)
+      return profile === null;
+    return profile !== null && analysisProfilesEqual(activeProfile, profile);
   }
 
   /** Close the active target, if any. */
@@ -632,6 +675,39 @@ export class BinarySession implements BinarySessionPort {
     if (!transitioned.ok) return transitioned;
     const active = this.#active;
     if (active === undefined) return err(new NoBinaryOpenError());
+    const prepared = this.#prepareExecution(active, name, arguments_);
+    if (!prepared.ok) return prepared;
+    const { capability, profile, cacheable, cached } = prepared.value;
+    if (cached !== undefined) return ok(cached);
+    const call = active.client.execute(name, arguments_, options);
+    this.#calls.add(call);
+    try {
+      const result = await call;
+      const profiled = commitExecutionProfile(name, result, profile);
+      this.#observeRuntimeAvailability(name, profiled);
+      if (profiled.ok && cacheable && profile !== undefined)
+        this.#snapshot.record({
+          target: active.target,
+          profile,
+          operation: name,
+          parameters: arguments_,
+          execution: profiled.value,
+        });
+      else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
+        this.#snapshot.clear();
+        this.#snapshotInvalidated = true;
+      }
+      return profiled;
+    } finally {
+      this.#calls.delete(call);
+    }
+  }
+
+  #prepareExecution(
+    active: ActiveBinarySession,
+    name: AnalysisOperation,
+    arguments_: Readonly<Record<string, JsonValue>>,
+  ): Result<ExecutionPlan, AnalysisError> {
     const capability = active.route.capabilities?.get(name);
     if (
       active.route.capabilities !== undefined &&
@@ -662,29 +738,7 @@ export class BinarySession implements BinarySessionPort {
     const cached = cacheable
       ? this.#snapshot.lookup(active.target, profile, name, arguments_)
       : undefined;
-    if (cached !== undefined) return ok(cached);
-    const call = active.client.execute(name, arguments_, options);
-    this.#calls.add(call);
-    try {
-      const result = await call;
-      const profiled = commitExecutionProfile(name, result, profile);
-      this.#observeRuntimeAvailability(name, profiled);
-      if (profiled.ok && cacheable)
-        this.#snapshot.record({
-          target: active.target,
-          profile,
-          operation: name,
-          parameters: arguments_,
-          execution: profiled.value,
-        });
-      else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
-        this.#snapshot.clear();
-        this.#snapshotInvalidated = true;
-      }
-      return profiled;
-    } finally {
-      this.#calls.delete(call);
-    }
+    return ok({ capability, profile, cacheable, cached });
   }
 
   #observeRuntimeAvailability(

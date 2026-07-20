@@ -93,6 +93,16 @@ describe("runtime configuration", () => {
     );
   });
 
+  it("parses an optional absolute BYO jadx path", () => {
+    expect(
+      parseConfig({ REA_JADX_CMD_PATH: "/opt/jadx/bin/jadx" }),
+    ).toMatchObject({
+      ok: true,
+      value: { jadxCmdPath: "/opt/jadx/bin/jadx" },
+    });
+    expect(parseConfig({ REA_JADX_CMD_PATH: "relative/jadx" }).ok).toBe(false);
+  });
+
   it("builds a separate Electron endpoint and file-root ceiling", () => {
     const result = parseConfig({
       REA_ELECTRON_OBSERVE_ENABLED: "true",

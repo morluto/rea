@@ -564,24 +564,20 @@ export interface WindowsOwnedProcessInput
   readonly limits: WindowsOwnedProcessLimits;
 }
 
-const parseAdmittedFileObservation = (
+const parseAdmittedObservation = <
+  TObservation extends Omit<
+    WindowsAdmittedPathObservation<"file" | "directory">,
+    "stableIdentity"
+  >,
+>(
+  schema: z.ZodType<TObservation>,
   value: unknown,
   requestedPath: string,
-): Result<WindowsAdmittedFileObservation, WindowsNativeAuthorityError> => {
-  const parsed = admittedFileObservationSchema.safeParse(value);
-  if (!parsed.success || parsed.data.requestedPath !== requestedPath)
-    return malformedAdmissionObservation();
-  return ok({
-    ...parsed.data,
-    stableIdentity: stablePathIdentity(parsed.data),
-  });
-};
-
-const parseAdmittedDirectoryObservation = (
-  value: unknown,
-  requestedPath: string,
-): Result<WindowsAdmittedDirectoryObservation, WindowsNativeAuthorityError> => {
-  const parsed = admittedDirectoryObservationSchema.safeParse(value);
+): Result<
+  TObservation & { readonly stableIdentity: string },
+  WindowsNativeAuthorityError
+> => {
+  const parsed = schema.safeParse(value);
   if (!parsed.success || parsed.data.requestedPath !== requestedPath)
     return malformedAdmissionObservation();
   return ok({
@@ -683,6 +679,57 @@ const malformedAdmissionObservation = <T>(): Result<
     ),
   );
 
+const completePathAdmission = async <
+  TObservation extends Omit<
+    WindowsAdmittedPathObservation<"file" | "directory">,
+    "stableIdentity"
+  >,
+>(
+  input: Readonly<{
+    authority: WindowsNativeAuthority;
+    admitted: Result<
+      WindowsNativeAdmittedFile | WindowsNativeAdmittedDirectory,
+      WindowsNativeAuthorityError
+    >;
+    schema: z.ZodType<TObservation>;
+    requestedPath: string;
+  }>,
+): Promise<
+  Result<
+    TObservation & {
+      readonly stableIdentity: string;
+      close(): Promise<Result<void, WindowsNativeAuthorityError>>;
+    },
+    WindowsNativeAuthorityError
+  >
+> => {
+  const admitted = input.admitted;
+  if (!admitted.ok) return admitted;
+  const observation = parseAdmittedObservation(
+    input.schema,
+    admitted.value.observation,
+    input.requestedPath,
+  );
+  if (!observation.ok) {
+    await poisonAliasedToken(admitted.value.resource, () =>
+      admitted.value.resource.close(),
+    );
+    return observation;
+  }
+  const resource = createResource({
+    authority: input.authority,
+    operation: "admit_path",
+    kind: observation.value.kind,
+    observation: observation.value,
+    backend: admitted.value.resource,
+  });
+  if (!resource.ok)
+    await poisonAliasedToken(admitted.value.resource, () =>
+      admitted.value.resource.close(),
+    );
+  return resource;
+};
+
 /** Application-owned authority wrapper that scopes every native resource. */
 export class WindowsNativeAuthority {
   constructor(readonly backend: WindowsNativeAuthorityBackend) {}
@@ -719,60 +766,24 @@ export class WindowsNativeAuthority {
     };
 
     if (input.kind === "file") {
-      const admitted = await this.backend.admitFile(
-        admissionInput as WindowsPathAdmissionInput<"file">,
-      );
-      if (!admitted.ok) return admitted;
-      const observation = parseAdmittedFileObservation(
-        admitted.value.observation,
-        admissionInput.path,
-      );
-      if (!observation.ok) {
-        await poisonAliasedToken(admitted.value.resource, () =>
-          admitted.value.resource.close(),
-        );
-        return observation;
-      }
-      const resource = createResource({
+      return completePathAdmission({
         authority: this,
-        operation: "admit_path",
-        kind: "file",
-        observation: observation.value,
-        backend: admitted.value.resource,
+        admitted: await this.backend.admitFile(
+          admissionInput as WindowsPathAdmissionInput<"file">,
+        ),
+        schema: admittedFileObservationSchema,
+        requestedPath: admissionInput.path,
       });
-      if (!resource.ok)
-        await poisonAliasedToken(admitted.value.resource, () =>
-          admitted.value.resource.close(),
-        );
-      return resource;
     }
 
-    const admitted = await this.backend.admitDirectory(
-      admissionInput as WindowsPathAdmissionInput<"directory">,
-    );
-    if (!admitted.ok) return admitted;
-    const observation = parseAdmittedDirectoryObservation(
-      admitted.value.observation,
-      admissionInput.path,
-    );
-    if (!observation.ok) {
-      await poisonAliasedToken(admitted.value.resource, () =>
-        admitted.value.resource.close(),
-      );
-      return observation;
-    }
-    const resource = createResource({
+    return completePathAdmission({
       authority: this,
-      operation: "admit_path",
-      kind: "directory",
-      observation: observation.value,
-      backend: admitted.value.resource,
+      admitted: await this.backend.admitDirectory(
+        admissionInput as WindowsPathAdmissionInput<"directory">,
+      ),
+      schema: admittedDirectoryObservationSchema,
+      requestedPath: admissionInput.path,
     });
-    if (!resource.ok)
-      await poisonAliasedToken(admitted.value.resource, () =>
-        admitted.value.resource.close(),
-      );
-    return resource;
   }
 
   /** Create and verify a protected runtime root beneath owned authority. */
@@ -907,19 +918,21 @@ export class WindowsNativeAuthority {
 }
 
 const registerBackend = (
-  authority: WindowsNativeAuthority,
-  kind: ResourceKind,
-  backend: WindowsNativeBackendResource,
-  operation: WindowsNativeAuthorityOperation,
-  closeBackend: ResourceState["closeBackend"],
+  input: Readonly<{
+    authority: WindowsNativeAuthority;
+    kind: ResourceKind;
+    backend: WindowsNativeBackendResource;
+    operation: WindowsNativeAuthorityOperation;
+    closeBackend: ResourceState["closeBackend"];
+  }>,
 ): Result<ResourceState, WindowsNativeAuthorityError> => {
-  const existing = backendTokenStates.get(backend);
+  const existing = backendTokenStates.get(input.backend);
   if (existing !== undefined) {
     return err(
       new WindowsNativeAuthorityError(
-        operation,
+        input.operation,
         "native_contract_mismatch",
-        existing.kind === kind
+        existing.kind === input.kind
           ? "Windows native backend token is already registered"
           : "Windows native backend token is registered with a different kind",
       ),
@@ -927,14 +940,14 @@ const registerBackend = (
   }
 
   const state: ResourceState = {
-    owner: authority,
-    backend,
-    closeBackend,
-    kind,
+    owner: input.authority,
+    backend: input.backend,
+    closeBackend: input.closeBackend,
+    kind: input.kind,
     status: "open",
     leaseCount: 0,
   };
-  backendTokenStates.set(backend, state);
+  backendTokenStates.set(input.backend, state);
   return ok(state);
 };
 
@@ -1173,13 +1186,13 @@ const createResource = <TObservation extends object>(
   },
   WindowsNativeAuthorityError
 > => {
-  const stateResult = registerBackend(
-    input.authority,
-    input.kind,
-    input.backend,
-    input.operation,
-    () => input.backend.close(),
-  );
+  const stateResult = registerBackend({
+    authority: input.authority,
+    kind: input.kind,
+    backend: input.backend,
+    operation: input.operation,
+    closeBackend: () => input.backend.close(),
+  });
   if (!stateResult.ok) return stateResult;
   const resource = {
     ...input.observation,
@@ -1213,16 +1226,16 @@ const createOwnedProcess = (
     ...ownership.data,
     policySha256: jobOwnershipPolicySha256(ownership.data),
   };
-  const stateResult = registerBackend(
+  const stateResult = registerBackend({
     authority,
-    "process",
+    kind: "process",
     backend,
-    "spawn_owned_process",
-    () =>
+    operation: "spawn_owned_process",
+    closeBackend: () =>
       closeOwnedProcess(backend).then((result) =>
         result.ok ? ok(undefined) : result,
       ),
-  );
+  });
   if (!stateResult.ok) return stateResult;
   const state = stateResult.value;
 

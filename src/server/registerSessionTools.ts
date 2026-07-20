@@ -582,13 +582,13 @@ const registerLifecycleTools = ({
       return toCallToolResult(closed, closeContract);
     },
   );
-  registerSessionStatusTool(
+  registerSessionStatusTool({
     server,
     session,
-    statusContract,
+    contract: statusContract,
     startedAt,
     availabilityPolicy,
-  );
+  });
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */

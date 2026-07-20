@@ -9,6 +9,9 @@ import {
 } from "./application/DirectAnalysis.js";
 import { compareManagedMemberPaths } from "./application/ManagedMemberComparisonService.js";
 import { projectManagedApplicationGraphEvidence } from "./application/ManagedApplicationGraphService.js";
+import { projectAppleApplicationEvidence } from "./application/AppleApplicationService.js";
+import { projectAndroidApplicationEvidence } from "./application/AndroidApplicationService.js";
+import { identifyRuntimeEvidence } from "./application/RuntimeIdentificationService.js";
 import { verifyManagedNativeBoundariesEvidence } from "./application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "./application/ManagedReconstructionService.js";
 import { planManagedRuntimeCorrelationEvidence } from "./application/ManagedRuntimeCorrelationService.js";
@@ -38,9 +41,10 @@ import { registerApplicationCommands } from "./cliApplicationCommands.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import {
-  analysisProviderSelectorSchema,
-  type AnalysisProviderSelector,
-} from "./contracts/providerSelection.js";
+  directAnalysisOptions,
+  providerSelectionOption,
+} from "./cliDirectAnalysisOptions.js";
+import { registerEnhancedAnalysisCommands } from "./cliEnhancedCommands.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import {
   conciseSetupResult,
@@ -86,6 +90,7 @@ export const createCli = (): ReturnType<typeof Cli.create> => {
   registerSearchCommand(cli, logger);
   registerXrefsCommand(cli, logger);
   registerTraceCommand(cli, logger);
+  registerEnhancedAnalysisCommands(cli, logger);
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
   registerArtifactCommands(cli, logger);
@@ -1183,6 +1188,65 @@ const registerManagedCommands = (
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
+  cli.command(CLI_COMMANDS.projectAppleApplicationGraph, {
+    description:
+      "Project authenticated IPA inventory Evidence into an Apple application graph",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline Apple application projection JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "project-apple-application-graph", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "project-apple-application-graph",
+        );
+        if (!input.ok) return input.error;
+        const result = projectAppleApplicationEvidence(input.value);
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
+  cli.command(CLI_COMMANDS.projectAndroidApplicationGraph, {
+    description:
+      "Project authenticated APK inventory Evidence into an Android application graph",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe(
+          "Inline Android application projection JSON or JSON file path",
+        ),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "project-android-application-graph", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "project-android-application-graph",
+        );
+        if (!input.ok) return input.error;
+        const result = projectAndroidApplicationEvidence(input.value);
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
+  cli.command(CLI_COMMANDS.identifyRuntime, {
+    description:
+      "Identify runtime families from authenticated artifact inventory Evidence",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe("Inline runtime-identification JSON or JSON file path"),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, "identify-runtime", async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "identify-runtime",
+        );
+        if (!input.ok) return input.error;
+        const result = identifyRuntimeEvidence(input.value);
+        return result.ok ? result.value : projectAnalysisError(result.error);
+      }),
+  });
 };
 
 const registerNativeCommands = (
@@ -1244,19 +1308,3 @@ const registerNativeCommands = (
       ),
   });
 };
-
-const providerSelectionOption = analysisProviderSelectorSchema
-  .optional()
-  .describe(
-    "Bind deep analysis to a provider ID or use deterministic auto selection",
-  );
-
-const directAnalysisOptions = (
-  logger: Logger,
-  snapshotPath: string | undefined,
-  providerId: AnalysisProviderSelector | undefined,
-) => ({
-  logger,
-  snapshotPath,
-  ...(providerId === undefined ? {} : { providerId }),
-});

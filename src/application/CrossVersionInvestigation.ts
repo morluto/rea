@@ -313,15 +313,13 @@ const ensureComparisonCheckpoint = async (
     ],
     comparison_evidence_id: evidence.evidence_id,
   });
-  const saved = await checkpoint({
-    path: input.workspace_path,
-    name: input.workspace_name,
-    current: state.workspace,
-    records: [evidence],
+  return checkpointRunEvidence({
+    input,
+    workspace: state.workspace,
+    evidence,
     run,
     policy,
   });
-  return saved.ok ? ok({ workspace: saved.value, run }) : saved;
 };
 
 const finalizeInvestigation = async (
@@ -348,15 +346,42 @@ const finalizeInvestigation = async (
     ],
     result_evidence_id: evidence.evidence_id,
   });
+  const saved = await checkpointRunEvidence({
+    input,
+    workspace: state.workspace,
+    evidence,
+    run,
+    policy,
+  });
+  return saved.ok
+    ? completeOutcome(saved.value.workspace, saved.value.run, false, session)
+    : saved;
+};
+
+interface RunEvidenceCheckpoint {
+  readonly input: CrossVersionInvestigationInput;
+  readonly workspace: InvestigationWorkspace;
+  readonly evidence: Evidence;
+  readonly run: InvestigationRun;
+  readonly policy: EvidenceFilePolicy;
+}
+
+const checkpointRunEvidence = async ({
+  input,
+  workspace,
+  evidence,
+  run,
+  policy,
+}: RunEvidenceCheckpoint): Promise<Result<RunState, AnalysisError>> => {
   const saved = await checkpoint({
     path: input.workspace_path,
     name: input.workspace_name,
-    current: state.workspace,
+    current: workspace,
     records: [evidence],
     run,
     policy,
   });
-  return saved.ok ? completeOutcome(saved.value, run, false, session) : saved;
+  return saved.ok ? ok({ workspace: saved.value, run }) : saved;
 };
 
 const comparisonEvidenceFor = (

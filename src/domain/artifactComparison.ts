@@ -223,40 +223,26 @@ const classifyPath = (input: {
   readonly complete: boolean;
   readonly evidenceLinks: readonly string[];
 }): ArtifactChange | null => {
-  const base = {
-    logical_path: input.path,
-    left_occurrence_id: input.leftOccurrence?.occurrence_id ?? null,
-    right_occurrence_id: input.rightOccurrence?.occurrence_id ?? null,
-    left_artifact_id: input.leftOccurrence?.artifact_id ?? null,
-    right_artifact_id: input.rightOccurrence?.artifact_id ?? null,
-    evidence_links: [...input.evidenceLinks],
-  };
-  if (input.leftOccurrence === undefined)
-    return {
-      ...base,
-      classification: input.complete ? "added" : "unknown",
-      dimensions: [input.complete ? "content" : "availability"],
-    };
-  if (input.rightOccurrence === undefined)
-    return {
-      ...base,
-      classification: input.complete ? "removed" : "unknown",
-      dimensions: [input.complete ? "content" : "availability"],
-    };
-  if (
-    input.leftOccurrence.hash_status === "mismatched" ||
-    input.rightOccurrence.hash_status === "mismatched"
-  )
+  const base = artifactChangeBase(input);
+  const leftOccurrence = input.leftOccurrence;
+  const rightOccurrence = input.rightOccurrence;
+  if (leftOccurrence === undefined)
+    return missingOccurrenceChange(base, "added", input.complete);
+  if (rightOccurrence === undefined)
+    return missingOccurrenceChange(base, "removed", input.complete);
+  if (hasIntegrityContradiction(leftOccurrence, rightOccurrence))
     return {
       ...base,
       classification: "contradiction",
       dimensions: ["integrity"],
     };
   if (
-    input.leftOccurrence.hash_status !== "verified" ||
-    input.rightOccurrence.hash_status !== "verified" ||
-    input.leftNode === undefined ||
-    input.rightNode === undefined
+    hasUnavailableComparisonInput({
+      leftOccurrence,
+      rightOccurrence,
+      leftNode: input.leftNode,
+      rightNode: input.rightNode,
+    })
   )
     return { ...base, classification: "unknown", dimensions: ["availability"] };
   const dimensions = changedDimensions(input);
@@ -264,6 +250,49 @@ const classifyPath = (input: {
     ? null
     : { ...base, classification: "changed", dimensions };
 };
+
+type ArtifactChangeBase = Omit<ArtifactChange, "classification" | "dimensions">;
+
+const artifactChangeBase = (input: {
+  readonly path: string;
+  readonly leftOccurrence: ArtifactOccurrence | undefined;
+  readonly rightOccurrence: ArtifactOccurrence | undefined;
+  readonly evidenceLinks: readonly string[];
+}): ArtifactChangeBase => ({
+  logical_path: input.path,
+  left_occurrence_id: input.leftOccurrence?.occurrence_id ?? null,
+  right_occurrence_id: input.rightOccurrence?.occurrence_id ?? null,
+  left_artifact_id: input.leftOccurrence?.artifact_id ?? null,
+  right_artifact_id: input.rightOccurrence?.artifact_id ?? null,
+  evidence_links: [...input.evidenceLinks],
+});
+
+const missingOccurrenceChange = (
+  base: ArtifactChangeBase,
+  completeClassification: "added" | "removed",
+  complete: boolean,
+): ArtifactChange => ({
+  ...base,
+  classification: complete ? completeClassification : "unknown",
+  dimensions: [complete ? "content" : "availability"],
+});
+
+const hasIntegrityContradiction = (
+  left: ArtifactOccurrence,
+  right: ArtifactOccurrence,
+): boolean =>
+  left.hash_status === "mismatched" || right.hash_status === "mismatched";
+
+const hasUnavailableComparisonInput = (input: {
+  readonly leftOccurrence: ArtifactOccurrence;
+  readonly rightOccurrence: ArtifactOccurrence;
+  readonly leftNode: ArtifactNode | undefined;
+  readonly rightNode: ArtifactNode | undefined;
+}): boolean =>
+  input.leftOccurrence.hash_status !== "verified" ||
+  input.rightOccurrence.hash_status !== "verified" ||
+  input.leftNode === undefined ||
+  input.rightNode === undefined;
 
 const changedDimensions = (input: {
   readonly leftNode: ArtifactNode | undefined;

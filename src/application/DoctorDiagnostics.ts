@@ -46,6 +46,8 @@ export const collectDoctorDiagnostics = async (
   if (javascriptReplayCheck !== undefined) checks.push(javascriptReplayCheck);
   const ilspyCheck = await optionalIlspyCheck(host);
   if (ilspyCheck !== undefined) checks.push(ilspyCheck);
+  const jadxCheck = await optionalJadxCheck(host);
+  if (jadxCheck !== undefined) checks.push(jadxCheck);
   const hopperDemoCheck = await optionalHopperDemoCheck(host, hopperPath);
   if (hopperDemoCheck !== undefined) checks.push(hopperDemoCheck);
   const targetCheck = await optionalTargetCheck(target, host);
@@ -245,6 +247,25 @@ const optionalIlspyCheck = async (
     {
       remediation:
         "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+      classification: "config_drift",
+    },
+  );
+};
+
+const optionalJadxCheck = async (
+  host: DoctorHost,
+): Promise<DoctorCheck | undefined> => {
+  if (host.configuredJadxCmdPath === undefined) return undefined;
+  const version = await host.jadxCmdVersion?.(host.configuredJadxCmdPath);
+  return check(
+    "jadx",
+    version !== undefined,
+    version === undefined
+      ? host.configuredJadxCmdPath
+      : `${host.configuredJadxCmdPath} (${version})`,
+    {
+      remediation:
+        "Unset REA_JADX_CMD_PATH or point it at a runnable jadx executable.",
       classification: "config_drift",
     },
   );

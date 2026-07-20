@@ -46,7 +46,7 @@ const MAX_CANONICAL_BYTES = 32 * 1024 * 1024;
 const providers = {
   behavioral: {
     operation: "compare_process_captures",
-    predicate: "rea.process-comparison/v3",
+    predicate: "rea.process-comparison/v4",
     id: "rea-process",
     name: "REA deterministic process harness",
   },
@@ -232,7 +232,7 @@ const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
     evidence.predicate_type !== expected.predicate ||
     evidence.provider.id !== expected.id ||
     evidence.provider.name !== expected.name ||
-    evidence.provider.version !== (claim.kind === "behavioral" ? "3" : "1") ||
+    evidence.provider.version !== (claim.kind === "behavioral" ? "4" : "1") ||
     evidence.confidence !== "derived" ||
     evidence.authority !== "analyst-inference" ||
     evidence.subject !== null

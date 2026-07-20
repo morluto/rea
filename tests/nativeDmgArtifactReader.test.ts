@@ -11,9 +11,9 @@ import {
 
 describe("native DMG artifact reader", () => {
   it("uses plist attachment metadata and detaches returned devices", async () => {
-    if (process.platform !== "darwin") return;
     const calls: string[][] = [];
     const host: NativeDmgHost = {
+      platform: "darwin",
       async run(arguments_) {
         const args = [...arguments_];
         calls.push(args);
@@ -51,14 +51,15 @@ describe("native DMG artifact reader", () => {
   });
 
   it("rejects non-zero results and surfaces detach failure during attach cleanup", async () => {
-    if (process.platform !== "darwin") return;
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        platform: "darwin",
         run: () => Promise.resolve({ stdout: "", exitCode: 1 }),
       }),
     ).rejects.toThrow("non-zero exit code");
 
     const host: NativeDmgHost = {
+      platform: "darwin",
       run(arguments_) {
         if (arguments_[0] === "detach")
           return Promise.reject(new Error("detach failed"));

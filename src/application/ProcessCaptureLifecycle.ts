@@ -10,6 +10,7 @@ import type {
   InteractionEvent,
   ProcessCapture,
   ProcessExecutionPolicy,
+  ProcessLifecycleEvent,
   ProcessPolicyDecision,
   ProcessSample,
   ProcessScenario,
@@ -39,6 +40,7 @@ import {
   assertRealPathAuthority,
 } from "./ProcessCaptureAuthority.js";
 import {
+  normalizeProcessEvents,
   normalizeProcessSamples,
   normalizeProcessText,
   redactProtocolEvents,
@@ -66,6 +68,7 @@ interface CaptureResultOptions {
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
   readonly samples: readonly ProcessSample[];
+  readonly processEvents: readonly ProcessLifecycleEvent[];
   readonly replay: LoopbackReplay;
   readonly before: SnapshotResult;
   readonly after: SnapshotResult;
@@ -80,6 +83,11 @@ interface CaptureResultOptions {
   readonly settlement: ProcessCapture["settlement"];
   readonly manifest: ProcessCapture["manifest"];
 }
+
+type ProcessSignal = NonNullable<ProcessLifecycleEvent["signal"]>;
+
+const isProcessSignal = (value: string): value is ProcessSignal =>
+  value === "SIGINT" || value === "SIGTERM" || value === "SIGKILL";
 
 export const buildCaptureResult = (
   options: CaptureResultOptions,
@@ -109,12 +117,40 @@ export const buildCaptureResult = (
     options.scenario,
     options.rootPid,
   ),
+  process_events: normalizeProcessEvents(
+    [
+      ...options.processEvents,
+      ...options.interactions
+        .filter(
+          (event) => event.type === "signal" && event.outcome === "dispatched",
+        )
+        .flatMap((event) =>
+          isProcessSignal(event.data)
+            ? [
+                {
+                  sequence: 0,
+                  at_ms: event.dispatched_at_ms,
+                  type: "signal_dispatched" as const,
+                  pid: options.rootPid,
+                  parent_pid: null,
+                  previous_parent_pid: null,
+                  signal: event.data,
+                },
+              ]
+            : [],
+        ),
+    ].sort((left, right) => left.at_ms - right.at_ms),
+    options.samples,
+    options.scenario,
+    options.rootPid,
+  ),
   filesystem_checkpoints: options.checkpoints,
   shim_events: options.shimEvents,
   protocol_events: redactProtocolEvents(
     options.replay.events,
     options.scenario,
   ),
+  replay_transitions: options.replay.transitions,
   files_before: options.before.files,
   files_after: options.after.files,
   filesystem_effects: classifyFilesystemEffects(

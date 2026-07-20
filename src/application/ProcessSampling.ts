@@ -1,8 +1,12 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ProcessSample } from "../domain/processCapture.js";
+import type {
+  ProcessLifecycleEvent,
+  ProcessSample,
+} from "../domain/processCapture.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
+import { recordProcessLifecycle } from "./ProcessLifecycleTracking.js";
 
 const execFileAsync = promisify(execFile);
 const PROC_READ_CONCURRENCY = 64;
@@ -261,16 +265,17 @@ const sampleLinux = async (
   if (limit <= 0) return [];
 
   const rootStat = await readProcessStat(rootPid, signal);
-  if (rootStat === undefined) return [];
   const rootChildren = await readLinuxChildren(rootPid, signal);
-  if (rootChildren === undefined) return samplePs(context);
+  if (rootStat !== undefined && rootChildren === undefined)
+    return samplePs(context);
 
   const rows: ProcessRow[] = [];
   const visited = new Set<number>([rootPid]);
   let level: Array<{
     readonly pid: number;
     readonly expectedParent: number | undefined;
-  }> = [{ pid: rootPid, expectedParent: undefined }];
+  }> =
+    rootStat === undefined ? [] : [{ pid: rootPid, expectedParent: undefined }];
 
   while (level.length > 0 && rows.length < limit) {
     const batchSize = Math.min(level.length, PROC_READ_CONCURRENCY);
@@ -300,6 +305,12 @@ const sampleLinux = async (
     }
 
     level.push(...nextLevel);
+  }
+
+  for (const pid of identities.keys()) {
+    if (rows.length >= limit || visited.has(pid)) continue;
+    const node = await inspectProcess(pid, undefined, signal, identities);
+    if (node !== undefined) rows.push(node);
   }
 
   return rows;
@@ -452,10 +463,13 @@ export const startProcessSampler = (options: {
   readonly started: number;
   readonly limit: number;
   readonly samples: ProcessSample[];
+  readonly events: ProcessLifecycleEvent[];
 }): (() => Promise<{ readonly partial: boolean }>) => {
-  const { rootPid, runId, started, limit, samples } = options;
+  const { rootPid, runId, started, limit, samples, events } = options;
   const identities = new Map<number, string>();
   const lastObservations = new Map<number, string>();
+  const previous = new Map<number, ProcessSample>();
+  const misses = new Map<number, number>();
   let pending: Promise<void> | undefined;
   let stopped = false;
   let abortCurrent: (() => void) | undefined;
@@ -488,6 +502,16 @@ export const startProcessSampler = (options: {
       });
     })()
       .then((values) => {
+        if (
+          !recordProcessLifecycle({
+            values,
+            events,
+            state: { previous, misses },
+            limit,
+            elapsedMs: Date.now() - started,
+          })
+        )
+          partial = true;
         for (const value of values) {
           const observation = JSON.stringify({
             parent_pid: value.parent_pid,

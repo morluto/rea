@@ -2,23 +2,27 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { err, ok, type Result } from "./result.js";
 
-/** Local capabilities governed by the shared REA permission policy. */
-export type PermissionCapability =
-  | "process_capture"
-  | "browser_observe"
-  | "electron_observe"
-  | "evidence_read"
-  | "evidence_write"
-  | "investigation_input"
-  | "investigation_workspace_read"
-  | "investigation_workspace_write"
-  | "snapshot_read"
-  | "snapshot_write"
-  | "artifact_extract"
-  | "native_mount"
-  | "reference_read"
-  | "javascript_replay"
-  | "managed_runtime";
+/** Canonical local capabilities governed by the shared REA permission policy. */
+export const PERMISSION_CAPABILITIES = [
+  "process_capture",
+  "browser_observe",
+  "electron_observe",
+  "evidence_read",
+  "evidence_write",
+  "investigation_input",
+  "investigation_workspace_read",
+  "investigation_workspace_write",
+  "snapshot_read",
+  "snapshot_write",
+  "artifact_extract",
+  "native_mount",
+  "reference_read",
+  "javascript_replay",
+  "managed_runtime",
+] as const;
+
+/** Local capability governed by the shared REA permission policy. */
+export type PermissionCapability = (typeof PERMISSION_CAPABILITIES)[number];
 
 /** Ordered network authority; each mode includes the modes before it. */
 type PermissionNetwork = "none" | "loopback" | "external";

@@ -259,6 +259,16 @@ export const classifyArtifactPath = (
   path: string,
 ): Pick<ArtifactNode, "kind" | "format"> => {
   const lower = path.toLowerCase();
+  if (/(?:^|\/)androidmanifest\.xml$/u.test(lower))
+    return { kind: "package-metadata", format: "android-manifest" };
+  if (/(?:^|\/)resources\.(?:arsc|pb)$/u.test(lower))
+    return { kind: "resource", format: "android-resources" };
+  if (/\.(?:dex|odex)$/u.test(lower))
+    return { kind: "bytecode", format: "dex" };
+  if (lower.endsWith(".class"))
+    return { kind: "bytecode", format: "jvm-class" };
+  if (lower.endsWith(".wasm"))
+    return { kind: "bytecode", format: "webassembly" };
   if (lower.endsWith(".map"))
     return { kind: "source-map", format: "source-map" };
   if (/\.(?:m?js|cjs)$/u.test(lower))
@@ -286,6 +296,18 @@ export const classifyArtifactContent = (
   prefix: Buffer,
 ): Pick<ArtifactNode, "kind" | "format"> => {
   const byPath = classifyArtifactPath(path);
+  if (PATH_AUTHORITATIVE_FORMATS.has(byPath.format)) return byPath;
+  if (
+    prefix.length >= 8 &&
+    prefix.subarray(0, 4).toString("ascii") === "dex\n" &&
+    prefix[7] === 0
+  )
+    return { kind: "bytecode", format: "dex" };
+  if (
+    prefix.length >= 4 &&
+    prefix.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d]))
+  )
+    return { kind: "bytecode", format: "webassembly" };
   if (prefix.length >= 4) {
     const magic = prefix.readUInt32BE(0);
     if ([0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca].includes(magic))
@@ -315,6 +337,14 @@ export const classifyArtifactContent = (
     };
   return byPath;
 };
+
+const PATH_AUTHORITATIVE_FORMATS = new Set<ArtifactNode["format"]>([
+  "dex",
+  "jvm-class",
+  "webassembly",
+  "android-manifest",
+  "android-resources",
+]);
 
 export const pageOf = <Value>(
   items: readonly Value[],

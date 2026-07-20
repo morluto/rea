@@ -3,6 +3,7 @@ import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
+import type { AnalysisOperation } from "./AnalysisProvider.js";
 import { createBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -41,15 +42,17 @@ import {
   workflowAnalysisProfile,
 } from "./InvestigationProviders.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import {
+  enhancedToolNameSchema,
+  type EnhancedToolName,
+} from "../contracts/enhancedInputs.js";
 
 type DirectAnalysisTool =
-  | "binary_overview"
+  | EnhancedToolName
   | "procedure_pseudo_code"
-  | "analyze_function"
   | "search_strings"
   | "search_procedures"
-  | "xrefs"
-  | "trace_feature";
+  | "xrefs";
 
 /**
  * Open one binary, execute one tool, and always release provider resources.
@@ -312,11 +315,7 @@ const runAnalysis = async (
     if (!writable.ok) return cliError(writable.error);
     let output: JsonValue;
     let evidence: Evidence | undefined;
-    if (
-      tool === "binary_overview" ||
-      tool === "analyze_function" ||
-      tool === "trace_feature"
-    ) {
+    if (isEnhancedTool(tool)) {
       const result = await new EnhancedTools(session).execute(
         tool,
         arguments_,
@@ -324,22 +323,16 @@ const runAnalysis = async (
       );
       if (!result.ok) output = cliError(result.error);
       else {
-        evidence = createEvidence(
-          opened.value,
-          tool === "analyze_function"
-            ? session.providerIdentity(tool)
-            : REA_WORKFLOW_PROVIDER,
-          {
-            operation: tool,
-            parameters: arguments_,
-            result: result.value,
-            ...(evidenceProfile === undefined
-              ? {}
-              : { analysisProfile: evidenceProfile }),
-            confidence: "derived",
-            limitations: ["Derived by an REA composed workflow."],
-          },
-        );
+        evidence = createEvidence(opened.value, REA_WORKFLOW_PROVIDER, {
+          operation: tool,
+          parameters: arguments_,
+          result: result.value,
+          ...(evidenceProfile === undefined
+            ? {}
+            : { analysisProfile: evidenceProfile }),
+          confidence: "derived",
+          limitations: ["Derived by an REA composed workflow."],
+        });
         output = evidence;
       }
     } else {
@@ -428,9 +421,7 @@ const replayProviderFor = (
     | ManagedToolName
     | DirectAnalysisTool,
 ) =>
-  tool === "binary_overview" || tool === "trace_feature"
-    ? REA_WORKFLOW_PROVIDER
-    : session.providerIdentity(tool);
+  isEnhancedTool(tool) ? REA_WORKFLOW_PROVIDER : session.providerIdentity(tool);
 
 const analysisProfileForEvidence = (
   session: ReturnType<typeof createBinarySession>,
@@ -440,11 +431,13 @@ const analysisProfileForEvidence = (
     | ManagedToolName
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
-  if (tool !== "binary_overview" && tool !== "trace_feature")
-    return session.analysisProfile(tool);
+  if (!isEnhancedTool(tool)) return session.analysisProfile(tool);
   const upstream = session.analysisProfile();
   return upstream === undefined ? undefined : workflowAnalysisProfile(upstream);
 };
+
+const isEnhancedTool = (tool: AnalysisOperation): tool is EnhancedToolName =>
+  enhancedToolNameSchema.safeParse(tool).success;
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {

@@ -82,7 +82,7 @@ export const compareProcessEvidenceFiles = async (
     const right = parseCaptureEvidence(await readJson(rightPath));
     const comparison = compareProcessCaptures(left.capture, right.capture);
     return createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-comparison/v3",
+      predicateType: "rea.process-comparison/v4",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: left.id,

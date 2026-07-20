@@ -53,20 +53,20 @@ export const scanVersionInventories = async (
   scanner: VersionInventoryScanner = scanAuthorizedArtifactInventory,
 ): Promise<VersionSnapshots> => {
   const [left, right] = await Promise.all([
-    scanner(
-      options.leftPath,
-      options.inputRoots,
-      options.limits,
-      options.signal,
-      options.integrity,
-    ),
-    scanner(
-      options.rightPath,
-      options.inputRoots,
-      options.limits,
-      options.signal,
-      options.integrity,
-    ),
+    scanner({
+      inputPath: options.leftPath,
+      roots: options.inputRoots,
+      limits: options.limits,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      integrity: options.integrity,
+    }),
+    scanner({
+      inputPath: options.rightPath,
+      roots: options.inputRoots,
+      limits: options.limits,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      integrity: options.integrity,
+    }),
   ]);
   return { left, right };
 };

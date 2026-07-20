@@ -54,7 +54,14 @@ export const matchJavaScriptApplicationVersions = (
   const rightCandidates = new Map<string, Set<string>>();
   const pairs: ApplicationVersionNodePair[] = [];
   for (const tier of matchTiers())
-    applyTier(left, right, pairs, leftCandidates, rightCandidates, tier);
+    applyTier({
+      left,
+      right,
+      pairs,
+      leftCandidates,
+      rightCandidates,
+      tier,
+    });
   const remainingLeft = sortedNodes(left.values());
   const remainingRight = sortedNodes(right.values());
   const leftIds = new Set(remainingLeft.map(({ node_id: id }) => id));
@@ -73,14 +80,23 @@ export const matchJavaScriptApplicationVersions = (
   };
 };
 
-const applyTier = (
-  left: Map<string, ApplicationNode>,
-  right: Map<string, ApplicationNode>,
-  pairs: ApplicationVersionNodePair[],
-  leftCandidates: Map<string, Set<string>>,
-  rightCandidates: Map<string, Set<string>>,
-  tier: MatchTier,
-): void => {
+interface MatchTierContext {
+  readonly left: Map<string, ApplicationNode>;
+  readonly right: Map<string, ApplicationNode>;
+  readonly pairs: ApplicationVersionNodePair[];
+  readonly leftCandidates: Map<string, Set<string>>;
+  readonly rightCandidates: Map<string, Set<string>>;
+  readonly tier: MatchTier;
+}
+
+const applyTier = ({
+  left,
+  right,
+  pairs,
+  leftCandidates,
+  rightCandidates,
+  tier,
+}: MatchTierContext): void => {
   const leftByKey = nodesByKey(left.values(), tier.key);
   const rightByKey = nodesByKey(right.values(), tier.key);
   for (const key of [...leftByKey.keys()].sort(compareCodePoints)) {

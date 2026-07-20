@@ -11,6 +11,9 @@ import { NATIVE_TOOL_CONTRACTS } from "../src/contracts/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../src/contracts/artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "../src/contracts/managedToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../src/contracts/managedWorkflowToolContracts.js";
+import { APPLE_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/appleApplicationToolContracts.js";
+import { ANDROID_APPLICATION_TOOL_CONTRACTS } from "../src/contracts/androidApplicationToolContracts.js";
+import { RUNTIME_IDENTIFICATION_TOOL_CONTRACTS } from "../src/contracts/runtimeIdentificationToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
@@ -93,11 +96,14 @@ describe("tool contract surface", () => {
       ...ARTIFACT_TOOL_CONTRACTS,
       ...MANAGED_TOOL_CONTRACTS,
       ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
+      ...APPLE_APPLICATION_TOOL_CONTRACTS,
+      ...ANDROID_APPLICATION_TOOL_CONTRACTS,
+      ...RUNTIME_IDENTIFICATION_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(77);
+    expect(contracts).toHaveLength(80);
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);
@@ -129,6 +135,9 @@ describe("tool contract surface", () => {
       ...ARTIFACT_TOOL_CONTRACTS,
       ...MANAGED_TOOL_CONTRACTS,
       ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
+      ...APPLE_APPLICATION_TOOL_CONTRACTS,
+      ...ANDROID_APPLICATION_TOOL_CONTRACTS,
+      ...RUNTIME_IDENTIFICATION_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
@@ -223,6 +232,9 @@ describe("tool contract surface", () => {
       ...ARTIFACT_TOOL_CONTRACTS,
       ...MANAGED_TOOL_CONTRACTS,
       ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
+      ...APPLE_APPLICATION_TOOL_CONTRACTS,
+      ...ANDROID_APPLICATION_TOOL_CONTRACTS,
+      ...RUNTIME_IDENTIFICATION_TOOL_CONTRACTS,
       ...BROWSER_TOOL_CONTRACTS,
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,

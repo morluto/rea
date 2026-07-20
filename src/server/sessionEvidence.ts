@@ -8,6 +8,11 @@ import { err, ok, type Result } from "../domain/result.js";
 
 type EvidenceAuthorityResult = Result<Evidence[], EvidenceIntegrityError>;
 
+type EvidencePairAuthorityResult = Result<
+  { readonly left: Evidence[]; readonly right: Evidence[] },
+  EvidenceIntegrityError
+>;
+
 /** Resolve bounded IDs to authoritative records with exact semantic identity. */
 export const resolveSessionEvidenceIds = (
   session: BinarySessionPort,
@@ -47,4 +52,20 @@ export const resolveSessionEvidenceIds = (
     records.push(record);
   }
   return ok(records);
+};
+
+/** Resolve both sides of a comparison under one semantic authority contract. */
+export const resolveSessionEvidencePair = (
+  session: BinarySessionPort,
+  evidenceIds: {
+    readonly left: readonly string[];
+    readonly right: readonly string[];
+  },
+  expected: { readonly operation: string; readonly predicate: string },
+): EvidencePairAuthorityResult => {
+  const left = resolveSessionEvidenceIds(session, evidenceIds.left, expected);
+  if (!left.ok) return left;
+  const right = resolveSessionEvidenceIds(session, evidenceIds.right, expected);
+  if (!right.ok) return right;
+  return ok({ left: left.value, right: right.value });
 };

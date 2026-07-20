@@ -1,8 +1,22 @@
 import type {
   ProcessCapture,
+  ProcessLifecycleEvent,
   ProcessSample,
   ProcessScenario,
 } from "../domain/processCapture.js";
+
+const localProcessIdentifiers = (
+  identifiers: readonly number[],
+): ReadonlyMap<number, number> => {
+  const mapping = new Map<number, number>();
+  for (const identifier of identifiers)
+    if (identifier > 0 && !mapping.has(identifier))
+      mapping.set(identifier, mapping.size + 1);
+  return mapping;
+};
+
+const bucketProcessTime = (atMs: number, bucketMs: number): number =>
+  Math.floor(atMs / bucketMs) * bucketMs;
 
 /** Normalize and redact one terminal/protocol payload under scenario rules. */
 export const normalizeProcessText = (
@@ -53,10 +67,7 @@ export const normalizeProcessSamples = (
       sample.session_id ?? 0,
     ]),
   ];
-  const mapping = new Map<number, number>();
-  for (const identifier of identifiers)
-    if (identifier > 0 && !mapping.has(identifier))
-      mapping.set(identifier, mapping.size + 1);
+  const mapping = localProcessIdentifiers(identifiers);
   const normalizeCommand = (command: string): string => {
     const normalized = normalizeProcessText(
       command,
@@ -69,9 +80,10 @@ export const normalizeProcessSamples = (
       : normalized;
   };
   return samples.map((sample) => ({
-    at_ms:
-      Math.floor(sample.at_ms / scenario.normalization.time_bucket_ms) *
+    at_ms: bucketProcessTime(
+      sample.at_ms,
       scenario.normalization.time_bucket_ms,
+    ),
     pid: mapping.get(sample.pid) ?? 1,
     parent_pid: mapping.get(sample.parent_pid) ?? 0,
     process_group_id:
@@ -81,6 +93,40 @@ export const normalizeProcessSamples = (
     session_id:
       sample.session_id === null ? null : (mapping.get(sample.session_id) ?? 0),
     command: normalizeCommand(sample.command),
+  }));
+};
+
+/** Normalize lifecycle coordinates with stable capture-local PID identities. */
+export const normalizeProcessEvents = (
+  events: readonly ProcessLifecycleEvent[],
+  samples: readonly ProcessSample[],
+  scenario: ProcessScenario,
+  rootPid: number,
+): readonly ProcessLifecycleEvent[] => {
+  const identifiers = [
+    rootPid,
+    ...samples.flatMap(({ pid, parent_pid }) => [pid, parent_pid]),
+    ...events.flatMap(({ pid, parent_pid, previous_parent_pid }) => [
+      pid,
+      parent_pid ?? 0,
+      previous_parent_pid ?? 0,
+    ]),
+  ];
+  const mapping = localProcessIdentifiers(identifiers);
+  return events.map((event, sequence) => ({
+    ...event,
+    sequence,
+    at_ms: bucketProcessTime(
+      event.at_ms,
+      scenario.normalization.time_bucket_ms,
+    ),
+    pid: mapping.get(event.pid) ?? 1,
+    parent_pid:
+      event.parent_pid === null ? null : (mapping.get(event.parent_pid) ?? 0),
+    previous_parent_pid:
+      event.previous_parent_pid === null
+        ? null
+        : (mapping.get(event.previous_parent_pid) ?? 0),
   }));
 };
 

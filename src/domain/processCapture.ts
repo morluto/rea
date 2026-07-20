@@ -65,6 +65,17 @@ export interface ProcessSample {
   readonly session_id: number | null;
 }
 
+/** One bounded lifecycle transition for a proven owned process identity. */
+export interface ProcessLifecycleEvent {
+  readonly sequence: number;
+  readonly at_ms: number;
+  readonly type: "spawned" | "reparented" | "exited" | "signal_dispatched";
+  readonly pid: number;
+  readonly parent_pid: number | null;
+  readonly previous_parent_pid: number | null;
+  readonly signal: "SIGINT" | "SIGTERM" | "SIGKILL" | null;
+}
+
 /**
  * Named filesystem state whose effects are relative to the prior checkpoint.
  */
@@ -100,7 +111,27 @@ export interface ProtocolEvent {
     | "matched"
     | "unmatched"
     | "script_exhausted"
-    | "disconnected";
+    | "disconnected"
+    | "invalid_state"
+    | "guard_failed"
+    | "transition_exhausted"
+    | "invalid_capture"
+    | "unexpected_reconnect"
+    | "limit_exhausted";
+  readonly transition_id?: string | null | undefined;
+  readonly state_before?: string | null | undefined;
+  readonly state_after?: string | null | undefined;
+}
+
+/** Secret-safe state transition linked to its triggering protocol event. */
+export interface ReplayTransitionEvent {
+  readonly sequence: number;
+  readonly at_ms: number;
+  readonly protocol_event_sequence: number;
+  readonly transition_id: string;
+  readonly state_before: string;
+  readonly state_after: string;
+  readonly sensitive_aliases: readonly string[];
 }
 
 /**
@@ -145,9 +176,11 @@ export interface ProcessCapture {
     readonly cleanup_outcome: "not_required" | "cleaned" | "failed";
   };
   readonly process_samples: readonly ProcessSample[];
+  readonly process_events: readonly ProcessLifecycleEvent[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
   readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
+  readonly replay_transitions?: readonly ReplayTransitionEvent[] | undefined;
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
   readonly filesystem_effects: readonly FileEffect[];
@@ -161,6 +194,7 @@ export interface ProcessCapture {
       | "process"
       | "filesystem"
       | "protocol"
+      | "replay_transition"
       | "shim"
       | "cleanup"
       | "network";
@@ -265,6 +299,17 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       session_id: z.number().int().nonnegative().nullable(),
     }),
   ),
+  process_events: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
+      type: z.enum(["spawned", "reparented", "exited", "signal_dispatched"]),
+      pid: z.number().int().positive(),
+      parent_pid: z.number().int().nonnegative().nullable(),
+      previous_parent_pid: z.number().int().nonnegative().nullable(),
+      signal: z.enum(["SIGINT", "SIGTERM", "SIGKILL"]).nullable(),
+    }),
+  ),
   filesystem_checkpoints: z.array(
     z.object({
       name: z.string(),
@@ -299,9 +344,32 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
         "unmatched",
         "script_exhausted",
         "disconnected",
+        "invalid_state",
+        "guard_failed",
+        "transition_exhausted",
+        "invalid_capture",
+        "unexpected_reconnect",
+        "limit_exhausted",
       ]),
+      transition_id: z.string().nullable().optional(),
+      state_before: z.string().nullable().optional(),
+      state_after: z.string().nullable().optional(),
     }),
   ),
+  replay_transitions: z
+    .array(
+      z.object({
+        sequence: z.number().int().nonnegative(),
+        at_ms: z.number().int().nonnegative(),
+        protocol_event_sequence: z.number().int().nonnegative(),
+        transition_id: z.string(),
+        state_before: z.string(),
+        state_after: z.string(),
+        sensitive_aliases: z.array(z.string()),
+      }),
+    )
+    .max(100_000)
+    .optional(),
   files_before: z.array(fileStateSchema),
   files_after: z.array(fileStateSchema),
   filesystem_effects: z.array(fileEffectSchema),
@@ -316,6 +384,7 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
         "process",
         "filesystem",
         "protocol",
+        "replay_transition",
         "shim",
         "cleanup",
         "network",

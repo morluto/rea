@@ -12,25 +12,15 @@ import {
   PermissionRequiredError,
   projectAnalysisError,
 } from "./domain/errors.js";
-import type { PermissionCapability } from "./domain/permissionPolicy.js";
+import {
+  PERMISSION_CAPABILITIES,
+  type PermissionCapability,
+} from "./domain/permissionPolicy.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 
-const capabilitySchema = z.enum([
-  "process_capture",
-  "browser_observe",
-  "electron_observe",
-  "evidence_read",
-  "evidence_write",
-  "investigation_input",
-  "investigation_workspace_read",
-  "investigation_workspace_write",
-  "snapshot_read",
-  "snapshot_write",
-  "artifact_extract",
-  "native_mount",
-  "reference_read",
-]);
+/** CLI parser derived from the canonical permission-capability inventory. */
+export const policyCapabilitySchema = z.enum(PERMISSION_CAPABILITIES);
 
 type PolicyRevocationApproval =
   | { readonly approved: true }
@@ -155,7 +145,7 @@ export const registerPolicyCommands = (
               ? { error: "Grant was not found", grant_id: args.value }
               : { error: revoked.error.message };
         }
-        const capability = capabilitySchema.safeParse(args.value);
+        const capability = policyCapabilitySchema.safeParse(args.value);
         if (!capability.success)
           return {
             error: "A registered capability is required for policy explain",

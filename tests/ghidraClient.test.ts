@@ -52,8 +52,16 @@ class FixtureLauncher implements GhidraLauncher {
   readonly endpointPaths: string[] = [];
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
+  readonly launched: Promise<void>;
+  readonly #resolveLaunched: () => void;
 
-  constructor(readonly mode: FixtureMode = "success") {}
+  constructor(readonly mode: FixtureMode = "success") {
+    let resolveLaunched = (): void => undefined;
+    this.launched = new Promise<void>((resolve) => {
+      resolveLaunched = resolve;
+    });
+    this.#resolveLaunched = resolveLaunched;
+  }
 
   async launch(session: GhidraLaunchSession) {
     this.runtimeRoots.push(session.runtimeRoot);
@@ -77,6 +85,7 @@ class FixtureLauncher implements GhidraLauncher {
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     this.processes.push(process_);
+    this.#resolveLaunched();
     return ok({
       process: process_,
       ownsProcessLifetime: true,
@@ -244,7 +253,8 @@ describe("GhidraClient", () => {
     const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    setTimeout(() => controller.abort(), 10);
+    await launcher.launched;
+    controller.abort();
 
     const result = await pending;
 

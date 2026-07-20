@@ -340,6 +340,46 @@ describe("artifact graph MCP integration", () => {
       expect(inventoryResult.result).toMatchObject({
         manifest: { root_format: "ipa" },
       });
+      const projected = await client.callTool({
+        name: "project_apple_application_graph",
+        arguments: {
+          inventory_evidence_ids: [evidence.evidence_id],
+          limits: { max_components: 100 },
+        },
+      });
+      expect(projected.isError).not.toBe(true);
+      const projection = compactResult(projected.structuredContent);
+      expect(projection.result).toMatchObject({
+        root_format: "ipa",
+        source_evidence_ids: [evidence.evidence_id],
+        components: { javascript: [expect.objectContaining({})] },
+      });
+      expect(session.evidenceById(projection.evidence_id)).toMatchObject({
+        operation: "project_apple_application_graph",
+        provider: { id: "rea-apple-application" },
+      });
+      const identified = await client.callTool({
+        name: "identify_runtime",
+        arguments: { inventory_evidence_ids: [evidence.evidence_id] },
+      });
+      expect(identified.isError).not.toBe(true);
+      const runtimeIdentification = compactResult(identified.structuredContent);
+      expect(runtimeIdentification.result).toMatchObject({
+        root_format: "ipa",
+        runtimes: expect.arrayContaining([
+          expect.objectContaining({
+            family: "apple",
+            inspection: "available",
+            provider_id: "rea-apple-application",
+          }),
+        ]),
+      });
+      expect(
+        session.evidenceById(runtimeIdentification.evidence_id),
+      ).toMatchObject({
+        operation: "identify_runtime",
+        provider: { id: "rea-runtime-identification" },
+      });
       const openedChanged = await client.callTool({
         name: "open_binary",
         arguments: { path: changedArchive },
@@ -380,11 +420,69 @@ describe("artifact graph MCP integration", () => {
       const envelope = z
         .object({ result: evidenceBundleSchema })
         .parse(exported.structuredContent);
-      expect(envelope.result.records).toHaveLength(4);
+      expect(envelope.result.records).toHaveLength(6);
       expect(envelope.result.artifacts).toContainEqual({
         digest: { sha256: evidence.subject?.digest.sha256 },
         format: "ipa",
         architecture: null,
+      });
+    } finally {
+      await Promise.allSettled([
+        client.close(),
+        server.close(),
+        session.close(),
+      ]);
+    }
+  });
+
+  it("projects authenticated APK inventory through the Android MCP workflow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-android-mcp-"));
+    const archive = join(root, "Fixture.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("AndroidManifest.xml", new TextReader("manifest"));
+    await writer.add("classes.dex", new TextReader("dex\n035\0"));
+    await writeFile(archive, await writer.close());
+
+    const session = new BinarySession(new ArtifactProvider());
+    const server = createServer(session, session);
+    const client = new Client({ name: "android-artifact-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.callTool({
+        name: "open_binary",
+        arguments: { path: archive },
+      });
+      const inventory = compactResult(
+        (
+          await client.callTool({
+            name: "inventory_artifact",
+            arguments: {},
+          })
+        ).structuredContent,
+      );
+      const projected = await client.callTool({
+        name: "project_android_application_graph",
+        arguments: {
+          inventory_evidence_ids: [inventory.evidence_id],
+          limits: { max_components: 100 },
+        },
+      });
+      expect(projected.isError).not.toBe(true);
+      const projection = compactResult(projected.structuredContent);
+      expect(projection.result).toMatchObject({
+        root_format: "apk",
+        source_evidence_ids: [inventory.evidence_id],
+        components: {
+          manifests: [expect.objectContaining({})],
+          dex: [expect.objectContaining({})],
+        },
+      });
+      expect(session.evidenceById(projection.evidence_id)).toMatchObject({
+        operation: "project_android_application_graph",
+        provider: { id: "rea-android-application" },
       });
     } finally {
       await Promise.allSettled([
