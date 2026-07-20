@@ -16,34 +16,33 @@ const SERIAL_INTEGRATION_TESTS = [
   PROCESS_CAPTURE_TEST,
   "tests/runtime.test.ts",
 ];
-const dualCoreProjects =
-  availableParallelism() === 2
-    ? {
-        maxWorkers: 2,
-        projects: [
-          {
-            test: {
-              name: "parallel",
-              include: TEST_FILES,
-              exclude: SERIAL_INTEGRATION_TESTS,
-            },
-          },
-          {
-            test: {
-              name: "serial-integration",
-              include: SERIAL_INTEGRATION_TESTS,
-              fileParallelism: false,
-            },
-          },
-        ],
-      }
-    : {};
+const isolatedProjects = {
+  maxWorkers: Math.min(2, availableParallelism()),
+  projects: [
+    {
+      test: {
+        name: "parallel",
+        include: TEST_FILES,
+        exclude: SERIAL_INTEGRATION_TESTS,
+        sequence: { groupOrder: 0 },
+      },
+    },
+    {
+      test: {
+        name: "serial-integration",
+        include: SERIAL_INTEGRATION_TESTS,
+        fileParallelism: false,
+        sequence: { groupOrder: 1 },
+      },
+    },
+  ],
+};
 
 export default defineConfig({
   test: {
     include: TEST_FILES,
     env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
-    ...dualCoreProjects,
+    ...isolatedProjects,
     retry: 2,
     reporters: ["default", "verbose"],
     coverage: {
