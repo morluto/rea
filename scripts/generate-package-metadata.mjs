@@ -33,7 +33,7 @@ const versionOf = (name) => {
 const source = `/** Generated from package.json and package-lock.json; do not edit. */
 export const PACKAGE_METADATA = {
   name: ${JSON.stringify(packageJson.name)},
-  version: ${JSON.stringify(packageJson.version)},
+  version: ${JSON.stringify(packageJson.version)}, // x-release-please-version
   serverSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/server"))},
   clientSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/client"))},
   coreSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/core"))},

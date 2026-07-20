@@ -14,7 +14,23 @@
   ],
   "packages": {
     ".": {
-      "package-name": "rea-agents"
+      "package-name": "rea-agents",
+      "extra-files": [
+        { "type": "generic", "path": "README.md" },
+        { "type": "generic", "path": "README_zh.md" },
+        { "type": "generic", "path": "README_ja.md" },
+        { "type": "generic", "path": "README_ko.md" },
+        { "type": "generic", "path": "README_ar.md" },
+        {
+          "type": "generic",
+          "path": "src/generatedPackageMetadata.ts"
+        },
+        {
+          "type": "json",
+          "path": "docs/product-catalog.json",
+          "jsonpath": "$.package.version"
+        }
+      ]
     }
   }
 }

@@ -165,16 +165,20 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 
 Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin を検出し、最初の 6 クライアントを自動設定します。Devin は検出結果を報告するだけで変更しません。ローカル MCP サーバーに対応するコーディングエージェントなら、次の設定で REA を利用できます。
 
+<!-- x-release-please-start-version -->
+
 ```json
 {
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@2.1.0", "mcp"]
+      "args": ["-y", "rea-agents@2.2.0", "mcp"]
     }
   }
 }
 ```
+
+<!-- x-release-please-end -->
 
 ## 仕組み
 

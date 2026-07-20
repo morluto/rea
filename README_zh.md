@@ -165,16 +165,20 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 
 Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf 和 Devin，并自动配置检测到的前六种客户端；检测到 Devin 时只会报告而不会修改。任何支持本地 MCP 服务器的编程智能体都可以使用以下配置连接 REA。
 
+<!-- x-release-please-start-version -->
+
 ```json
 {
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@2.1.0", "mcp"]
+      "args": ["-y", "rea-agents@2.2.0", "mcp"]
     }
   }
 }
 ```
+
+<!-- x-release-please-end -->
 
 ## 工作原理
 

@@ -459,16 +459,20 @@ Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, 
 
 ### Manual MCP configuration
 
+<!-- x-release-please-start-version -->
+
 ```json
 {
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@2.1.0", "mcp"]
+      "args": ["-y", "rea-agents@2.2.0", "mcp"]
     }
   }
 }
 ```
+
+<!-- x-release-please-end -->
 
 Persistent registrations should use one exact package version. `rea setup`
 maintains that pin, upgrades the bundled skill at the same time, and gives Codex
