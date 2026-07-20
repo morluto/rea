@@ -17,17 +17,21 @@ export interface ToolExample {
   readonly input: Readonly<Record<string, JsonValue>>;
 }
 
+/** Canonical adapter families responsible for public MCP tools. */
+export const TOOL_KINDS = [
+  "official-proxy",
+  "enhanced",
+  "native-provider",
+  "artifact-provider",
+  "managed-provider",
+  "browser-provider",
+  "electron-provider",
+  "application",
+  "session",
+] as const;
+
 /** Adapter family responsible for implementing a public MCP tool. */
-type ToolKind =
-  | "official-proxy"
-  | "enhanced"
-  | "native-provider"
-  | "artifact-provider"
-  | "managed-provider"
-  | "browser-provider"
-  | "electron-provider"
-  | "application"
-  | "session";
+type ToolKind = (typeof TOOL_KINDS)[number];
 
 /** Single source of truth for a public MCP tool. */
 export interface ToolContract<Name extends string = string> {

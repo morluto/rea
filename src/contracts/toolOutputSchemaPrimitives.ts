@@ -85,7 +85,7 @@ const providerCapability = z.object({
   limitations: z.array(z.string()),
 });
 
-const providerIdentity = z.object({
+export const providerIdentity = z.object({
   id: z.string(),
   name: z.string(),
   version: z.string().nullable(),
@@ -139,6 +139,38 @@ const providerTargetSupport = z.discriminatedUnion("status", [
   }),
 ]);
 
+export const toolAvailability = z.object({
+  name: z.string(),
+  surface: z.string(),
+  available: z.boolean(),
+  reason: z.enum([
+    "available",
+    "target_required",
+    "provider_missing",
+    "provider_unavailable",
+    "target_unsupported",
+    "unsupported_host",
+    "policy_disabled",
+  ]),
+  remediation: z.string().nullable(),
+  effects: z.strictObject({
+    mutatesTarget: z.boolean(),
+    mutatesSession: z.boolean(),
+    writesFilesystem: z.boolean(),
+    launchesProcess: z.boolean(),
+    accessesNetwork: z.boolean(),
+    changesUiState: z.boolean(),
+    mayDiscardData: z.boolean(),
+    idempotent: z.boolean(),
+  }),
+  annotations: z.object({
+    read_only: z.boolean(),
+    destructive: z.boolean(),
+    idempotent: z.boolean(),
+    open_world: z.boolean(),
+  }),
+});
+
 export const sessionProvider = z.object({
   provider: providerIdentity,
   providers: z.array(providerIdentity),
@@ -163,39 +195,7 @@ export const sessionProvider = z.object({
       capabilities: z.array(providerCapability),
     }),
   ),
-  tool_availability: z.array(
-    z.object({
-      name: z.string(),
-      surface: z.string(),
-      available: z.boolean(),
-      reason: z.enum([
-        "available",
-        "target_required",
-        "provider_missing",
-        "provider_unavailable",
-        "target_unsupported",
-        "unsupported_host",
-        "policy_disabled",
-      ]),
-      remediation: z.string().nullable(),
-      effects: z.strictObject({
-        mutatesTarget: z.boolean(),
-        mutatesSession: z.boolean(),
-        writesFilesystem: z.boolean(),
-        launchesProcess: z.boolean(),
-        accessesNetwork: z.boolean(),
-        changesUiState: z.boolean(),
-        mayDiscardData: z.boolean(),
-        idempotent: z.boolean(),
-      }),
-      annotations: z.object({
-        read_only: z.boolean(),
-        destructive: z.boolean(),
-        idempotent: z.boolean(),
-        open_world: z.boolean(),
-      }),
-    }),
-  ),
+  tool_availability: z.array(toolAvailability),
   client_features: z.object({
     elicitation_form: z.boolean(),
     elicitation_url: z.boolean(),

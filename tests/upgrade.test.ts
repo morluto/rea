@@ -16,6 +16,8 @@ class FakeUpgradeHost implements UpgradeHost {
   installSucceeds = true;
   installs = 0;
   output: UpgradeOutput | undefined;
+  syncResult: boolean | undefined = true;
+  syncs = 0;
 
   latestVersion = (): Promise<string | undefined> =>
     Promise.resolve(this.latest);
@@ -28,6 +30,12 @@ class FakeUpgradeHost implements UpgradeHost {
     this.installs += 1;
     this.output = output;
     return Promise.resolve(this.installSucceeds);
+  };
+  syncAgentIntegration = (
+    _output: UpgradeOutput,
+  ): Promise<boolean | undefined> => {
+    this.syncs += 1;
+    return Promise.resolve(this.syncResult);
   };
 }
 
@@ -54,11 +62,13 @@ describe("CLI upgrade", () => {
       versionCheck: "available",
       installMethod: "npm",
       command: "npm install --global rea-agents@latest",
+      integrationSync: "setup_invoked",
       clientRestartRequired: true,
       remediation:
-        "Rerun rea setup to refresh registrations and the skill, then restart clients that may retain an older MCP server.",
+        "The updated setup journey was opened to align registrations and the skill. Restart clients whose approved registration changed.",
     });
     expect(host.installs).toBe(1);
+    expect(host.syncs).toBe(1);
   });
 
   it("does not mutate when the registry check is unavailable", async () => {
@@ -119,8 +129,14 @@ describe("CLI upgrade", () => {
 
   it("preserves stdout for an explicitly structured CLI response", async () => {
     const host = new FakeUpgradeHost();
+    host.syncResult = undefined;
 
-    await runUpgrade("0.5.0", host, "structured");
+    expect(await runUpgrade("0.5.0", host, "structured")).toMatchObject({
+      status: "upgraded",
+      integrationSync: "deferred",
+      remediation:
+        "Run rea setup --all-detected to align registrations and the skill, then restart clients that may retain an older MCP server.",
+    });
 
     expect(host.output).toBe("structured");
   });

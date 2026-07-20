@@ -28,7 +28,7 @@ const promptStreams = {
   withGuide: true,
 } as const;
 
-const agentAccessCapabilityId = "agent_access";
+const agentIntegrationCapabilityId = "agent_integration";
 
 interface SetupCapability {
   readonly id: string;
@@ -138,37 +138,58 @@ const selectSetupActions = async (
     : await selectCapabilities(capabilities);
   if (selectedCapabilities === undefined) return undefined;
   const selectedCapabilityIds = new Set(selectedCapabilities);
+  const bundledSkillAction = componentActions.find(
+    ({ kind }) => kind === "install_skill",
+  );
   const selectedActionIds = componentActions
-    .filter(({ id }) => selectedCapabilityIds.has(id))
+    .filter(
+      ({ id }) =>
+        id !== bundledSkillAction?.id && selectedCapabilityIds.has(id),
+    )
     .map(({ id }) => id);
-  if (!selectedCapabilityIds.has(agentAccessCapabilityId))
+  if (!selectedCapabilityIds.has(agentIntegrationCapabilityId))
     return selectedActionIds;
+  if (clientActions.length === 0)
+    return [
+      ...(bundledSkillAction === undefined ? [] : [bundledSkillAction.id]),
+      ...selectedActionIds,
+    ];
   const selectedClients = accessible
     ? await selectClientsAccessibly(clientActions)
     : await selectClients(clientActions);
-  return selectedClients === undefined
-    ? undefined
-    : [...selectedClients, ...selectedActionIds];
+  if (selectedClients === undefined) return undefined;
+  if (selectedClients.length === 0) return selectedActionIds;
+  return [
+    ...selectedClients,
+    ...(bundledSkillAction === undefined ? [] : [bundledSkillAction.id]),
+    ...selectedActionIds,
+  ];
 };
 
 const setupCapabilities = (
   clientActions: readonly SetupAction[],
   componentActions: readonly SetupAction[],
 ): readonly SetupCapability[] => [
-  ...(clientActions.length === 0
+  ...(clientActions.length === 0 &&
+  !componentActions.some(({ kind }) => kind === "install_skill")
     ? []
     : [
         {
-          id: agentAccessCapabilityId,
-          label: "Coding-agent access (MCP)",
-          hint: `${String(clientActions.length)} detected ${clientActions.length === 1 ? "agent" : "agents"}`,
+          id: agentIntegrationCapabilityId,
+          label: "Agent integration (MCP + guided workflow)",
+          hint:
+            clientActions.length === 0
+              ? "MCP registrations are aligned; installs the matching bundled skill"
+              : `${String(clientActions.length)} detected ${clientActions.length === 1 ? "agent" : "agents"}; installs the bundled skill when needed`,
         },
       ]),
-  ...componentActions.map((action) => ({
-    id: action.id,
-    label: `${action.label} (${actionModality(action)})`,
-    hint: `${action.operation} · ${action.target}`,
-  })),
+  ...componentActions
+    .filter(({ kind }) => kind !== "install_skill")
+    .map((action) => ({
+      id: action.id,
+      label: `${action.label} (${actionModality(action)})`,
+      hint: `${action.operation} · ${action.target}`,
+    })),
 ];
 
 const selectCapabilities = async (
@@ -297,7 +318,7 @@ const renderReadyCapabilities = (
   const firstClient = readyClients[0];
   if (firstClient !== undefined)
     writeLine(
-      `│  Try in ${firstClient}: "Use REA to explain how a feature works in /path/to/app."`,
+      `│  Try in ${firstClient}: "Explain how a feature works in /path/to/app and show the evidence."`,
     );
 };
 

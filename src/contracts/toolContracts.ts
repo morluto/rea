@@ -34,6 +34,9 @@ import {
 } from "./sessionLifecycleInputs.js";
 import type { ToolContract, ToolExample } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { binarySessionInputSchema } from "./sessionStatusContract.js";
+
+export { binarySessionInputSchema } from "./sessionStatusContract.js";
 
 export type { ToolContract, ToolExample } from "./toolContractTypes.js";
 
@@ -366,16 +369,6 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
 ] as const satisfies readonly ToolContract[];
 
-/** Caller observations used to compare a live server with expected identity. */
-export const binarySessionInputSchema = z.object({
-  expected_package_version: z.string().min(1).optional(),
-  expected_catalog_digest: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/u)
-    .optional(),
-  expected_server_path: z.string().min(1).optional(),
-});
-
 /** Session-owned Evidence bundle export options. */
 export const exportEvidenceBundleInputSchema = z.strictObject({
   path: z.string().min(1).optional(),
@@ -426,7 +419,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    "Report deterministic deep-provider candidates, host availability, target support, the immutable active binding/profile, capability descriptors, and whether a target is open. Candidate discovery never starts an analysis process; use rejection codes and local diagnostics before choosing provider_id.",
+    "Report compact target, provider, and alignment state without starting analysis. The default summary is the routing check agents should use; detail=capabilities returns one family-filtered availability page, while detail=full is reserved for complete provider diagnostics.",
     binarySessionInputSchema,
   ),
   session(

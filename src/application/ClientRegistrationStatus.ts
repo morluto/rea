@@ -17,7 +17,11 @@ export interface ClientRegistrationStatus {
 
 const objectSchema = z.record(z.string(), z.unknown());
 const registrationSchema = z
-  .object({ command: z.string().min(1), args: z.array(z.string()).default([]) })
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    startup_timeout_sec: z.number().positive().optional(),
+  })
   .passthrough();
 
 /** Inspect supported client registrations without reading their environment. */
@@ -49,7 +53,7 @@ export const readClientRegistrationStatuses = async (
           client.name,
           client.configPath,
           command,
-          registrationAligned(command, currentCommandPath)
+          registrationAligned(registration, client.name, currentCommandPath)
             ? "aligned"
             : "stale",
         ),
@@ -71,14 +75,18 @@ export const readClientRegistrationStatuses = async (
 };
 
 const registrationAligned = (
-  command: readonly string[],
+  registration: z.output<typeof registrationSchema>,
+  client: string,
   currentCommandPath: string,
 ): boolean => {
+  const command = [registration.command, ...registration.args];
+  if (client === "codex" && registration.startup_timeout_sec !== 30)
+    return false;
   if (
     command.length === 4 &&
     command[0] === "npx" &&
     command[1] === "-y" &&
-    command[2] === PRODUCT_IDENTITY.packageSpecifier &&
+    command[2] === PRODUCT_IDENTITY.registrationPackageSpecifier &&
     command[3] === "mcp"
   )
     return true;

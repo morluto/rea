@@ -29,7 +29,7 @@
 ## اطلب من وكيلك مباشرة
 
 ```bash
-npx skills add morluto/rea
+npx rea-agents setup
 ```
 
 ثم اطلب:
@@ -65,7 +65,7 @@ npx skills add morluto/rea
 ### باستخدام وكيل برمجة — موصى به
 
 ```bash
-npx skills add morluto/rea
+npx rea-agents setup
 ```
 
 اطلب من الوكيل إعداد REA. سيفحص جهاز Mac ويشرح ما يحتاج إلى تثبيته ويطلب الموافقة ويرشدك خلال رسائل النظام. أعد تشغيل الوكيل بعد الإعداد إذا طلب ذلك لتحميل مجموعة الأدوات الكاملة.
@@ -180,7 +180,7 @@ rea uninstall --purge-data
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@latest", "mcp"]
+      "args": ["-y", "rea-agents@2.1.0", "mcp"]
     }
   }
 }

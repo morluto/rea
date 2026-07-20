@@ -53,7 +53,9 @@ export const registerSetupCommands = (
       skill: z
         .boolean()
         .optional()
-        .describe("Install or skip the bundled REA skill"),
+        .describe(
+          "Override the bundled skill included with agent integrations",
+        ),
       dryRun: z
         .boolean()
         .default(false)
@@ -129,8 +131,10 @@ const runSetupCommand = async (input: {
   const hasExplicitScope = setupHasExplicitScope(options);
   if (options.yes && !hasExplicitScope)
     process.stderr.write(
-      "!  Implicit `rea setup --yes` scope is deprecated; use `--all-detected --skill` to retain it.\n",
+      "!  Implicit `rea setup --yes` scope is deprecated; use `--all-detected` to retain it.\n",
     );
+  const agentIntegrationSelected =
+    options.allDetected || options.client.length > 0;
   const result = await runSetup(
     {
       approved: options.yes && !options.dryRun,
@@ -140,7 +144,11 @@ const runSetupCommand = async (input: {
       ...(!hasExplicitScope || options.allDetected
         ? {}
         : { clientIds: options.client }),
-      ...(!hasExplicitScope ? {} : { installSkill: options.skill ?? false }),
+      ...(!hasExplicitScope
+        ? {}
+        : {
+            installSkill: options.skill ?? agentIntegrationSelected,
+          }),
       ...(interactive ? { onProgress: renderSetupProgress } : {}),
     },
     systemSetupHost(createSystemDoctorHost()),
