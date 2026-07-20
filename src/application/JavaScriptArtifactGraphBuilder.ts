@@ -15,6 +15,7 @@ import {
   addJavaScriptSourceMapOriginals,
 } from "./JavaScriptArtifactGraphDocuments.js";
 import { addJavaScriptStaticFindings } from "./JavaScriptArtifactGraphFindings.js";
+import { addJavaScriptBundlerManifestNodes } from "./JavaScriptBundlerManifestGraph.js";
 import {
   addJavaScriptModuleRelationships,
   addJavaScriptSourceModules,
@@ -66,6 +67,7 @@ export const buildJavaScriptArtifactGraph = (
   const packageRoots = addJavaScriptPackageNodes(context);
   addJavaScriptSourceModules(context);
   addJavaScriptBundlerNodes(context);
+  addJavaScriptBundlerManifestNodes(context);
   addJavaScriptModuleRelationships(context);
   addJavaScriptStaticFindings(context);
   addElectronBoundaries(context);
@@ -96,6 +98,9 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   const malformedStructuredData =
     context.analysis.packages.some(({ status }) => status !== "included") ||
     context.analysis.json_modules.some(({ status }) => status !== "included") ||
+    context.analysis.bundler_manifests.some(
+      ({ status }) => status === "invalid" || status === "unavailable",
+    ) ||
     context.analysis.source_maps.some(({ status }) => status === "invalid");
   const partialJavaScript = context.analysis.files.some(
     ({ javascript }) =>
@@ -141,7 +146,11 @@ const truncationOmittedCount = (
   const sourceMapTruncations = context.analysis.source_maps.filter(
     ({ status }) => status === "truncated",
   );
-  if (sourceMapTruncations.length > 0) return null;
+  const manifestTruncations = context.analysis.bundler_manifests.filter(
+    ({ status }) => status === "truncated",
+  );
+  if (sourceMapTruncations.length > 0 || manifestTruncations.length > 0)
+    return null;
   if (semanticTruncations.length !== context.analysis.truncated_scopes)
     return null;
   const omissions = semanticTruncations.map(({ omittedCount }) => omittedCount);
@@ -172,7 +181,8 @@ const graphLimitations = (
   return [
     ...context.analysis.limitations,
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
-    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+    "Webpack/Rspack/esbuild factories were recovered from AST literals; REA did not invoke push handlers, wrappers, or bundle bootstrap code.",
+    "Vite/Rollup manifests and esbuild metafiles are treated as artifact metadata; they do not prove runtime loading.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
     ...(electronFindings === 0
       ? []

@@ -450,6 +450,8 @@ const vendorPatterns = [
   { name: "webpack", patterns: ["__webpack_require__", "webpackChunk"] },
   { name: "Rspack", patterns: ["__webpack_require__.f", "rspackChunk"] },
   { name: "Vite", patterns: ["__vite__", "import.meta.hot"] },
+  { name: "Rollup", patterns: ["ROLLUP_FILE_URL", "import.meta.ROLLUP"] },
+  { name: "esbuild", patterns: ["__commonJS", "__esm"] },
   { name: "React", patterns: ["React.createElement", "react/jsx-runtime"] },
   { name: "Vue", patterns: ["__VUE__", "createApp("] },
   { name: "Next.js", patterns: ["__NEXT_DATA__", "/_next/"] },

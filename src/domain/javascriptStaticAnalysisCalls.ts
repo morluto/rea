@@ -30,6 +30,7 @@ import type {
 
 /** Inspect one call or new expression for references, endpoints, storage, and roles. */
 export const inspectCall = (
+  source: string,
   node: t.CallExpression | t.NewExpression,
   context: FindingContext,
 ): void => {
@@ -52,6 +53,8 @@ export const inspectCall = (
       kind: "dynamic-import",
       specifier: chunkLoad.specifier,
     });
+  for (const specifier of vitePreloadDependencySpecifiers(source, node, name))
+    addReference(context, { node, kind: "dynamic-import", specifier });
   if (name === "Worker" || name.endsWith(".Worker"))
     addReference(context, { node, kind: "worker", specifier: first });
   if (name.endsWith("serviceWorker.register"))
@@ -116,6 +119,33 @@ const chunkLoadSpecifier = (
   )
     return null;
   return { specifier: prefixedArgument("chunk:", node.arguments[0]) };
+};
+
+const vitePreloadDependencySpecifiers = (
+  source: string,
+  node: t.CallExpression | t.NewExpression,
+  name: string,
+): readonly string[] => {
+  if (name !== "__vite__mapDeps" || !t.isArrayExpression(node.arguments[0]))
+    return [];
+  const indexes = node.arguments[0].elements.flatMap((element) =>
+    t.isNumericLiteral(element) ? [element.value] : [],
+  );
+  if (indexes.length !== node.arguments[0].elements.length) return [];
+  const table = vitePreloadDependencyTable(source);
+  return indexes.flatMap((index) => table[index] ?? []);
+};
+
+const vitePreloadDependencyTable = (source: string): readonly string[] => {
+  const match =
+    /\.\s*f\s*\|\|\s*\(\s*[^)]*?\.f\s*=\s*\[([\s\S]*?)\]\s*\)/u.exec(source);
+  const body = match?.[1];
+  if (body === undefined) return [];
+  return [
+    ...body.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/gu),
+  ]
+    .map((literal) => (literal[1] ?? literal[2] ?? "").slice(0, 4_096))
+    .slice(0, 256);
 };
 
 const inspectEndpointCall = (

@@ -67,9 +67,9 @@ export interface JavaScriptBundlerModule {
   readonly location: JavaScriptSourceRange;
 }
 
-/** One statically recognized Webpack/Rspack chunk registration. */
+/** One statically recognized bundler chunk or module registration. */
 export interface JavaScriptBundlerRegistration {
-  readonly bundler: "webpack" | "rspack";
+  readonly bundler: "webpack" | "rspack" | "esbuild";
   readonly runtime: string;
   readonly chunk_keys: readonly string[];
   readonly omitted_chunk_keys: number;

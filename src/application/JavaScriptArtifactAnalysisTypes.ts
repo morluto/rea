@@ -55,6 +55,33 @@ export interface JavaScriptJsonModuleObservation {
   readonly limitation: string | null;
 }
 
+/** One bounded entry recovered from a bundler manifest or metafile. */
+export interface JavaScriptBundlerManifestEntry {
+  readonly key: string;
+  readonly source: string | null;
+  readonly file: string | null;
+  readonly entry: boolean | null;
+  readonly imports: readonly string[];
+  readonly dynamic_imports: readonly string[];
+  readonly css: readonly string[];
+  readonly assets: readonly string[];
+}
+
+/** Bounded Vite/Rollup manifest or esbuild metafile parse result. */
+export interface JavaScriptBundlerManifestObservation {
+  readonly path: string;
+  readonly sha256: string;
+  readonly status: "included" | "truncated" | "invalid" | "unavailable";
+  readonly bundler: "vite" | "rollup" | "esbuild";
+  readonly manifest_kind:
+    | "vite-manifest"
+    | "rollup-manifest"
+    | "esbuild-metafile";
+  readonly entries: readonly JavaScriptBundlerManifestEntry[];
+  readonly omitted_entries: number | null;
+  readonly limitation: string | null;
+}
+
 /** One relevant file plus optional AST-only JavaScript facts. */
 export interface AnalyzedJavaScriptArtifactFile {
   readonly file: JavaScriptArtifactFile;
@@ -70,6 +97,7 @@ export interface JavaScriptArtifactAnalysis {
   readonly files: readonly AnalyzedJavaScriptArtifactFile[];
   readonly packages: readonly JavaScriptPackageObservation[];
   readonly json_modules: readonly JavaScriptJsonModuleObservation[];
+  readonly bundler_manifests: readonly JavaScriptBundlerManifestObservation[];
   readonly html_scripts: readonly JavaScriptHtmlScriptObservation[];
   readonly source_maps: readonly JavaScriptSourceMapObservation[];
   readonly visited_ast_nodes: number;

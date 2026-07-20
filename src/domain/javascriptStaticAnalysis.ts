@@ -16,7 +16,10 @@ import {
   inspectRouteProperty,
   inspectRoleProperty,
 } from "./javascriptStaticAnalysisCalls.js";
-import { inspectBundlerRegistration } from "./javascriptStaticAnalysisBundler.js";
+import {
+  inspectBundlerRegistration,
+  inspectEsbuildWrapper,
+} from "./javascriptStaticAnalysisBundler.js";
 import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
 import {
   createJavaScriptAnalysisAccumulator,
@@ -167,8 +170,9 @@ const inspectNode = (
   inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerRegistration(source, node, accumulator, limits);
-    inspectCall(node, findings);
-  } else if (t.isNewExpression(node)) inspectCall(node, findings);
+    inspectEsbuildWrapper(source, node, accumulator, limits);
+    inspectCall(source, node, findings);
+  } else if (t.isNewExpression(node)) inspectCall(source, node, findings);
   if (
     (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
     node.source !== undefined

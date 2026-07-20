@@ -22,6 +22,7 @@ import {
 import type { JavaScriptAnalysisAccumulator as AnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
 import type {
   JavaScriptBundlerModule,
+  JavaScriptBundlerRegistration,
   JavaScriptStaticAnalysisLimits,
 } from "./javascriptStaticAnalysisTypes.js";
 
@@ -92,6 +93,56 @@ export const inspectBundlerRegistration = (
       asyncChunkKeys.omitted,
     unknown_async_chunk_keys:
       runtimeValue.unknownAsyncChunkKeys + recovered.unknownAsyncChunkKeys,
+    modules: recovered.modules.sort((left, right) =>
+      compareCodePoints(left.module_key, right.module_key),
+    ),
+    location: range(call),
+  };
+  addBoundedFinding(
+    accumulator,
+    `registration\0${registrationKey(registration)}`,
+    limits.maxFindings,
+    () => accumulator.registrations.push(registration),
+  );
+};
+
+/** Inspect esbuild helper wrappers and recover their literal module tables. */
+export const inspectEsbuildWrapper = (
+  source: string,
+  call: t.CallExpression,
+  accumulator: AnalysisAccumulator,
+  limits: JavaScriptStaticAnalysisLimits,
+): void => {
+  const name = calleeName(call.callee);
+  const wrapperKind =
+    name === "__commonJS" || name.endsWith(".__commonJS")
+      ? "commonjs"
+      : name === "__esm" || name.endsWith(".__esm")
+        ? "esm"
+        : null;
+  const table = call.arguments[0];
+  if (wrapperKind === null || !t.isObjectExpression(table)) return;
+  const recovered = recoverBundlerModules(source, table, accumulator, limits);
+  if (recovered.modules.length === 0) return;
+  if (recovered.omittedAsyncChunkKeys > 0) {
+    accumulator.droppedFindings += recovered.omittedAsyncChunkKeys;
+    accumulator.structuralTruncation = true;
+  }
+  accumulator.unknownFindings += recovered.unknownAsyncChunkKeys;
+  const registration: JavaScriptBundlerRegistration = {
+    bundler: "esbuild",
+    runtime: `esbuild-${wrapperKind}`,
+    chunk_keys: [`${wrapperKind}@${String(call.start ?? 0)}`],
+    omitted_chunk_keys: 0,
+    unknown_chunk_keys: 0,
+    runtime_require_name: null,
+    runtime_module_cache_status: "not-observed",
+    entry_module_keys: [],
+    omitted_entry_module_keys: 0,
+    unknown_entry_module_keys: 0,
+    async_chunk_keys: recovered.asyncChunkKeys,
+    omitted_async_chunk_keys: recovered.omittedAsyncChunkKeys,
+    unknown_async_chunk_keys: recovered.unknownAsyncChunkKeys,
     modules: recovered.modules.sort((left, right) =>
       compareCodePoints(left.module_key, right.module_key),
     ),

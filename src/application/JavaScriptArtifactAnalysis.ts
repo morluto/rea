@@ -18,6 +18,7 @@ import type {
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
+  JavaScriptBundlerManifestObservation,
   JavaScriptHtmlScriptObservation,
   JavaScriptJsonModuleObservation,
   JavaScriptPackageObservation,
@@ -26,11 +27,13 @@ import type {
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactReconstructionInput } from "./JavaScriptArtifactReconstructionInput.js";
 import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
+import { parseJavaScriptBundlerManifest } from "./JavaScriptBundlerManifestAnalysis.js";
 
 interface MutableArtifactAnalysis {
   readonly files: AnalyzedJavaScriptArtifactFile[];
   readonly packages: JavaScriptPackageObservation[];
   readonly jsonModules: JavaScriptJsonModuleObservation[];
+  readonly bundlerManifests: JavaScriptBundlerManifestObservation[];
   readonly htmlScripts: JavaScriptHtmlScriptObservation[];
   readonly sourceMaps: JavaScriptSourceMapObservation[];
   visitedNodes: number;
@@ -88,6 +91,7 @@ const finalizeArtifactAnalysis = (
     files: state.files,
     packages: state.packages,
     json_modules: state.jsonModules,
+    bundler_manifests: state.bundlerManifests,
     html_scripts: state.htmlScripts.slice(0, input.limits.max_findings),
     source_maps: state.sourceMaps,
     visited_ast_nodes: state.visitedNodes,
@@ -115,7 +119,7 @@ const analyzeArtifactFile = (
   context: ArtifactAnalysisContext,
 ): void => {
   const { state, input } = context;
-  addStructuredObservations(file, state);
+  addStructuredObservations(file, state, input);
   if (file.kind === "html" && file.text.included)
     state.htmlScripts.push(
       ...parseHtmlScripts(
@@ -204,6 +208,7 @@ const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
   files: [],
   packages: [],
   jsonModules: [],
+  bundlerManifests: [],
   htmlScripts: [],
   sourceMaps: [],
   visitedNodes: 0,
@@ -217,12 +222,27 @@ const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
 const addStructuredObservations = (
   file: JavaScriptArtifactFile,
   state: MutableArtifactAnalysis,
+  input: JavaScriptArtifactReconstructionInput,
 ): void => {
   if (file.kind === "package-json") state.packages.push(parsePackage(file));
   if (file.kind !== "json") return;
   const json = analyzeJavaScriptJsonModule(file);
   state.jsonModules.push(json);
   if (json.status === "invalid") state.parseFailures += 1;
+  const remainingManifestEntries = Math.max(
+    0,
+    input.limits.max_findings - state.findings,
+  );
+  const manifest = parseJavaScriptBundlerManifest(
+    file,
+    remainingManifestEntries,
+  );
+  if (manifest === null) return;
+  state.bundlerManifests.push(manifest);
+  state.findings += manifest.entries.length;
+  if (manifest.status === "invalid" || manifest.status === "unavailable")
+    state.parseFailures += 1;
+  if (manifest.status === "truncated") state.truncatedScopes += 1;
 };
 
 const parsePackage = (

@@ -1,6 +1,9 @@
 import type { ArtifactInventorySnapshot } from "./ArtifactInventory.js";
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import type {
+  AnalyzedJavaScriptArtifactFile,
+  JavaScriptArtifactAnalysis,
+} from "./JavaScriptArtifactAnalysisTypes.js";
 import type {
   JavaScriptArtifactContainer,
   JavaScriptArtifactFile,
@@ -151,59 +154,81 @@ export const addJavaScriptArtifactFiles = (
         }),
       });
     }
-    if (
-      file.kind === "javascript" &&
-      (analyzed.javascript === null ||
-        analyzed.javascript.parse_status === "failed")
-    )
-      addUnavailableStaticParseScope(context, {
-        file,
-        asset: target,
-        operation: "parse-javascript",
-        limitation: file.text.included
-          ? "JavaScript syntax could not be parsed."
-          : `JavaScript text was unavailable: ${file.text.reason}.`,
-      });
-    const packageValue = context.analysis.packages.find(
-      ({ path }) => path === file.path,
-    );
-    if (
-      packageValue?.status !== undefined &&
-      packageValue.status !== "included"
-    )
-      addUnavailableStaticParseScope(context, {
-        file,
-        asset: target,
-        operation: "parse-package-json",
-        limitation:
-          packageValue.limitation ?? "Package metadata could not be parsed.",
-      });
-    const jsonValue = context.analysis.json_modules.find(
-      ({ path }) => path === file.path,
-    );
-    if (jsonValue !== undefined && jsonValue.status !== "included")
-      addUnavailableStaticParseScope(context, {
-        file,
-        asset: target,
-        operation: "parse-json-module",
-        limitation:
-          jsonValue.limitation ?? "JSON module content could not be parsed.",
-      });
-    const sourceMap = context.analysis.source_maps.find(
-      ({ path }) => path === file.path,
-    );
-    if (
-      sourceMap !== undefined &&
-      (sourceMap.status === "invalid" || sourceMap.status === "not-approved")
-    )
-      addUnavailableStaticParseScope(context, {
-        file,
-        asset: target,
-        operation: "parse-local-source-map",
-        limitation:
-          sourceMap.limitation ?? "Source-map content could not be parsed.",
-      });
+    addUnavailableFileParseScopes(context, analyzed, target);
   }
+};
+
+const addUnavailableFileParseScopes = (
+  context: JavaScriptArtifactGraphContext,
+  analyzed: AnalyzedJavaScriptArtifactFile,
+  target: ApplicationNode,
+): void => {
+  const { file } = analyzed;
+  if (
+    file.kind === "javascript" &&
+    (analyzed.javascript === null ||
+      analyzed.javascript.parse_status === "failed")
+  )
+    addUnavailableStaticParseScope(context, {
+      file,
+      asset: target,
+      operation: "parse-javascript",
+      limitation: file.text.included
+        ? "JavaScript syntax could not be parsed."
+        : `JavaScript text was unavailable: ${file.text.reason}.`,
+    });
+  const packageValue = context.analysis.packages.find(
+    ({ path }) => path === file.path,
+  );
+  if (packageValue?.status !== undefined && packageValue.status !== "included")
+    addUnavailableStaticParseScope(context, {
+      file,
+      asset: target,
+      operation: "parse-package-json",
+      limitation:
+        packageValue.limitation ?? "Package metadata could not be parsed.",
+    });
+  const jsonValue = context.analysis.json_modules.find(
+    ({ path }) => path === file.path,
+  );
+  if (jsonValue !== undefined && jsonValue.status !== "included")
+    addUnavailableStaticParseScope(context, {
+      file,
+      asset: target,
+      operation: "parse-json-module",
+      limitation:
+        jsonValue.limitation ?? "JSON module content could not be parsed.",
+    });
+  const bundlerManifest = context.analysis.bundler_manifests.find(
+    ({ path }) => path === file.path,
+  );
+  if (
+    bundlerManifest !== undefined &&
+    (bundlerManifest.status === "invalid" ||
+      bundlerManifest.status === "unavailable")
+  )
+    addUnavailableStaticParseScope(context, {
+      file,
+      asset: target,
+      operation: "parse-bundler-manifest",
+      limitation:
+        bundlerManifest.limitation ??
+        "Bundler manifest content could not be parsed.",
+    });
+  const sourceMap = context.analysis.source_maps.find(
+    ({ path }) => path === file.path,
+  );
+  if (
+    sourceMap !== undefined &&
+    (sourceMap.status === "invalid" || sourceMap.status === "not-approved")
+  )
+    addUnavailableStaticParseScope(context, {
+      file,
+      asset: target,
+      operation: "parse-local-source-map",
+      limitation:
+        sourceMap.limitation ?? "Source-map content could not be parsed.",
+    });
 };
 
 /** Project package metadata and its declared Electron roles. */
@@ -285,6 +310,9 @@ const createFileTarget = (
   const json = context.analysis.json_modules.find(
     ({ path }) => path === file.path,
   );
+  const bundlerManifest = context.analysis.bundler_manifests.find(
+    ({ path }) => path === file.path,
+  );
   return context.accumulator.addNode({
     kind,
     identity: {
@@ -304,6 +332,8 @@ const createFileTarget = (
           text_status: file.text.included ? "included" : file.text.reason,
           parse_status: javascript?.parse_status ?? null,
           json_parse_status: json?.status ?? null,
+          bundler_manifest_status: bundlerManifest?.status ?? null,
+          bundler_manifest_kind: bundlerManifest?.manifest_kind ?? null,
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys: json?.omitted_top_level_keys ?? 0,
           vendor_markers: javascript?.vendors ?? [],

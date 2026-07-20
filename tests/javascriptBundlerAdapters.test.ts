@@ -103,6 +103,86 @@ describe("Webpack and Rspack runtime adapters", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("projects Vite/Rollup manifests and esbuild metafiles without execution", async () => {
+    const root = await esmBundlerFixture();
+    try {
+      const result = await reconstructJavaScriptArtifact({ input_path: root });
+      const graph = result.graph;
+
+      const viteMain = manifestChunk(graph, "vite", "src/main.ts");
+      const viteFeature = manifestChunk(graph, "vite", "src/feature.ts");
+      const viteVendor = manifestChunk(graph, "vite", "_vendor.js");
+      const rollupEntry = manifestChunk(graph, "rollup", "src/entry.ts");
+      const rollupNested = manifestChunk(graph, "rollup", "chunks/nested.js");
+      const esbuildApp = manifestChunk(graph, "esbuild", "out/app.js");
+      const esbuildLazy = manifestChunk(graph, "esbuild", "out/chunk.js");
+      const esbuildModule = moduleNode(graph, "src/dep.js");
+
+      expect(viteMain?.observations[0]?.properties).toMatchObject({
+        bundler: "vite",
+        manifest_kind: "vite-manifest",
+        file: "assets/main-abc.js",
+        resolved_path: "dist/assets/main-abc.js",
+        entry: true,
+        css: ["assets/main.css"],
+        assets: ["assets/logo.svg"],
+      });
+      expect(edge(graph, viteMain, viteVendor, "imports")).toMatchObject({
+        properties: expect.objectContaining({
+          kind: "bundler-manifest-static-import",
+          resolution_status: "resolved",
+        }),
+      });
+      expect(edge(graph, viteMain, viteFeature, "imports")).toMatchObject({
+        properties: expect.objectContaining({
+          kind: "bundler-manifest-dynamic-import",
+          resolution_status: "resolved",
+        }),
+      });
+      expect(
+        graph.edges.some(
+          ({ source_node_id, relation, properties }) =>
+            source_node_id === viteMain?.node_id &&
+            relation === "imports" &&
+            properties.kind === "bundler-manifest-asset" &&
+            properties.specifier === "assets/logo.svg" &&
+            properties.resolution_status === "not-found",
+        ),
+      ).toBe(true);
+
+      expect(rollupEntry?.observations[0]?.properties).toMatchObject({
+        bundler: "rollup",
+        manifest_kind: "rollup-manifest",
+        resolved_path: "rollup/chunks/entry.js",
+      });
+      expect(edge(graph, rollupEntry, rollupNested, "imports")).toMatchObject({
+        properties: expect.objectContaining({
+          kind: "bundler-manifest-dynamic-import",
+          resolution_status: "resolved",
+        }),
+      });
+
+      expect(esbuildApp?.observations[0]?.properties).toMatchObject({
+        bundler: "esbuild",
+        manifest_kind: "esbuild-metafile",
+        source: "src/app.ts",
+        resolved_path: "esbuild/out/app.js",
+      });
+      expect(edge(graph, esbuildApp, esbuildLazy, "imports")).toMatchObject({
+        properties: expect.objectContaining({
+          kind: "bundler-manifest-dynamic-import",
+          resolution_status: "resolved",
+        }),
+      });
+      expect(esbuildModule?.observations[0]?.properties).toMatchObject({
+        bundler: "esbuild",
+        module_key: "src/dep.js",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 const bundlerFixture = async (): Promise<string> => {
@@ -158,6 +238,135 @@ const bundlerFixture = async (): Promise<string> => {
   return root;
 };
 
+const esmBundlerFixture = async (): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), "rea-esm-bundler-adapters-"));
+  await mkdir(join(root, "dist", ".vite"), { recursive: true });
+  await mkdir(join(root, "dist", "assets"), { recursive: true });
+  await mkdir(join(root, "rollup", "chunks"), { recursive: true });
+  await mkdir(join(root, "esbuild", "out"), { recursive: true });
+  await writeFile(
+    join(root, "dist", ".vite", "manifest.json"),
+    JSON.stringify(
+      {
+        "src/main.ts": {
+          file: "assets/main-abc.js",
+          src: "src/main.ts",
+          isEntry: true,
+          imports: ["_vendor.js"],
+          dynamicImports: ["src/feature.ts"],
+          css: ["assets/main.css"],
+          assets: ["assets/logo.svg"],
+        },
+        "src/feature.ts": {
+          file: "assets/feature-def.js",
+          src: "src/feature.ts",
+          isDynamicEntry: true,
+          imports: ["_vendor.js"],
+        },
+        "_vendor.js": { file: "assets/vendor.js" },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    join(root, "dist", "assets", "main-abc.js"),
+    `
+      import { helper } from "./vendor.js";
+      const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./feature-def.js", "./main.css"]))) => i.map((i) => d[i]);
+      export const start = () => __vitePreload(() => import("./feature-def.js"), __vite__mapDeps([0, 1]));
+      helper();
+    `,
+  );
+  await writeFile(
+    join(root, "dist", "assets", "feature-def.js"),
+    `export const feature = "feature";`,
+  );
+  await writeFile(
+    join(root, "dist", "assets", "vendor.js"),
+    `export const helper = () => "vendor";`,
+  );
+  await writeFile(
+    join(root, "rollup", "rollup-manifest.json"),
+    JSON.stringify(
+      {
+        "src/entry.ts": {
+          file: "chunks/entry.js",
+          isEntry: true,
+          imports: ["chunks/shared.js"],
+          dynamicImports: ["chunks/nested.js"],
+        },
+        "chunks/shared.js": { file: "chunks/shared.js" },
+        "chunks/nested.js": { file: "chunks/nested.js" },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    join(root, "rollup", "chunks", "entry.js"),
+    `import "./shared.js"; export const nested = () => import("./nested.js");`,
+  );
+  await writeFile(
+    join(root, "rollup", "chunks", "shared.js"),
+    `export const shared = true;`,
+  );
+  await writeFile(
+    join(root, "rollup", "chunks", "nested.js"),
+    `export const nested = true;`,
+  );
+  await writeFile(
+    join(root, "esbuild", "esbuild-metafile.json"),
+    JSON.stringify(
+      {
+        inputs: {
+          "src/app.ts": {},
+          "src/lazy.ts": {},
+        },
+        outputs: {
+          "out/app.js": {
+            entryPoint: "src/app.ts",
+            imports: [
+              { path: "out/shared.js", kind: "import-statement" },
+              { path: "out/chunk.js", kind: "dynamic-import" },
+            ],
+          },
+          "out/chunk.js": { entryPoint: "src/lazy.ts", imports: [] },
+          "out/shared.js": { imports: [] },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    join(root, "esbuild", "out", "app.js"),
+    `
+      var require_dep = __commonJS({
+        "src/dep.js"(exports, module) {
+          module.exports = { value: 1 };
+        }
+      });
+      var init_core = __esm({
+        "src/core.js"() {
+          require_dep();
+        }
+      });
+      init_core();
+      import("./chunk.js");
+    `,
+  );
+  await writeFile(
+    join(root, "esbuild", "out", "chunk.js"),
+    `export const lazy = true;`,
+  );
+  await writeFile(
+    join(root, "esbuild", "out", "shared.js"),
+    `export const shared = true;`,
+  );
+  return root;
+};
+
 const chunk = (
   graph: JavaScriptApplicationGraph,
   runtime: string,
@@ -183,6 +392,20 @@ const moduleNode = (
       kind === "javascript-module" &&
       observations.some(
         ({ properties }) => properties.module_key === moduleKey,
+      ),
+  );
+
+const manifestChunk = (
+  graph: JavaScriptApplicationGraph,
+  bundler: string,
+  entryKey: string,
+): ApplicationNode | undefined =>
+  graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "javascript-chunk" &&
+      observations.some(
+        ({ properties }) =>
+          properties.bundler === bundler && properties.entry_key === entryKey,
       ),
   );
 
