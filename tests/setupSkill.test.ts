@@ -35,14 +35,23 @@ describe("canonical skill transaction", () => {
       "stale managed skill\n",
     );
     const installedSkill = await readFile(destination, "utf8");
-    expect(installedSkill).toContain('version: "22"');
+    expect(installedSkill).toContain('version: "23"');
     expect(installedSkill).toContain(
-      "use normal repository tools and skip REA readiness",
+      "use normal repository tools and do not run REA",
     );
     expect(installedSkill).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
+    expect(
+      await readFile(
+        join(
+          home,
+          ".agents/skills/reverse-engineer-anything/references/javascript-applications.md",
+        ),
+        "utf8",
+      ),
+    ).toContain("analyze_javascript_application");
     expect(await canonicalSkillNeedsInstall(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
   });

@@ -142,6 +142,16 @@ describe("server and catalog identity", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      const instructions = client.getInstructions();
+      expect(instructions?.length).toBeLessThanOrEqual(512);
+      expect(instructions).toContain(
+        "ASAR/JavaScript -> analyze_javascript_application",
+      );
+      expect(instructions).toContain(
+        "native binary/database -> open_binary, then binary_overview",
+      );
+      expect(instructions).toContain("Never repeat identical analysis");
+      expect(instructions).toContain("cite Evidence IDs");
       const resource = await client.readResource({
         uri: "rea://server/identity",
       });
@@ -158,7 +168,10 @@ describe("server and catalog identity", () => {
       });
       const status = await client.callTool({
         name: "binary_session",
-        arguments: { expected_package_version: "1.2.0" },
+        arguments: {
+          detail: "full",
+          expected_package_version: "1.2.0",
+        },
       });
       expect(status.structuredContent).toMatchObject({
         result: {
@@ -193,6 +206,45 @@ describe("server and catalog identity", () => {
             elicitation_url: false,
             roots: false,
             sampling: false,
+          },
+        },
+      });
+      const summary = await client.callTool({
+        name: "binary_session",
+        arguments: { expected_package_version: "1.2.0" },
+      });
+      expect(summary.structuredContent).toMatchObject({
+        result: {
+          view: "summary",
+          open: false,
+          target: null,
+          alignment: { state: "mcp_server_restart_required" },
+          recommended_actions: expect.any(Array),
+        },
+      });
+      expect(JSON.stringify(summary.structuredContent)).not.toContain(
+        "tool_availability",
+      );
+      const capabilities = await client.callTool({
+        name: "binary_session",
+        arguments: {
+          detail: "capabilities",
+          capability_family: "browser-provider",
+          cursor: 0,
+          limit: 1,
+        },
+      });
+      expect(capabilities.structuredContent).toMatchObject({
+        result: {
+          view: "capabilities",
+          capability_family: "browser-provider",
+          capabilities: {
+            items: [expect.objectContaining({ surface: "browser-provider" })],
+            cursor: 0,
+            limit: 1,
+            total: expect.any(Number),
+            next_cursor: expect.any(Number),
+            has_more: true,
           },
         },
       });

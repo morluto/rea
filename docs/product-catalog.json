@@ -8,7 +8,7 @@
       "client": "2.0.0-beta.4",
       "core": "2.0.0-beta.4"
     },
-    "skill_version": "22"
+    "skill_version": "23"
   },
   "tools": {
     "total": 95,
@@ -566,10 +566,10 @@
       "mcp_resource_templates": 8
     },
     "digests": {
-      "tools_sha256": "b0a3ec201a314394264ff45ba6b2ed151833f1b13701e3d07279b665d771e35e",
+      "tools_sha256": "f0eb8f9d91aac6b509e9b282d0df78003b9ad4133a36c7da4d81dc37221b4037",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "5dca0fcdad3e78d71a1b6ef7b4f0c12bdcd8e3ec11fcbdd9ccd3a68edadf5c80",
-      "combined_sha256": "e0c341749f488a869b62ab9b48c9236c60c91317ac60c8427f12a830cb900ae0"
+      "combined_sha256": "f8a4a8392f73780686234656e3e4555539a828e021c72754e4131c83df349b9f"
     }
   }
 }

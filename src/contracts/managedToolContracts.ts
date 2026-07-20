@@ -6,6 +6,13 @@ import { toolContractMetadata } from "./toolEffects.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedArtifactInputSchema = z.object({
+  path: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Managed PE/CLI path to open before inspection; omit only when a managed target is already active",
+    ),
   reference_offset: z.number().int().min(0).default(0),
   reference_limit: z.number().int().min(1).max(500).default(100),
   resource_offset: z.number().int().min(0).default(0),
@@ -122,14 +129,14 @@ export const MANAGED_TOOL_CONTRACTS = [
     name: "inspect_managed_artifact",
     ...toolContractMetadata("inspect_managed_artifact"),
     description:
-      "Classify the active PE/CLI artifact and inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns bounded pages and explicit partial or malformed coverage.",
+      "Open and classify an explicit managed PE/CLI path, or inspect the active managed target, then inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns bounded pages and explicit partial or malformed coverage.",
     kind: "managed-provider",
     inputSchema: managedArtifactInputSchema,
     outputSchema,
     examples: [
       {
         title: "Example inspect managed artifact request",
-        input: {},
+        input: { path: "/tmp/Example.dll" },
       },
     ],
   },

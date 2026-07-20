@@ -11,6 +11,8 @@ import type { ToolContract } from "../contracts/toolContracts.js";
 
 interface ToolResultOptions {
   readonly evidenceResourcesAvailable?: boolean;
+  readonly evidenceResultProjection?: JsonValue;
+  readonly evidenceTextProjection?: JsonValue;
   readonly resourceLinks?: readonly {
     readonly uri: string;
     readonly name: string;
@@ -53,7 +55,7 @@ const successResult = (
   options: ToolResultOptions,
 ): CallToolResult => {
   const candidate =
-    compactEvidence(value) ??
+    compactEvidence(value, options.evidenceResultProjection) ??
     (contract.kind === "session" ? { result: value } : value);
   const parsed = contract.outputSchema.safeParse(candidate);
   if (!parsed.success) {
@@ -78,7 +80,15 @@ const successResult = (
   }
   return {
     content: [
-      { type: "text", text: JSON.stringify(parsed.data) },
+      {
+        type: "text",
+        text: JSON.stringify(
+          options.evidenceTextProjection === undefined
+            ? parsed.data
+            : (compactEvidence(value, options.evidenceTextProjection) ??
+                options.evidenceTextProjection),
+        ),
+      },
       ...evidenceResourceLinks(
         value,
         contract.kind === "session" ||
@@ -94,7 +104,10 @@ const successResult = (
   };
 };
 
-const compactEvidence = (value: JsonValue): JsonValue | undefined => {
+const compactEvidence = (
+  value: JsonValue,
+  resultProjection: JsonValue | undefined,
+): JsonValue | undefined => {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -105,7 +118,7 @@ const compactEvidence = (value: JsonValue): JsonValue | undefined => {
   )
     return undefined;
   return {
-    result: value.normalized_result,
+    result: resultProjection ?? value.normalized_result,
     evidence_id: value.evidence_id,
     evidence_uri: `rea://evidence/${value.evidence_id}`,
   };

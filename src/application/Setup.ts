@@ -45,7 +45,7 @@ export { canonicalSkillNeedsInstall, installCanonicalSkill };
 
 const registrationCommand = (): readonly string[] =>
   process.env.npm_command === "exec"
-    ? ["npx", "-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]
+    ? PRODUCT_IDENTITY.mcpCommand.split(" ")
     : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
 
 /** Result of one backup/write/readback transaction. */
@@ -188,7 +188,7 @@ export const runSetup = async (
       plannedActions,
       appliedActions,
       clients,
-      doctor: await host.doctor(),
+      doctor: discovery.initialDoctor,
       remediation:
         "Review the setup plan, then rerun interactively or with --yes.",
     };
@@ -273,7 +273,7 @@ const resolveSetupSelection = async (
         selected.has(`configure_client:${client.name}`),
       );
       interactiveApproval = decision.approved;
-      approved = decision.approved || plannedActions.length === 0;
+      approved = decision.approved;
     }
   }
   return {

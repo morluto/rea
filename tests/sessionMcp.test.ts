@@ -86,7 +86,10 @@ describe("target-free MCP lifecycle", () => {
         .object({ result: z.object({ path: z.string(), sha256: z.string() }) })
         .parse(
           structured(
-            await mcp.callTool({ name: "binary_session", arguments: {} }),
+            await mcp.callTool({
+              name: "binary_session",
+              arguments: { detail: "full" },
+            }),
           ),
         ).result,
     ).toEqual({

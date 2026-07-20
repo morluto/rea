@@ -55,7 +55,7 @@ describe("browser MCP tools", () => {
       );
       const status = await connected.client.callTool({
         name: "binary_session",
-        arguments: {},
+        arguments: { detail: "full" },
       });
       expect(status.structuredContent).toMatchObject({
         result: {

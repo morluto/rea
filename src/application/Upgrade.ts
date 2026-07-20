@@ -12,6 +12,9 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 const execFileAsync = promisify(execFile);
 const registryResponseSchema = z.object({ version: z.string().min(1) });
 const UPGRADE_COMMAND = "npm install --global rea-agents@latest";
+const CLI_SCRIPT_PATH = fileURLToPath(
+  new URL("../../scripts/rea.mjs", import.meta.url),
+);
 
 /** Location of the global npm installation that owns the running CLI. */
 export interface NpmInstallation {
@@ -36,6 +39,7 @@ export interface UpgradeHost {
     installation: NpmInstallation,
     output: UpgradeOutput,
   ): Promise<boolean>;
+  syncAgentIntegration(output: UpgradeOutput): Promise<boolean | undefined>;
 }
 
 /** Caller-visible outcome of checking and updating the REA CLI. */
@@ -53,6 +57,7 @@ export type UpgradeResult =
       readonly versionCheck: "available" | "unavailable";
       readonly installMethod: "npm";
       readonly command: typeof UPGRADE_COMMAND;
+      readonly integrationSync: "setup_invoked" | "deferred" | "failed";
       readonly clientRestartRequired: true;
       readonly remediation: string;
     }
@@ -111,6 +116,13 @@ export const runUpgrade = async (
       remediation: `REA could not update through npm. Check npm registry access and global install permissions, then run: ${UPGRADE_COMMAND}`,
     };
 
+  const integrationSyncResult = await host.syncAgentIntegration(output);
+  const integrationSync =
+    integrationSyncResult === undefined
+      ? "deferred"
+      : integrationSyncResult
+        ? "setup_invoked"
+        : "failed";
   return {
     status: "upgraded",
     previousVersion: currentVersion,
@@ -118,9 +130,12 @@ export const runUpgrade = async (
     versionCheck: "available",
     installMethod: "npm",
     command: UPGRADE_COMMAND,
+    integrationSync,
     clientRestartRequired: true,
     remediation:
-      "Rerun rea setup to refresh registrations and the skill, then restart clients that may retain an older MCP server.",
+      integrationSync === "setup_invoked"
+        ? "The updated setup journey was opened to align registrations and the skill. Restart clients whose approved registration changed."
+        : "Run rea setup --all-detected to align registrations and the skill, then restart clients that may retain an older MCP server.",
   };
 };
 
@@ -156,6 +171,16 @@ export const systemUpgradeHost = (): UpgradeHost => ({
       ],
       output,
     ),
+  syncAgentIntegration: (output) =>
+    output === "structured" ||
+    process.stdin.isTTY !== true ||
+    process.stderr.isTTY !== true
+      ? Promise.resolve(undefined)
+      : runCommand(
+          process.execPath,
+          [CLI_SCRIPT_PATH, "setup", "--all-detected"],
+          "human",
+        ),
 });
 
 const systemNpmInstallationHost: NpmInstallationHost = {

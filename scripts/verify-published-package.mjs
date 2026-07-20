@@ -1,5 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
 
@@ -9,6 +12,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? ""))
 
 const serverEnvironment = { ...process.env };
 delete serverEnvironment.HOPPER_TARGET_PATH;
+const canaryRoot = await mkdtemp(join(tmpdir(), "rea-published-canary-"));
 const transport = new StdioClientTransport({
   command: "npm",
   args: [
@@ -19,6 +23,7 @@ const transport = new StdioClientTransport({
     "rea",
     "mcp",
   ],
+  cwd: canaryRoot,
   env: serverEnvironment,
   stderr: "pipe",
 });
@@ -61,8 +66,12 @@ try {
 } catch (cause) {
   throw new Error(`Published MCP canary failed: ${stderr}`, { cause });
 } finally {
-  await client.close();
-  await transport.close();
+  try {
+    await client.close();
+    await transport.close();
+  } finally {
+    await rm(canaryRoot, { recursive: true, force: true });
+  }
 }
 
 process.stdout.write(

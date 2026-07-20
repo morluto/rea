@@ -6,7 +6,7 @@ import { z } from "zod";
 import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 describe("package identity", () => {
-  it("keeps the manifest, executable, and latest MCP command aligned", async () => {
+  it("keeps the manifest, executable, and pinned MCP command aligned", async () => {
     const packageJson = z
       .object({
         name: z.string(),
@@ -34,8 +34,11 @@ describe("package identity", () => {
     expect(PRODUCT_IDENTITY.packageSpecifier).toBe(
       `${packageJson.name}@latest`,
     );
+    expect(PRODUCT_IDENTITY.registrationPackageSpecifier).toBe(
+      `${packageJson.name}@${PRODUCT_IDENTITY.packageVersion}`,
+    );
     expect(PRODUCT_IDENTITY.mcpCommand).toBe(
-      `npx -y ${packageJson.name}@latest mcp`,
+      `npx -y ${packageJson.name}@${PRODUCT_IDENTITY.packageVersion} mcp`,
     );
     expect(packageJson.scripts.start).toBe("node scripts/rea.mjs mcp");
     expect(packageJson.scripts.prepare).toBe("npm run build && husky");

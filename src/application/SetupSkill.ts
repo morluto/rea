@@ -4,8 +4,23 @@ import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 
-const skillDestination = (home: string, name: string): string =>
-  join(home, ".agents/skills", name, "SKILL.md");
+const SKILL_FILES = [
+  "SKILL.md",
+  "references/native-and-artifacts.md",
+  "references/javascript-applications.md",
+  "references/runtime-observation.md",
+  "references/evidence-workflows.md",
+  "references/controlled-replay.md",
+] as const;
+
+interface CanonicalSkillFile {
+  readonly content: string;
+  readonly destination: string;
+  readonly original: string | undefined;
+}
+
+const skillRoot = (home: string): string =>
+  join(home, ".agents/skills", PRODUCT_IDENTITY.skillName);
 
 const readOptionalText = async (path: string): Promise<string | undefined> => {
   try {
@@ -19,70 +34,75 @@ const readOptionalText = async (path: string): Promise<string | undefined> => {
 
 const canonicalSkillFiles = async (
   home: string,
-): Promise<{ readonly content: string; readonly destination: string }> => ({
-  destination: skillDestination(home, PRODUCT_IDENTITY.skillName),
-  content: await readFile(
-    new URL(
-      `../../skills/${PRODUCT_IDENTITY.skillName}/SKILL.md`,
-      import.meta.url,
-    ),
-    "utf8",
-  ),
-});
+): Promise<readonly CanonicalSkillFile[]> =>
+  Promise.all(
+    SKILL_FILES.map(async (relativePath) => {
+      const destination = join(skillRoot(home), relativePath);
+      return {
+        destination,
+        content: await readFile(
+          new URL(
+            `../../skills/${PRODUCT_IDENTITY.skillName}/${relativePath}`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+        original: await readOptionalText(destination),
+      };
+    }),
+  );
 
-/** Report whether setup would change the managed REA skill. */
+/** Report whether setup would change any file in the managed REA skill bundle. */
 export const canonicalSkillNeedsInstall = async (
   home: string,
 ): Promise<boolean> => {
   try {
-    const { content, destination } = await canonicalSkillFiles(home);
-    return (await readOptionalText(destination)) !== content;
+    return (await canonicalSkillFiles(home)).some(
+      ({ content, original }) => original !== content,
+    );
   } catch {
     return true;
   }
 };
 
-/** Transactionally install or upgrade the versioned canonical REA skill. */
+const writeText = (path: string, content: string): Promise<void> =>
+  writeFileAtomic(path, content, { encoding: "utf8", mode: 0o600 });
+
+const restoreSkillFiles = async (
+  changed: readonly CanonicalSkillFile[],
+): Promise<void> => {
+  for (const { destination, original } of [...changed].reverse()) {
+    if (original === undefined) await rm(destination, { force: true });
+    else await writeText(destination, original);
+  }
+};
+
+/** Transactionally install or upgrade the canonical REA skill and references. */
 export const installCanonicalSkill = async (
   home: string,
 ): Promise<"installed" | "unchanged" | "failed"> => {
-  let destination = skillDestination(home, PRODUCT_IDENTITY.skillName);
-  let backup = `${destination}.rea.backup`;
-  let original: string | undefined;
-  let canonicalChanged = false;
+  let changed: readonly CanonicalSkillFile[] = [];
   try {
     const canonical = await canonicalSkillFiles(home);
-    destination = canonical.destination;
-    backup = `${destination}.rea.backup`;
-    const { content } = canonical;
-    original = await readOptionalText(destination);
-    if (original === content) return "unchanged";
-    await mkdir(dirname(destination), { recursive: true });
-    if (original !== undefined && original !== content)
-      await writeFileAtomic(backup, original, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-    canonicalChanged = original !== content;
-    if (canonicalChanged)
-      await writeFileAtomic(destination, content, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-    if ((await readFile(destination, "utf8")) !== content)
-      throw new Error("skill readback mismatch");
+    changed = canonical.filter(({ content, original }) => original !== content);
+    if (changed.length === 0) return "unchanged";
+
+    for (const { destination, original } of changed) {
+      await mkdir(dirname(destination), { recursive: true });
+      if (original !== undefined)
+        await writeText(`${destination}.rea.backup`, original);
+    }
+    for (const { destination, content } of changed)
+      await writeText(destination, content);
+    for (const { destination, content } of changed)
+      if ((await readFile(destination, "utf8")) !== content)
+        throw new Error(`skill readback mismatch: ${destination}`);
     return "installed";
   } catch {
     try {
-      if (canonicalChanged && original === undefined)
-        await rm(destination, { force: true });
-      else if (canonicalChanged && original !== undefined)
-        await writeFileAtomic(destination, original, {
-          encoding: "utf8",
-          mode: 0o600,
-        });
+      await restoreSkillFiles(changed);
     } catch {
-      // The canonical backup remains beside the skill for operator recovery.
+      // Per-file backups remain beside changed files for operator recovery.
     }
     return "failed";
   }

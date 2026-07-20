@@ -50,16 +50,15 @@ mechanics:
 - recover evidence through an available deep-analysis provider;
 - use the bundled skill for a repeatable investigation workflow.
 
-REA then summarizes the detected clients and asks which independent
-capabilities to set up. The capability picker starts empty and labels each
-choice by its role: `MCP` for coding-agent access, `provider` for Hopper, and
-`skill` for the shared REA investigation workflow. Selecting MCP access opens a
-second empty checklist for the exact detected agents that should receive a
-registration. Detection provides context; it does not preselect or authorize a
-configuration write.
+REA then summarizes the detected clients and asks which capabilities to set up.
+The capability picker starts empty and presents `Agent integration` (the MCP
+registration and matching guided workflow together) plus the optional Hopper
+provider. Selecting agent integration opens a second empty checklist for the
+exact detected agents that should receive a registration. Detection provides
+context; it does not preselect or authorize a configuration write.
 
-Choosing no capabilities exits without changes. Selecting the skill or provider
-does not implicitly select an agent, and selecting agent access does not include
+Choosing no capabilities exits without changes. Selecting the provider does not
+implicitly select an agent, and selecting agent integration does not include
 every detected agent. The picker keeps its navigation, selection, confirmation,
 and cancellation keys visible instead of relying on a transient hint.
 
@@ -89,7 +88,8 @@ capability that the final diagnostic check did not verify.
 
 Select exact clients in scripts with repeatable `--client` flags, or retain
 automatic discovery explicitly with `--all-detected`. Use `--skill=false` to
-omit the bundled skill and `--dry-run` for a read-only plan:
+override the normal bundled-skill installation and `--dry-run` for a read-only
+plan:
 
 ```bash
 rea setup --client codex --client cursor --skill=false --dry-run
@@ -101,13 +101,21 @@ structured results and pipelines. `NO_COLOR=1` disables color. Use
 
 For automation, `rea setup --json` reports the plan without applying it.
 Prefer pairing `--yes` with explicit scope such as `--client codex`,
-`--all-detected`, or `--skill`. Legacy unscoped `--yes` remains compatible for
+or `--all-detected`. Legacy unscoped `--yes` remains compatible for
 this release but emits a deprecation warning. Installing missing Hopper
 non-interactively additionally requires `--install-hopper`:
 
 ```bash
 rea setup --yes --all-detected --install-hopper --json
 ```
+
+Setup pins package-runner MCP registrations to the exact installed REA version,
+installs the matching skill and on-demand references in the same plan, and adds
+`startup_timeout_sec = 30` for Codex. Interactive `rea upgrade` installs the new
+executable and then opens the updated `rea setup --all-detected` plan for
+separate approval. Structured or non-TTY upgrades defer that integration sync.
+Use the same setup command to migrate floating, unversioned, or stale
+registrations, then restart changed clients.
 
 ## Hopper
 

@@ -1,235 +1,76 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, Electron/JavaScript, and web application artifacts or runtimes with REA. Connect static artifacts to passive runtime evidence, explain how features work, and build a version tailored to the user's project. Skip REA setup for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or approved runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "22"
+  version: "23"
   tool_count: 95
-  catalog_digest: "e0c341749f488a869b62ab9b48c9236c60c91317ac60c8427f12a830cb900ae0"
+  catalog_digest: "f8a4a8392f73780686234656e3e4555539a828e021c72754e4131c83df349b9f"
 ---
 
 # REA
 
-Use REA when the user wants to understand how an app or feature works, compare app versions, decompile code, or build a similar feature.
+Use REA when a claim depends on a shipped binary or package, decompilation,
+passive application runtime evidence, controlled replay, or comparison with
+behavior not established by available source. For ordinary analysis of a
+complete source repository, use normal repository tools and do not run REA
+readiness or provider commands.
 
-For a website already open in a user-owned Chrome-family browser, start with
-`list_browser_targets` and `inspect_web_page` instead of opening a binary. Use
-`analyze_web_bundle`, `observe_web_session`, `discover_webmcp_tools`, capture
-comparison, or screenshot tools only for the corresponding investigation. Ask
-the user to approve the exact page origins and loopback CDP endpoint before the
-first call. Browser observation is disabled unless the operator configured
-`REA_BROWSER_OBSERVE_ENABLED`, `REA_BROWSER_CDP_ENDPOINTS_JSON`, and
-`REA_BROWSER_ALLOWED_ORIGINS_JSON` before starting REA.
+## Route the target first
 
-Browser inspection is passive. Never claim that it clicked, navigated,
-evaluated page JavaScript, captured prior activity, or contained the page's
-network. Query values, credentials, cookies, authorization headers, storage
-values, and raw WebSocket or JSON values are deliberately absent. Accessibility
-text, bounded redacted console primitives, value-free JSON/WebSocket shapes,
-script sources, storage key names, source-map fetches, and screenshot pixels
-each require their documented independent opt-in or approval. Treat truncation,
-policy filtering, and attach-window coverage as explicit limitations, and cite
-the returned Evidence v2 IDs. WebMCP declarations are page-declared untrusted;
-REA inventories them but never invokes them.
+Choose the first tool from the target the user supplied. Do not call
+`open_binary` unless the target is native or an analysis database.
 
-Electron `file://` pages use `list_electron_targets` and
-`inspect_electron_page` with a separate loopback endpoint and canonical
-filesystem-root authority. Never claim that Electron inspection invoked IPC,
-evaluated renderer JavaScript, navigated, or escaped an approved root.
+- ASAR or extracted JavaScript/Electron tree:
+  `analyze_javascript_application`.
+- Archive, application package, ZIP/APK/IPA, or DMG: `inventory_artifact`.
+- Managed PE/CLI assembly: `inspect_managed_artifact`.
+- User-owned browser page already open: `list_browser_targets`.
+- User-owned Electron runtime already open: `list_electron_targets`.
+- Native executable, library, or analysis database: `open_binary`, then
+  `binary_overview`.
 
-For an operator-supplied ASAR or extracted JavaScript/Electron application, use
-`analyze_javascript_application` after the operator configures its canonical
-root in `REA_INVESTIGATION_INPUT_ROOTS_JSON`; every call still requires
-`approved: true`. Source-map contents require the independent
-`source_map_read_approved` flag. Treat BrowserWindow preferences, preload and
-contextBridge surfaces, IPC registrations, utility processes, and native
-binding requests as static syntax observations. Treat only a unique exact
-literal IPC channel match as an inferred pairing; keep dynamic and ambiguous
-channels unresolved. A requested `.node` member is not a verified binary export.
-Never claim that this workflow executed application code or observed runtime
-registration, reachability, defaults, or policy enforcement.
+If the app is missing, ask which app to inspect. Resolve a human-readable app
+name to one clear installed artifact when possible; ask only when matches are
+ambiguous. Never choose an example app on the user's behalf.
 
-When static application Evidence and passive `inspect_web_page` or
-`inspect_electron_page` Evidence already exist, use
-`reconcile_javascript_runtime` to map capture-scoped targets, frames, scripts,
-and workers onto the static graph. Supply exactly one `application` layer and
-add separately analyzed `cache` or `assets` layers only when relevant. Use
-explicit file-root or URL-prefix mappings for relocated runtime paths; mappings
-are inference inputs and never broaden CDP or filesystem authority. Prefer
-approved captured-source digest identity, report path/digest disagreement as a
-mismatch, preserve ambiguity, and never call a module executed merely because
-its containing bundle was observed. Keep source-map authority separate. This
-tool maps JavaScript graph entities; `correlate_static_and_runtime` remains the
-separate workflow for explicit cross-version comparison hypotheses.
+## Work summary-first
 
-Use `trace_application_feature` on authenticated static or reconciled
-application Evidence to follow one literal node ID, route, string, API, IPC
-channel, module, or native export. Choose an explicit direction and bounds.
-Preserve every graph authority in the returned subgraph. A native handoff means
-only that the exact artifact digest and requested export frontier are known;
-link Ghidra or Hopper Evidence only on exact subject digest, and never claim the
-workflow opened a provider or verified a requested export by itself.
+Start with the default summary projection. Do not repeat an identical tool call.
+Do not fetch full Evidence or a full application graph unless a specific claim
+requires detail absent from the summary. For JavaScript graphs, follow the
+paged resource URIs returned by the summary and fetch only the relevant page.
 
-Use `compare_application_versions` after analyzing both versions independently.
-Accept only its unique digest, source-map, structural-fingerprint, or non-module
-semantic matches. Never use module ordinals or minified names as persistent
-identity, and never promote an ambiguous candidate to a match. Report added or
-removed only when opposite-side coverage is complete; otherwise report unknown.
-Use `unknown_registry_approved: true` only after approval to retain unresolved
-version matches. For local operator-provided artifacts, the packaged
-`verify:application-workflows` command reports digests and coverage without
-printing source text.
+Every conclusion must distinguish observations, inferences, and unknowns. Cite
+Evidence IDs, preserve limitations and incomplete coverage, and never imply
+that static analysis observed execution. Ask for approval only where a tool or
+policy requires it; approval never broadens a different authority boundary.
 
-Use `run_controlled_replay` only for operator-selected extracted JavaScript
-modules when the separate `javascript_replay` policy is enabled. First call
-`mode: plan`; review the exact module, stub, runtime, sandbox, case, limit, and
-policy commitments. Execute only with `approved: true` and that exact
-`plan_digest`. Prefer explicit cases plus the parser, sanitizer, or clipboard
-boundary generator. A right manifest produces a derived differential result.
-Treat return values, exceptions, denials, limits, and crashes as observations
-of the isolated experiment with `controlled-replay` authority—not facts about
-the real application. Never substitute passive browser/Electron permission,
-Process Capture, or an in-process `vm` run. Reproducer export requires its own
-literal approval and `evidence_write` authority after sandbox cleanup.
+## Read only the relevant guide
 
-## Understand the request
+- Native binaries, managed assemblies, archives, and extraction:
+  [references/native-and-artifacts.md](references/native-and-artifacts.md)
+- ASARs, extracted JavaScript, feature tracing, and version comparison:
+  [references/javascript-applications.md](references/javascript-applications.md)
+- Passive browser/Electron observation and static/runtime reconciliation:
+  [references/runtime-observation.md](references/runtime-observation.md)
+- Evidence paging, comparisons, residual unknowns, and verification:
+  [references/evidence-workflows.md](references/evidence-workflows.md)
+- Controlled JavaScript replay:
+  [references/controlled-replay.md](references/controlled-replay.md)
 
-Identify the app and what the user wants to understand or build. Do not ask for information they already provided.
+## Readiness and setup
 
-First decide whether REA evidence is needed. When the complete source repository
-is available and the request is ordinary source-level architecture, code-flow,
-or implementation analysis, use normal repository tools and skip REA readiness,
-setup, and binary-provider commands. Use REA only when the request needs evidence
-from a binary, package, built artifact, decompilation, passive application
-runtime, controlled replay, or comparison against behavior not established by
-the available source. If the source is available but the requested claim still
-depends on built or runtime behavior, explain that distinction and continue with
-the relevant REA workflow.
+If REA tools are available, use them directly; do not run `doctor` on every
+task. If the MCP server is unavailable or registration is reported stale, run
+`npx -y rea-agents@latest doctor`. Propose
+`npx -y rea-agents@latest setup` only when doctor identifies an alignment or
+provider problem. Show the exact plan and obtain approval before setup writes
+configuration or installs Hopper. Restart the agent after MCP registration
+changes; direct CLI commands remain available immediately.
 
-If the app is missing, ask which app they want to reverse engineer. If the app is known but the goal is unclear, ask what they want to understand or build, and offer to start with an overview. Never require the user to supply a program path, address, architecture, or reverse-engineering terminology.
+## Finish the task
 
-Notes is only a documentation example. Never select an app unless the user names it or confirms it.
-
-## Ensure REA is ready
-
-Run this section only after the request-routing decision establishes that REA
-evidence is needed.
-
-1. Run `npx -y rea-agents@latest doctor`.
-2. If setup is needed, tell the user REA needs to install its local binary-analysis tools. Do not lead with implementation details or assume the user knows reverse-engineering products.
-3. Before installing external software, obtain approval and identify what will be installed. If deeper analysis needs Hopper, describe it as REA's local analysis engine and note that it is a separate Mac app with its own license. Then run `npx -y rea-agents@latest setup --yes`.
-4. If macOS or an installer requests human input, tell the user exactly what needs attention. After they finish, rerun setup and doctor.
-5. If setup registers a new MCP server, tell the user to restart their agent to load all REA tools. Direct CLI commands remain available before restart.
-
-## Locate the app
-
-Accept a human-readable app name. Search macOS application locations and system metadata. If one clear match is found, continue without asking for a path. If several apps match, show their names and locations and ask which one the user means. If none match, ask where the app is installed.
-
-REA accepts a `.app` bundle directly. Do not expose its internal `Contents/MacOS` path unless it helps explain an error.
-
-## Investigate
-
-Briefly tell the user what you will investigate. Open the app with `open_binary`, begin with `binary_overview`, and narrow the investigation around the requested feature. Use decompilation, strings, names, callers, callees, and cross-references as needed.
-
-For applications, ZIP/APK/IPA packages, Electron ASAR archives, or DMGs, call
-`inventory_artifact` before extraction. Follow its deterministic occurrence
-pages and cite graph manifest IDs. `extract_artifact` requires explicit user
-approval, an absent absolute output root, and selected occurrence IDs; never
-extract every entry implicitly. Symlinks and encrypted entries are inventory
-facts, not extractable files. Inventory traverses discovered ASARs within the
-same graph and shared limits, including ASARs inside an approved mounted DMG.
-
-Native DMG traversal is macOS-only, read-only, and disabled by default. Use it
-only when the user approves that inventory call with
-`native_mount_approved: true` and the operator has separately enabled
-`REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`. Without both gates, retain the DMG
-root-hash-only result. Never imply that approval changes extraction authority.
-
-Explain conclusions in plain language. Point to the relevant decompiled code, strings, names, and connections so the user can see how the explanation was reached. Do not claim to recover original source code or automatically clone an application.
-
-Search uses bounded deterministic pages. Prefer literal mode; use regex mode only
-when regex semantics are needed, and continue from `next_offset` while
-`has_more` is true. Treat nullable permissions and explicit unavailable metadata
-as unknown, never as `false`.
-
-Every successful analysis result is Evidence v2. Cite evidence IDs and preserve
-limitations and residual unknowns. Process capture is disabled by default,
-requires per-call approval plus operator policy, and uses host networking only
-when the operator explicitly permits it. It is behavioral evidence, not a
-security sandbox.
-
-`capture_process_scenario` produces Process Capture v4 only. If a boundary
-reports Process Capture v3, tell the user or calling agent to rerun the original
-scenario; v3 cannot be upgraded because it lacks required manifest and
-settlement evidence. Treat the v4 manifest commitments as compatibility and
-provenance evidence, and distinguish root exit from descendant settlement.
-When comparing stored captures, set `max_capture_age_ms` when the task requires
-fresh behavioral evidence. Different scenario and executable digests are
-allowed, but schema and comparison-contract digests must be compatible.
-
-Do not let unanswered questions disappear. Use `record_unknown` only with
-explicit approval, attach supporting and contradicting evidence IDs, and record
-the authority/environment still required. Use `update_unknown` with the current
-`expected_revision`; stale updates must be re-read, not retried blindly. A
-verified resolution needs qualifying observed evidence. Inference, withdrawn,
-and out-of-scope dispositions are never substitutes for observed behavior.
-Set `unknown_registry_approved: true` on `trace_feature` or
-`capture_process_scenario` only when the user approves durable automatic
-recording of their bounded residuals. The same flag on a direct operation
-records typed provider unavailability, and on `compare_process_captures`
-records an observed disagreement as a contradiction.
-
-Use `compare_artifacts` with one record or bounded arrays of
-`inventory_artifact` Evidence pages per side. Pages must share one manifest;
-collect all node, occurrence, and edge pages for exhaustive comparison. It
-compares stable occurrence paths, content, metadata, and graph relations,
-cites both evidence sets on every delta, and paginates changes. Incomplete
-inventories are truncated or unknown, never equivalent. Set
-`unknown_registry_approved: true` only with approval to preserve the
-disagreement or missing evidence as a residual unknown.
-
-Use `compare_functions` with explicit `analyze_function` Evidence page sets;
-it does not perform fuzzy whole-binary matching. Collect every pseudocode,
-assembly, collection, and CFG page when exhaustive comparison matters.
-Absolute addresses are volatile only in CFG topology; pseudocode constants are
-never stripped. Omitted assembly, truncated scans, unavailable reference kinds,
-and cross-provider text remain unknown rather than equal.
-
-Use `compare_bundles` for canonical Evidence v2 bundle membership and
-residual-unknown history changes. Pair cross-version observations explicitly;
-the tool never guesses record identity. One-sided records prove only bundle
-inclusion or omission, not behavioral absence. Use the returned canonical
-bundle digests to anchor paginated reports.
-
-Use `find_changed_behavior` to combine existing comparison Evidence. Runtime
-process differences are observed changes; artifact and function differences
-remain static candidates, not causal proof. Supply complete comparison pages.
-For an automatic two-version artifact investigation, use its
-`investigation_run` mode with explicit write approval and a workspace beneath
-`REA_EVIDENCE_ROOTS_JSON`. It checkpoints inventory, comparison, and report
-Evidence in monotonic CAS-linked revisions. Repeating the same content and
-budgets resumes or reuses the run. This automatic mode does not execute either
-version or perform fuzzy function matching, so its behavior status remains
-unknown without separate controlled runtime Evidence.
-
-Use `build_call_path` with explicit `analyze_function` Evidence groups from one
-artifact and provider. Select endpoints by exact address. Missing dossiers,
-incomplete callee pages, or a depth frontier make absence unknown; found paths
-remain valid and cite each contributing dossier.
-
-Use `correlate_static_and_runtime` only with explicit mappings between exact
-static and runtime comparison findings. A matching pattern is a hypothesis,
-never proof of causality. Declare side alignment; unmapped similarities are not
-correlated.
-
-Use `verify_reconstruction` with a finite typed specification and canonical
-Evidence bundle. Pass means all declared claims passed with comparable
-authority, not global implementation equivalence. Missing, limited, active-
-unknown, or incompatible evidence stays unknown; observed differences fail.
-
-## Build
-
-When requested, use normal coding tools to build a version suited to the user's project, stack, interface, and requirements. Keep the implementation tied to what the investigation established, and distinguish observed behavior from assumptions or design choices.
-
-## Human input and cleanup
-
-Hopper or macOS may show a window that needs human input. Tell the user what appeared and ask them to handle it; do not guess or take over unrelated UI. Call `close_binary` when the investigation is complete.
+Explain findings in plain language and tie them to returned evidence. When the
+user asks to build something, use normal coding tools and separate observed
+behavior from design choices. Close an opened native session with
+`close_binary` when the investigation is complete.

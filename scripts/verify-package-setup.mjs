@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { spawn } from "@lydell/node-pty";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import {
   json,
   pathExists,
@@ -21,10 +22,9 @@ import {
 const verifyMcpAdd = async ({ cli, environment, npxLog }) => {
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
-  if (
-    !mcpRegistration.includes("add-mcp npx -y rea-agents@latest mcp --name rea")
-  )
-    throw new Error("Incur mcp add did not register the latest npx command");
+  const expected = `add-mcp npx -y ${PRODUCT_IDENTITY.registrationPackageSpecifier} mcp --name rea`;
+  if (!mcpRegistration.includes(expected))
+    throw new Error("Incur mcp add did not register the pinned npx command");
 };
 
 const verifyInteractiveSetup = async ({ command, environment, root }) =>
@@ -182,6 +182,7 @@ const assertCodexSymlink = async ({
     !(await lstat(cursorConfig)).isSymbolicLink() ||
     !codex.includes("[mcp_servers.rea]") ||
     !codex.includes(`command = "${cli}"`) ||
+    !codex.includes("startup_timeout_sec = 30") ||
     (await readFile(`${codexConfig}.rea.backup`, "utf8")) !==
       'model = "gpt-5"\n' ||
     (await readFile(`${cursorConfig}.rea.backup`, "utf8")) !==
@@ -198,6 +199,19 @@ const assertSkill = async ({ skillPath, siblingSkillPath, root }) => {
   );
   if (skill !== canonicalSkill)
     throw new Error("packaged skill did not match its canonical source");
+  const installedReference = await readFile(
+    join(skillPath, "..", "references/javascript-applications.md"),
+    "utf8",
+  );
+  const canonicalReference = await readFile(
+    join(
+      root,
+      "skills/reverse-engineer-anything/references/javascript-applications.md",
+    ),
+    "utf8",
+  );
+  if (installedReference !== canonicalReference)
+    throw new Error("packaged skill references did not match canonical source");
   if ((await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n")
     throw new Error("packaged skill installation modified a sibling skill");
 };

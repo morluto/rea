@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { loadConfiguredPermissionAuthority } from "../src/application/PermissionConfiguration.js";
@@ -109,9 +110,17 @@ describe("Electron MCP tools", () => {
     });
     const analyzed = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, approved: true },
+      arguments: { input_path: root, approved: true, detail: "full" },
     });
     expect(analyzed.isError).not.toBe(true);
+    expect(analyzed.structuredContent).toMatchObject({
+      result: { graph: { nodes: expect.any(Array), edges: expect.any(Array) } },
+    });
+    const analysisText = analyzed.content.find(({ type }) => type === "text");
+    expect(analysisText).toBeDefined();
+    if (analysisText?.type !== "text")
+      throw new TypeError("Missing JavaScript analysis text projection");
+    expect(analysisText.text).not.toContain('"nodes":[');
     const reconciled = await client.callTool({
       name: "reconcile_javascript_runtime",
       arguments: {
@@ -213,17 +222,54 @@ describe("Electron MCP tools", () => {
     });
 
     expect(analyzed.isError).not.toBe(true);
-    expect(analyzed.structuredContent).toMatchObject({
-      result: {
-        schema_version: 1,
-        input_path: expect.stringMatching(/rea-electron-static-mcp-/u),
-        summary: {
-          browser_windows: 3,
-          context_bridge_apis: 2,
-          ipc: { paired_renderer_transmissions: 4 },
-        },
-        graph: { schema: "JavaScriptApplicationGraph", schema_version: 1 },
+    const projected = z
+      .object({
+        evidence_id: z.string(),
+        result: z.object({
+          schema_version: z.literal(1),
+          input_path: z.string(),
+          unknowns: z.array(z.string()),
+          summary: z.object({
+            browser_windows: z.number(),
+            context_bridge_apis: z.number(),
+            ipc: z.object({ paired_renderer_transmissions: z.number() }),
+          }),
+          graph: z.object({
+            graph_id: z.string(),
+            node_count: z.number(),
+            edge_count: z.number(),
+            top_findings: z.array(z.unknown()),
+            pages: z.object({ nodes: z.string(), edges: z.string() }),
+          }),
+        }),
+      })
+      .parse(analyzed.structuredContent);
+    expect(projected.result).toMatchObject({
+      input_path: expect.stringMatching(/rea-electron-static-mcp-/u),
+      summary: {
+        browser_windows: 3,
+        context_bridge_apis: 2,
+        ipc: { paired_renderer_transmissions: 4 },
       },
+    });
+    expect(projected.result.graph.node_count).toBeGreaterThan(0);
+    expect(JSON.stringify(analyzed.structuredContent)).not.toContain(
+      '"nodes":[',
+    );
+
+    const nodePage = await client.readResource({
+      uri: projected.result.graph.pages.nodes,
+    });
+    const nodeContent = nodePage.contents[0];
+    if (nodeContent === undefined || !("text" in nodeContent))
+      throw new TypeError("Missing JavaScript application graph node page");
+    expect(JSON.parse(nodeContent.text)).toMatchObject({
+      evidence_id: projected.evidence_id,
+      graph_id: projected.result.graph.graph_id,
+      collection: "nodes",
+      items: expect.any(Array),
+      offset: 0,
+      limit: 100,
     });
   });
 
