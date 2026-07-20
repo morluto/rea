@@ -10,12 +10,14 @@ import {
   listElectronTargets,
 } from "../application/ElectronObservationService.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
-import { ELECTRON_TOOL_CONTRACTS } from "../contracts/electronToolContracts.js";
+import {
+  analyzeJavaScriptApplicationToolInputSchema,
+  ELECTRON_TOOL_CONTRACTS,
+} from "../contracts/electronToolContracts.js";
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
-import { analyzeJavaScriptApplicationInputSchema } from "../domain/javascriptApplicationAnalysis.js";
 import { reconcileJavaScriptRuntimeInputSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -28,6 +30,8 @@ import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/errors.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { summarizeJavaScriptApplicationEvidence } from "./javascriptApplicationResult.js";
 
 interface ElectronToolRegistration {
   readonly logger: Logger;
@@ -48,6 +52,13 @@ interface ElectronToolSpec<Schema extends z.ZodType> {
     parsed: z.output<Schema>,
     context: ElectronToolContext,
   ) => Promise<Result<Evidence, AnalysisError>>;
+  readonly projectEvidence?: (
+    evidence: Evidence,
+    parsed: z.output<Schema>,
+  ) => {
+    readonly structured: JsonValue;
+    readonly text?: JsonValue;
+  };
 }
 
 /** Register Electron tools even when provider or permission policy is absent. */
@@ -87,13 +98,19 @@ export const registerElectronTools = (
   });
   registerElectronTool(server, options, {
     contract: analyzeContract,
-    schema: analyzeJavaScriptApplicationInputSchema,
+    schema: analyzeJavaScriptApplicationToolInputSchema,
     execute: (parsed, { signal, progress }) =>
       analyzeJavaScriptApplicationValidated(
         options.permissionAuthority,
         parsed,
         { signal, progress },
       ),
+    projectEvidence: (evidence, parsed) => {
+      const summary = summarizeJavaScriptApplicationEvidence(evidence);
+      return parsed.detail === "full"
+        ? { structured: evidence.normalized_result, text: summary }
+        : { structured: summary };
+    },
   });
   registerElectronTool(server, options, {
     contract: reconcileContract,
@@ -128,7 +145,12 @@ const registerElectronTool = <Schema extends z.ZodType>(
           }),
       );
       if (!result.ok) return toCallToolResult(result, spec.contract);
-      return evidenceResult(options, spec.contract, result.value);
+      return evidenceResult(
+        options,
+        spec.contract,
+        result.value,
+        spec.projectEvidence?.(result.value, parsedInput.value),
+      );
     },
   );
 };
@@ -137,11 +159,22 @@ const evidenceResult = (
   options: ElectronToolRegistration,
   contract: ToolContract,
   evidence: Evidence,
+  projection:
+    | { readonly structured: JsonValue; readonly text?: JsonValue }
+    | undefined,
 ) => {
   const recorded = options.recordEvidence?.(evidence);
   return recorded !== undefined && !recorded.ok
     ? toCallToolResult(recorded, contract)
     : toCallToolResult({ ok: true, value: evidence }, contract, {
         evidenceResourcesAvailable: recorded !== undefined,
+        ...(projection === undefined
+          ? {}
+          : {
+              evidenceResultProjection: projection.structured,
+              ...(projection.text === undefined
+                ? {}
+                : { evidenceTextProjection: projection.text }),
+            }),
       });
 };

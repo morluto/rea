@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { readClientRegistrationStatuses } from "../src/application/ClientRegistrationStatus.js";
+import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 describe("client registration status", () => {
   it("distinguishes aligned, stale, missing, and invalid registrations", async () => {
@@ -17,7 +18,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@latest", "mcp"]\n',
+      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\n`,
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),

@@ -29,6 +29,12 @@ import { registerBrowserTools } from "./registerBrowserTools.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
+
+const TARGET_FREE_INSTRUCTIONS =
+  "REA analyzes shipped artifacts and approved runtime evidence; use repository tools for source. Route: ASAR/JavaScript -> analyze_javascript_application; archive/package -> inventory_artifact; managed PE/CLI -> inspect_managed_artifact; browser/Electron runtime -> list_browser_targets/list_electron_targets; native binary/database -> open_binary, then binary_overview. Start with summaries and cite Evidence IDs. Never repeat identical analysis or read full Evidence unless a missing detail requires it.";
+
+const ACTIVE_TARGET_INSTRUCTIONS =
+  "REA analyzes the active reverse-engineering target. Start native analysis with binary_overview, then narrow with analyze_function, literal search, callers, callees, and xrefs. Prefer summary views, never repeat an identical call, and read full Evidence only when the task requires it.";
 import type {
   JavaScriptReplayHost,
   JavaScriptReplayPolicy,
@@ -102,8 +108,8 @@ export const createServer = (
       requestState: { verify: processCaptureStateCodec.verify },
       instructions:
         session === undefined
-          ? "Reverse-engineering tools for an active analysis target. Start with binary_overview."
-          : "Reverse-engineering tools for configured analysis providers. Open a target with open_binary, then start with binary_overview.",
+          ? ACTIVE_TARGET_INSTRUCTIONS
+          : TARGET_FREE_INSTRUCTIONS,
     },
   );
   server.server.onclose = () => {
@@ -276,6 +282,7 @@ const registerBinaryAnalysisTools = ({
     logger,
     activeTarget,
     recordEvidence,
+    session,
   });
   if (session !== undefined)
     registerManagedWorkflowTools(server, {

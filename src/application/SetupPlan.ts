@@ -83,14 +83,9 @@ const setupPlan = (input: SetupPlanOptions): readonly SetupAction[] => [
           id: "install_skill",
           kind: "install_skill" as const,
           label: "REA reverse-engineering skill",
-          target: join(
-            homedir(),
-            ".agents/skills",
-            PRODUCT_IDENTITY.skillName,
-            "SKILL.md",
-          ),
+          target: join(homedir(), ".agents/skills", PRODUCT_IDENTITY.skillName),
           detail:
-            "Install or update the bundled REA reverse-engineering skill.",
+            "Install or update the bundled REA reverse-engineering skill and on-demand references.",
           external: false,
           operation: "install" as const,
         },
@@ -178,6 +173,7 @@ export const discoverSetupActions = async (input: {
   const linuxDistribution =
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
   return {
+    initialDoctor,
     installHopper,
     installSkill,
     detectedClients: clientPlans.map(({ client }) => client),

@@ -36,17 +36,18 @@ Reverse engineering normally makes the operator choose a tool, learn its API, mo
 
 ## Just ask your agent
 
-Install the REA skill:
+Run setup once. Agent integration installs an aligned MCP registration and the
+bundled routing skill together:
 
 ```bash
-npx skills add morluto/rea
+npx rea-agents setup
 ```
 
 Then ask:
 
 ```text
-Use REA to understand how search works in the Notes app, show me the
-evidence, and build a similar feature for my project.
+Understand how search works in the Notes app, show me the evidence, and build a
+similar feature for my project.
 ```
 
 Notes is only an example. Name any app you want to understand, or ask the agent to start with an overview.
@@ -97,9 +98,9 @@ shows its complete plan and asks before applying it. Setup does not update
 Homebrew, Node.js, or npm. `npx rea-agents setup` opens with the work it
 enables: investigate local apps from an agent, recover evidence through a
 deep-analysis provider, and reuse REA's guided workflow. It summarizes the
-detected agents, then asks which independent capabilities to set up: coding-agent
-access through MCP, the shared investigation skill, and—when needed—the Hopper
-provider. Nothing is preselected. Choosing MCP access opens a second empty
+detected agents, then asks which capabilities to set up: agent integration
+(MCP plus the matching guided workflow) and—when needed—the Hopper provider.
+Nothing is preselected. Choosing agent integration opens a second empty
 checklist for the specific detected agents that should receive a registration.
 
 REA keeps the journey inline so its history remains in the terminal. Selecting
@@ -131,10 +132,12 @@ Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`
 ### With an agent — recommended
 
 ```bash
-npx skills add morluto/rea
+npx rea-agents setup
 ```
 
-Ask your agent to set up REA. It will check your supported host, explain anything it needs to install, ask for approval, and guide you through system prompts. After setup, restart the agent if it asks you to load the full REA toolset.
+Choose Agent Integration in the reviewed setup plan. REA installs the pinned MCP
+registration and its matching routing skill as one transaction. After setup,
+restart the configured agent so it loads the aligned integration.
 
 Review the setup plan, approve it if appropriate, then describe the app or feature you want to understand. Hopper can run in its free demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
 
@@ -461,11 +464,18 @@ Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, 
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@latest", "mcp"]
+      "args": ["-y", "rea-agents@2.1.0", "mcp"]
     }
   }
 }
 ```
+
+Persistent registrations should use one exact package version. `rea setup`
+maintains that pin, upgrades the bundled skill at the same time, and gives Codex
+a 30-second startup allowance for a cold package-runner start. An interactive
+`rea upgrade` opens the updated setup plan after installing the new executable;
+structured or non-interactive upgrades tell you to run that sync explicitly.
+Restart clients whose approved registration changed.
 
 MCP clients that support prompts can also discover six ordered investigation
 workflows through `prompts/list`. Their optional identifier arguments use the
@@ -692,6 +702,11 @@ Any agent that can run a local MCP server can use the manual configuration. Setu
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, architecture, tests, and release instructions. Generated API documentation is available under [`docs/api`](docs/api/index.html).
+
+`npm run verify:agent` runs brandless native, JavaScript-application, managed,
+and browser prompts through a real local Codex CLI. Its JSON report measures
+natural MCP use, first-tool routing, repeated calls, actual Codex token usage,
+completion quality, and explicit treatment of authority and unknowns.
 
 ## Project links
 

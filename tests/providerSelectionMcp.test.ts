@@ -54,7 +54,10 @@ describe("provider selection over MCP", () => {
     await mcp.connect(clientTransport);
 
     const before = structured(
-      await mcp.callTool({ name: "binary_session", arguments: {} }),
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail: "full" },
+      }),
     );
     expect(before.result).toMatchObject({
       open: false,
@@ -117,7 +120,10 @@ describe("provider selection over MCP", () => {
     expect(starts).toEqual(["beta"]);
 
     const status = structured(
-      await mcp.callTool({ name: "binary_session", arguments: {} }),
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail: "full" },
+      }),
     );
     expect(status.result).toMatchObject({
       open: true,
@@ -140,8 +146,12 @@ describe("provider selection over MCP", () => {
       error: { details: { selection_reason: "unknown_provider" } },
     });
     expect(
-      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
-        .result,
+      structured(
+        await mcp.callTool({
+          name: "binary_session",
+          arguments: { detail: "full" },
+        }),
+      ).result,
     ).toMatchObject({
       analysis_provider_binding: { provider: { id: "beta" } },
     });

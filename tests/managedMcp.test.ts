@@ -154,14 +154,10 @@ describe("managed artifact MCP tools", () => {
         },
       });
 
-      await client.callTool({
-        name: "open_binary",
-        arguments: { path },
-      });
       const inspected = structured(
         await client.callTool({
           name: "inspect_managed_artifact",
-          arguments: { reference_limit: 1 },
+          arguments: { path, reference_limit: 1 },
         }),
       );
 

@@ -31,6 +31,7 @@ class FakeSetupHost implements SetupHost {
   hopperReplaceRequests: boolean[] = [];
   configurations = 0;
   skillInstalls = 0;
+  doctorCalls = 0;
   checkedHopperPaths: Array<string | undefined> = [];
   configuredProviderEnvironments: SetupProviderEnvironment[] = [];
   doctorHealthy: boolean | undefined;
@@ -111,6 +112,7 @@ class FakeSetupHost implements SetupHost {
     hopperPath?: string;
     checks: readonly DoctorCheck[];
   }> => {
+    this.doctorCalls += 1;
     const checks: DoctorCheck[] = [
       ...(this.linuxDemoRuntimeMissing
         ? ([
@@ -211,6 +213,26 @@ describe("setup workflow", () => {
     expect(result.status).toBe("planned");
     expect(result.appliedActions).toEqual([]);
     expect(host.hopperInstalls).toBe(0);
+    expect(host.doctorCalls).toBe(1);
+  });
+
+  it("treats an empty interactive selection as cancellation", async () => {
+    const host = new FakeSetupHost();
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+
+    const result = await runSetup(
+      { ...options(false), structured: false },
+      host,
+      () => Promise.resolve({ approved: false, selectedActionIds: [] }),
+    );
+
+    expect(result.status).toBe("planned");
+    expect(result.plannedActions).toEqual([]);
+    expect(result.appliedActions).toEqual([]);
+    expect(host.configurations).toBe(0);
+    expect(host.skillInstalls).toBe(0);
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.doctorCalls).toBe(1);
   });
 
   it("requires the Hopper flag for unattended setup", async () => {

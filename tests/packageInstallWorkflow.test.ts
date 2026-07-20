@@ -27,4 +27,24 @@ describe("package installation workflows", () => {
     for (const workflow of [realHopperLinux, realHopperMac])
       expect(workflow).toContain("npm install --global --ignore-scripts");
   });
+
+  it("verifies the package before publish and runs published canaries outside the checkout", async () => {
+    const release = await readFile(
+      new URL("../.github/workflows/release.yml", import.meta.url),
+      "utf8",
+    );
+    const canary = await readFile(
+      new URL("../scripts/verify-published-package.mjs", import.meta.url),
+      "utf8",
+    );
+
+    expect(release.indexOf("npm run verify:package")).toBeLessThan(
+      release.indexOf("npm publish --access public"),
+    );
+    expect(release).toContain('verification_root="$(mktemp -d)"');
+    expect(release).toContain('cd "${verification_root}"');
+    expect(release).not.toContain('npm run verify:published -- "${version}"');
+    expect(canary).toContain('mkdtemp(join(tmpdir(), "rea-published-canary-")');
+    expect(canary).toContain("cwd: canaryRoot");
+  });
 });

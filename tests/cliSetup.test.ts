@@ -55,7 +55,9 @@ describe("interactive setup journey", () => {
     expect(result.output).toContain("Found 1 supported agent");
     expect(result.output).toContain("Codex");
     expect(result.output).toContain("Hopper deep-analysis provider (provider)");
-    expect(result.output).toContain("REA reverse-engineering skill (skill)");
+    expect(result.output).toContain(
+      "Agent integration (MCP + guided workflow)",
+    );
     expect(result.output).toContain(
       "Keys: ↑/↓ navigate · Space toggle · Enter confirm · Ctrl-C cancel",
     );
@@ -65,8 +67,12 @@ describe("interactive setup journey", () => {
   it("does not turn available capabilities into selected setup actions", async () => {
     const result = await runJourney([step("What should REA set up?", "\r")]);
 
-    expect(result.output).toContain("Coding-agent access (MCP)");
-    expect(result.output).toContain("REA reverse-engineering skill (skill)");
+    expect(result.output).toContain(
+      "Agent integration (MCP + guided workflow)",
+    );
+    expect(result.output).not.toContain(
+      "REA reverse-engineering skill (skill)",
+    );
     expect(result.output).toContain("Hopper deep-analysis provider (provider)");
     expect(result.output).not.toContain("Ready to review");
     expect(result.output).toContain("Nothing selected. No changes were made.");
@@ -76,7 +82,7 @@ describe("interactive setup journey", () => {
     });
   });
 
-  it("omits MCP access when no agent integration needs configuration", async () => {
+  it("offers one bundled repair when MCP is aligned but the skill is missing", async () => {
     const result = await runJourney(
       [step("What should REA set up?", "\r")],
       false,
@@ -84,7 +90,12 @@ describe("interactive setup journey", () => {
     );
 
     expect(result.output).toContain("No agent integrations need configuration");
-    expect(result.output).not.toContain("Coding-agent access (MCP)");
+    expect(result.output).toContain(
+      "Agent integration (MCP + guided workflow)",
+    );
+    expect(result.output).not.toContain(
+      "REA reverse-engineering skill (skill)",
+    );
     expect(result.decision.selectedActionIds).toEqual([]);
   });
 
@@ -112,7 +123,7 @@ describe("interactive setup journey", () => {
     expect(result.decision.approved).toBe(false);
   });
 
-  it("asks for agent targets only after MCP access is selected", async () => {
+  it("asks for agent targets only after agent integration is selected", async () => {
     const result = await runJourney([
       step("What should REA set up?", " \r"),
       step("Which agents should use REA?", "\u0003"),
@@ -127,15 +138,13 @@ describe("interactive setup journey", () => {
     const result = await runJourney([
       step("What should REA set up?", " \r"),
       step("Which agents should use REA?", " \r"),
-      step("Apply this change?", "\r"),
+      step("Apply these 2 changes?", "\r"),
     ]);
 
     expect(result.output).toContain("Ready to review");
     expect(result.output).toContain("CREATE  Codex");
     expect(result.output).toContain("/isolated/.codex/config.toml");
-    expect(result.output).not.toContain(
-      "INSTALL  REA reverse-engineering skill",
-    );
+    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
     expect(result.output).not.toContain(
       "INSTALL  Hopper deep-analysis provider",
     );
@@ -143,17 +152,24 @@ describe("interactive setup journey", () => {
     expect(result.output).toContain("Setup cancelled. No changes were made.");
     expect(result.decision).toEqual({
       approved: false,
-      selectedActionIds: ["configure_client:codex"],
+      selectedActionIds: ["configure_client:codex", "install_skill"],
     });
   });
 
-  it("can select the shared skill without selecting an agent integration", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\u001b[B \r"),
-      step("Apply this change?", "\r"),
-    ]);
+  it("repairs an aligned agent integration through the bundled option", async () => {
+    const result = await runJourney(
+      [
+        step("What should REA set up?", " \r"),
+        step("Apply this change?", "\r"),
+      ],
+      false,
+      actions.filter(({ kind }) => kind !== "configure_client"),
+    );
 
     expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
+    expect(result.output).toContain(
+      "Agent integration (MCP + guided workflow)",
+    );
     expect(result.output).not.toContain("CREATE  Codex");
     expect(result.output).not.toContain(
       "INSTALL  Hopper deep-analysis provider",
@@ -167,8 +183,7 @@ describe("interactive setup journey", () => {
   it("keeps every accessible capability prompt defaulted to skip", async () => {
     const result = await runJourney(
       [
-        step("Set up Coding-agent access (MCP)?", "\r"),
-        step("Set up REA reverse-engineering skill (skill)?", "\r"),
+        step("Set up Agent integration (MCP + guided workflow)?", "\r"),
         step("Set up Hopper deep-analysis provider (provider)?", "\r"),
       ],
       true,
@@ -213,7 +228,7 @@ describe("interactive setup journey", () => {
     expect(stderr).toContain("Guided reverse-engineering workflows: installed");
     expect(stderr).toContain("CLI: rea analyze /path/to/app");
     expect(stderr).toContain(
-      'Try in Codex: "Use REA to explain how a feature works in /path/to/app."',
+      'Try in Codex: "Explain how a feature works in /path/to/app and show the evidence."',
     );
   });
 });

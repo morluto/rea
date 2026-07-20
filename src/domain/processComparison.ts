@@ -86,7 +86,9 @@ export const processCaptureComparisonSchema = z
         path: ["status"],
       });
   });
-type ProcessCaptureComparison = z.infer<typeof processCaptureComparisonSchema>;
+export type ProcessCaptureComparison = z.infer<
+  typeof processCaptureComparisonSchema
+>;
 
 const terminalObservations = (capture: ProcessCapture): readonly unknown[] =>
   [
@@ -112,6 +114,29 @@ const filesystemObservations = (
     effects: capture.filesystem_effects,
   },
 ];
+
+/** Canonical observations for one process-comparison dimension. */
+export const processDimensionObservations = (
+  capture: ProcessCapture,
+  dimension: (typeof PROCESS_COMPARISON_DIMENSIONS)[number],
+): readonly unknown[] => {
+  switch (dimension) {
+    case "terminal":
+      return terminalObservations(capture);
+    case "interaction":
+      return capture.interaction_events;
+    case "exit":
+      return [{ ...capture.exit, settlement: capture.settlement }];
+    case "filesystem":
+      return filesystemObservations(capture);
+    case "protocol":
+      return capture.protocol_events;
+    case "process":
+      return capture.process_samples;
+    case "shim":
+      return capture.shim_events;
+  }
+};
 
 const classifyCollection = (
   left: readonly unknown[],

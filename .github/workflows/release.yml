@@ -38,8 +38,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Verify build
-        run: npm run build
+      - name: Verify packaged release before publishing
+        run: npm run verify:package
 
       - name: Publish
         run: npm publish --access public
@@ -48,11 +48,14 @@ jobs:
         shell: bash
         run: |
           version="$(node --input-type=module -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
+          verification_root="$(mktemp -d)"
+          trap 'rm -rf -- "${verification_root}"' EXIT
+          cd "${verification_root}"
           for attempt in 1 2 3 4 5 6; do
             if npm view "rea-agents@${version}" version --json >/dev/null 2>&1 \
               && npm exec --yes --package="rea-agents@${version}" -- rea --help \
               && npm exec --yes --package="rea-agents@${version}" -- rea --llms \
-              && npm run verify:published -- "${version}"; then
+              && node "${GITHUB_WORKSPACE}/scripts/verify-published-package.mjs" "${version}"; then
               exit 0
             fi
             if [ "${attempt}" -lt 6 ]; then

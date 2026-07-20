@@ -17,9 +17,11 @@ import type { SetupClient } from "./SupportedClients.js";
 const defaultCommand = (): readonly string[] => [
   "npx",
   "-y",
-  PRODUCT_IDENTITY.packageSpecifier,
+  PRODUCT_IDENTITY.registrationPackageSpecifier,
   "mcp",
 ];
+
+const CODEX_STARTUP_TIMEOUT_SECONDS = 30;
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = async (
@@ -47,6 +49,7 @@ export const configureJsonClient = async (
     return { status: "failed", reason: "readback" };
   }
   const desired = clientConfigurationDesired(
+    client,
     normalizeProviderEnvironment(environment),
     command,
   );
@@ -122,6 +125,7 @@ export const configureTomlClient = async (
     return { status: "failed", reason: "readback" };
   }
   const desired = clientConfigurationDesired(
+    client,
     normalizeProviderEnvironment(environment),
     command,
   );
@@ -172,7 +176,11 @@ export const clientConfigurationAligned = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<boolean> => {
-  const desired = clientConfigurationDesired(providerEnvironment, command);
+  const desired = clientConfigurationDesired(
+    client,
+    providerEnvironment,
+    command,
+  );
   try {
     const original = await readFile(client.configPath, "utf8");
     const document =
@@ -215,7 +223,11 @@ export const inspectClientConfiguration = async (
         "The configuration file could not be read. Check its permissions before rerunning setup.",
     };
   }
-  const desired = clientConfigurationDesired(providerEnvironment, command);
+  const desired = clientConfigurationDesired(
+    client,
+    providerEnvironment,
+    command,
+  );
   try {
     const document =
       client.format === "toml"
@@ -274,6 +286,7 @@ const restoreConfig = async (
 };
 
 const clientConfigurationDesired = (
+  client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ) => {
@@ -285,6 +298,9 @@ const clientConfigurationDesired = (
   return {
     command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
     args: command.slice(1),
+    ...(client.name === "codex"
+      ? { startup_timeout_sec: CODEX_STARTUP_TIMEOUT_SECONDS }
+      : {}),
     ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
   };
 };

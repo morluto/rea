@@ -89,6 +89,7 @@ describe("agent lifecycle", () => {
     expect(configured).toContain('model = "gpt-5"');
     expect(configured).toContain("[mcp_servers.rea]");
     expect(configured).toContain('command = "rea"');
+    expect(configured).toContain("startup_timeout_sec = 30");
     expect(configured).toContain('GHIDRA_INSTALL_DIR = "/opt/ghidra"');
     expect(configured).toContain('JAVA_HOME = "/opt/jdk-21"');
     expect(

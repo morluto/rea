@@ -225,7 +225,13 @@ const isOwnedRegistration = (value: unknown): boolean => {
       args[0] === "mcp") ||
     (command === "npx" &&
       (JSON.stringify(args) ===
-        JSON.stringify(["-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]) ||
+        JSON.stringify([
+          "-y",
+          PRODUCT_IDENTITY.registrationPackageSpecifier,
+          "mcp",
+        ]) ||
+        JSON.stringify(args) ===
+          JSON.stringify(["-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]) ||
         JSON.stringify(args) ===
           JSON.stringify(["-y", PRODUCT_IDENTITY.packageName, "mcp"])))
   );

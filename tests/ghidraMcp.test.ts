@@ -231,7 +231,7 @@ describe("Ghidra MCP and shared CLI composition", () => {
 
       const status = await mcp.callTool({
         name: "binary_session",
-        arguments: {},
+        arguments: { detail: "full" },
       });
       expect(status.structuredContent).toMatchObject({
         result: {

@@ -335,10 +335,12 @@ try {
   }
 
   const options = { timeout };
-  const initialSession = await client.callTool(
-    { name: "binary_session", arguments: {} },
-    options,
-  );
+  const fullSessionStatus = () =>
+    client.callTool(
+      { name: "binary_session", arguments: { detail: "full" } },
+      options,
+    );
+  const initialSession = await fullSessionStatus();
   const initialStatus = jsonValue(initialSession);
   if (initialStatus.open !== false)
     throw new Error("The verifier did not start without a target");
@@ -351,9 +353,7 @@ try {
     options,
   );
   if (opened.isError === true) throw new Error(textValue(opened));
-  const firstStatus = jsonValue(
-    await client.callTool({ name: "binary_session", arguments: {} }, options),
-  );
+  const firstStatus = jsonValue(await fullSessionStatus());
   const providerBinding = requireHopperSelection(firstStatus, {
     targetSupport: "supported",
     selected: true,
@@ -405,9 +405,7 @@ try {
     options,
   );
   if (switched.isError === true) throw new Error(textValue(switched));
-  const secondSession = jsonValue(
-    await client.callTool({ name: "binary_session", arguments: {} }, options),
-  );
+  const secondSession = jsonValue(await fullSessionStatus());
   if (secondSession.path !== targetB)
     throw new Error("The real session did not switch to target B");
   requireHopperSelection(secondSession, {
@@ -449,9 +447,7 @@ try {
     options,
   );
   if (closed.isError === true) throw new Error(textValue(closed));
-  const closedSession = jsonValue(
-    await client.callTool({ name: "binary_session", arguments: {} }, options),
-  );
+  const closedSession = jsonValue(await fullSessionStatus());
   if (closedSession.open !== false)
     throw new Error("The real session remained open after close_binary");
 

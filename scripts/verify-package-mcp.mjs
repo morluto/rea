@@ -80,7 +80,7 @@ const verifyMcpOpenAndBind = async (client, mcpOptions) => {
   const providerStatusEnvelope = json(
     prompts.mcpText(
       await client.callTool(
-        { name: "binary_session", arguments: {} },
+        { name: "binary_session", arguments: { detail: "full" } },
         mcpOptions,
       ),
     ),

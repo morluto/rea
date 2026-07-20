@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { ToolContract } from "./toolContracts.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
@@ -11,6 +13,8 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
 } from "../domain/javascriptApplicationAnalysis.js";
+import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "../domain/javascriptApplicationGraphSchemas.js";
+import { applicationCoverageSchema } from "../domain/javascriptApplicationEvidenceSchemas.js";
 import {
   javascriptRuntimeReconciliationResultSchema,
   reconcileJavaScriptRuntimeInputSchema,
@@ -19,8 +23,62 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeRe
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
+/** MCP-only response selection; analysis identity does not depend on projection. */
+export const analyzeJavaScriptApplicationToolInputSchema =
+  analyzeJavaScriptApplicationInputSchema.extend({
+    detail: z
+      .enum(["summary", "full"])
+      .default("summary")
+      .describe(
+        "summary returns bounded findings and paged graph resource URIs; full returns the complete graph only when explicitly required",
+      ),
+  });
+
+/** Bounded default projection for agent-facing JavaScript application analysis. */
+export const javascriptApplicationAnalysisSummarySchema =
+  javascriptApplicationAnalysisResultSchema.omit({ graph: true }).extend({
+    unknowns: z.array(z.string().min(1).max(4_096)).max(1_000),
+    graph: z.strictObject({
+      graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+      node_count: z.number().int().min(0),
+      edge_count: z.number().int().min(0),
+      roots: z.strictObject({
+        items: z.array(z.string().regex(/^jag_node_[a-f0-9]{64}$/u)),
+        total: z.number().int().min(0),
+        truncated: z.boolean(),
+      }),
+      node_kinds: z.array(
+        z.strictObject({
+          kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
+          count: z.number().int().min(1),
+        }),
+      ),
+      top_findings: z.array(
+        z.strictObject({
+          node_id: z.string().regex(/^jag_node_[a-f0-9]{64}$/u),
+          kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
+          label: z.string().nullable(),
+          authority: z.string(),
+          state: z.string(),
+          confidence: z.string(),
+          location: z.json(),
+        }),
+      ),
+      coverage: applicationCoverageSchema,
+      limitations: z.array(z.string()),
+      pages: z.strictObject({
+        nodes: z.string().startsWith("rea://evidence/"),
+        edges: z.string().startsWith("rea://evidence/"),
+        page_limit: z.number().int().min(1).max(500),
+      }),
+    }),
+  });
+
 const applicationOutputSchema = evidenceResultOf(
-  javascriptApplicationAnalysisResultSchema,
+  z.union([
+    javascriptApplicationAnalysisSummarySchema,
+    javascriptApplicationAnalysisResultSchema,
+  ]),
 );
 const reconciliationOutputSchema = evidenceResultOf(
   javascriptRuntimeReconciliationResultSchema,
@@ -88,9 +146,9 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "analyze_javascript_application",
     ...toolContractMetadata("analyze_javascript_application"),
     description:
-      "Statically reconstruct one approved local ASAR or extracted JavaScript application as Evidence v2 and JavaScript Application Graph v1. Maps BrowserWindow preferences, preload and contextBridge APIs, literal and dynamic IPC, handler locations, sender-validation observations, utility processes, and requested native addon bindings without executing JavaScript; source-map contents require separate approval.",
+      "Statically reconstruct one approved local ASAR or extracted JavaScript application without executing it. The default summary returns architecture/security counts, top evidence-backed findings, unknowns, and paged graph resource URIs; request detail=full only when the complete graph must be returned immediately. Identical inputs are deterministic, so do not repeat the call or reread full Evidence without a specific missing detail.",
     kind: "electron-provider",
-    inputSchema: analyzeJavaScriptApplicationInputSchema,
+    inputSchema: analyzeJavaScriptApplicationToolInputSchema,
     outputSchema: applicationOutputSchema,
     examples: [
       {
@@ -100,6 +158,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
           format: "auto",
           approved: true,
           source_map_read_approved: false,
+          detail: "summary",
         },
       },
     ],

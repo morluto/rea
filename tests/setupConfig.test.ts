@@ -12,6 +12,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveClientConfigTransactionPath } from "../src/application/ClientConfigPath.js";
 import { configureJsonClient } from "../src/application/Setup.js";
+import { PRODUCT_IDENTITY } from "../src/identity.js";
+
+const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -55,7 +58,7 @@ describe("JSON client configuration transaction", () => {
         other: { command: "other" },
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents@latest", "mcp"],
+          args: ["-y", pinnedPackage, "mcp"],
         },
       },
     });
@@ -79,7 +82,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents@latest", "mcp"],
+          args: ["-y", pinnedPackage, "mcp"],
         },
       },
     });
@@ -108,7 +111,7 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      '{"mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents@latest","mcp"]}}}\n',
+      `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
     );
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
       status: "unchanged",
@@ -134,7 +137,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents@latest", "mcp"],
+          args: ["-y", pinnedPackage, "mcp"],
         },
         other: { command: "other" },
       },
@@ -156,7 +159,7 @@ describe("JSON client configuration transaction", () => {
       mcpServers: {
         rea: {
           command: "npx",
-          args: ["-y", "rea-agents@latest", "mcp"],
+          args: ["-y", pinnedPackage, "mcp"],
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

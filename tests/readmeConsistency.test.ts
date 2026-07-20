@@ -15,6 +15,7 @@ import { BROWSER_TOOL_CONTRACTS } from "../src/contracts/browserToolContracts.js
 import { ELECTRON_TOOL_CONTRACTS } from "../src/contracts/electronToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../src/contracts/applicationToolContracts.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
+import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 const readmes = [
   "README.md",
@@ -57,14 +58,15 @@ describe("localized README product facts", () => {
     "keeps commands and requirements aligned in %s",
     async (path) => {
       const content = await readFile(resolve(path), "utf8");
-      expect(content).toContain("npx skills add morluto/rea");
       expect(content).toContain(
         "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
       );
       expect(content).toContain("npx rea-agents setup");
       expect(content).toContain("npx -y rea-agents@latest doctor");
       expect(content).toContain("rea uninstall");
-      expect(content).toContain('"args": ["-y", "rea-agents@latest", "mcp"]');
+      expect(content).toContain(
+        `"args": ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]`,
+      );
       expect(content).toContain("Node.js 22");
       expect(content).toContain("macOS 12");
       expect(content).toContain("Ubuntu 24.04");

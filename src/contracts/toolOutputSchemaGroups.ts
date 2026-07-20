@@ -52,6 +52,8 @@ import {
   searchPageOutput,
   segmentOutput,
   sessionProvider,
+  providerIdentity,
+  toolAvailability,
   symbolDiscoveryOutput,
   targetFormatSchema,
   targetKindSchema,
@@ -275,15 +277,57 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   ),
   binary_session: lifecycleResultOf(
     z.union([
-      sessionProvider.extend({ open: z.literal(false) }),
-      sessionProvider.extend({
-        open: z.literal(true),
-        path: z.string(),
-        format: targetFormatSchema,
-        kind: targetKindSchema,
-        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-        architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
+      z.object({
+        view: z.literal("summary"),
+        open: z.boolean(),
+        provider: providerIdentity,
+        active_provider: providerIdentity.nullable(),
+        target: z
+          .object({
+            path: z.string(),
+            format: targetFormatSchema,
+            kind: targetKindSchema,
+            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+            architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
+          })
+          .nullable(),
+        alignment: z.object({
+          state: z.enum(["aligned", "mcp_server_restart_required", "unknown"]),
+          reasons: z.array(z.string()),
+          remediation: z.string().nullable(),
+        }),
+        recommended_actions: z.array(z.string()),
       }),
+      z.object({
+        view: z.literal("capabilities"),
+        open: z.boolean(),
+        provider: providerIdentity,
+        active_provider: providerIdentity.nullable(),
+        capability_family: z.string().nullable(),
+        capabilities: z.object({
+          items: z.array(toolAvailability),
+          cursor: z.number().int().min(0),
+          limit: z.number().int().min(1),
+          total: z.number().int().min(0),
+          next_cursor: z.number().int().min(0).nullable(),
+          has_more: z.boolean(),
+        }),
+      }),
+      z.union([
+        sessionProvider.extend({
+          view: z.literal("full"),
+          open: z.literal(false),
+        }),
+        sessionProvider.extend({
+          view: z.literal("full"),
+          open: z.literal(true),
+          path: z.string(),
+          format: targetFormatSchema,
+          kind: targetKindSchema,
+          sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
+        }),
+      ]),
     ]),
   ),
   export_evidence_bundle: lifecycleResultOf(
