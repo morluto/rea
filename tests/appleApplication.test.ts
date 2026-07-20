@@ -90,7 +90,14 @@ describe("Apple application projection", () => {
       expect.arrayContaining(["javascript", "native", "react-native"]),
     );
     expect(left.bridge_candidates).toEqual([
-      expect.objectContaining({ basis: "react-native-convention" }),
+      expect.objectContaining({
+        basis: "javascript-and-native-content",
+        native_path: "Payload/Fixture.app/Fixture",
+      }),
+      expect.objectContaining({
+        basis: "react-native-convention",
+        native_path: "Payload/Fixture.app/Frameworks/React.framework/React",
+      }),
     ]);
     expect(JSON.stringify(left)).not.toContain("opaque signing bytes");
   });

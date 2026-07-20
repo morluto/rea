@@ -129,7 +129,10 @@ export const projectAppleApplication = (
   const runtimeFamilies = identifyRuntimeFamilies(all);
   const bridgeProjection = identifyBridgeCandidates(
     retained.javascript,
-    [...retained.frameworks, ...retained.native_libraries],
+    deduplicateComponents([
+      ...retained.executables,
+      ...retained.native_libraries,
+    ]),
     parsed.limits.max_components,
   );
   const limitations = projectionLimitations(
@@ -211,6 +214,11 @@ const retainComponents = <Groups extends Record<string, readonly Component[]>>(
 
 const componentCount = (groups: Record<string, readonly Component[]>): number =>
   Object.values(groups).reduce((total, values) => total + values.length, 0);
+
+const deduplicateComponents = (values: readonly Component[]): Component[] =>
+  [...new Map(values.map((value) => [value.path, value])).values()].sort(
+    (left, right) => compare(left.path, right.path),
+  );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
   const paths = all.map(({ path }) => path.toLowerCase());

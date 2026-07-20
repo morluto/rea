@@ -127,4 +127,30 @@ describe("runtime identification", () => {
     });
     expect(result.coverage.omitted_observations).toBeGreaterThan(0);
   });
+
+  it("does not route nested DEX content to the APK-only provider", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-runtime-dex-"));
+    const path = join(root, "Fixture.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "classes.dex",
+      new Uint8ArrayReader(
+        Uint8Array.from([...Buffer.from("dex\n035\0"), 0, 0, 0, 0]),
+      ),
+    );
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    const result = identifyRuntimes({ inventory_evidence: [inventory] });
+
+    expect(result.runtimes).toContainEqual(
+      expect.objectContaining({
+        family: "android",
+        inspection: "provider-selection-required",
+        provider_id: null,
+      }),
+    );
+  });
 });

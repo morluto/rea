@@ -161,7 +161,7 @@ export const identifyRuntimes = (
       remaining -= observations.length;
       const omittedObservations = unique.length - observations.length;
       omitted += omittedObservations;
-      const provider = PROVIDERS[family];
+      const provider = providerFor(family, inventory.manifest.root_format);
       return {
         family,
         inspection: provider.inspection,
@@ -208,11 +208,25 @@ export const identifyRuntimes = (
   });
 };
 
+const providerFor = (
+  family: RuntimeFamily,
+  rootFormat: string,
+): RuntimeProvider =>
+  family === "android" && rootFormat !== "apk"
+    ? {
+        inspection: "provider-selection-required",
+        id: null,
+        reason:
+          "Extract or select an APK root before using the Android application provider.",
+      }
+    : PROVIDERS[family];
+
 const familiesFor = (format: string, path: string): RuntimeFamily[] => {
   const families = new Set<RuntimeFamily>();
   if (
     format === "apk" ||
     format === "dex" ||
+    /(?:^|\/)[^/]+\.dex$/iu.test(path) ||
     /(?:^|\/)AndroidManifest\.xml$/u.test(path)
   )
     families.add("android");
