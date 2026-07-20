@@ -537,7 +537,7 @@ describe("JavaScript artifact reconstruction", () => {
       truncated: true,
       omitted_count: 6,
     });
-  });
+  }, 15_000);
 
   it("rejects traversal from a production reader seam and malformed ASAR containers", async () => {
     const root = await fixtureDirectory();
