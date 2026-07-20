@@ -8,6 +8,7 @@ import { CATALOG_IDENTITY, CLI_COMMAND_NAMES } from "../src/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../src/identity.js";
 import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
+import { TOOL_KINDS } from "../src/contracts/toolContractTypes.js";
 import { createServer } from "../src/server/createServer.js";
 import { createServerIdentity } from "../src/serverIdentity.js";
 import { observed } from "./fixtures/analysisExecution.js";
@@ -248,6 +249,28 @@ describe("server and catalog identity", () => {
           },
         },
       });
+      for (const capabilityFamily of TOOL_KINDS) {
+        const familyCapabilities = await client.callTool({
+          name: "binary_session",
+          arguments: {
+            detail: "capabilities",
+            capability_family: capabilityFamily,
+            limit: 100,
+          },
+        });
+        expect(familyCapabilities.structuredContent).toMatchObject({
+          result: {
+            view: "capabilities",
+            capability_family: capabilityFamily,
+            capabilities: {
+              items: expect.arrayContaining([
+                expect.objectContaining({ surface: capabilityFamily }),
+              ]),
+              total: expect.any(Number),
+            },
+          },
+        });
+      }
       await client.callTool({ name: "close_binary", arguments: {} });
       await expect.poll(() => toolListChanges).toBeGreaterThan(0);
     } finally {

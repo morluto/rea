@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { TOOL_KINDS } from "./toolContractTypes.js";
+
 /** Caller observations and projection controls for binary_session. */
 export const binarySessionInputSchema = z.object({
   detail: z
@@ -9,17 +11,7 @@ export const binarySessionInputSchema = z.object({
       "summary returns routing state; capabilities returns one filtered tool-availability page; full returns complete diagnostics only when required",
     ),
   capability_family: z
-    .enum([
-      "official-proxy",
-      "enhanced",
-      "native-provider",
-      "artifact-provider",
-      "managed-provider",
-      "browser-provider",
-      "electron-provider",
-      "application",
-      "session",
-    ])
+    .enum(TOOL_KINDS)
     .optional()
     .describe("Optional tool family for detail=capabilities"),
   cursor: z
