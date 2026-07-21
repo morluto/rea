@@ -70,6 +70,9 @@ export const startMcpTransport = async (
               evidenceFileRoots:
                 serverContext.runtimeState.currentConfig.evidenceFilePolicy
                   .roots.length,
+              investigationInputRoots:
+                serverContext.runtimeState.currentConfig.investigationInputRoots
+                  .length,
               browserObservationEnabled:
                 serverContext.runtimeState.currentConfig
                   .browserObservationEnabled &&

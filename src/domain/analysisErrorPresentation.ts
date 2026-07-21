@@ -27,9 +27,11 @@ export const analysisErrorRemediationAction = (
   if (error instanceof ReplayPlanStaleError)
     return "Review the rebuilt replay plan and explicitly approve its new digest.";
   if (error instanceof PermissionRequiredError)
-    return error.elicitationSupported
-      ? "Approve the exact missing scope, then retry the operation."
-      : "Add the exact missing scope beneath the administrator ceiling, then retry.";
+    return error.restartRequired
+      ? "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client."
+      : error.elicitationSupported
+        ? "Approve the exact missing scope, then retry the operation."
+        : "Add the exact missing scope beneath the administrator ceiling, then retry.";
   return analysisErrorUserMessage(error);
 };
 

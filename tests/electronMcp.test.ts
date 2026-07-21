@@ -72,6 +72,7 @@ describe("Electron MCP tools", () => {
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         evidenceFileRoots: 0,
+        investigationInputRoots: 1,
         electronObservationEnabled: true,
       }),
     });
@@ -204,6 +205,7 @@ describe("Electron MCP tools", () => {
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         evidenceFileRoots: 0,
+        investigationInputRoots: 1,
       }),
     });
     const client = new Client({
@@ -270,6 +272,82 @@ describe("Electron MCP tools", () => {
       items: expect.any(Array),
       offset: 0,
       limit: 100,
+    });
+  });
+
+  it("reports an unconfigured investigation ceiling before static analysis", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-denied-mcp-"));
+    temporary.push(root);
+    await writeElectronBoundaryFixture(root);
+    const config = parseConfig({});
+    if (!config.ok) throw config.error;
+    const authority = await loadConfiguredPermissionAuthority(config.value);
+    if (!authority.ok) throw authority.error;
+    const session = new BinarySession(() => ({
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const server = createServer(session, session, {
+      permissionAuthority: authority.value,
+    });
+    const client = new Client({
+      name: "electron-denied-mcp-test",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server, session);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const status = await client.callTool({
+      name: "binary_session",
+      arguments: {
+        detail: "capabilities",
+        capability_family: "electron-provider",
+        limit: 100,
+      },
+    });
+    expect(status.structuredContent).toMatchObject({
+      result: {
+        capabilities: {
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              name: "analyze_javascript_application",
+              available: false,
+              reason: "policy_disabled",
+            }),
+            expect.objectContaining({
+              name: "reconcile_javascript_runtime",
+              available: true,
+              reason: "available",
+            }),
+          ]),
+        },
+      },
+    });
+
+    const denied = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: root, approved: true },
+    });
+    expect(denied).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "permission_required",
+          remediation: {
+            action: expect.stringContaining("administrator configuration"),
+            elicitation_supported: false,
+            restart_required: true,
+          },
+          details: {
+            capability: "investigation_input",
+            missing: { roots: [root] },
+            ceiling: expect.objectContaining({ roots: [] }),
+          },
+        },
+      },
     });
   });
 

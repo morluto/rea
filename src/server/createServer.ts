@@ -29,9 +29,10 @@ import { registerBrowserTools } from "./registerBrowserTools.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
+import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
 
 const TARGET_FREE_INSTRUCTIONS =
-  "REA analyzes shipped artifacts and approved runtime evidence; use repository tools for source. Route: ASAR/JavaScript -> analyze_javascript_application; archive/package -> inventory_artifact; managed PE/CLI -> inspect_managed_artifact; browser/Electron runtime -> list_browser_targets/list_electron_targets; native binary/database -> open_binary, then binary_overview. Start with summaries and cite Evidence IDs. Never repeat identical analysis or read full Evidence unless a missing detail requires it.";
+  "REA analyzes shipped artifacts. Route: ASAR/JavaScript -> analyze_javascript_application (configured root required); archive/package -> inventory_artifact; managed PE/CLI -> inspect_managed_artifact; browser/Electron runtime -> list_browser_targets/list_electron_targets; native binary/database -> open_binary, then binary_overview. Check binary_session for policy. Start with summaries and cite Evidence IDs. Never repeat identical analysis or read full Evidence without a specific need.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Start native analysis with binary_overview, then narrow with analyze_function, literal search, callers, callees, and xrefs. Prefer summary views, never repeat an identical call, and read full Evidence only when the task requires it.";
@@ -62,14 +63,7 @@ export interface CreateServerOptions {
   readonly javascriptReplayHost?: JavaScriptReplayHost;
   readonly javascriptReplayRunner?: JavaScriptReplayRunner;
   readonly managedRuntimePolicy?: ManagedRuntimePolicy;
-  readonly availabilityPolicy?: () => {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  };
+  readonly availabilityPolicy?: () => SessionAvailability;
 }
 
 /**

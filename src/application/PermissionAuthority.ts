@@ -131,13 +131,16 @@ type PermissionAuthorizationResult = Promise<
 export class PermissionAuthority {
   private policy: PermissionPolicy;
   private readonly configuredAuthority: PermissionAuthority | undefined;
+  private readonly outsideCeilingRestartRequired: boolean;
 
   constructor(
     policy: PermissionPolicy,
     configuredAuthority?: PermissionAuthority,
+    outsideCeilingRestartRequired = false,
   ) {
     this.policy = policy;
     this.configuredAuthority = configuredAuthority;
+    this.outsideCeilingRestartRequired = outsideCeilingRestartRequired;
   }
 
   /** Create a connection-owned overlay for once and session grants. */
@@ -145,6 +148,7 @@ export class PermissionAuthority {
     return new PermissionAuthority(
       createPermissionPolicy([]),
       this.configuredAuthority ?? this,
+      true,
     );
   }
 
@@ -267,13 +271,16 @@ export class PermissionAuthority {
     const effective = this.effectivePolicy();
     const denied = evaluatePermission(effective, request);
     if (denied.allowed) return ok({ decision: denied, owner: this });
+    const outsideAdministratorCeiling =
+      denied.reason === "outside_administrator_ceiling";
     return err(
       new PermissionRequiredError(
         request,
         denied.missing,
         ceilingFor(effective, request.capability),
-        options.elicitationSupported ?? false,
-        options.restartRequired ?? false,
+        !outsideAdministratorCeiling && (options.elicitationSupported ?? false),
+        options.restartRequired ??
+          (outsideAdministratorCeiling && this.outsideCeilingRestartRequired),
       ),
     );
   }

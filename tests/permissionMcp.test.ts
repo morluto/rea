@@ -47,7 +47,7 @@ describe("MCP permission preflight", () => {
               missing: { roots: [outputRoot] },
             },
             remediation: {
-              restart_required: false,
+              restart_required: true,
               elicitation_supported: false,
             },
           },

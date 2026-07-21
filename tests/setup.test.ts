@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  registrationPermissionEnvironment,
   runSetup,
   type ClientConfigurationInspection,
   type ClientConfigurationResult,
@@ -153,6 +154,18 @@ const options = (approved: boolean, installHopper = false): SetupOptions => ({
 });
 
 describe("setup workflow", () => {
+  it("propagates only the explicit non-secret investigation root policy", () => {
+    expect(
+      registrationPermissionEnvironment({
+        REA_INVESTIGATION_INPUT_ROOTS_JSON: '["/approved/apps"]',
+        AUTHORIZATION: "secret",
+      }),
+    ).toEqual({
+      REA_INVESTIGATION_INPUT_ROOTS_JSON: '["/approved/apps"]',
+    });
+    expect(registrationPermissionEnvironment({})).toEqual({});
+  });
+
   it("returns a complete plan without mutation", async () => {
     const host = new FakeSetupHost();
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];

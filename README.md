@@ -279,6 +279,11 @@ rea investigate-versions /absolute/path/to/releases/v1 /absolute/path/to/release
 rea analyze-javascript-application /absolute/path/to/releases/app.asar --approved --json
 ```
 
+If REA is registered with an MCP client, run approved `rea setup` while the
+explicit investigation-root variable is set, then restart that client. Setup
+copies this non-secret policy into the managed registration; changing the shell
+environment alone cannot update an already-running MCP process.
+
 `investigate-versions` inventories both versions, checkpoints their observed
 Evidence, derives an artifact comparison, and records a changed-behavior report.
 Both input paths must resolve beneath `REA_INVESTIGATION_INPUT_ROOTS_JSON`;

@@ -36,7 +36,9 @@ import {
   type SetupFailureCode,
   type SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
+import { registrationPermissionEnvironment } from "./SetupRegistrationEnvironment.js";
 export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
+export { registrationPermissionEnvironment } from "./SetupRegistrationEnvironment.js";
 
 /** Exact non-secret provider variables propagated into managed registrations. */
 export type SetupProviderEnvironment = Readonly<Record<string, string>>;
@@ -469,6 +471,7 @@ export const systemSetupHost = (
       const diagnosis = await runDoctor(undefined, doctorHost);
       return {
         ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
+        ...registrationPermissionEnvironment(process.env),
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),

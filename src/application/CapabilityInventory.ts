@@ -33,6 +33,7 @@ type ProviderDescriptor = {
 type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
   readonly evidenceFileRoots: number;
+  readonly investigationInputRoots: number;
   readonly browserObservationEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
   readonly javascriptReplayEnabled?: boolean;
@@ -115,11 +116,30 @@ export const buildCapabilityInventory = (
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  const javascriptApplication = javascriptApplicationAvailability(context);
+  if (javascriptApplication !== null) return javascriptApplication;
   const policyDecision = policyAvailability(context);
   if (policyDecision !== null) return policyDecision;
   const targetDecision = targetAvailability(context);
   if (targetDecision !== null) return targetDecision;
   return providerAvailability(context);
+};
+
+const javascriptApplicationAvailability = ({
+  name,
+  policy,
+}: AvailabilityContext): Availability | null => {
+  if (name === "analyze_javascript_application")
+    return policy.investigationInputRoots === 0
+      ? {
+          reason: "policy_disabled",
+          remediation:
+            "Configure an exact REA_INVESTIGATION_INPUT_ROOTS_JSON root in the MCP registration, then restart the registered MCP server or client.",
+        }
+      : { reason: "available", remediation: null };
+  return name === "reconcile_javascript_runtime"
+    ? { reason: "available", remediation: null }
+    : null;
 };
 
 const policyAvailability = ({
