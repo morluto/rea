@@ -118,6 +118,68 @@ describe("Electron CLI parity", () => {
   );
 
   it(
+    "routes generic approved analysis of a directory to static JavaScript",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "rea-electron-routed-cli-"));
+      temporary.push(root);
+      await writeElectronBoundaryFixture(root);
+      const environment = {
+        ...process.env,
+        REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
+      };
+
+      const analyzed = await runCli(
+        ["analyze", root, "--approved", "--json"],
+        environment,
+      );
+
+      expect(analyzed).toMatchObject({
+        operation: "analyze_javascript_application",
+        provider: { id: "rea-javascript-application" },
+        normalized_result: {
+          input_path: root,
+          format: "directory",
+          summary: { ipc: { paired_renderer_transmissions: 4 } },
+        },
+      });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "requires explicit approval before generic JavaScript analysis",
+    async () => {
+      const root = await mkdtemp(
+        join(tmpdir(), "rea-electron-unapproved-cli-"),
+      );
+      temporary.push(root);
+      await writeElectronBoundaryFixture(root);
+      const environment = {
+        ...process.env,
+        REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
+      };
+
+      const denied = await runCli(["analyze", root, "--json"], environment);
+
+      expect(denied).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "analyze_javascript_application",
+          issues: [
+            {
+              path: ["approved"],
+              reason: "invalid_value",
+              expected: [true],
+            },
+          ],
+        },
+      });
+      expect(denied).not.toHaveProperty("details.candidate_ids");
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
     "reads a file and returns the derived static/runtime reconciliation contract",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "rea-runtime-cli-"));
