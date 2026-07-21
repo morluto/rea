@@ -18,6 +18,46 @@ import {
 } from "../src/domain/permissionPolicy.js";
 
 describe("permission authority", () => {
+  it("distinguishes an elicitable grant from administrator reconfiguration", async () => {
+    const sandbox = await mkdtemp(
+      join(tmpdir(), "rea-permission-remediation-"),
+    );
+    const allowedRoot = join(sandbox, "allowed");
+    const outsideRoot = join(sandbox, "outside");
+    await Promise.all([mkdir(allowedRoot), mkdir(outsideRoot)]);
+    const authority = await createPermissionAuthority([
+      evidenceScope(allowedRoot),
+    ]);
+    expect(authority.ok).toBe(true);
+    if (!authority.ok) return;
+
+    const inside = await authority.value.authorize(
+      {
+        ...evidenceScope(allowedRoot),
+        operation_identity: "read:inside-ceiling",
+      },
+      "read",
+      { elicitationSupported: true },
+    );
+    expect(inside).toMatchObject({
+      ok: false,
+      error: { elicitationSupported: true, restartRequired: false },
+    });
+
+    const outside = await authority.value.createConnectionAuthority().authorize(
+      {
+        ...evidenceScope(outsideRoot),
+        operation_identity: "read:outside-ceiling",
+      },
+      "read",
+      { elicitationSupported: true },
+    );
+    expect(outside).toMatchObject({
+      ok: false,
+      error: { elicitationSupported: false, restartRequired: true },
+    });
+  });
+
   it("accepts canonical aliases but rejects a symlink escape", async () => {
     const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-"));
     const root = join(sandbox, "root");

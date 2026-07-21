@@ -99,8 +99,10 @@ used by MCP. Optional project grants require both
 `REA_PERMISSION_PROJECT_ROOT` and `REA_PERMISSION_PROJECT_STORE`. The store is
 atomically written with mode `0600`, bound to the canonical project root, and is
 never enabled by default. Send `SIGHUP` to the REA MCP process after a trusted
-local policy change;
-ceilings, administrator grants, and project grants reload without restarting.
+project-store change; project grants reload without restarting. Environment
+settings belong to the process environment, so changing an administrator
+ceiling in an MCP registration requires restarting that registered server or
+its owning client.
 Revocation affects future operations; an already-running operation retains the
 decision made at its preflight boundary.
 Once and session grants are connection-local overlays. They cannot authorize a
@@ -114,6 +116,11 @@ confirmation; automation must pass `--yes` (or `-y`) explicitly.
 Denials use the shared `permission_required` schema with requested scope, missing
 scope, administrator ceiling, elicitation support, and exact restart status.
 Client-provided roots are context only and never grants.
+
+Elicitation can add a once or session grant only inside an existing
+administrator ceiling. A request outside that ceiling reports
+`elicitation_supported: false` and `restart_required: true`; interactive consent
+cannot silently widen administrator policy.
 
 `analyze_javascript_application` uses the `investigation_input` capability. Its
 absolute `input_path` must be inside `REA_INVESTIGATION_INPUT_ROOTS_JSON` and the

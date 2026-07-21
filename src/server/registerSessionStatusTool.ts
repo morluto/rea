@@ -12,6 +12,7 @@ import { createServerIdentity } from "../serverIdentity.js";
 import { buildCapabilityInventory } from "../application/CapabilityInventory.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
+import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
 
 type BinarySessionInput = z.output<typeof binarySessionInputSchema>;
 type ToolAvailability = ReturnType<typeof buildCapabilityInventory>[number];
@@ -22,14 +23,7 @@ export interface SessionStatusToolOptions {
   readonly session: BinarySessionPort;
   readonly contract: (typeof SESSION_TOOL_CONTRACTS)[2];
   readonly startedAt: string;
-  readonly availabilityPolicy: () => {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  };
+  readonly availabilityPolicy: () => SessionAvailability;
 }
 
 /** Register the read-only provider and target status operation. */

@@ -27,6 +27,18 @@ rea analyze-javascript-application /absolute/path/to/apps/app.asar \
   --json
 ```
 
+When configuring an MCP client, set the variable before approved setup so REA
+copies the explicit non-secret root policy into the managed registration:
+
+```bash
+export REA_INVESTIGATION_INPUT_ROOTS_JSON='["/absolute/path/to/apps"]'
+rea setup
+```
+
+Restart the configured MCP client after changing this administrator ceiling.
+An already-running server cannot acquire a new process environment through
+MCP elicitation or `SIGHUP`.
+
 The equivalent MCP input is:
 
 ```json

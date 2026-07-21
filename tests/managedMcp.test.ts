@@ -65,6 +65,7 @@ describe("managed artifact MCP tools", () => {
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         evidenceFileRoots: 0,
+        investigationInputRoots: 0,
         browserObservationEnabled: false,
         electronObservationEnabled: false,
         javascriptReplayEnabled: false,

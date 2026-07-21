@@ -66,7 +66,11 @@ describe("server and catalog identity", () => {
   });
 
   it("reports composed, host, and target-specific availability truthfully", () => {
-    const policy = { processCaptureEnabled: true, evidenceFileRoots: 1 };
+    const policy = {
+      processCaptureEnabled: true,
+      evidenceFileRoots: 1,
+      investigationInputRoots: 1,
+    };
     const composed = buildCapabilityInventory(
       {
         open: true,
@@ -200,6 +204,14 @@ describe("server and catalog identity", () => {
               name: "inspect_web_page",
               available: false,
               reason: "policy_disabled",
+            }),
+            expect.objectContaining({
+              name: "analyze_javascript_application",
+              available: false,
+              reason: "policy_disabled",
+              remediation: expect.stringContaining(
+                "REA_INVESTIGATION_INPUT_ROOTS_JSON",
+              ),
             }),
           ]),
           client_features: {

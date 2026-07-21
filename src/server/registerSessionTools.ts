@@ -56,7 +56,10 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
+import {
+  sessionAvailabilityPolicy,
+  type SessionAvailability,
+} from "./sessionAvailabilityPolicy.js";
 
 const permissionFailure = (
   failure: Awaited<ReturnType<PermissionAuthority["authorize"]>>,
@@ -119,10 +122,6 @@ interface ProcessToolRegistration {
   readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
   readonly permissionAuthority?: PermissionAuthority;
   readonly processCaptureElicitation?: ProcessCaptureElicitation;
-  readonly availabilityPolicy?: () => {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-  };
 }
 
 const registerProcessTools = ({
@@ -215,14 +214,7 @@ interface LifecycleToolRegistration {
   ];
   readonly snapshotFilePolicy: EvidenceFilePolicy;
   readonly startedAt: string;
-  readonly availabilityPolicy: () => {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  };
+  readonly availabilityPolicy: () => SessionAvailability;
   readonly permissionAuthority?: PermissionAuthority;
 }
 
@@ -400,14 +392,7 @@ export interface SessionToolOptions {
   readonly permissionAuthority?: PermissionAuthority;
   readonly processCaptureElicitation?: ProcessCaptureElicitation;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
-  readonly availabilityPolicy?: () => {
-    readonly processCaptureEnabled: boolean;
-    readonly evidenceFileRoots: number;
-    readonly browserObservationEnabled?: boolean;
-    readonly electronObservationEnabled?: boolean;
-    readonly javascriptReplayEnabled?: boolean;
-    readonly managedRuntimeEnabled?: boolean;
-  };
+  readonly availabilityPolicy?: () => SessionAvailability;
 }
 
 export const registerSessionTools = (
@@ -448,6 +433,7 @@ export const registerSessionTools = (
       options.availabilityPolicy,
       processPolicy,
       evidenceFilePolicy,
+      options.investigationInputRoots ?? [],
     ),
     ...(options.permissionAuthority === undefined
       ? {}
