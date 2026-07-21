@@ -13,8 +13,9 @@ import {
   PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
-import { err, ok, type Result } from "../domain/result.js";
 import type { Evidence } from "../domain/evidence.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import { createJavaScriptApplicationEvidence } from "./JavaScriptApplicationEvidence.js";
 import { reconstructJavaScriptArtifact } from "./JavaScriptArtifactReconstruction.js";
@@ -29,7 +30,14 @@ export const analyzeJavaScriptApplication = async (
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
-  if (!parsed.success) return err(new AnalysisInputError(OPERATION));
+  if (!parsed.success)
+    return err(
+      new AnalysisInputError(
+        OPERATION,
+        undefined,
+        projectInputIssues(parsed.error.issues, rawInput),
+      ),
+    );
   return analyzeJavaScriptApplicationValidated(authority, parsed.data, options);
 };
 

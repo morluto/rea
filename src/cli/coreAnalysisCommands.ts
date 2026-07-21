@@ -1,4 +1,6 @@
 import { z } from "incur";
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { runDirectAnalysis } from "../application/DirectAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -6,6 +8,7 @@ import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";
 import { directAnalysisOptions, providerSelectionOption } from "./options.js";
 import type { CliInstance } from "./types.js";
+import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 
 export const registerCoreAnalysisCommands = (
   cli: CliInstance,
@@ -38,20 +41,23 @@ const registerCoreCommands = (cli: CliInstance, logger: Logger): void => {
       .describe("Load and update a local analysis snapshot"),
     provider: providerSelectionOption,
   });
+  const analyzeOptions = overviewOptions.extend({
+    approved: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Approve static analysis when the path is a JavaScript directory or ASAR",
+      ),
+  });
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
       path: z.string().describe("App, program, or analysis database path"),
     }),
-    options: overviewOptions,
+    options: analyzeOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "analyze", () =>
-        runDirectAnalysis(
-          args.path,
-          "binary_overview",
-          { detail: options.detail, limit: options.limit },
-          directAnalysisOptions(logger, options.snapshot, options.provider),
-        ),
+        runRoutedOverview(args.path, options, logger),
       ),
   });
   cli.command(CLI_COMMANDS.inspect, {
@@ -94,6 +100,45 @@ const registerCoreCommands = (cli: CliInstance, logger: Logger): void => {
         ),
       ),
   });
+};
+
+const runRoutedOverview = async (
+  path: string,
+  options: {
+    readonly approved: boolean;
+    readonly detail: "concise" | "detailed";
+    readonly limit: number;
+    readonly snapshot?: string | undefined;
+    readonly provider?: string | undefined;
+  },
+  logger: Logger,
+) => {
+  if (
+    options.provider === undefined &&
+    options.snapshot === undefined &&
+    (await isJavaScriptApplicationPath(path))
+  )
+    return runCliJavaScriptApplicationAnalysis({
+      input_path: resolve(path),
+      approved: options.approved,
+    });
+  return runDirectAnalysis(
+    path,
+    "binary_overview",
+    { detail: options.detail, limit: options.limit },
+    directAnalysisOptions(logger, options.snapshot, options.provider),
+  );
+};
+
+const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".asar")) return true;
+  if (lower.endsWith(".app")) return false;
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 };
 
 const registerXrefsCommand = (cli: CliInstance, logger: Logger): void => {

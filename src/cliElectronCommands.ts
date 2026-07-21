@@ -4,7 +4,6 @@ import {
   inspectElectronPage,
   listElectronTargets,
 } from "./application/ElectronObservationService.js";
-import { analyzeJavaScriptApplication } from "./application/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./application/JavaScriptRuntimeReconciliationService.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
@@ -14,7 +13,6 @@ import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "./domain/electronObservation.js";
-import { analyzeJavaScriptApplicationInputSchema } from "./domain/javascriptApplicationAnalysis.js";
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
@@ -24,6 +22,7 @@ import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
 } from "./cliObservationOptions.js";
+import { runCliJavaScriptApplicationAnalysis } from "./cli/javascriptApplicationAnalysis.js";
 
 const scopeOptions = {
   allowedFileRoots: z
@@ -191,42 +190,29 @@ const registerJavaScriptApplicationCommand = (
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
-      logCliCommand(
-        logger,
-        CLI_COMMANDS.analyzeJavaScriptApplication,
-        async () => {
-          const context = await electronContext();
-          if (!context.ok) return context.error;
-          const parsed = analyzeJavaScriptApplicationInputSchema.safeParse({
-            input_path: args.path,
-            approved: options.approved,
-            format: options.format,
-            source_map_read_approved: options.sourceMapReadApproved,
-            limits: {
-              max_entries: options.maxEntries,
-              max_total_artifact_bytes: options.maxTotalArtifactBytes,
-              max_artifact_entry_bytes: options.maxArtifactEntryBytes,
-              max_compression_ratio: options.maxCompressionRatio,
-              max_depth: options.maxDepth,
-              max_path_bytes: options.maxPathBytes,
-              max_text_files: options.maxTextFiles,
-              max_total_text_bytes: options.maxTotalTextBytes,
-              max_text_file_bytes: options.maxTextFileBytes,
-              max_ast_nodes: options.maxAstNodes,
-              max_findings: options.maxFindings,
-              max_modules: options.maxModules,
-              max_source_map_sources: options.maxSourceMapSources,
-              max_parse_milliseconds: options.maxParseMilliseconds,
-            },
-          });
-          if (!parsed.success)
-            return inputError("analyze_javascript_application");
-          const result = await analyzeJavaScriptApplication(
-            context.authority,
-            parsed.data,
-          );
-          return result.ok ? result.value : cliError(result.error);
-        },
+      logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
+        runCliJavaScriptApplicationAnalysis({
+          input_path: args.path,
+          approved: options.approved,
+          format: options.format,
+          source_map_read_approved: options.sourceMapReadApproved,
+          limits: {
+            max_entries: options.maxEntries,
+            max_total_artifact_bytes: options.maxTotalArtifactBytes,
+            max_artifact_entry_bytes: options.maxArtifactEntryBytes,
+            max_compression_ratio: options.maxCompressionRatio,
+            max_depth: options.maxDepth,
+            max_path_bytes: options.maxPathBytes,
+            max_text_files: options.maxTextFiles,
+            max_total_text_bytes: options.maxTotalTextBytes,
+            max_text_file_bytes: options.maxTextFileBytes,
+            max_ast_nodes: options.maxAstNodes,
+            max_findings: options.maxFindings,
+            max_modules: options.maxModules,
+            max_source_map_sources: options.maxSourceMapSources,
+            max_parse_milliseconds: options.maxParseMilliseconds,
+          },
+        }),
       ),
   });
 };

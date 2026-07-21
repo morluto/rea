@@ -4,7 +4,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { json, run } from "./lib/verify-package-core.mjs";
 
-/** Run inventory-artifact and analyze-javascript-application against packaged fixtures. */
+/** Run artifact and JavaScript application analysis against packaged fixtures. */
 export async function verifyPackageArtifactAndElectron({
   cli,
   workspace,
@@ -61,6 +61,25 @@ export async function verifyPackageArtifactAndElectron({
       ?.paired_renderer_transmissions !== 1
   )
     throw new Error("packaged JavaScript application analysis CLI failed");
+  const routedApplicationAnalysis = json(
+    await run(
+      cli,
+      ["analyze", applicationRoot, "--approved", "--json"],
+      environment,
+    ),
+  );
+  assertRoutedApplicationAnalysis(routedApplicationAnalysis);
 
   return { artifactArchive };
 }
+
+const assertRoutedApplicationAnalysis = (analysis) => {
+  if (
+    analysis.operation !== "analyze_javascript_application" ||
+    analysis.provider?.id !== "rea-javascript-application" ||
+    analysis.normalized_result?.format !== "directory" ||
+    analysis.normalized_result?.summary?.ipc?.paired_renderer_transmissions !==
+      1
+  )
+    throw new Error("packaged routed JavaScript application analysis failed");
+};

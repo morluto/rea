@@ -262,7 +262,7 @@ Uninstall preserves Hopper, Node.js, evidence, captures, external evidence roots
 | Inspect or decompile one part of an app from the Terminal        | `rea analyze` or `rea decompile`                                          |
 | Validate, canonicalize, or compare Evidence v2 bundles           | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
 | Run or resume a persistent two-version artifact analysis         | `rea investigate-versions`                                                |
-| Map a local JavaScript/Electron application without executing it | `rea analyze-javascript-application`                                      |
+| Map a local JavaScript/Electron application without executing it | `rea analyze PATH --approved` or `rea analyze-javascript-application`     |
 | Reuse immutable analysis results without relaunching a provider  | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
 | Import source as historical reference                            | `rea import-reference-source`                                             |
 | Capture or compare controlled process behavior                   | `rea capture-process` or `rea compare-process-captures`                   |
@@ -276,8 +276,15 @@ rea evidence-import /absolute/path/to/evidence/bundle.json
 rea evidence-export /absolute/path/to/evidence/bundle.json /absolute/path/to/evidence/canonical.json
 rea compare /absolute/path/to/evidence/left.json /absolute/path/to/evidence/right.json
 rea investigate-versions /absolute/path/to/releases/v1 /absolute/path/to/releases/v2 /absolute/path/to/evidence/releases.json --yes --workspace-name releases
+rea analyze /absolute/path/to/releases/app.asar --approved --json
 rea analyze-javascript-application /absolute/path/to/releases/app.asar --approved --json
 ```
+
+For a directory or `.asar`, generic `rea analyze` automatically selects the
+static JavaScript application provider when neither `--provider` nor
+`--snapshot` is supplied. The dedicated command remains available for explicit
+format and resource-limit controls. Both routes require `--approved` and an
+administrator-approved investigation input root.
 
 If REA is registered with an MCP client, run approved `rea setup` while the
 explicit investigation-root variable is set, then restart that client. Setup

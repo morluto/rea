@@ -3,8 +3,9 @@
 REA can project an operator-supplied Electron/JavaScript application directory
 or ASAR into [JavaScript Application Graph v1](javascript-application-graph.md)
 without executing application code. The target-free
-`analyze_javascript_application` MCP tool and
-`rea analyze-javascript-application` CLI command expose the same application
+`analyze_javascript_application` MCP tool, dedicated
+`rea analyze-javascript-application` CLI command, and generic
+`rea analyze PATH --approved` directory/ASAR route expose the same application
 service and return an Evidence v2 envelope containing the graph and an Electron
 boundary summary.
 
@@ -22,10 +23,17 @@ remain beneath that root after canonicalization:
 
 ```bash
 export REA_INVESTIGATION_INPUT_ROOTS_JSON='["/absolute/path/to/apps"]'
+rea analyze /absolute/path/to/apps/app.asar --approved --json
 rea analyze-javascript-application /absolute/path/to/apps/app.asar \
   --approved \
   --json
 ```
+
+Generic `rea analyze` selects this static provider for directories and `.asar`
+paths when neither `--provider` nor `--snapshot` is supplied. Use the dedicated
+command when setting explicit format or reconstruction limits. Native targets,
+single JavaScript files, `.app` bundles, and explicit deep-provider or snapshot
+requests retain the native deep-analysis route.
 
 When configuring an MCP client, set the variable before approved setup so REA
 copies the explicit non-secret root policy into the managed registration:
