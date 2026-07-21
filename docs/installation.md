@@ -51,20 +51,24 @@ mechanics:
 - use the bundled skill for a repeatable investigation workflow.
 
 REA then summarizes the detected clients and asks which capabilities to set up.
-The capability picker starts empty and presents `Agent integration` (the MCP
-registration and matching guided workflow together) plus the optional Hopper
-provider. Selecting agent integration opens a second empty checklist for the
-exact detected agents that should receive a registration. Detection provides
-context; it does not preselect or authorize a configuration write.
+The capability picker pre-selects `Agent integration` (the MCP registration and
+matching guided workflow together) when detected agents exist, and presents the
+optional Hopper provider alongside it. Selecting agent integration opens a second
+checklist for the exact detected agents that should receive a registration; all
+detected agents are pre-selected. Detection provides context and pre-selection;
+it does not authorize a configuration write until the user confirms.
 
-Choosing no capabilities exits without changes. Selecting the provider does not
-implicitly select an agent, and selecting agent integration does not include
-every detected agent. The picker keeps its navigation, selection, confirmation,
-and cancellation keys visible instead of relying on a transient hint.
+Because the user has explicitly invoked `rea setup`, the wizard biases toward the
+happy path: capabilities and agents are pre-selected, and the final approval
+defaults to **Yes**. The user can still deselect any item or cancel at any prompt.
+Choosing no capabilities exits without changes. Selecting agent integration
+always includes the bundled skill, even if all agents are deselected. The picker
+keeps its navigation, selection, confirmation, and cancellation keys visible
+instead of relying on a transient hint.
 
 Every selected path converges on the same exact preflight. REA validates the
 current state, prints the proposed effects, and asks for final approval with
-**No** as the default. Selection alone never authorizes a mutation. The plan
+**Yes** as the default. Selection alone never authorizes a mutation. The plan
 identifies:
 
 - an existing Hopper installation, a validated bring-your-own Ghidra environment, or the official Hopper package it proposes to install;

@@ -64,8 +64,8 @@ describe("interactive setup journey", () => {
     expect(result.decision.approved).toBe(false);
   });
 
-  it("does not turn available capabilities into selected setup actions", async () => {
-    const result = await runJourney([step("What should REA set up?", "\r")]);
+  it("allows deselecting the pre-selected agent integration to opt out", async () => {
+    const result = await runJourney([step("What should REA set up?", " \r")]);
 
     expect(result.output).toContain(
       "Agent integration (MCP + guided workflow)",
@@ -82,9 +82,20 @@ describe("interactive setup journey", () => {
     });
   });
 
+  it("pre-selects agent integration and proceeds to the agent picker on Enter", async () => {
+    const result = await runJourney([
+      step("What should REA set up?", "\r"),
+      step("Which agents should use REA?", "\u0003"),
+    ]);
+
+    expect(result.output).toContain("Codex (detected)");
+    expect(result.output).toContain("Setup cancelled. No changes were made.");
+    expect(result.decision.approved).toBe(false);
+  });
+
   it("offers one bundled repair when MCP is aligned but the skill is missing", async () => {
     const result = await runJourney(
-      [step("What should REA set up?", "\r")],
+      [step("What should REA set up?", "\r"), step("Apply this change?", "\r")],
       false,
       actions.filter(({ kind }) => kind !== "configure_client"),
     );
@@ -96,13 +107,16 @@ describe("interactive setup journey", () => {
     expect(result.output).not.toContain(
       "REA reverse-engineering skill (skill)",
     );
-    expect(result.decision.selectedActionIds).toEqual([]);
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["install_skill"],
+    });
   });
 
-  it("shows multiple detected agents without preselecting either one", async () => {
+  it("pre-selects all detected agents in the agent picker", async () => {
     const result = await runJourney(
       [
-        step("What should REA set up?", " \r"),
+        step("What should REA set up?", "\r"),
         step("Which agents should use REA?", "\u0003"),
       ],
       false,
@@ -123,21 +137,26 @@ describe("interactive setup journey", () => {
     expect(result.decision.approved).toBe(false);
   });
 
-  it("asks for agent targets only after agent integration is selected", async () => {
+  it("retains the bundled skill even when all agents are deselected (#399)", async () => {
     const result = await runJourney([
-      step("What should REA set up?", " \r"),
-      step("Which agents should use REA?", "\u0003"),
+      step("What should REA set up?", "\r"),
+      step("Which agents should use REA?", " \r"),
+      step("Apply this change?", "\r"),
     ]);
 
-    expect(result.output).toContain("Codex (detected)");
-    expect(result.output).toContain("Setup cancelled. No changes were made.");
-    expect(result.decision.approved).toBe(false);
+    expect(result.output).toContain("Ready to review");
+    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
+    expect(result.output).not.toContain("CREATE  Codex");
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["install_skill"],
+    });
   });
 
-  it("reviews only explicitly selected actions with default-No consent", async () => {
+  it("defaults the final confirmation to Yes, apply", async () => {
     const result = await runJourney([
-      step("What should REA set up?", " \r"),
-      step("Which agents should use REA?", " \r"),
+      step("What should REA set up?", "\r"),
+      step("Which agents should use REA?", "\r"),
       step("Apply these 2 changes?", "\r"),
     ]);
 
@@ -148,7 +167,21 @@ describe("interactive setup journey", () => {
     expect(result.output).not.toContain(
       "INSTALL  Hopper deep-analysis provider",
     );
-    expect(result.output).toContain("No, cancel");
+    expect(result.output).toContain("Yes, apply");
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["configure_client:codex", "install_skill"],
+    });
+  });
+
+  it("can still be cancelled at the final confirmation", async () => {
+    const result = await runJourney([
+      step("What should REA set up?", "\r"),
+      step("Which agents should use REA?", "\r"),
+      step("Apply these 2 changes?", "\u001b[D\r"),
+    ]);
+
+    expect(result.output).toContain("Ready to review");
     expect(result.output).toContain("Setup cancelled. No changes were made.");
     expect(result.decision).toEqual({
       approved: false,
@@ -158,10 +191,7 @@ describe("interactive setup journey", () => {
 
   it("repairs an aligned agent integration through the bundled option", async () => {
     const result = await runJourney(
-      [
-        step("What should REA set up?", " \r"),
-        step("Apply this change?", "\r"),
-      ],
+      [step("What should REA set up?", "\r"), step("Apply this change?", "\r")],
       false,
       actions.filter(({ kind }) => kind !== "configure_client"),
     );
@@ -175,21 +205,40 @@ describe("interactive setup journey", () => {
       "INSTALL  Hopper deep-analysis provider",
     );
     expect(result.decision).toEqual({
-      approved: false,
+      approved: true,
       selectedActionIds: ["install_skill"],
     });
   });
 
-  it("keeps every accessible capability prompt defaulted to skip", async () => {
+  it("defaults accessible agent integration to Yes and others to No", async () => {
     const result = await runJourney(
       [
         step("Set up Agent integration (MCP + guided workflow)?", "\r"),
+        step("Set up Hopper deep-analysis provider (provider)?", "\r"),
+        step("Apply this change?", "\r"),
+      ],
+      true,
+      actions.filter(({ kind }) => kind !== "configure_client"),
+    );
+
+    expect(result.output).toContain("Ready to review");
+    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["install_skill"],
+    });
+  });
+
+  it("allows accessible opt-out of the pre-selected agent integration", async () => {
+    const result = await runJourney(
+      [
+        step("Set up Agent integration (MCP + guided workflow)?", "\u001b[B\r"),
         step("Set up Hopper deep-analysis provider (provider)?", "\r"),
       ],
       true,
     );
 
-    expect(result.output).not.toContain("Ready to review");
+    expect(result.output).toContain("Nothing selected. No changes were made.");
     expect(result.decision.selectedActionIds).toEqual([]);
   });
 

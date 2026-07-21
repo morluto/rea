@@ -60,7 +60,7 @@ export const confirmInteractiveSetup = async (
       selectedActions.length === 1
         ? "Apply this change?"
         : `Apply these ${String(selectedActions.length)} changes?`,
-    initialValue: false,
+    initialValue: true,
     active: "Yes, apply",
     inactive: "No, cancel",
   });
@@ -133,9 +133,10 @@ const selectSetupActions = async (
     ({ kind }) => kind !== "configure_client",
   );
   const capabilities = setupCapabilities(clientActions, componentActions);
+  const preselectedCapabilityIds = defaultCapabilityIds(capabilities);
   const selectedCapabilities = accessible
-    ? await selectCapabilitiesAccessibly(capabilities)
-    : await selectCapabilities(capabilities);
+    ? await selectCapabilitiesAccessibly(capabilities, preselectedCapabilityIds)
+    : await selectCapabilities(capabilities, preselectedCapabilityIds);
   if (selectedCapabilities === undefined) return undefined;
   const selectedCapabilityIds = new Set(selectedCapabilities);
   const bundledSkillAction = componentActions.find(
@@ -149,21 +150,33 @@ const selectSetupActions = async (
     .map(({ id }) => id);
   if (!selectedCapabilityIds.has(agentIntegrationCapabilityId))
     return selectedActionIds;
+  const bundledSkillId =
+    bundledSkillAction === undefined ? undefined : bundledSkillAction.id;
   if (clientActions.length === 0)
     return [
-      ...(bundledSkillAction === undefined ? [] : [bundledSkillAction.id]),
+      ...(bundledSkillId === undefined ? [] : [bundledSkillId]),
       ...selectedActionIds,
     ];
+  const preselectedClientIds = clientActions.map(({ id }) => id);
   const selectedClients = accessible
-    ? await selectClientsAccessibly(clientActions)
-    : await selectClients(clientActions);
+    ? await selectClientsAccessibly(clientActions, preselectedClientIds)
+    : await selectClients(clientActions, preselectedClientIds);
   if (selectedClients === undefined) return undefined;
-  if (selectedClients.length === 0) return selectedActionIds;
   return [
     ...selectedClients,
-    ...(bundledSkillAction === undefined ? [] : [bundledSkillAction.id]),
+    ...(bundledSkillId === undefined ? [] : [bundledSkillId]),
     ...selectedActionIds,
   ];
+};
+
+const defaultCapabilityIds = (
+  capabilities: readonly SetupCapability[],
+): readonly string[] => {
+  const hasAgentIntegration = capabilities.some(
+    ({ id }) => id === agentIntegrationCapabilityId,
+  );
+  if (!hasAgentIntegration) return [];
+  return [agentIntegrationCapabilityId];
 };
 
 const setupCapabilities = (
@@ -194,6 +207,7 @@ const setupCapabilities = (
 
 const selectCapabilities = async (
   capabilities: readonly SetupCapability[],
+  initialValues: readonly string[],
 ): Promise<readonly string[] | undefined> => {
   const selection = await multiselect({
     ...promptStreams,
@@ -203,6 +217,7 @@ const selectCapabilities = async (
       label: capability.label,
       hint: capability.hint,
     })),
+    initialValues: [...initialValues],
     required: false,
     maxItems: Math.max(
       3,
@@ -215,13 +230,15 @@ const selectCapabilities = async (
 
 const selectCapabilitiesAccessibly = async (
   capabilities: readonly SetupCapability[],
+  preselectedIds: readonly string[],
 ): Promise<readonly string[] | undefined> => {
+  const preselected = new Set(preselectedIds);
   const selected: string[] = [];
   for (const capability of capabilities) {
     const included = await confirm({
       ...promptStreams,
       message: `Set up ${capability.label}? ${capability.hint}`,
-      initialValue: false,
+      initialValue: preselected.has(capability.id),
       vertical: true,
     });
     if (isCancel(included)) return undefined;
@@ -232,6 +249,7 @@ const selectCapabilitiesAccessibly = async (
 
 const selectClients = async (
   actions: readonly SetupAction[],
+  initialValues: readonly string[],
 ): Promise<readonly string[] | undefined> => {
   const selection = await multiselect({
     ...promptStreams,
@@ -239,8 +257,9 @@ const selectClients = async (
     options: actions.map((action) => ({
       value: action.id,
       label: `${action.label} (detected)`,
-      hint: `${action.operation} · ${action.target}`,
+      hint: `Configure the REA MCP server for ${action.label}`,
     })),
+    initialValues: [...initialValues],
     required: false,
     maxItems: Math.max(
       3,
@@ -253,13 +272,15 @@ const selectClients = async (
 
 const selectClientsAccessibly = async (
   actions: readonly SetupAction[],
+  initialValues: readonly string[],
 ): Promise<readonly string[] | undefined> => {
+  const preselected = new Set(initialValues);
   const selected: string[] = [];
   for (const action of actions) {
     const included = await confirm({
       ...promptStreams,
       message: `Configure ${action.label}? ${action.target}`,
-      initialValue: false,
+      initialValue: preselected.has(action.id),
       vertical: true,
     });
     if (isCancel(included)) return undefined;
