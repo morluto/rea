@@ -53,35 +53,40 @@ describe("CdpBrowserProvider", () => {
     expect(JSON.stringify(result.value)).not.toContain("page-secret");
   });
 
-  it("sanitizes URL-shaped transitional target titles", async () => {
-    const browser = await startFakeCdpBrowser({
-      urlShapedAllowedTitle: true,
-    });
-    browsers.push(browser);
-    const provider = new CdpBrowserProvider();
-    const input = {
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      approved: true as const,
-      target_id: "allowed-page",
-    };
-    const listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse(input),
-    );
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets.items[0]?.title).toBe(
-      `${browser.allowedOrigin}/app?startup=%5BREDACTED%5D`,
-    );
+  it.each([
+    ["absolute", true, ""],
+    ["host/path", "host-path", ""],
+    ["root-relative", "root-relative", ""],
+    ["prefixed host/path", "prefixed", "Loading "],
+  ] as const)(
+    "sanitizes %s transitional target titles",
+    async (_label, urlShapedAllowedTitle, prefix) => {
+      const browser = await startFakeCdpBrowser({ urlShapedAllowedTitle });
+      browsers.push(browser);
+      const provider = new CdpBrowserProvider();
+      const input = {
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        approved: true as const,
+        target_id: "allowed-page",
+      };
+      const expected = `${prefix}${browser.allowedOrigin}/app?startup=%5BREDACTED%5D`;
+      const listed = await provider.listTargets(
+        listBrowserTargetsInputSchema.parse(input),
+      );
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets.items[0]?.title).toBe(expected);
 
-    const inspected = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
-    );
-    if (!inspected.ok) throw inspected.error;
-    expect(inspected.value.target.title).toBe(
-      `${browser.allowedOrigin}/app?startup=%5BREDACTED%5D`,
-    );
-    expect(JSON.stringify({ listed, inspected })).not.toContain("title-secret");
-  });
+      const inspected = await provider.inspectPage(
+        inspectWebPageInputSchema.parse({ ...input, observation_ms: 0 }),
+      );
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.target.title).toBe(expected);
+      expect(JSON.stringify({ listed, inspected })).not.toContain(
+        "title-secret",
+      );
+    },
+  );
 
   it("uses page-scoped discovery sockets as direct target transports", async () => {
     const browser = await startFakeCdpBrowser({

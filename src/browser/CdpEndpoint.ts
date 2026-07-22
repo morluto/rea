@@ -112,7 +112,7 @@ export const discoverCdpEndpoint = async (
     targets: targets.map((target) => ({
       id: target.id,
       type: target.type,
-      title: sanitizeTargetTitle(target.title),
+      title: sanitizeTargetTitle(target.title, target.url),
       url: target.url,
       attached: target.attached,
       ...targetWebSocket(endpoint, target, operation),
@@ -120,17 +120,56 @@ export const discoverCdpEndpoint = async (
   };
 };
 
-const sanitizeTargetTitle = (value: string): string => {
+const sanitizeTargetTitle = (value: string, targetUrl: string): string => {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return value;
+    return sanitizeTargetUrlAlias(value, targetUrl);
   }
   return url.protocol === "http:" || url.protocol === "https:"
     ? sanitizeBrowserUrl(value).url.slice(0, 16_384)
-    : value;
+    : sanitizeTargetUrlAlias(value, targetUrl);
 };
+
+const sanitizeTargetUrlAlias = (value: string, targetUrl: string): string => {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    return value;
+  }
+  const markers = [parsed.origin, `//${parsed.host}`, parsed.host];
+  if (parsed.pathname !== "/") markers.push(parsed.pathname);
+  const candidatePattern = new RegExp(
+    `(?:${markers.map(escapeRegExp).join("|")})[^\\s<>"']*`,
+    "gu",
+  );
+  return value
+    .replace(candidatePattern, (candidate) =>
+      sanitizeSameOriginTitleUrl(candidate, parsed),
+    )
+    .slice(0, 16_384);
+};
+
+const sanitizeSameOriginTitleUrl = (candidate: string, target: URL): string => {
+  let parsed: URL;
+  try {
+    parsed = candidate.startsWith("//")
+      ? new URL(`${target.protocol}${candidate}`)
+      : candidate.startsWith(target.host)
+        ? new URL(`${target.protocol}//${candidate}`)
+        : new URL(candidate, target.origin);
+  } catch {
+    return candidate;
+  }
+  return parsed.origin === target.origin && parsed.search !== ""
+    ? sanitizeBrowserUrl(parsed.href).url
+    : candidate;
+};
+
+const escapeRegExp = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 /** Select a browser attachment socket or a direct socket for one page target. */
 export const cdpTargetWebSocket = (
