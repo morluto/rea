@@ -1,6 +1,6 @@
 import canonicalize from "canonicalize";
 
-import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
+import { analyzeFunctionParametersSchema } from "./analyzeFunctionParameters.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { functionDossierSchema, type FunctionDossier } from "./hopperValues.js";
 
@@ -59,9 +59,7 @@ interface DossierPage {
     readonly subject: NonNullable<Evidence["subject"]>;
   };
   readonly dossier: FunctionDossier;
-  readonly parameters: ReturnType<
-    typeof enhancedInputSchemas.analyze_function.parse
-  >;
+  readonly parameters: ReturnType<typeof analyzeFunctionParametersSchema.parse>;
 }
 
 /** Parse and assemble up to 100 mutually consistent analyze_function pages. */
@@ -116,9 +114,7 @@ const parsePage = (input: unknown): DossierPage => {
   return {
     evidence: { ...evidence, subject: evidence.subject },
     dossier: functionDossierSchema.parse(evidence.normalized_result),
-    parameters: enhancedInputSchemas.analyze_function.parse(
-      evidence.parameters,
-    ),
+    parameters: analyzeFunctionParametersSchema.parse(evidence.parameters),
   };
 };
 
