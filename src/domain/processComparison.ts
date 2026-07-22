@@ -3,6 +3,12 @@ import { z } from "zod";
 import type { ProcessCapture } from "./processCapture.js";
 import { validateProcessCapture } from "./processCapture.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import {
+  compareProcessTraces,
+  processTraceComparisonResultSchema,
+  type ProcessTraceSource,
+  type ProcessTraceSpecification,
+} from "./processTraceComparison.js";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -73,6 +79,7 @@ export const processCaptureComparisonSchema = z
         right: jsonValueSchema.nullable(),
       }),
     ]),
+    trace: processTraceComparisonResultSchema.optional(),
     limitations: z.array(z.string()),
   })
   .superRefine((comparison, context) => {
@@ -269,6 +276,115 @@ const truncatedComparison = (): ProcessCaptureComparison => ({
   limitations: ["At least one capture is truncated."],
 });
 
+const dimensionsForTraceSources = (
+  sources: ReadonlySet<ProcessTraceSource>,
+): ReadonlySet<(typeof PROCESS_COMPARISON_DIMENSIONS)[number]> => {
+  const dimensions = new Set<(typeof PROCESS_COMPARISON_DIMENSIONS)[number]>();
+  for (const source of sources) {
+    if (source.startsWith("terminal_")) dimensions.add("terminal");
+    else if (source === "interaction") dimensions.add("interaction");
+    else if (source === "lifecycle") dimensions.add("exit");
+    else if (source === "filesystem") dimensions.add("filesystem");
+    else if (
+      source === "http" ||
+      source === "websocket" ||
+      source === "replay_transition"
+    )
+      dimensions.add("protocol");
+    else if (source === "process") dimensions.add("process");
+    else if (source === "shim") dimensions.add("shim");
+  }
+  return dimensions;
+};
+
+const traceCoversObservedDimension = (
+  dimension: (typeof PROCESS_COMPARISON_DIMENSIONS)[number],
+  sources: ReadonlySet<ProcessTraceSource>,
+  left: ProcessCapture,
+  right: ProcessCapture,
+): boolean => {
+  const any = <Value>(
+    leftValues: readonly Value[],
+    rightValues: readonly Value[],
+  ): boolean => leftValues.length > 0 || rightValues.length > 0;
+  switch (dimension) {
+    case "terminal":
+      return (
+        (!any(left.frames, right.frames) || sources.has("terminal_raw")) &&
+        (!any(left.rendered_frames, right.rendered_frames) ||
+          sources.has("terminal_rendered"))
+      );
+    case "interaction":
+      return sources.has("interaction");
+    case "exit":
+      return sources.has("lifecycle");
+    case "filesystem":
+      return false;
+    case "protocol":
+      return (
+        (![...left.protocol_events, ...right.protocol_events].some(
+          ({ protocol }) => protocol === "http",
+        ) ||
+          sources.has("http")) &&
+        (![...left.protocol_events, ...right.protocol_events].some(
+          ({ protocol }) => protocol === "websocket",
+        ) ||
+          sources.has("websocket")) &&
+        (!any(left.replay_transitions, right.replay_transitions) ||
+          sources.has("replay_transition"))
+      );
+    case "process":
+      return sources.has("process");
+    case "shim":
+      return sources.has("shim");
+  }
+};
+
+const applyTraceVerdict = (
+  dimensions: ComparisonDimensions,
+  specification: ProcessTraceSpecification,
+  trace: ReturnType<typeof compareProcessTraces>,
+  captures: readonly [left: ProcessCapture, right: ProcessCapture],
+): ComparisonDimensions => {
+  const traceStatus: ComparisonStatus =
+    trace.verdict === "equivalent"
+      ? "unchanged"
+      : trace.verdict === "different"
+        ? "changed"
+        : "unknown";
+  const sources = new Set(specification.events.map(({ source }) => source));
+  const covered = dimensionsForTraceSources(sources);
+  const statusFor = (
+    dimension: (typeof PROCESS_COMPARISON_DIMENSIONS)[number],
+  ): ComparisonStatus => {
+    const exact = dimensions[dimension];
+    if (!covered.has(dimension)) return exact;
+    if (trace.verdict === "different") return "changed";
+    if (
+      trace.verdict === "unknown" &&
+      ["changed", "added", "removed"].includes(exact)
+    )
+      return exact;
+    return traceCoversObservedDimension(
+      dimension,
+      sources,
+      captures[0],
+      captures[1],
+    )
+      ? traceStatus
+      : exact;
+  };
+  return {
+    terminal: statusFor("terminal"),
+    interaction: statusFor("interaction"),
+    exit: statusFor("exit"),
+    filesystem: statusFor("filesystem"),
+    protocol: statusFor("protocol"),
+    process: statusFor("process"),
+    shim: statusFor("shim"),
+  };
+};
+
 type ComparisonDimensions = Pick<
   ProcessCaptureComparison,
   | "terminal"
@@ -326,7 +442,6 @@ const compareDimensions = (
   };
 };
 
-/** Compare bounded captures without equating missing or incompatible evidence. */
 /**
  * Compare two Process Capture v4 observations without treating absence as proof.
  *
@@ -339,64 +454,73 @@ export const compareProcessCaptures = (
   options: {
     readonly maxCaptureAgeMs?: number;
     readonly now?: () => number;
+    readonly traceSpecification?: ProcessTraceSpecification;
   } = {},
 ): ProcessCaptureComparison => {
   assertComparable(left, right, options);
-  if (left.truncated || right.truncated) return truncatedComparison();
+  if (left.truncated || right.truncated) {
+    const truncated = truncatedComparison();
+    return options.traceSpecification === undefined
+      ? truncated
+      : {
+          ...truncated,
+          trace: compareProcessTraces(left, right, options.traceSpecification),
+        };
+  }
   const sameNormalization =
     JSON.stringify(left.normalization) === JSON.stringify(right.normalization);
-  const dimensions = compareDimensions(left, right, sameNormalization);
-  const observedFirstDivergence = chooseFirstDivergence([
+  const exactDimensions = compareDimensions(left, right, sameNormalization);
+  const trace =
+    options.traceSpecification === undefined
+      ? undefined
+      : compareProcessTraces(left, right, options.traceSpecification);
+  const dimensions =
+    trace === undefined || options.traceSpecification === undefined
+      ? exactDimensions
+      : applyTraceVerdict(exactDimensions, options.traceSpecification, trace, [
+          left,
+          right,
+        ]);
+  const divergenceCandidates = PROCESS_COMPARISON_DIMENSIONS.map((dimension) =>
     firstCollectionDivergence(
-      "terminal",
-      terminalObservations(left),
-      terminalObservations(right),
+      dimension,
+      processDimensionObservations(left, dimension),
+      processDimensionObservations(right, dimension),
     ),
-    firstCollectionDivergence(
-      "interaction",
-      left.interaction_events,
-      right.interaction_events,
+  );
+  const observedFirstDivergence = chooseFirstDivergence(
+    divergenceCandidates.map((candidate) =>
+      candidate !== null &&
+      trace?.verdict === "equivalent" &&
+      dimensions[candidate.dimension] === "unchanged"
+        ? null
+        : candidate,
     ),
-    firstCollectionDivergence(
-      "exit",
-      [{ ...left.exit, settlement: left.settlement }],
-      [{ ...right.exit, settlement: right.settlement }],
-    ),
-    firstCollectionDivergence(
-      "filesystem",
-      filesystemObservations(left),
-      filesystemObservations(right),
-    ),
-    firstCollectionDivergence(
-      "protocol",
-      [...left.protocol_events, ...left.replay_transitions],
-      [...right.protocol_events, ...right.replay_transitions],
-    ),
-    firstCollectionDivergence(
-      "process",
-      left.process_samples,
-      right.process_samples,
-    ),
-    firstCollectionDivergence("shim", left.shim_events, right.shim_events),
-  ]);
+  );
   const firstDivergence =
-    observedFirstDivergence.status === "found"
-      ? observedFirstDivergence
-      : !sameNormalization ||
-          left.residual_unknowns.length > 0 ||
-          right.residual_unknowns.length > 0
-        ? ({
-            status: "unknown",
-            reason:
-              "Residual unknowns prevent proving that no divergence occurred.",
-          } as const)
-        : observedFirstDivergence;
+    trace?.verdict === "equivalent" &&
+    deriveProcessComparisonStatus(
+      PROCESS_COMPARISON_DIMENSIONS.map((dimension) => dimensions[dimension]),
+    ) === "unchanged"
+      ? ({ status: "none" } as const)
+      : observedFirstDivergence.status === "found"
+        ? observedFirstDivergence
+        : !sameNormalization ||
+            left.residual_unknowns.length > 0 ||
+            right.residual_unknowns.length > 0
+          ? ({
+              status: "unknown",
+              reason:
+                "Residual unknowns prevent proving that no divergence occurred.",
+            } as const)
+          : observedFirstDivergence;
   return {
     status: deriveProcessComparisonStatus(
       PROCESS_COMPARISON_DIMENSIONS.map((dimension) => dimensions[dimension]),
     ),
     ...dimensions,
     first_divergence: firstDivergence,
+    ...(trace === undefined ? {} : { trace }),
     limitations: [
       ...left.limitations,
       ...right.limitations,
