@@ -11,26 +11,32 @@ npm ci
 npm test
 ```
 
-`npm ci` installs the exact dependencies, builds the compiled runtime through
-the package `prepare` lifecycle, and prepares the Husky hook. Run
-`npm run build` again after source changes when you need the standalone CLI or
-MCP server without running the test prebuild.
+`npm ci` installs the exact dependencies and prepares the Husky hooks without
+building the project. Run `npm run build` when you need the standalone CLI or
+MCP server. Turbo caches deterministic local builds and static checks across
+Git worktrees; use `npm run build:cached` when you want that cache. After a
+package, lockfile, or managed-skill version change, run
+`npm run metadata:generate` before building.
 
 Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the canonical tool inventory defined by `TOOL_CONTRACTS` unless a deliberate contract change updates every verifier, generated catalog artifact, and snapshot. Prefer capability- and session-scoped tool advertisement over schema truncation.
 
 Before submitting a pull request, run:
 
 ```bash
-npm run check
+npm run check:pr
 npm run verify:package
 npm pack --dry-run
 ```
 
-`npm install` builds the compiled runtime and prepares the Husky pre-commit
-hook. Commits format and lint staged files with lint-staged, then typecheck the
-complete project. The normal test and CI coverage runs enforce the thresholds
-in `vitest.config.ts`; `npm run lint:dead` rejects unused files, exports, and
-dependencies.
+`npm run check` runs the cached typecheck, lint, formatting, and dead-code tasks;
+`check:fast` remains as an alias. Use `npm run check:test` when the complete test
+suite is relevant. Pre-commit formats and lints only staged files, and pre-push
+runs `check`. `check:pr` additionally renders API documentation and checks all
+committed generated metadata. Real provider and replay verifiers remain outside
+Turbo's cache. CI uploads the rendered TypeDoc site as an `api-docs` artifact;
+the generated HTML is not committed. The normal test and CI coverage runs
+enforce the thresholds in `vitest.config.ts`; `npm run lint:dead` rejects unused
+files, exports, and dependencies.
 
 Tests that need a temporary directory must use
 `createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`. The

@@ -45,6 +45,6 @@ await ensureGeneratedFile({
   path: outputPath,
   source,
   check: arguments_.has("--check"),
-  generateCommand: "npm run build",
+  generateCommand: "npm run metadata:generate",
 });
 await validateBuildCache(root);

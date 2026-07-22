@@ -1,0 +1,42 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "tasks": {
+    "build": {
+      "inputs": [
+        ".nvmrc",
+        "bridge/**",
+        "package.json",
+        "package-lock.json",
+        "scripts/**",
+        "skills/reverse-engineer-anything/SKILL.md",
+        "src/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.build.json"
+      ],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.build.json",
+        "vitest.config.ts"
+      ]
+    },
+    "lint": {},
+    "format:check": {},
+    "knip": {},
+    "test:run": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "docs:check:built": {
+      "dependsOn": ["build"],
+      "cache": false
+    }
+  }
+}

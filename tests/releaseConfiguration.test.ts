@@ -61,9 +61,10 @@ describe("release configuration", () => {
     expect(generated).toContain("x-release-please-version");
   });
 
-  it("does not make all TypeDoc output release-version dependent", async () => {
+  it("keeps TypeDoc unversioned and outside the tracked documentation tree", async () => {
     await expect(readJson("typedoc.json")).resolves.toMatchObject({
       includeVersion: false,
+      out: "build/api-docs",
     });
   });
 });
