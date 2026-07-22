@@ -5,6 +5,7 @@ import {
   LEGACY_PROCESS_CAPTURE_MESSAGE,
   normalizationSchema,
 } from "./processScenario.js";
+import type { ReplayTransitionRecord } from "./replayMachineRuntime.js";
 
 export * from "./processScenario.js";
 
@@ -100,7 +101,13 @@ export interface ProtocolEvent {
     | "matched"
     | "unmatched"
     | "script_exhausted"
-    | "disconnected";
+    | "disconnected"
+    | "invalid_state"
+    | "guard_failed"
+    | "transition_exhausted"
+    | "invalid_capture"
+    | "unexpected_reconnect"
+    | "limit_exhausted";
 }
 
 /**
@@ -148,6 +155,7 @@ export interface ProcessCapture {
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
   readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
+  readonly replay_transitions: readonly ReplayTransitionRecord[];
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
   readonly filesystem_effects: readonly FileEffect[];
@@ -299,9 +307,27 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
         "unmatched",
         "script_exhausted",
         "disconnected",
+        "invalid_state",
+        "guard_failed",
+        "transition_exhausted",
+        "invalid_capture",
+        "unexpected_reconnect",
+        "limit_exhausted",
       ]),
     }),
   ),
+  replay_transitions: z
+    .array(
+      z.object({
+        sequence: z.number().int().nonnegative(),
+        at_ms: z.number().int().nonnegative(),
+        transition_id: z.string().min(1).max(64),
+        state_before: z.string().min(1).max(64),
+        state_after: z.string().min(1).max(64),
+        sensitive_aliases: z.array(z.string().min(1).max(64)).max(32),
+      }),
+    )
+    .default([]),
   files_before: z.array(fileStateSchema),
   files_after: z.array(fileStateSchema),
   filesystem_effects: z.array(fileEffectSchema),

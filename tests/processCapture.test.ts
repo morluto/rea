@@ -33,6 +33,7 @@ import {
   parseProcessCapture,
   parseProcessScenario,
   processCaptureSchema,
+  validateProcessCapture,
   type ProcessCapture,
   type ProcessExecutionPolicy,
 } from "../src/domain/processCapture.js";
@@ -98,6 +99,7 @@ const emptyCapture = (): ProcessCapture => {
     ],
     shim_events: [],
     protocol_events: [],
+    replay_transitions: [],
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -383,6 +385,7 @@ describe("process capture domain", () => {
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
+      replay_transitions: [],
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -422,6 +425,77 @@ describe("process capture domain", () => {
       }),
     ).toThrow("executable_sha256");
   });
+
+  it.each([
+    ["machine limit", 1, 5, 10],
+    ["transition use limit", 5, 1, 10],
+    ["state visit limit", 5, 5, 1],
+  ])(
+    "rejects replay journals that exceed the declared %s",
+    (_name, maxTransitions, maxUses, maxVisits) => {
+      const replayPlan = {
+        machine: {
+          initial_state: "active",
+          states: [
+            { name: "active", max_visits: maxVisits },
+            { name: "complete", terminal: true },
+          ],
+          transitions: [
+            {
+              id: "again",
+              from: "active",
+              to: "active",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "again",
+              },
+              actions: [{ type: "websocket_send", data: "again" }],
+              max_uses: maxUses,
+            },
+            {
+              id: "finish",
+              from: "active",
+              to: "complete",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "finish",
+              },
+              actions: [{ type: "websocket_send", data: "done" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: maxTransitions,
+        },
+      };
+      const capture = emptyCapture();
+      const candidate: ProcessCapture = {
+        ...capture,
+        manifest: {
+          ...capture.manifest,
+          replay_plan: replayPlan,
+          replay_plan_sha256: digestProcessCommitment(replayPlan),
+        },
+        replay_transitions: [0, 1].map((sequence) => ({
+          sequence,
+          at_ms: sequence,
+          transition_id: "again",
+          state_before: "active",
+          state_after: "active",
+          sensitive_aliases: [],
+        })),
+      };
+
+      expect(validateProcessCapture(candidate)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringContaining("limit"),
+          }),
+        ]),
+      );
+    },
+  );
 
   it("tells agents and users to recapture unsupported v3 evidence", () => {
     const legacy = { ...emptyCapture(), schema_version: 3 };
@@ -478,6 +552,7 @@ describe("process capture domain", () => {
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
+      replay_transitions: [],
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -537,6 +612,7 @@ describe("process capture domain", () => {
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
+      replay_transitions: [],
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -580,6 +656,7 @@ describe("process capture domain", () => {
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
+      replay_transitions: [],
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -652,6 +729,7 @@ describe("process capture domain", () => {
       filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
       shim_events: [],
       protocol_events: [],
+      replay_transitions: [],
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -680,6 +758,63 @@ describe("process capture domain", () => {
     const comparison = compareProcessCaptures(capture, changed);
     expect(comparison.process).toBe("changed");
     expect(comparison.status).toBe("changed");
+  });
+
+  it("compares replay state transitions as protocol evidence", () => {
+    const replayPlan = {
+      machine: {
+        initial_state: "anonymous",
+        states: [
+          { name: "anonymous" },
+          { name: "authenticated", terminal: true },
+        ],
+        transitions: [
+          {
+            id: "login",
+            from: "anonymous",
+            to: "authenticated",
+            trigger: { protocol: "http", method: "POST", path: "/login" },
+            captures: [
+              {
+                variable: "token",
+                value: { source: "request_json", path: ["token"] },
+                sensitive: true,
+              },
+            ],
+            actions: [{ type: "http_response", status: 204, body: "" }],
+            max_uses: 1,
+          },
+        ],
+        max_transitions: 1,
+      },
+    };
+    const empty = emptyCapture();
+    const baseline = {
+      ...empty,
+      manifest: {
+        ...empty.manifest,
+        replay_plan: replayPlan,
+        replay_plan_sha256: digestProcessCommitment(replayPlan),
+      },
+    };
+    const transitioned = {
+      ...baseline,
+      replay_transitions: [
+        {
+          sequence: 0,
+          at_ms: 0,
+          transition_id: "login",
+          state_before: "anonymous",
+          state_after: "authenticated",
+          sensitive_aliases: ["token"],
+        },
+      ],
+    };
+
+    expect(compareProcessCaptures(baseline, transitioned)).toMatchObject({
+      status: "changed",
+      protocol: "added",
+    });
   });
 });
 
@@ -813,6 +948,334 @@ describe("process capture adapter", () => {
       await replay.close();
     }
   });
+
+  it("serializes WebSocket transition actions across rapid messages", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        machine: {
+          initial_state: "connecting",
+          states: [
+            { name: "connecting" },
+            { name: "first" },
+            { name: "second" },
+            { name: "complete", terminal: true },
+          ],
+          transitions: [
+            {
+              id: "connect",
+              from: "connecting",
+              to: "first",
+              trigger: { protocol: "websocket_connect", path: "/ws" },
+              actions: [{ type: "websocket_send", data: "ready" }],
+              max_uses: 1,
+            },
+            {
+              id: "first",
+              from: "first",
+              to: "second",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "first",
+              },
+              actions: [
+                { type: "delay", duration_ms: 30 },
+                { type: "websocket_send", data: "first-done" },
+              ],
+              max_uses: 1,
+            },
+            {
+              id: "second",
+              from: "second",
+              to: "complete",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "second",
+              },
+              actions: [{ type: "websocket_send", data: "second-done" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: 3,
+        },
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    try {
+      const messages = await new Promise<string[]>((resolve, reject) => {
+        const received: string[] = [];
+        const socket = new WebSocket(replay.websocketUrl);
+        socket.on("message", (value) => {
+          received.push(value.toString());
+          if (received.length === 1) {
+            socket.send("first");
+            socket.send("second");
+          }
+          if (received.length === 3) {
+            socket.close();
+            resolve(received);
+          }
+        });
+        socket.once("error", reject);
+      });
+      expect(messages).toEqual(["ready", "first-done", "second-done"]);
+    } finally {
+      await replay.close();
+    }
+  });
+
+  it("drains queued machine work before exposing finalized snapshots", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      replay: {
+        machine: {
+          initial_state: "connecting",
+          states: [
+            { name: "connecting" },
+            { name: "first" },
+            { name: "second" },
+            { name: "complete", terminal: true },
+          ],
+          transitions: [
+            {
+              id: "connect",
+              from: "connecting",
+              to: "first",
+              trigger: { protocol: "websocket_connect", path: "/ws" },
+              actions: [{ type: "websocket_send", data: "ready" }],
+              max_uses: 1,
+            },
+            {
+              id: "first",
+              from: "first",
+              to: "second",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "first",
+              },
+              actions: [
+                { type: "delay", duration_ms: 30 },
+                { type: "disconnect" },
+              ],
+              max_uses: 1,
+            },
+            {
+              id: "second",
+              from: "second",
+              to: "complete",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "second",
+              },
+              actions: [{ type: "websocket_send", data: "done" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: 3,
+        },
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(replay.websocketUrl);
+      socket.once("message", () => {
+        socket.send("first");
+        socket.send("second");
+        setTimeout(resolve, 5);
+      });
+      socket.once("error", reject);
+    });
+
+    await replay.close();
+    const finalized = replay.transitions;
+    expect(finalized.map(({ transition_id }) => transition_id)).toEqual([
+      "connect",
+      "first",
+      "second",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(replay.transitions).toEqual(finalized);
+  });
+
+  it("enforces replay duration before normalizing recorded timestamps", async () => {
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: "/bin/sh",
+      working_directory: "/tmp",
+      normalization: { time_bucket_ms: 60_000 },
+      replay: {
+        machine: {
+          initial_state: "waiting",
+          states: [{ name: "waiting" }, { name: "complete", terminal: true }],
+          transitions: [
+            {
+              id: "late",
+              from: "waiting",
+              to: "complete",
+              trigger: { protocol: "http", method: "GET", path: "/late" },
+              actions: [{ type: "http_response", status: 200, body: "late" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: 1,
+          limits: { duration_ms: 5 },
+        },
+      },
+    });
+    const replay = await startLoopbackReplay(scenario);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const response = await fetch(`${replay.httpUrl}/late`);
+      expect(response.status).toBe(409);
+      expect(replay.events.at(-1)).toMatchObject({
+        at_ms: 0,
+        outcome: "limit_exhausted",
+      });
+    } finally {
+      await replay.close();
+    }
+  });
+
+  it("runs a login and reconnect replay machine inside process capture", async () => {
+    const root = await createTestTempDirectory("rea-replay-machine-test-");
+    const script = join(root, "client.mjs");
+    await writeFile(
+      script,
+      [
+        'const token = "machine-secret";',
+        'await fetch(`${process.env.REA_REPLAY_HTTP_URL}/login`, { method: "POST", body: JSON.stringify({ token }) });',
+        "const api = await fetch(`${process.env.REA_REPLAY_HTTP_URL}/api`, { headers: { authorization: token } });",
+        'if (await api.text() !== "connect") throw new Error("bad API response");',
+        "const connect = (acknowledge) => new Promise((resolve, reject) => {",
+        "  const socket = new WebSocket(process.env.REA_REPLAY_WEBSOCKET_URL);",
+        "  socket.addEventListener('error', reject);",
+        "  socket.addEventListener('message', (event) => {",
+        "    if (acknowledge) socket.send('ack');",
+        "    else { console.log(`reply:${event.data}`); socket.close(); resolve(); }",
+        "  });",
+        "  if (acknowledge) socket.addEventListener('close', () => resolve());",
+        "});",
+        "await connect(true);",
+        "await connect(false);",
+      ].join("\n"),
+    );
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: process.execPath,
+      arguments: [script],
+      working_directory: root,
+      replay: {
+        machine: {
+          initial_state: "login",
+          states: [
+            { name: "login" },
+            { name: "api" },
+            { name: "socket" },
+            { name: "ack" },
+            { name: "reconnect" },
+            { name: "complete", terminal: true },
+          ],
+          transitions: [
+            {
+              id: "login",
+              from: "login",
+              to: "api",
+              trigger: { protocol: "http", method: "POST", path: "/login" },
+              captures: [
+                {
+                  variable: "token",
+                  value: { source: "request_json", path: ["token"] },
+                  sensitive: true,
+                },
+              ],
+              actions: [{ type: "http_response", status: 204, body: "" }],
+              max_uses: 1,
+            },
+            {
+              id: "api",
+              from: "api",
+              to: "socket",
+              trigger: { protocol: "http", method: "GET", path: "/api" },
+              guards: [
+                {
+                  variable: "token",
+                  value: { source: "request_header", name: "authorization" },
+                },
+              ],
+              actions: [
+                { type: "http_response", status: 200, body: "connect" },
+              ],
+              max_uses: 1,
+            },
+            {
+              id: "initial_socket",
+              from: "socket",
+              to: "ack",
+              trigger: { protocol: "websocket_connect", path: "/ws" },
+              actions: [{ type: "websocket_send", data: "welcome" }],
+              max_uses: 1,
+            },
+            {
+              id: "ack",
+              from: "ack",
+              to: "reconnect",
+              trigger: {
+                protocol: "websocket_message",
+                path: "/ws",
+                body: "ack",
+              },
+              actions: [{ type: "disconnect" }],
+              max_uses: 1,
+            },
+            {
+              id: "reconnect",
+              from: "reconnect",
+              to: "complete",
+              trigger: { protocol: "websocket_connect", path: "/ws" },
+              actions: [{ type: "websocket_send", data: "done" }],
+              max_uses: 1,
+            },
+          ],
+          max_transitions: 5,
+        },
+      },
+    });
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const capture = await captureProcessScenario(scenario, {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [root],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      });
+      expect(capture.ok).toBe(true);
+      if (!capture.ok) throw capture.error;
+      expect(
+        capture.value.replay_transitions.map(
+          ({ transition_id }) => transition_id,
+        ),
+      ).toEqual(["login", "api", "initial_socket", "ack", "reconnect"]);
+      expect(capture.value.frames.map(({ data }) => data).join("")).toContain(
+        "reply:done",
+      );
+      expect(JSON.stringify(capture.value)).not.toContain("machine-secret");
+      expect(capture.value.manifest.replay_plan_sha256).toBe(
+        digestProcessCommitment(scenario.replay),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   it("captures PTY, filesystem, descendants, HTTP replay, and redacts environment", async () => {
     const root = await createTestTempDirectory("rea-harness-test-");
