@@ -32,6 +32,12 @@ describe("binary session", () => {
     const [first] = await targets();
     const session = new BinarySession(cacheProvider([]));
     expect((await session.open(first)).ok).toBe(true);
+    expect(session.status()).toMatchObject({
+      analysis_run: {
+        run_id: expect.any(String),
+        process_lineage: { status: "not_observed" },
+      },
+    });
     expect(session.listUnknowns()).toEqual([]);
     const identity = session.providerIdentity();
     Reflect.set(identity, "id", "forged");
@@ -90,13 +96,36 @@ describe("binary session", () => {
           limitations: [],
         },
       ],
-      createClient: () => ({
-        execute: (operation) => {
-          operations.push(operation);
-          return Promise.resolve(ok(operation));
-        },
-        close: () => Promise.resolve(),
-      }),
+      createClient: (_target, _profile, context) => {
+        if (context === undefined)
+          throw new Error("missing analysis run context");
+        return {
+          execute: (operation) => {
+            operations.push(operation);
+            return Promise.resolve(ok(operation));
+          },
+          runtimeLineageSnapshots: () => [
+            {
+              provider: provider.identity(),
+              observation: {
+                status: "verified",
+                observedAt: "2026-07-22T10:00:00.000Z",
+                lineage: {
+                  schemaVersion: 1,
+                  runId: context.runId,
+                  launcherPid: 100,
+                  launcherParentPid: 1,
+                  processGroupId: 100,
+                  descendants: [
+                    { pid: 101, parentPid: 100, processGroupId: 100 },
+                  ],
+                },
+              },
+            },
+          ],
+          close: () => Promise.resolve(),
+        };
+      },
     };
     const session = new BinarySession(provider);
     expect((await session.open(first)).ok).toBe(true);
@@ -131,8 +160,54 @@ describe("binary session", () => {
           },
         },
       ],
+      analysis_run: {
+        run_id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+        ),
+        process_lineage: {
+          status: "snapshots",
+          snapshots: [
+            {
+              provider: { id: "fixture", name: "Fixture", version: "1" },
+              observation: {
+                status: "verified",
+                observed_at: "2026-07-22T10:00:00.000Z",
+                schema_version: 1,
+                launcher_pid: 100,
+                launcher_parent_pid: 1,
+                process_group_id: 100,
+                descendants: [
+                  { pid: 101, parent_pid: 100, process_group_id: 100 },
+                ],
+              },
+            },
+          ],
+        },
+      },
     });
     expect(operations).toEqual(["health", "address_name"]);
+    await session.close();
+  });
+
+  it("allocates one fresh run identity per provider client lifetime", async () => {
+    const [first, second] = await targets();
+    const provider = cacheProvider([]);
+    const createClient = provider.createClient.bind(provider);
+    const runIds: string[] = [];
+    provider.createClient = (target, profile, context) => {
+      if (context === undefined)
+        throw new Error("missing analysis run context");
+      runIds.push(context.runId);
+      return createClient(target, profile, context);
+    };
+    const session = new BinarySession(provider);
+
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.open(second)).ok).toBe(true);
+
+    expect(runIds).toHaveLength(2);
+    expect(new Set(runIds).size).toBe(2);
     await session.close();
   });
 

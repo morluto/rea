@@ -27,7 +27,10 @@ import {
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
 const execFileAsync = promisify(execFile);
+const verifierRun = createVerifierRun();
 const timeout = 180_000;
 const parseServerArgs = (encoded) => {
   const parsed = JSON.parse(encoded);
@@ -281,6 +284,8 @@ transport.stderr?.on("data", (chunk) => {
   if (stderrBytes <= 16_384) stderrChunks.push(chunk.toString("utf8"));
 });
 const client = new Client({ name: "real-hopper-verifier", version: "1.0.0" });
+const unrelatedHopper = await startUnrelatedHopperSentinel();
+let unrelatedHopperSurvived = false;
 let summary;
 
 try {
@@ -456,6 +461,7 @@ try {
     await transport.close();
   } finally {
     clearInterval(keepAlive);
+    unrelatedHopperSurvived = await unrelatedHopper.verifyAndClose();
   }
 }
 
@@ -482,9 +488,10 @@ if (
 }
 if (summary === undefined)
   throw new Error("Real-Hopper verification did not produce a summary");
+const completedVerifierRun = await completeVerifierRun(verifierRun);
 await new Promise((resolve, reject) => {
   process.stdout.write(
-    `${JSON.stringify({ ...summary, cleanShutdown: true }, null, 2)}\n`,
+    `${JSON.stringify({ verifier_run: completedVerifierRun, ...summary, unrelatedHopperSurvived, cleanShutdown: true }, null, 2)}\n`,
     (cause) => {
       if (cause) reject(cause);
       else resolve();

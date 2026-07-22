@@ -159,6 +159,30 @@ describe("replay machine", () => {
     );
   });
 
+  it("rejects sensitive captures sourced from persisted action JSON", () => {
+    const candidate = loginMachine();
+    const capture = candidate.transitions[0]?.captures?.[0];
+    if (capture === undefined) throw new TypeError("missing capture");
+    capture.value = { source: "action_json", path: ["token"] };
+
+    expect(() => replayMachineSchema.parse(candidate)).toThrow(
+      /literal action JSON/u,
+    );
+  });
+
+  it.each([
+    ["invalid header name", { "bad header": "value" }],
+    ["invalid header value", { "x-test": "value\nsmuggled" }],
+  ])("rejects %s in HTTP responses", (_name, headers) => {
+    const candidate = loginMachine();
+    const action = candidate.transitions[0]?.actions[0];
+    if (action === undefined || action.type !== "http_response")
+      throw new TypeError("missing HTTP response");
+    action.headers = headers;
+
+    expect(() => replayMachineSchema.parse(candidate)).toThrow();
+  });
+
   it("rejects unknown fields at nested machine boundaries", () => {
     const candidate = loginMachine();
     const action = candidate.transitions[0]?.actions[0];

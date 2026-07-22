@@ -8,6 +8,9 @@ import { runControlledReplay } from "../dist/application/JavaScriptReplayService
 import { createPermissionPolicy } from "../dist/domain/permissionPolicy.js";
 import { LinuxJavaScriptReplayRunner } from "../dist/replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../dist/replay/SystemJavaScriptReplayHost.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const verifierRun = createVerifierRun();
 
 const suppliedInputPath = process.env.REA_REPLAY_INPUT_PATH;
 const suppliedInput =
@@ -147,7 +150,7 @@ const planned = await runControlledReplay(dependencies, input);
 if (!planned.ok) {
   if (process.env.REA_REPLAY_ALLOW_UNAVAILABLE === "true") {
     process.stdout.write(
-      `${JSON.stringify({ available: false, error_tag: planned.error._tag })}\n`,
+      `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), available: false, error_tag: planned.error._tag })}\n`,
     );
     process.exit(0);
   }
@@ -179,6 +182,7 @@ if (
 if (suppliedInput !== undefined) {
   process.stdout.write(
     `${JSON.stringify({
+      verifier_run: await completeVerifierRun(verifierRun),
       available: true,
       supplied_manifest: true,
       plan_digest: plan.plan_digest,
@@ -320,6 +324,7 @@ if (memory.termination !== "oom" || memory.cleanup.state !== "complete")
   );
 process.stdout.write(
   `${JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
     available: true,
     plan_digest: plan.plan_digest,
     evidence_id: evidence.evidence_id,

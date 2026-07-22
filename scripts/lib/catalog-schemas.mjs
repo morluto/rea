@@ -57,6 +57,16 @@ const durableSchemaDefinitions = (sources) => [
     ["bundle_version"],
   ],
   [
+    "evidence_completion_ledger",
+    sources.evidenceCompletion.evidenceCompletionLedgerSchema,
+    ["schema_version"],
+  ],
+  [
+    "evidence_completion_manifest",
+    sources.completionGeneration.completionManifestSchema,
+    ["schema_version"],
+  ],
+  [
     "investigation_run",
     sources.investigationWorkspace.investigationRunSchema,
     ["schema_version"],

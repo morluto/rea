@@ -29,7 +29,10 @@ import {
   memberLimits,
   nativeBoundaryLimits,
 } from "./lib/managed-conformance-config.mjs";
+import { createManagedCompletionReport } from "./lib/managed-completion-report.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
+const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
 const {
   fixture,
@@ -145,13 +148,14 @@ try {
       locations: [{ kind: "artifact-path", path: framework.target.path }],
     },
   );
+  const nativeFunctionTarget = {
+    path: "/system/user32.dll",
+    sha256: "9".repeat(64),
+    format: "pe",
+    architecture: "x86",
+  };
   const nativeFunctionEvidence = createEvidence(
-    {
-      path: "/system/user32.dll",
-      sha256: "9".repeat(64),
-      format: "pe",
-      architecture: "x86",
-    },
+    nativeFunctionTarget,
     {
       id: "ghidra",
       name: "Ghidra",
@@ -437,6 +441,23 @@ try {
   const manifestSelfTest = await runManagedAppManifestSelfTest();
   const operatorManifest = await runOptionalManagedAppManifest();
   const ilspyOracle = await runOptionalIlspyOracle();
+  const completionReport = createManagedCompletionReport(
+    {
+      modern,
+      framework,
+      nativeFunctionTarget,
+      readyToRun,
+      obfuscated,
+      left,
+      right,
+      nativeOnly,
+      malformed,
+      manifestSelfTest,
+      operatorManifest,
+      ilspyOracle,
+    },
+    await completeVerifierRun(verifierRun),
+  );
 
   process.stdout.write(
     `${JSON.stringify({
@@ -478,6 +499,7 @@ try {
         env: "REA_ILSPY_CMD_PATH",
         configured: false,
       },
+      completionReport,
     })}\n`,
   );
 } finally {

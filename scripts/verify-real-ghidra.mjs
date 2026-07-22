@@ -33,8 +33,10 @@ import {
   call,
   verifyInventoryOperations,
 } from "./verify-real-ghidra-inventory.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
+const verifierRun = createVerifierRun();
 const installDir = process.env.GHIDRA_INSTALL_DIR;
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
@@ -150,6 +152,7 @@ try {
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
   process.stdout.write(
     `${JSON.stringify({
+      verifier_run: await completeVerifierRun(verifierRun),
       ok: true,
       provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
       fixture_sources: [sourcePath, crossFormatSourcePath],

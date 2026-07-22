@@ -27,6 +27,15 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
+Every successful target transition allocates `binary_session.analysis_run.run_id`
+before any provider startup. `process_lineage` is `not_observed` until a dynamic
+provider starts, then becomes `snapshots` with every started provider's identity
+and retained ownership observation. Each observation records `observed_at` and
+is `unavailable` with a reason when ownership could not be revalidated, or
+`verified` with launcher PID, parent PID, process group, and descendants observed
+at that bounded check. These are historical snapshots, not live process
+inventories, and do not claim that no short-lived descendant existed.
+
 ## Progress and cancellation
 
 REA accepts ordinary `tools/call` progress tokens. Updates are monotonic,

@@ -157,9 +157,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       }
       const spawned = started;
       return ok({
-        process: spawned.process,
-        ownsProcessLifetime: true,
-        cleanup: () => cleanupStartedProcess(spawned, platform),
+        ...ownedGhidraProcess(spawned, platform),
         projectRoot: paths.projectRoot,
         ghidraLogPath: paths.ghidraLogPath,
         scriptLogPath: paths.scriptLogPath,
@@ -175,6 +173,19 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     }
   }
 }
+
+const ownedGhidraProcess = (
+  spawned: SpawnedOwnedProviderProcess,
+  platform: NodeJS.Platform,
+): Pick<
+  GhidraLaunch,
+  "process" | "ownsProcessLifetime" | "ownership" | "cleanup"
+> => ({
+  process: spawned.process,
+  ownsProcessLifetime: true,
+  ownership: spawned.ownership,
+  cleanup: () => cleanupStartedProcess(spawned, platform),
+});
 
 /** Exact executable and argv passed to shell-free process creation. */
 export interface GhidraHeadlessCommand {

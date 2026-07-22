@@ -10,8 +10,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
+const verifierRun = createVerifierRun();
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
 const prefix = join(workspace, "prefix");
@@ -98,6 +100,7 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
+      verifier_run: await completeVerifierRun(verifierRun),
       ok: true,
       platform: process.platform,
       package: packageResult.filename,

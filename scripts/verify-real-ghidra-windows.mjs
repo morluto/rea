@@ -25,6 +25,9 @@ import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProvider.js";
 import { GHIDRA_SESSION_CAPABILITIES as SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/domain/binaryTarget.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const verifierRun = createVerifierRun();
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -191,7 +194,9 @@ try {
 }
 if (report === undefined)
   throw new Error("Windows Ghidra report was not produced");
-process.stdout.write(`${JSON.stringify(report)}\n`);
+process.stdout.write(
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+);
 
 async function inventory(operation, parameters) {
   const input = parseGhidraInventoryInput(operation, parameters);
