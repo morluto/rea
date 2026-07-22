@@ -12,6 +12,7 @@ import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { callPathInputSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
+import { replayMachineRunInputSchema } from "../domain/replayMachineRun.js";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import {
@@ -496,6 +497,11 @@ export const SESSION_TOOL_CONTRACTS = [
     "verify_unknown_resolution",
     "Revalidate the current residual-unknown head against live bundled evidence, exact authority/confidence/environment requirements, and revision integrity. Withdrawn and out-of-scope dispositions are not truth claims.",
     verifyUnknownResolutionInputSchema,
+  ),
+  session(
+    "run_replay_machine",
+    "Evaluate ordered HTTP and WebSocket events directly against one validated finite replay machine without opening sockets or launching a target. Returns every decision, a capture-value-free transition journal, one redacted action table entry per used transition, captured aliases, final state, and exact configured and consumed limits.",
+    replayMachineRunInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];
 

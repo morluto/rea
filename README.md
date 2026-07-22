@@ -381,7 +381,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Browser observation       |     8 | exact-origin CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, and visual evidence                                                                                                          |
 | Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation                                                                                                                  |
 | Application workflows     |     8 | bounded cross-layer traces, unique-only version matching, static export return-shape comparison, approved Linux-isolated extracted-module replay, managed-runtime characterization, and reconstruction coverage closure                   |
-| Workspace and observation |    18 | target lifecycle, Evidence v2 bundles, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                                                                                                                   |
+| Workspace and observation |    19 | target lifecycle, Evidence v2 bundles, direct finite replay-machine evaluation, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                                                                          |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
@@ -409,6 +409,7 @@ REA is already useful for native application, browser, and Electron investigatio
 - Export and import evidence bundles across sessions.
 - Persist automatic cross-version artifact runs as canonical, lock-protected workspaces with tamper-evident revision commitments.
 - Capture approved PTY scenarios as Process Capture v4 Evidence, including committed run manifests, raw and rendered terminal frames, scripted interactions, descendant settlement, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
+- Validate finite replay machines without launching a target through `run_replay_machine` or `rea run-replay-machine`; ordered events return typed decisions, actions, captured aliases, transition journals, final state, and exact limit use without echoing request or captured values.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
 - Compare explicit function dossiers across text, calls, references, strings, and address-normalized CFG topology with per-facet unknowns.
 - Compare canonical Evidence bundles by exact membership, explicit observation pairs, and residual-unknown histories without turning omissions into behavioral absence.

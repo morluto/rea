@@ -1,4 +1,5 @@
 import canonicalize from "canonicalize";
+import { z } from "zod";
 
 import type { ReplayMachine } from "./replayMachine.js";
 
@@ -16,6 +17,61 @@ interface TransitionRecordOptions {
 }
 
 /** One bounded inbound protocol event offered to a replay machine. */
+const replayEventHeadersSchema = z
+  .record(
+    z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u),
+    z
+      .string()
+      .max(8_192)
+      .regex(/^[\t\x20-\x7e\x80-\xff]*$/u),
+  )
+  .superRefine((headers, context) => {
+    const normalized = Object.keys(headers).map((name) => name.toLowerCase());
+    if (new Set(normalized).size !== normalized.length)
+      context.addIssue({
+        code: "custom",
+        message: "replay event headers must be unique ignoring case",
+        input: headers,
+      });
+  });
+
+const replayEventFields = {
+  at_ms: z.number().int().nonnegative().safe(),
+  path: z.string().startsWith("/").max(8_192),
+  headers: replayEventHeadersSchema,
+  body: z.string().max(1_000_000),
+};
+
+export const replayMachineEventSchema = z.discriminatedUnion("protocol", [
+  z.strictObject({
+    protocol: z.literal("http"),
+    connection: z.literal("not_applicable"),
+    method: z
+      .string()
+      .min(1)
+      .max(16)
+      .transform((method) => method.toUpperCase()),
+    ...replayEventFields,
+  }),
+  z.strictObject({
+    protocol: z.literal("websocket_connect"),
+    connection: z.enum(["initial", "reconnect"]),
+    method: z.null(),
+    ...replayEventFields,
+  }),
+  z.strictObject({
+    protocol: z.literal("websocket_message"),
+    connection: z.enum(["initial", "reconnect"]),
+    method: z.null(),
+    ...replayEventFields,
+  }),
+]);
+
+/** One bounded inbound protocol event offered to a replay machine. */
 export interface ReplayMachineEvent {
   readonly protocol: "http" | "websocket_connect" | "websocket_message";
   readonly connection: "not_applicable" | "initial" | "reconnect";
@@ -25,6 +81,16 @@ export interface ReplayMachineEvent {
   readonly path: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
+}
+
+/** Runtime counters committed only for events admitted by all machine limits. */
+export interface ReplayMachineUsage {
+  readonly events: number;
+  readonly transitions: number;
+  readonly connections: number;
+  readonly messages: number;
+  readonly bytes: number;
+  readonly last_at_ms: number;
 }
 
 /** Persistable transition journal entry containing aliases, never secrets. */
@@ -183,6 +249,7 @@ export class ReplayMachineRuntime {
   #messages = 0;
   #bytes = 0;
   #lastAtMs = 0;
+  #events = 0;
 
   constructor(readonly machine: ReplayMachine) {
     this.#state = machine.initial_state;
@@ -197,6 +264,18 @@ export class ReplayMachineRuntime {
   /** Ordered, secret-free transition records. */
   get timeline(): readonly ReplayTransitionRecord[] {
     return this.#timeline;
+  }
+
+  /** Current committed use of the machine's declared limits. */
+  get usage(): ReplayMachineUsage {
+    return {
+      events: this.#events,
+      transitions: this.#timeline.length,
+      connections: this.#connections,
+      messages: this.#messages,
+      bytes: this.#bytes,
+      last_at_ms: this.#lastAtMs,
+    };
   }
 
   /** Replace captured secret values with stable aliases before persistence. */
@@ -214,6 +293,17 @@ export class ReplayMachineRuntime {
     for (const { variable, secret } of secrets)
       redacted = redacted.replaceAll(secret, `<secret:${variable}>`);
     return redacted;
+  }
+
+  /** Replace a field containing captured secrets with one stable alias only. */
+  redactField(value: string): string {
+    const alias = [...this.#sensitiveValues]
+      .filter(([, values]) =>
+        [...values].some((secret) => value.includes(secret)),
+      )
+      .map(([variable]) => variable)
+      .sort()[0];
+    return alias === undefined ? value : `<secret:${alias}>`;
   }
 
   /** Evaluate and, when admitted, commit one protocol event. */
@@ -334,6 +424,7 @@ export class ReplayMachineRuntime {
     this.#messages = messages;
     this.#bytes = bytes;
     this.#lastAtMs = event.at_ms;
+    this.#events += 1;
     return true;
   }
 
