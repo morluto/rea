@@ -102,6 +102,11 @@ export const queryJavaScriptSemanticGraph = (
     traversal.nodeIds,
     input,
   );
+  const candidateRelations = relevantCandidateRelationCount(
+    graph,
+    traversal.nodeIds,
+    input,
+  );
   const expectedMatches = expectedMatchesFor(
     retainedNodes,
     retainedRelations,
@@ -115,6 +120,7 @@ export const queryJavaScriptSemanticGraph = (
     hasExpectation: input.expected !== null,
     frontier,
     unknowns: relevantUnknowns,
+    candidateRelations,
   });
   const nextOffset = offset + pageRelations.length;
   const nextCursor =
@@ -541,6 +547,24 @@ const relevantUnknownFrontiers = (
       (allowed === null ||
         unknown.relation_kinds.some((relation) => allowed.has(relation))),
   );
+};
+
+const relevantCandidateRelationCount = (
+  graph: JavaScriptSemanticGraph,
+  nodeIds: ReadonlySet<string>,
+  input: JavaScriptSemanticQueryInput,
+): number => {
+  const allowed =
+    input.allowed_relations === undefined
+      ? null
+      : new Set(input.allowed_relations);
+  return graph.relations.filter(
+    (relation) =>
+      relation.resolution === "candidate" &&
+      (allowed === null || allowed.has(relation.relation)) &&
+      (nodeIds.has(relation.source_node_id) ||
+        nodeIds.has(relation.target_node_id)),
+  ).length;
 };
 
 const expectedMatchesFor = (

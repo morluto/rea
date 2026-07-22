@@ -370,6 +370,9 @@ describe("JavaScript semantic query", () => {
     });
     expect(conservative.summary.traversed_relations).toBe(0);
     expect(optedIn.summary.traversed_relations).toBe(1);
+    expect(conservative.status).toBe("ambiguous");
+    expect(conservative.coverage.status).toBe("partial");
+    expect(optedIn.status).toBe("ambiguous");
     expect(optedIn.relations).toMatchObject([
       { relation: "supplies-request-field", resolution: "candidate" },
     ]);

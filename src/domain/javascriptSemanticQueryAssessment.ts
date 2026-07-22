@@ -25,6 +25,7 @@ export interface JavaScriptSemanticQueryAssessmentInput {
   readonly hasExpectation: boolean;
   readonly frontier: readonly JavaScriptSemanticQueryFrontier[];
   readonly unknowns: readonly JavaScriptSemanticGraphUnknown[];
+  readonly candidateRelations: number;
 }
 
 /** Status, coverage, limits, and limitations derived from one traversal. */
@@ -62,6 +63,7 @@ const queryCoverage = (
       : input.frontier.length > 0
         ? "truncated"
         : input.unknowns.length > 0 ||
+            input.candidateRelations > 0 ||
             input.graph.coverage.status !== "complete"
           ? "partial"
           : "complete",
@@ -75,6 +77,7 @@ const queryStatus = (
   if (input.frontier.length > 0) return "truncated";
   if (input.unknowns.length > 0 || input.graph.coverage.status !== "complete")
     return "partial";
+  if (input.candidateRelations > 0) return "ambiguous";
   if (
     input.totalSeeds === 0 ||
     (input.hasExpectation && input.expectedMatches === 0)
@@ -103,6 +106,11 @@ const queryLimitations = (
       ? []
       : [
           "Relevant dynamic, unsupported, incomplete, or ambiguous semantics remain unknown.",
+        ]),
+    ...(input.candidateRelations === 0
+      ? []
+      : [
+          "Candidate relations remain ambiguous and do not establish a resolved semantic path.",
         ]),
   ]);
 
