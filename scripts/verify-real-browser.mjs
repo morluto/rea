@@ -95,7 +95,7 @@ try {
       allowed_origins: [site.origin],
       approved: true,
       target_id: target,
-      observation_ms: 200,
+      observation_ms: 1_000,
       include_accessibility_text: true,
       include_script_sources: true,
       include_console_text: true,
@@ -449,16 +449,17 @@ function assertBundleAnalysis(result) {
 }
 
 function assertSensitiveShapes(result) {
-  const request = result.network.requests.find((item) =>
-    item.url.includes("/api"),
+  const request = result.network.requests.find(
+    (item) =>
+      item.url.includes("/api") &&
+      item.body_shapes.request?.properties.some(
+        ({ path }) => path === "/token",
+      ) &&
+      item.body_shapes.response?.properties.some(
+        ({ path }) => path === "/secret",
+      ),
   );
-  const requestPaths = request?.body_shapes.request?.properties.map(
-    ({ path }) => path,
-  );
-  const responsePaths = request?.body_shapes.response?.properties.map(
-    ({ path }) => path,
-  );
-  if (!requestPaths?.includes("/token") || !responsePaths?.includes("/secret"))
+  if (request === undefined)
     throw new Error("Real Chrome JSON request/response shapes were missing");
   const consoleText = result.console.events.flatMap(
     (event) => event.text_capture.values,
