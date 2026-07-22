@@ -4,10 +4,11 @@
     "build": {
       "inputs": [
         ".nvmrc",
-        "bridge/**",
         "package.json",
         "package-lock.json",
-        "scripts/**",
+        "scripts/check-dependency-install.mjs",
+        "scripts/generate-package-metadata.mjs",
+        "scripts/lib/generated-file.mjs",
         "skills/reverse-engineer-anything/SKILL.md",
         "src/**/*.ts",
         "tsconfig.json",
@@ -27,9 +28,21 @@
         "vitest.config.ts"
       ]
     },
+    "metadata:check": {
+      "inputs": [
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-package-metadata.mjs",
+        "scripts/lib/generated-file.mjs",
+        "skills/reverse-engineer-anything/SKILL.md",
+        "src/generatedPackageMetadata.ts"
+      ]
+    },
     "lint": {},
     "format:check": {},
     "knip": {},
+    "jscpd": {},
+    "scan:todos": {},
     "test:run": {
       "dependsOn": ["build"],
       "cache": false

@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+env:
+  HUSKY: "0"
+
 permissions:
   contents: write
   pull-requests: write
