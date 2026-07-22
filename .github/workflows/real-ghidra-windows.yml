@@ -4,6 +4,9 @@ on:
   repository_dispatch:
     types: [real-ghidra-windows]
 
+env:
+  HUSKY: "0"
+
 permissions:
   contents: read
 

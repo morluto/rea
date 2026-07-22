@@ -1,15 +1,29 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
-import { SERIAL_INTEGRATION_TESTS } from "../vitest.config.js";
+import vitestConfiguration, {
+  SERIAL_INTEGRATION_TESTS,
+} from "../vitest.config.js";
 
 const execute = promisify(execFile);
 
 describe("Vitest project configuration", () => {
+  it("keeps coverage and noisy reporting out of the local test loop", () => {
+    const continuousIntegration = process.env.CI === "true";
+
+    expect(vitestConfiguration.test?.coverage?.enabled).toBe(false);
+    expect(vitestConfiguration.test?.reporters).toEqual(["default"]);
+    expect(vitestConfiguration.test?.retry).toBe(continuousIntegration ? 2 : 0);
+    expect(vitestConfiguration.test?.maxWorkers).toBe(
+      Math.min(2, availableParallelism()),
+    );
+  });
+
   it("collects exact disjoint parallel and serial test sets", async () => {
     const { stdout } = await execute(
       process.execPath,

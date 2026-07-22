@@ -49,13 +49,23 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 
 - `npm ci`: install exact lockfile dependencies.
 - `npm run deps:check`: verify that installed direct dependency versions match the root lockfile; on failure, run `npm ci`, then retry.
+- `npm run metadata:generate`: refresh checked-in package metadata after package, lockfile, or skill-version changes.
+- `npm run metadata:check`: verify checked-in package metadata without rewriting it.
 - `npm run build`: compile `src/` into `dist/`.
-- `npm test`: build, then run the Vitest suite once.
+- `npm run build:cached`: compile through Turbo and reuse a valid local build cache entry.
+- `npm test`: restore or build `dist/`, then run the Vitest suite once without coverage or retries locally.
+- `npm run test:fast`: run the parallel test project without the serial integration group.
+- `npm run test:integration`: run the serial filesystem, process, and CLI integration group.
+- `npm run test:watch`: watch tests affected by working-tree changes in the parallel project, without coverage.
+- `npm run test:coverage`: run the complete suite with coverage; CI owns verbose and JUnit reporting.
 - `npm run typecheck`: run strict TypeScript checks without emitting files.
 - `npm run lint`: apply oxlint rules (complexity, max-lines, unused vars, and TypeScript-specific checks).
 - `npm run lint:fix`: auto-fix oxlint violations where possible.
 - `npm run format:check`: verify Prettier formatting.
-- `npm run check`: run typecheck, lint, format:check, generated-document freshness checks, and tests.
+- `npm run check`: run cached typecheck, lint, format:check, knip, and package-metadata freshness tasks.
+- `npm run check:ci`: run the static gate plus duplicate-code and debt-marker scans.
+- `npm run check:test`: run the cached static tasks plus the uncached complete test suite.
+- `npm run check:pr`: run the test gate plus uncached generated-document validation for PR preparation.
 - `npm run knip`: detect unused files, dependencies, and exports.
 - `npm run jscpd`: detect duplicate code blocks.
 - `npm run scan:todos`: scan for TODO, FIXME, and HACK markers.
@@ -68,12 +78,13 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run evidence:check`: rerun managed conformance and fail on generated manifest, completion ledger, or bundled skill drift.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
-- `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
-- `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc output, and the error JSON schema without rewriting them.
+- `npm run docs:api`: render uncommitted API documentation from JSDoc comments into `build/api-docs/` using TypeDoc.
+- `npm run docs:generate`: refresh committed metadata and render the uncommitted API documentation.
+- `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc rendering, and the error JSON schema.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
 
-Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use `npm run lint:fix` to auto-correct violations locally.
+Pre-commit hooks via Husky format and lint staged files. Pre-push runs `npm run check`. Use `npm run lint:fix` to auto-correct violations locally.
 
 ## Configuration & Environment Variables
 

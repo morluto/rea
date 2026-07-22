@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export const TEST_FILES = ["tests/**/*.test.ts"];
+const IS_CONTINUOUS_INTEGRATION = process.env.CI === "true";
+// Subprocess-heavy parallel tests exceed their existing deadlines above two workers.
+const MAX_TEST_WORKERS = 2;
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
 export const SERIAL_INTEGRATION_TESTS = [
@@ -17,7 +20,7 @@ export const SERIAL_INTEGRATION_TESTS = [
   "tests/runtime.test.ts",
 ];
 const isolatedProjects = {
-  maxWorkers: Math.min(2, availableParallelism()),
+  maxWorkers: Math.min(MAX_TEST_WORKERS, availableParallelism()),
   projects: [
     {
       extends: true as const,
@@ -44,10 +47,10 @@ export default defineConfig({
   test: {
     env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
     ...isolatedProjects,
-    retry: 2,
-    reporters: ["default", "verbose"],
+    retry: IS_CONTINUOUS_INTEGRATION ? 2 : 0,
+    reporters: ["default"],
     coverage: {
-      enabled: true,
+      enabled: false,
       provider: "v8",
       reportsDirectory: join(
         tmpdir(),

@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateBuildCache } from "./build-cache.mjs";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
 const arguments_ = new Set(process.argv.slice(2));
@@ -45,6 +44,5 @@ await ensureGeneratedFile({
   path: outputPath,
   source,
   check: arguments_.has("--check"),
-  generateCommand: "npm run build",
+  generateCommand: "npm run metadata:generate",
 });
-await validateBuildCache(root);

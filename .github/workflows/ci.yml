@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HUSKY: "0"
+
 jobs:
   pr-title:
     name: Conventional PR title
@@ -23,77 +30,78 @@ jobs:
             process.exit(1);
           }'
 
-  typecheck:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.package.outputs.required }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select package and Windows lanes
+        id: package
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+          elif git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- \
+            . \
+            ':(exclude)docs/**' \
+            ':(exclude)AGENTS.md' \
+            ':(exclude)CONTRIBUTING.md'; then
+            echo "required=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check:ci
+
+  typecheck-compatibility:
     name: Typecheck
+    needs: static
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
+      - name: Require successful static checks
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+        run: test "${STATIC_RESULT}" = "success"
 
-  lint:
+  lint-compatibility:
     name: Lint (oxlint)
+    needs: static
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
+      - name: Require successful static checks
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+        run: test "${STATIC_RESULT}" = "success"
 
-  format:
+  format-compatibility:
     name: Format Check
+    needs: static
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run format:check
-
-  dead-code:
-    name: Dead Code (knip)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run lint:dead
-
-  duplicates:
-    name: Duplicate Code (jscpd)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run jscpd
-
-  tech-debt:
-    name: Tech Debt Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      - run: npm run scan:todos
+      - name: Require successful static checks
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+        run: test "${STATIC_RESULT}" = "success"
 
   test:
     name: Test (coverage + timing)
@@ -105,7 +113,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run test:coverage -- --reporter=verbose --reporter=junit --outputFile.junit=test-results.xml
+      - run: npm run test:ci
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -115,6 +123,8 @@ jobs:
 
   package-e2e:
     name: Package E2E (${{ matrix.os }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +141,8 @@ jobs:
 
   windows-curated:
     name: Windows Ghidra P0 and package lane
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -140,7 +152,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: npm run build:cached
       - run: npm run typecheck
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
@@ -173,6 +185,7 @@ jobs:
 
   docs:
     name: Docs Generation
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -182,3 +195,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run docs:check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-docs
+          path: build/api-docs
+          retention-days: 14

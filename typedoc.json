@@ -14,7 +14,7 @@
     "src/server"
   ],
   "entryPointStrategy": "expand",
-  "out": "docs/api",
+  "out": "build/api-docs",
   "tsconfig": "tsconfig.json",
   "exclude": [
     "**/*.test.ts",
