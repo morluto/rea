@@ -2,9 +2,11 @@ import type { IPty } from "@lydell/node-pty";
 import type {
   InteractionEvent,
   ProcessCapture,
+  ProcessCaptureEventJournalEntry,
   ProcessExecutionPolicy,
   ProcessSample,
   ProcessScenario,
+  RecordProcessCaptureEvent,
   TerminalFrame,
 } from "../domain/processCapture.js";
 import { validateProcessCapture } from "../domain/processCapture.js";
@@ -83,6 +85,7 @@ interface ScenarioEventOptions {
   readonly renderer: TerminalRenderer;
   readonly started: number;
   readonly dispatchedEventIndexes: Set<number>;
+  readonly recordEvent: RecordProcessCaptureEvent;
 }
 
 const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
@@ -106,8 +109,9 @@ const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
           outcome = "failed";
         }
       }
+      const sequence = interactions.length;
       interactions.push({
-        sequence: interactions.length,
+        sequence,
         scheduled_at_ms: event.at_ms,
         dispatched_at_ms: dispatchedAt,
         type: event.type,
@@ -126,6 +130,7 @@ const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
               : event.signal,
         outcome,
       });
+      options.recordEvent("interaction_events", sequence);
     }, event.at_ms);
     timers.add(timer);
   }
@@ -173,6 +178,7 @@ const createTerminalRenderer = (
   scenario: ProcessScenario,
   temporaryRoot: string,
   terminalPid: () => number,
+  recordEvent: RecordProcessCaptureEvent,
 ): TerminalRenderer =>
   new TerminalRenderer({
     columns: scenario.terminal.columns,
@@ -182,6 +188,7 @@ const createTerminalRenderer = (
     maxBytes: scenario.limits.output_bytes,
     normalize: (value) =>
       normalizeProcessText(value, scenario, temporaryRoot, terminalPid()),
+    recordEvent,
   });
 
 const startCaptureRuntime = async (options: {
@@ -195,6 +202,7 @@ const startCaptureRuntime = async (options: {
   readonly interactions: InteractionEvent[];
   readonly timers: Set<NodeJS.Timeout>;
   readonly dispatchedEventIndexes: Set<number>;
+  readonly recordEvent: RecordProcessCaptureEvent;
   readonly signal?: AbortSignal;
 }): Promise<StartedCaptureRuntime> => {
   const { scenario } = options;
@@ -205,7 +213,7 @@ const startCaptureRuntime = async (options: {
   let terminal: IPty | undefined;
   try {
     const { spawn } = await import("@lydell/node-pty");
-    replay = await startLoopbackReplay(scenario);
+    replay = await startLoopbackReplay(scenario, options.recordEvent);
     const startedAt = new Date();
     const started = Date.now();
     let lastOutput = started;
@@ -213,17 +221,17 @@ const startCaptureRuntime = async (options: {
       scenario,
       options.temporaryRoot,
       () => terminal?.pid ?? -1,
+      options.recordEvent,
     );
-    checkpoints = new ProcessCheckpoints(
-      scenario,
-      started,
-      options.before,
-      options.signal,
-    );
+    checkpoints = new ProcessCheckpoints(scenario, started, options.before, {
+      signal: options.signal,
+      recordEvent: options.recordEvent,
+    });
     shimReplay = await startCommandShimReplay(
       scenario,
       options.temporaryRoot,
       started,
+      options.recordEvent,
     );
     terminal = spawn(scenario.executable, [...scenario.arguments], {
       cwd: scenario.working_directory,
@@ -252,6 +260,7 @@ const startCaptureRuntime = async (options: {
       started,
       limit: scenario.limits.processes,
       samples: options.samples,
+      recordEvent: options.recordEvent,
     });
     return {
       replay,
@@ -366,6 +375,8 @@ const completeCapture = async (options: {
   readonly exit: Awaited<ReturnType<typeof awaitTerminalExit>>;
   readonly signal?: AbortSignal;
   readonly initiallyTruncated: boolean;
+  readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
+  readonly recordEvent: RecordProcessCaptureEvent;
 }): Promise<ProcessCapture> => {
   const { runtime, scenario } = options;
   runtime.checkpoints.trigger("root_exit");
@@ -375,6 +386,7 @@ const completeCapture = async (options: {
     options.runId,
     selectCapturedProcessGroupIds(runtime.terminal.pid, options.samples),
     scenario.settle_ms,
+    options.recordEvent,
   );
   runtime.checkpoints.trigger("settled");
   const samplingPartial = (await runtime.stopSampler()).partial;
@@ -414,6 +426,7 @@ const completeCapture = async (options: {
     shimEvents: normalizedShimEvents(runtime, scenario, options.temporaryRoot),
     settlement: { ...settlement, cleanup_outcome: "not_required" },
     manifest,
+    eventJournal: options.eventJournal,
   });
 };
 
@@ -430,6 +443,14 @@ const runProcessScenario = async (
   );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
+  const eventJournal: ProcessCaptureEventJournalEntry[] = [];
+  const recordEvent: RecordProcessCaptureEvent = (collection, index) => {
+    eventJournal.push({
+      capture_order: eventJournal.length,
+      collection,
+      index,
+    });
+  };
   let runtime: StartedCaptureRuntime | undefined;
   const timers = new Set<NodeJS.Timeout>();
   let capture: ProcessCapture | undefined;
@@ -450,6 +471,7 @@ const runProcessScenario = async (
       interactions,
       timers,
       dispatchedEventIndexes,
+      recordEvent,
       ...(signal === undefined ? {} : { signal }),
     });
     stopSampler = runtime.stopSampler;
@@ -462,6 +484,7 @@ const runProcessScenario = async (
       timers,
       interactions,
       dispatchedEventIndexes,
+      recordEvent,
     });
     capture = await completeCapture({
       scenario,
@@ -474,6 +497,8 @@ const runProcessScenario = async (
       interactions,
       exit,
       initiallyTruncated: before.truncated,
+      eventJournal,
+      recordEvent,
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {

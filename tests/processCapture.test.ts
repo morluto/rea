@@ -15,6 +15,7 @@ import {
 } from "../src/application/ProcessHarness.js";
 import { snapshotRoots } from "../src/application/FilesystemSnapshot.js";
 import {
+  buildCaptureResult,
   prepareProcessCapture,
   type ProcessPreparationHost,
 } from "../src/application/ProcessCaptureLifecycle.js";
@@ -100,6 +101,7 @@ const emptyCapture = (): ProcessCapture => {
     shim_events: [],
     protocol_events: [],
     replay_transitions: [],
+    event_journal: [],
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -121,6 +123,7 @@ describe("process capture domain", () => {
   };
 
   it("returns detached terminal and filesystem checkpoint observations", async () => {
+    const observed: string[] = [];
     const renderer = new TerminalRenderer({
       columns: 40,
       rows: 12,
@@ -128,9 +131,14 @@ describe("process capture domain", () => {
       maxFrames: 10,
       maxBytes: 10_000,
       normalize: (value) => value,
+      recordEvent: (collection, index) =>
+        observed.push(`${collection}:${String(index)}`),
     });
-    renderer.write("A", 0);
+    renderer.write("A", 20);
+    renderer.resize(40, 12, 10);
     const frames = await renderer.frames();
+    expect(frames.map(({ at_ms }) => at_ms)).toEqual([20, 10]);
+    expect(observed).toEqual(["rendered_frames:0", "rendered_frames:1"]);
     if (frames[0] !== undefined) Reflect.set(frames[0], "cursor_x", 999);
     expect((await renderer.frames())[0]?.cursor_x).not.toBe(999);
     await renderer.dispose();
@@ -140,13 +148,69 @@ describe("process capture domain", () => {
       scenario,
       Date.now(),
       { files: [], truncated: false },
-      undefined,
+      { signal: undefined },
     );
     const first = await checkpoints.finish({ files: [], truncated: false });
     if (first[0] !== undefined) Reflect.set(first[0], "name", "tampered");
     const second = await checkpoints.finish({ files: [], truncated: false });
     expect(second[0]?.name).toBe("before");
     await checkpoints.dispose();
+  });
+
+  it("preserves rendered observation order instead of timestamp sorting", () => {
+    const capture = emptyCapture();
+    const renderedFrames: ProcessCapture["rendered_frames"] = [
+      {
+        sequence: 0,
+        at_ms: 20,
+        columns: 1,
+        rows: 1,
+        cursor_x: 0,
+        cursor_y: 0,
+        active_buffer: "normal",
+        lines: ["first"],
+        serialized_state: "first",
+      },
+      {
+        sequence: 1,
+        at_ms: 10,
+        columns: 1,
+        rows: 1,
+        cursor_x: 0,
+        cursor_y: 0,
+        active_buffer: "normal",
+        lines: ["second"],
+        serialized_state: "second",
+      },
+    ];
+    const result = buildCaptureResult({
+      frames: [],
+      exit: { exitCode: 0, reason: "exited" },
+      samples: [],
+      replay: {
+        httpUrl: "http://127.0.0.1",
+        websocketUrl: "ws://127.0.0.1/ws",
+        events: [],
+        transitions: [],
+        truncated: false,
+        close: () => Promise.resolve(),
+      },
+      before: { files: [], truncated: false },
+      after: { files: [], truncated: false },
+      truncated: false,
+      scenario: parseProcessScenario(base),
+      rootPid: 1,
+      samplingPartial: false,
+      renderedFrames,
+      interactions: [],
+      checkpoints: capture.filesystem_checkpoints,
+      shimEvents: [],
+      settlement: capture.settlement,
+      manifest: capture.manifest,
+      eventJournal: [],
+    });
+
+    expect(result.rendered_frames).toEqual(renderedFrames);
   });
 
   it("cleans the temporary root when capture home creation fails", async () => {
@@ -424,6 +488,56 @@ describe("process capture domain", () => {
         },
       }),
     ).toThrow("executable_sha256");
+  });
+
+  it("accepts old captures without a journal and validates complete journals", () => {
+    const capture = emptyCapture();
+    const { event_journal: _eventJournal, ...oldCapture } = capture;
+    expect(parseProcessCapture(oldCapture).event_journal).toEqual([]);
+
+    const eventJournal = [
+      { capture_order: 0, collection: "filesystem_checkpoints", index: 0 },
+      { capture_order: 1, collection: "lifecycle", index: 0 },
+      { capture_order: 2, collection: "lifecycle", index: 1 },
+      { capture_order: 3, collection: "filesystem_checkpoints", index: 1 },
+    ] as const;
+    expect(
+      validateProcessCapture({ ...capture, event_journal: eventJournal }),
+    ).toEqual([]);
+
+    for (const [candidate, message] of [
+      [
+        eventJournal.map((entry, index) =>
+          index === 1 ? { ...entry, capture_order: 2 } : entry,
+        ),
+        "contiguous",
+      ],
+      [
+        eventJournal.map((entry, index) =>
+          index === 3
+            ? { ...entry, collection: "lifecycle" as const, index: 1 }
+            : entry,
+        ),
+        "unique",
+      ],
+      [eventJournal.slice(0, 3), "every captured observation"],
+      [
+        eventJournal.map((entry, index) =>
+          index === 3 ? { ...entry, index: 2 } : entry,
+        ),
+        "outside",
+      ],
+    ] as const) {
+      expect(
+        validateProcessCapture({ ...capture, event_journal: candidate }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringContaining(message),
+          }),
+        ]),
+      );
+    }
   });
 
   it.each([
@@ -1272,6 +1386,11 @@ describe("process capture adapter", () => {
       expect(capture.value.manifest.replay_plan_sha256).toBe(
         digestProcessCommitment(scenario.replay),
       );
+      expect(
+        capture.value.event_journal?.filter(
+          ({ collection }) => collection === "replay_transitions",
+        ),
+      ).toHaveLength(capture.value.replay_transitions.length);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

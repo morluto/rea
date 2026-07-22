@@ -72,6 +72,54 @@ const validateOrdering = (
     require(orderedTimestamps(values), name, "timestamps must be ordered");
 };
 
+const journalCollectionSizes = (
+  capture: ProcessCapture,
+): Readonly<
+  Record<
+    NonNullable<ProcessCapture["event_journal"]>[number]["collection"],
+    number
+  >
+> => ({
+  frames: capture.frames.length,
+  rendered_frames: capture.rendered_frames.length,
+  interaction_events: capture.interaction_events.length,
+  lifecycle: 2,
+  process_samples: capture.process_samples.length,
+  filesystem_checkpoints: capture.filesystem_checkpoints.length,
+  shim_events: capture.shim_events.length,
+  protocol_events: capture.protocol_events.length,
+  replay_transitions: capture.replay_transitions.length,
+});
+
+const validateEventJournal = (
+  capture: ProcessCapture,
+  require: RequireInvariant,
+): void => {
+  const journal = capture.event_journal ?? [];
+  if (journal.length === 0) return;
+  const sizes = journalCollectionSizes(capture);
+  const references = new Set<string>();
+  for (const [position, entry] of journal.entries()) {
+    require(entry.capture_order ===
+      position, `event_journal.${String(position)}.capture_order`, "capture order must be contiguous from zero");
+    require(entry.index <
+      sizes[
+        entry.collection
+      ], `event_journal.${String(position)}.index`, "journal reference is outside its capture collection");
+    const reference = `${entry.collection}:${String(entry.index)}`;
+    require(!references.has(
+      reference,
+    ), `event_journal.${String(position)}`, "journal references must be unique");
+    references.add(reference);
+  }
+  const expectedSize = Object.values(sizes).reduce(
+    (total, size) => total + size,
+    0,
+  );
+  require(journal.length ===
+    expectedSize, "event_journal", "nonempty journal must reference every captured observation");
+};
+
 const validateLifecycle = (
   capture: ProcessCapture,
   require: RequireInvariant,
@@ -262,6 +310,7 @@ export const validateProcessCapture = (
   };
   validateCommitments(capture, require);
   validateOrdering(capture, require);
+  validateEventJournal(capture, require);
   validateLifecycle(capture, require);
   validateShimEvents(capture, require);
   validateReplayEvents(capture, require);
