@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { ProcessCapture } from "../src/domain/processCapture.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../src/contracts/processCaptureExample.js";
+import {
+  processCaptureSchema,
+  type ProcessCapture,
+} from "../src/domain/processCapture.js";
 import {
   compareProcessTraces,
   processTraceSpecificationSchema,
   type ProcessTraceSpecification,
 } from "../src/domain/processTraceComparison.js";
+
+const emptyCapture = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 
 const capture = (
   values: Pick<
@@ -23,58 +29,40 @@ const capture = (
     readonly residualUnknowns?: ProcessCapture["residual_unknowns"];
   } = {},
 ): ProcessCapture => ({
-  schema_version: 4,
-  manifest: {
-    rea_version: "test",
-    provider_version: "3",
-    platform: "linux",
-    architecture: "x64",
-    pty_backend: "node-pty",
-    started_at: "2026-01-01T00:00:00.000Z",
-    completed_at: "2026-01-01T00:00:01.000Z",
-    scenario: {},
-    comparison_contract: {},
-    shim_plan: [],
-    replay_plan: {},
-    full_scenario_sha256: "0".repeat(64),
-    comparison_contract_sha256: "1".repeat(64),
-    executable_sha256: "2".repeat(64),
-    normalization_sha256: "3".repeat(64),
-    shim_plan_sha256: "4".repeat(64),
-    replay_plan_sha256: "5".repeat(64),
-  },
-  normalization: {
-    paths: true,
-    pids: true,
-    ports: true,
-    time_bucket_ms: 10,
-    patterns: [],
-  },
+  ...emptyCapture,
   frames: values.frames,
-  rendered_frames: [],
-  interaction_events: [],
-  exit: { code: 0, signal: null, reason: "exited" },
-  settlement: {
-    state: "quiesced",
-    elapsed_ms: 10,
-    cleanup_outcome: "not_required",
-  },
   process_samples: values.process_samples,
-  filesystem_checkpoints: values.filesystem_checkpoints,
+  filesystem_checkpoints: emptyCapture.filesystem_checkpoints,
   shim_events: values.shim_events,
   protocol_events: values.protocol_events,
-  replay_transitions: [],
-  event_journal: values.event_journal,
-  files_before: [],
-  files_after: [],
-  filesystem_effects: [],
+  event_journal: [
+    {
+      capture_order: 0,
+      collection: "filesystem_checkpoints",
+      index: 0,
+    },
+    ...values.event_journal.map((entry) => ({
+      ...entry,
+      capture_order: entry.capture_order + 1,
+    })),
+    {
+      capture_order: values.event_journal.length + 1,
+      collection: "lifecycle",
+      index: 0,
+    },
+    {
+      capture_order: values.event_journal.length + 2,
+      collection: "lifecycle",
+      index: 1,
+    },
+    {
+      capture_order: values.event_journal.length + 3,
+      collection: "filesystem_checkpoints",
+      index: 1,
+    },
+  ],
   truncated: options.truncated ?? false,
-  limitations: [],
   residual_unknowns: options.residualUnknowns ?? [],
-  cleanup: {
-    owned_process_group: "verified",
-    temporary_root: "removed",
-  },
 });
 
 const terminal = { sequence: 0, at_ms: 900, data: "Ready" };
@@ -94,7 +82,7 @@ const http = {
   method: "GET",
   path: "/status",
   data: "",
-  outcome: "matched" as const,
+  outcome: "unmatched" as const,
 };
 const websocket = {
   sequence: 1,
@@ -183,6 +171,18 @@ describe("process trace specification", () => {
             { before: "worker", after: "ready" },
           ],
           unordered_groups: [{ events: ["status", "done"] }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      processTraceSpecificationSchema.safeParse({
+        version: 1,
+        events: base.events.slice(0, 3),
+        language: {
+          kind: "partial_order",
+          happens_before: [{ before: "ready", after: "status" }],
+          not_before: [{ event: "worker", anchor: "ready" }],
+          unordered_groups: [],
         },
       }).success,
     ).toBe(false);
@@ -315,7 +315,7 @@ describe("process trace comparison", () => {
         kind: "edge",
         side: "right",
         event_ids: ["ready", "worker"],
-        locations: [{ capture_order: 1 }, { capture_order: 0 }],
+        locations: [{ capture_order: 2 }, { capture_order: 1 }],
       },
     });
   });
@@ -417,6 +417,80 @@ describe("process trace comparison", () => {
     });
   });
 
+  it("enforces exact and range cardinality for one repeated predicate", () => {
+    const repeated = (count: number) =>
+      capture({
+        frames: Array.from({ length: count }, (_, sequence) => ({
+          sequence,
+          at_ms: sequence,
+          data: "tick",
+        })),
+        process_samples: [],
+        filesystem_checkpoints: [],
+        protocol_events: [],
+        shim_events: [],
+        event_journal: Array.from({ length: count }, (_, index) => ({
+          capture_order: index,
+          collection: "frames" as const,
+          index,
+        })),
+      });
+    const event: Omit<
+      ProcessTraceSpecification["events"][number],
+      "cardinality"
+    > = {
+      id: "tick",
+      source: "terminal_raw",
+      exact: { data: "tick" },
+      ignore_fields: ["sequence", "at_ms"],
+    };
+    const rangeSpecification: ProcessTraceSpecification = {
+      version: 1,
+      events: [{ ...event, cardinality: { kind: "range", min: 2, max: 3 } }],
+      language: {
+        kind: "partial_order",
+        happens_before: [],
+        not_before: [],
+        unordered_groups: [],
+        prefix: [],
+        suffix: [],
+      },
+    };
+    expect(
+      compareProcessTraces(repeated(2), repeated(3), rangeSpecification),
+    ).toMatchObject({ verdict: "equivalent" });
+    expect(
+      compareProcessTraces(repeated(1), repeated(2), rangeSpecification),
+    ).toMatchObject({
+      verdict: "different",
+      diagnostic: { kind: "cardinality", side: "left" },
+    });
+    expect(
+      compareProcessTraces(repeated(2), repeated(4), rangeSpecification),
+    ).toMatchObject({
+      verdict: "different",
+      diagnostic: { kind: "cardinality", side: "right" },
+    });
+
+    const exactSpecification: ProcessTraceSpecification = {
+      version: 1,
+      events: [{ ...event, cardinality: { kind: "exact", count: 2 } }],
+      language: {
+        kind: "finite_traces",
+        variants: [{ id: "two", trace: ["tick", "tick"] }],
+      },
+    };
+    expect(
+      compareProcessTraces(repeated(2), repeated(2), exactSpecification),
+    ).toMatchObject({ verdict: "equivalent" });
+    expect(
+      compareProcessTraces(repeated(3), repeated(2), exactSpecification),
+    ).toMatchObject({
+      verdict: "different",
+      diagnostic: { kind: "cardinality", side: "left" },
+    });
+  });
+
   it("never proves equivalence from truncated, unknown, or journal-free evidence", () => {
     const complete = capture(
       values(["terminal", "process", "http", "websocket"]),
@@ -437,7 +511,7 @@ describe("process trace comparison", () => {
       compareProcessTraces(complete, unknown, partialSpecification()).verdict,
     ).toBe("unknown");
 
-    const noJournal = capture({ ...values([]), event_journal: [] });
+    const noJournal = { ...complete, event_journal: [] };
     const comparison = compareProcessTraces(
       complete,
       noJournal,
@@ -447,5 +521,13 @@ describe("process trace comparison", () => {
       verdict: "unknown",
       diagnostic: { kind: "journal", side: "right" },
     });
+
+    const incompleteJournal = {
+      ...complete,
+      event_journal: (complete.event_journal ?? []).slice(1),
+    };
+    expect(() =>
+      compareProcessTraces(complete, incompleteJournal, partialSpecification()),
+    ).toThrow("Invalid Process Capture v4: event_journal.0.capture_order");
   });
 });

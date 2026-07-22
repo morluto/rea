@@ -197,6 +197,16 @@ const buildAdjacency = (
       });
     adjacency.get(edge.before)?.add(edge.after);
   }
+  return adjacency;
+};
+
+const validateNotBefore = (
+  language: PartialOrderLanguage,
+  context: z.RefinementCtx,
+  known: ReadonlySet<string>,
+  reachable: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlySet<string> => {
+  const pairs = new Set<string>();
   for (const [index, constraint] of language.not_before.entries()) {
     const path = ["language", "not_before", index];
     addReferenceIssue(context, known, constraint.event, [...path, "event"]);
@@ -207,9 +217,22 @@ const buildAdjacency = (
         message: "not-before constraints must reference distinct events",
         path,
       });
-    adjacency.get(constraint.anchor)?.add(constraint.event);
+    const key = pairKey(constraint.event, constraint.anchor);
+    if (pairs.has(key))
+      context.addIssue({
+        code: "custom",
+        message: "not-before event pairs must be declared once",
+        path,
+      });
+    pairs.add(key);
+    if (reachable.get(constraint.event)?.has(constraint.anchor) === true)
+      context.addIssue({
+        code: "custom",
+        message: "not-before constraint conflicts with happens-before order",
+        path,
+      });
   }
-  return adjacency;
+  return pairs;
 };
 
 const graphHasCycle = (
@@ -257,11 +280,16 @@ const isOrdered = (
   reachable.get(left)?.has(right) === true ||
   reachable.get(right)?.has(left) === true;
 
+type OrderingRelations = {
+  readonly reachable: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly notBeforePairs: ReadonlySet<string>;
+};
+
 const validateUnorderedGroups = (
   language: PartialOrderLanguage,
   context: z.RefinementCtx,
   known: ReadonlySet<string>,
-  reachable: ReadonlyMap<string, ReadonlySet<string>>,
+  relations: OrderingRelations,
 ): ReadonlySet<string> => {
   const pairs = new Set<string>();
   for (const [groupIndex, group] of language.unordered_groups.entries()) {
@@ -284,7 +312,10 @@ const validateUnorderedGroups = (
             path,
           });
         pairs.add(key);
-        if (isOrdered(reachable, leftId, rightId))
+        if (
+          isOrdered(relations.reachable, leftId, rightId) ||
+          relations.notBeforePairs.has(key)
+        )
           context.addIssue({
             code: "custom",
             message: "ordered events cannot also be declared unordered",
@@ -298,14 +329,15 @@ const validateUnorderedGroups = (
 
 const validateCompletePairDeclarations = (
   ids: readonly string[],
-  reachable: ReadonlyMap<string, ReadonlySet<string>>,
+  relations: OrderingRelations,
   unorderedPairs: ReadonlySet<string>,
   context: z.RefinementCtx,
 ): void => {
   for (const [leftIndex, leftId] of ids.entries())
     for (const rightId of ids.slice(leftIndex + 1))
       if (
-        !isOrdered(reachable, leftId, rightId) &&
+        !isOrdered(relations.reachable, leftId, rightId) &&
+        !relations.notBeforePairs.has(pairKey(leftId, rightId)) &&
         !unorderedPairs.has(pairKey(leftId, rightId))
       )
         context.addIssue({
@@ -330,13 +362,20 @@ const validatePartialOrder = (
       path: ["language"],
     });
   const reachable = computeReachability(ids, adjacency);
-  const unorderedPairs = validateUnorderedGroups(
+  const notBeforePairs = validateNotBefore(
     specification.language,
     context,
     known,
     reachable,
   );
-  validateCompletePairDeclarations(ids, reachable, unorderedPairs, context);
+  const relations = { reachable, notBeforePairs };
+  const unorderedPairs = validateUnorderedGroups(
+    specification.language,
+    context,
+    known,
+    relations,
+  );
+  validateCompletePairDeclarations(ids, relations, unorderedPairs, context);
   for (const [kind, values] of [
     ["prefix", specification.language.prefix],
     ["suffix", specification.language.suffix],

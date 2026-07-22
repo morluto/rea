@@ -1,4 +1,5 @@
 import type { ProcessCapture } from "./processCapture.js";
+import { validateProcessCapture } from "./processCaptureValidation.js";
 import {
   evaluateProcessTraceSide,
   processTraceComparisonResultSchema,
@@ -27,6 +28,14 @@ export const compareProcessTraces = (
   right: ProcessCapture,
   specificationInput: ProcessTraceSpecification,
 ): ProcessTraceComparisonResult => {
+  const captureIssues = [
+    ...validateProcessCapture(left),
+    ...validateProcessCapture(right),
+  ];
+  if (captureIssues.length > 0)
+    throw new TypeError(
+      `Invalid Process Capture v4: ${captureIssues[0]!.path}`,
+    );
   const specification =
     processTraceSpecificationSchema.parse(specificationInput);
   const leftEvaluation = evaluateProcessTraceSide(left, specification);
@@ -37,6 +46,14 @@ export const compareProcessTraces = (
         ? null
         : { side: "right" as const, ...rightEvaluation.diagnostic }
       : { side: "left" as const, ...leftEvaluation.diagnostic };
+  const outcomesDiffer =
+    leftEvaluation.result.status !== rightEvaluation.result.status ||
+    JSON.stringify(
+      leftEvaluation.result.raw_trace.map(({ event_id }) => event_id),
+    ) !==
+      JSON.stringify(
+        rightEvaluation.result.raw_trace.map(({ event_id }) => event_id),
+      );
   return processTraceComparisonResultSchema.parse({
     verdict:
       leftEvaluation.result.status === "unknown" ||
@@ -45,7 +62,9 @@ export const compareProcessTraces = (
         : leftEvaluation.result.status === "pass" &&
             rightEvaluation.result.status === "pass"
           ? "equivalent"
-          : "different",
+          : outcomesDiffer
+            ? "different"
+            : "nonconforming",
     left: leftEvaluation.result,
     right: rightEvaluation.result,
     diagnostic,

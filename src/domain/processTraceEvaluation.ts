@@ -73,7 +73,7 @@ const diagnosticSchema = z.strictObject({
 
 /** Structured verdict for one declared process trace language. */
 export const processTraceComparisonResultSchema = z.strictObject({
-  verdict: z.enum(["equivalent", "different", "unknown"]),
+  verdict: z.enum(["equivalent", "different", "nonconforming", "unknown"]),
   left: sideResultSchema,
   right: sideResultSchema,
   diagnostic: diagnosticSchema.nullable(),
@@ -257,31 +257,41 @@ const matchRecords = (
 ): MatchedTrace | EvaluatedSide => {
   const rawTrace: z.infer<typeof matchedEventSchema>[] = [];
   const locationsById = new Map<string, ProcessTraceLocation[]>();
-  for (const record of records) {
-    const matches = specification.events.filter(
-      (event) =>
-        event.source === record.source &&
-        canonicalTraceJson(
-          comparableTracePayload(event.exact, event.ignore_fields),
-        ) ===
-          canonicalTraceJson(
-            comparableTracePayload(record.payload, event.ignore_fields),
-          ),
+  const ignoredFieldsBySource = new Map<
+    ProcessTraceSource,
+    readonly string[]
+  >();
+  const eventsByKey = new Map<
+    string,
+    ProcessTraceSpecification["events"][number]
+  >();
+  for (const event of specification.events) {
+    const ignoredFields = event.ignore_fields ?? [];
+    ignoredFieldsBySource.set(event.source, ignoredFields);
+    eventsByKey.set(
+      `${event.source}\0${canonicalTraceJson(
+        comparableTracePayload(event.exact, ignoredFields),
+      )}`,
+      event,
     );
-    if (matches.length !== 1)
+  }
+  for (const record of records) {
+    const match = eventsByKey.get(
+      `${record.source}\0${canonicalTraceJson(
+        comparableTracePayload(
+          record.payload,
+          ignoredFieldsBySource.get(record.source),
+        ),
+      )}`,
+    );
+    if (match === undefined)
       return failure({
         kind: "predicate",
-        message:
-          matches.length === 0
-            ? "Observed event does not match any declared exact predicate."
-            : "Observed event matches multiple predicates.",
-        eventIds: matches.map(({ id }) => id),
+        message: "Observed event does not match any declared exact predicate.",
+        eventIds: [],
         locations: [record.location],
         rawTrace,
       });
-    const match = matches[0];
-    if (match === undefined)
-      throw new TypeError("Unique trace match is missing");
     rawTrace.push({ event_id: match.id, location: record.location });
     const locations = locationsById.get(match.id) ?? [];
     locations.push(record.location);

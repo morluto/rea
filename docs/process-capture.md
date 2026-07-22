@@ -198,6 +198,9 @@ each side's raw journal locations and identifies either the matched finite
 variant or the complete satisfied constraint set. A failure returns the first
 declaration-ordered predicate, cardinality, edge, prefix, suffix, or language
 violation with its relevant event locations.
+If both captures have the same invalid declared trace, the nested verdict is
+`nonconforming` while the top-level capture comparison remains unchanged. Side
+statuses and the diagnostic distinguish conformance from pairwise difference.
 
 The result classifies terminal, interaction, exit, filesystem, protocol,
 process, and shim behavior. `first_divergence` points to the earliest observed
