@@ -3,6 +3,8 @@
   "entry": ["src/main.ts", "src/cli.ts"],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "ignoreDependencies": [],
+  "ignoreBinaries": ["ps"],
+  "ignoreExportsUsedInFile": true,
   "rules": {
     "files": "error",
     "dependencies": "error",
