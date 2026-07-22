@@ -14,9 +14,9 @@
 <section class="tsd-panel tsd-comment">
 <div class="tsd-comment tsd-typography"><p>Dependencies, deadlines, and redacted diagnostics for one bridge client.</p>
 </div></section>
-<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">HopperClientOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#launcher">launcher</a><span class="tsd-signature-symbol">:</span> <a href="hopper_BridgeLauncher.BridgeLauncher.html" class="tsd-signature-type tsd-kind-interface">BridgeLauncher</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#logger">logger</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Logger</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ondiagnostic">onDiagnostic</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">HopperDiagnostic</span><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requesttimeoutms">requestTimeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#runid">runId</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#startuptimeoutms">startupTimeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">HopperClientOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#launcher">launcher</a><span class="tsd-signature-symbol">:</span> <a href="hopper_BridgeLauncher.BridgeLauncher.html" class="tsd-signature-type tsd-kind-interface">BridgeLauncher</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#logger">logger</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Logger</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ondiagnostic">onDiagnostic</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">:</span> <a href="../types/hopper_HopperDiagnostics.HopperDiagnostic.html" class="tsd-signature-type tsd-kind-type-alias">HopperDiagnostic</a><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requesttimeoutms">requestTimeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#runid">runId</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#startuptimeoutms">startupTimeoutMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:47</li></ul></aside>
+<li>Defined in src/hopper/HopperClient.ts:52</li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -38,32 +38,32 @@
 <h3 class="tsd-anchor-link" id="launcher"><code class="tsd-tag">Readonly</code><span>launcher</span><a href="#launcher" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">launcher</span><span class="tsd-signature-symbol">:</span> <a href="hopper_BridgeLauncher.BridgeLauncher.html" class="tsd-signature-type tsd-kind-interface">BridgeLauncher</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:48</li></ul></aside></section>
+<li>Defined in src/hopper/HopperClient.ts:53</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="logger"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>logger</span><a href="#logger" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">logger</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Logger</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:53</li></ul></aside></section>
+<li>Defined in src/hopper/HopperClient.ts:58</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ondiagnostic"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>on<wbr/>Diagnostic</span><a href="#ondiagnostic" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-signature"><span class="tsd-kind-property">onDiagnostic</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">HopperDiagnostic</span><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-property">onDiagnostic</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">event</span><span class="tsd-signature-symbol">:</span> <a href="../types/hopper_HopperDiagnostics.HopperDiagnostic.html" class="tsd-signature-type tsd-kind-type-alias">HopperDiagnostic</a><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:52</li></ul></aside></section>
+<li>Defined in src/hopper/HopperClient.ts:57</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="requesttimeoutms"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>request<wbr/>Timeout<wbr/>Ms</span><a href="#requesttimeoutms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">requestTimeoutMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:50</li></ul></aside></section>
+<li>Defined in src/hopper/HopperClient.ts:55</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="runid"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>run<wbr/>Id</span><a href="#runid" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">runId</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:49</li></ul></aside></section>
+<li>Defined in src/hopper/HopperClient.ts:54</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="startuptimeoutms"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>startup<wbr/>Timeout<wbr/>Ms</span><a href="#startuptimeoutms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">startupTimeoutMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in src/hopper/HopperClient.ts:51</li></ul></aside></section></section></details></div>
+<li>Defined in src/hopper/HopperClient.ts:56</li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
