@@ -34,6 +34,7 @@ jobs:
     name: Classify changes
     runs-on: ubuntu-latest
     outputs:
+      code: ${{ steps.package.outputs.required }}
       package: ${{ steps.package.outputs.required }}
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +61,34 @@ jobs:
 
   static:
     name: Static checks
+    needs: changes
+    if: ${{ always() }}
     runs-on: ubuntu-latest
+    steps:
+      - name: Require successful change classification
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+        run: test "${CHANGES_RESULT}" = "success"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+        run: npm run check:ci
+      - if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
+        run: npm run format:check
+
+  test-shard:
+    name: Test shard (${{ matrix.shard }})
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/2, 2/2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,24 +96,54 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run check:ci
+      - run: npm run test:ci:shard -- --shard=${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: vitest-report-${{ strategy.job-index }}
+          path: .vitest-reports/*
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 
   test:
     name: Test (coverage + timing)
+    needs: [changes, test-shard]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require successful test shards
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CODE_REQUIRED: ${{ needs.changes.outputs.code }}
+          SHARD_RESULT: ${{ needs.test-shard.result }}
+        run: |
+          test "${CHANGES_RESULT}" = "success"
+          test "${CODE_REQUIRED}" != "true" || test "${SHARD_RESULT}" = "success"
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.code == 'true' && success()
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true' && success()
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run test:ci
+      - if: needs.changes.outputs.code == 'true' && success()
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        if: needs.changes.outputs.code == 'true' && success()
+        with:
+          path: .vitest-reports
+          pattern: vitest-report-*
+          merge-multiple: true
+      - if: needs.changes.outputs.code == 'true' && success()
+        run: npm run test:ci:merge
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: needs.changes.outputs.code == 'true' && always()
         with:
           name: test-results
           path: test-results.xml
+          if-no-files-found: error
           retention-days: 30
 
   package-e2e:
