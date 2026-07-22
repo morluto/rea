@@ -70,39 +70,6 @@ jobs:
       - run: npm ci
       - run: npm run check:ci
 
-  typecheck-compatibility:
-    name: Typecheck
-    needs: static
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require successful static checks
-        env:
-          STATIC_RESULT: ${{ needs.static.result }}
-        run: test "${STATIC_RESULT}" = "success"
-
-  lint-compatibility:
-    name: Lint (oxlint)
-    needs: static
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require successful static checks
-        env:
-          STATIC_RESULT: ${{ needs.static.result }}
-        run: test "${STATIC_RESULT}" = "success"
-
-  format-compatibility:
-    name: Format Check
-    needs: static
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require successful static checks
-        env:
-          STATIC_RESULT: ${{ needs.static.result }}
-        run: test "${STATIC_RESULT}" = "success"
-
   test:
     name: Test (coverage + timing)
     runs-on: ubuntu-latest
