@@ -1,6 +1,4 @@
 import { parseConfig, type AppConfig } from "../config.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { createServerIdentity } from "../serverIdentity.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { createBinarySession } from "./runtime.js";
@@ -42,6 +40,11 @@ import {
   workflowAnalysisProfile,
 } from "./InvestigationProviders.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+
+export {
+  runCapabilityStatus,
+  runProviderStatus,
+} from "./DirectAnalysisStatus.js";
 
 type DirectAnalysisTool =
   | "binary_overview"
@@ -100,25 +103,6 @@ export const runProviderAnalysis = async (
       signal: operationSignal,
     }),
   );
-
-/** Describe configured providers without opening a target or starting one. */
-export const runSessionStatus = async (
-  logger: Logger = silentLogger,
-): Promise<JsonValue> => {
-  const config = parseConfig(process.env);
-  if (!config.ok) return cliError(config.error);
-  const session = createBinarySession(config.value, logger);
-  try {
-    return {
-      ...jsonObjectSchema.parse(session.status()),
-      server_identity: createServerIdentity({
-        startedAt: new Date().toISOString(),
-      }),
-    };
-  } finally {
-    await session.close();
-  }
-};
 
 const authorizeAnalysis = async (
   authority: PermissionAuthority,

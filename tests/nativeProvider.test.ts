@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../src/native/NativeMacOSProvider.js";
 import {
@@ -132,7 +133,7 @@ describe("native macOS provider", () => {
   });
 
   it("supports architectures, signatures, plists, and ordered demangling", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-native-"));
+    directory = await createTestTempDirectory("rea-native-");
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });

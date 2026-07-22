@@ -1,11 +1,12 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
@@ -42,7 +43,7 @@ afterEach(async () => {
 
 describe("target-free MCP lifecycle", () => {
   it("reopens replaced content at one canonical path through MCP", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-mcp-replaced-target-"));
+    directory = await createTestTempDirectory("rea-mcp-replaced-target-");
     const targetPath = join(directory, "mutable.hop");
     await writeFile(targetPath, "first");
     const closed: string[] = [];
@@ -99,7 +100,7 @@ describe("target-free MCP lifecycle", () => {
   });
 
   it("reports no-target, opens, analyzes, switches, reports status, and closes", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-mcp-session-"));
+    directory = await createTestTempDirectory("rea-mcp-session-");
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await writeFile(first, "one");

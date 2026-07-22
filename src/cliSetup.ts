@@ -13,6 +13,7 @@ import type {
   SetupProgressEvent,
   SetupResult,
 } from "./application/Setup.js";
+import { projectDoctorReport } from "./application/DoctorProjection.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "./application/SupportedClients.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
@@ -112,10 +113,7 @@ export const conciseSetupResult = (result: SetupResult) => ({
   plannedActions: result.plannedActions,
   appliedActions: result.appliedActions,
   clients: result.clients,
-  doctor: {
-    healthy: result.doctor.healthy,
-    checks: result.doctor.checks.filter(({ ok }) => !ok),
-  },
+  doctor: projectDoctorReport(result.doctor, "summary"),
   ...(result.code === undefined ? {} : { code: result.code }),
   ...(result.remediation === undefined
     ? {}

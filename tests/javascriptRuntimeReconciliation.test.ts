@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { createElectronEvidence } from "../src/application/ElectronEvidence.js";
 import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
@@ -147,9 +148,9 @@ describe("JavaScript static/passive-runtime reconciliation", () => {
 
   it("imports an operator-provided cache layer through an explicit file mapping", async () => {
     const application = await applicationFixture();
-    const cache = await mkdtemp(join(tmpdir(), "rea-runtime-cache-static-"));
-    const runtimeCache = await mkdtemp(
-      join(tmpdir(), "rea-runtime-cache-live-"),
+    const cache = await createTestTempDirectory("rea-runtime-cache-static-");
+    const runtimeCache = await createTestTempDirectory(
+      "rea-runtime-cache-live-",
     );
     temporary.push(application, cache, runtimeCache);
     const cacheSource = "export const cachedFeature = 'fixture';\n";
@@ -215,8 +216,8 @@ describe("JavaScript static/passive-runtime reconciliation", () => {
 
   it("keeps byte-identical cross-layer candidates explicitly ambiguous", async () => {
     const application = await applicationFixture();
-    const assets = await mkdtemp(join(tmpdir(), "rea-runtime-assets-static-"));
-    const runtime = await mkdtemp(join(tmpdir(), "rea-runtime-assets-live-"));
+    const assets = await createTestTempDirectory("rea-runtime-assets-static-");
+    const runtime = await createTestTempDirectory("rea-runtime-assets-live-");
     temporary.push(application, assets, runtime);
     await Promise.all([
       writeFile(join(assets, "app.js"), SOURCE),
@@ -345,7 +346,7 @@ describe("JavaScript static/passive-runtime reconciliation", () => {
 
   it("runs the local verifier from operator-provided paths without emitting source", async () => {
     const fixture = await applicationFixture();
-    const evidenceRoot = await mkdtemp(join(tmpdir(), "rea-runtime-evidence-"));
+    const evidenceRoot = await createTestTempDirectory("rea-runtime-evidence-");
     const evidencePath = join(evidenceRoot, "runtime-evidence.json");
     temporary.push(fixture, evidenceRoot);
     await writeFile(
@@ -375,7 +376,7 @@ describe("JavaScript static/passive-runtime reconciliation", () => {
 });
 
 const applicationFixture = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-runtime-reconciliation-"));
+  const root = await createTestTempDirectory("rea-runtime-reconciliation-");
   await Promise.all([
     writeFile(
       join(root, "package.json"),

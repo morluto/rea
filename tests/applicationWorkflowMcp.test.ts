@@ -1,22 +1,127 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { readFile, realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { copyFile, mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
 } from "../src/contracts/javascriptApplicationWorkflowExamples.js";
+import { createEvidence } from "../src/domain/evidence.js";
 import { createServer } from "../src/server/createServer.js";
 import { observed } from "./fixtures/analysisExecution.js";
 import { PermissionAuthority } from "../src/application/PermissionAuthority.js";
 import { createPermissionPolicy } from "../src/domain/permissionPolicy.js";
 import { controlledReplayOutputSchema } from "../src/domain/javascriptReplay.js";
 import { nodeCharacterizationPreparationOutputSchema } from "../src/domain/nodeRuntimeCharacterization.js";
+import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
+import { permissionAuthorityForRoot } from "./fixtures/permissionAuthority.js";
 
 describe("application workflow MCP parity", () => {
+  it("compares exact parser export shapes through full Evidence and session IDs", async () => {
+    const root = await createTestTempDirectory("rea-export-shape-mcp-");
+    const leftRoot = join(root, "left");
+    const rightRoot = join(root, "right");
+    await Promise.all([mkdir(leftRoot), mkdir(rightRoot)]);
+    await Promise.all([
+      copyFile(
+        resolve("tests/fixtures/replay/parser.mjs"),
+        join(leftRoot, "parser.mjs"),
+      ),
+      copyFile(
+        resolve("tests/fixtures/replay/parser-v2.mjs"),
+        join(rightRoot, "parser.mjs"),
+      ),
+    ]);
+    const authority = await permissionAuthorityForRoot(
+      root,
+      ["investigation_input"],
+      ["investigation_input"],
+    );
+    const [left, right] = await Promise.all([
+      analyzeJavaScriptApplication(authority, {
+        input_path: leftRoot,
+        approved: true,
+      }),
+      analyzeJavaScriptApplication(authority, {
+        input_path: rightRoot,
+        approved: true,
+      }),
+    ]);
+    if (!left.ok) throw left.error;
+    if (!right.ok) throw right.error;
+    const session = new BinarySession(() => ({
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    const server = createServer(session, session);
+    const client = new Client({ name: "export-shape-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const selectors = {
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const full = await client.callTool({
+        name: "compare_javascript_export_shapes",
+        arguments: { left: left.value, right: right.value, ...selectors },
+      });
+      expect(full.isError).not.toBe(true);
+      expect(full.structuredContent).toMatchObject({
+        result: {
+          summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
+          changes: [
+            {
+              status: "added",
+              path: "/depth",
+              right: { availability: "literal", value: 1 },
+            },
+          ],
+        },
+      });
+      expect(session.exportEvidenceBundle().records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: "compare_javascript_export_shapes",
+            predicate_type: "rea.javascript-export-shape-comparison/v1",
+          }),
+        ]),
+      );
+
+      const byId = await client.callTool({
+        name: "compare_javascript_export_shapes",
+        arguments: {
+          left_evidence_id: left.value.evidence_id,
+          right_evidence_id: right.value.evidence_id,
+          ...selectors,
+        },
+      });
+      expect(byId.isError).not.toBe(true);
+      expect(byId.structuredContent).toMatchObject({
+        result: {
+          evidence_links: [left.value.evidence_id, right.value.evidence_id],
+          changes: [expect.objectContaining({ path: "/depth" })],
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("traces and compares authenticated graph Evidence in the session", async () => {
     const session = new BinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
@@ -29,13 +134,20 @@ describe("application workflow MCP parity", () => {
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
+    let resourceListChanges = 0;
+    client.setNotificationHandler(
+      "notifications/resources/list_changed",
+      () => {
+        resourceListChanges += 1;
+      },
+    );
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
 
       const traced = await client.callTool({
         name: "trace_application_feature",
-        arguments: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+        arguments: JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
       });
       expect(traced.isError).not.toBe(true);
       expect(traced.structuredContent).toMatchObject({
@@ -48,7 +160,7 @@ describe("application workflow MCP parity", () => {
       const compared = await client.callTool({
         name: "compare_application_versions",
         arguments: {
-          ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+          ...JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
           unknown_registry_approved: true,
         },
       });
@@ -62,12 +174,112 @@ describe("application workflow MCP parity", () => {
       });
       expect(session.exportEvidenceBundle().records.length).toBeGreaterThan(2);
 
-      const spoofed = await client.callTool({
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const notificationsBeforeIdReuse = resourceListChanges;
+      const tracedById = await client.callTool({
         name: "trace_application_feature",
         arguments: {
           ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+          application_evidence_id:
+            JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application
+              .evidence_id,
+        },
+      });
+      expect(tracedById.isError).not.toBe(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(resourceListChanges).toBe(notificationsBeforeIdReuse);
+
+      const comparedById = await client.callTool({
+        name: "compare_application_versions",
+        arguments: {
+          ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+          left_evidence_id:
+            JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.left
+              .evidence_id,
+          right_evidence_id:
+            JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.right
+              .evidence_id,
+        },
+      });
+      expect(comparedById).toMatchObject({
+        structuredContent: {
+          result: {
+            evidence_links: expect.arrayContaining([
+              JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.left
+                .evidence_id,
+              JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.right
+                .evidence_id,
+            ]),
+          },
+        },
+      });
+
+      const missing = await client.callTool({
+        name: "trace_application_feature",
+        arguments: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+      });
+      expect(missing).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: { details: { reason: "missing" } },
+        },
+      });
+
+      const wrongOperation = createEvidence(
+        undefined,
+        { id: "fixture", name: "Fixture", version: "1" },
+        { operation: "inventory_artifact", parameters: {}, result: {} },
+      );
+      const wrongPredicate = createEvidence(
+        undefined,
+        { id: "fixture", name: "Fixture", version: "1" },
+        {
+          predicateType: "fixture.application/v1",
+          operation: "analyze_javascript_application",
+          parameters: {},
+          result: {},
+        },
+      );
+      expect(session.recordEvidence(wrongOperation).ok).toBe(true);
+      expect(session.recordEvidence(wrongPredicate).ok).toBe(true);
+      for (const [record, reason] of [
+        [wrongOperation, "wrong_operation"],
+        [wrongPredicate, "wrong_predicate"],
+      ] as const) {
+        const rejected = await client.callTool({
+          name: "trace_application_feature",
+          arguments: {
+            ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+            application_evidence_id: record.evidence_id,
+          },
+        });
+        expect(rejected).toMatchObject({
+          isError: true,
+          structuredContent: { error: { details: { reason } } },
+        });
+      }
+
+      const duplicateNative = await client.callTool({
+        name: "trace_application_feature",
+        arguments: {
+          ...JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
+          native_observations: [
+            JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application,
+          ],
+          native_observation_evidence_ids: [
+            JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application
+              .evidence_id,
+          ],
+        },
+      });
+      expect(duplicateNative.isError).toBe(true);
+
+      const spoofed = await client.callTool({
+        name: "trace_application_feature",
+        arguments: {
+          ...JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
           application: {
-            ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
+            ...JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application,
             provider: { id: "spoofed", name: "spoofed", version: "1" },
           },
         },

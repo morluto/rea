@@ -6,12 +6,14 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { OFFICIAL_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
+import type { HopperStartupDiagnostic } from "../src/domain/hopperStartupFailure.js";
 import { ok } from "../src/domain/result.js";
 import type {
   BridgeLauncher,
   BridgeSession,
 } from "../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../src/hopper/HopperClient.js";
+import { LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX } from "../src/hopper/LinuxPrivateDisplayDiagnostic.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/fakeHopper.mjs", import.meta.url),
@@ -86,6 +88,43 @@ class ExitingLauncher implements BridgeLauncher {
         process: spawn(process.execPath, ["-e", `process.exit(${this.code})`], {
           stdio: ["ignore", "ignore", "pipe"],
         }),
+        ownsProcessLifetime: true,
+      }),
+    );
+  }
+}
+
+class DiagnosticExitingLauncher implements BridgeLauncher {
+  launch() {
+    const diagnostic: HopperStartupDiagnostic = {
+      schema_version: 1,
+      component: "hopper_private_display",
+      operation: "launch",
+      status: "error",
+      failure_code: "x11_socket_directory_unusable",
+      reason: "socket_directory_read_only",
+      socket_directory: "/tmp/.X11-unix",
+      socket_directory_mode: "0777",
+      mount_read_only: true,
+      effective_socket_directory_mode: "0777",
+      effective_mount_read_only: true,
+      wsl: true,
+      strategy: "direct",
+      fallback_reason: null,
+      xvfb_stderr_bytes: 100,
+      xvfb_stderr_truncated: false,
+    };
+    const line = `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify(diagnostic)}\n`;
+    return Promise.resolve(
+      ok({
+        process: spawn(
+          process.execPath,
+          [
+            "-e",
+            `process.stderr.write(${JSON.stringify(line)}, () => process.exit(80))`,
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        ),
         ownsProcessLifetime: true,
       }),
     );
@@ -261,7 +300,7 @@ describe("HopperClient", () => {
     ).toBe(true);
   });
 
-  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79])(
+  it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80])(
     "reports Linux adapter exit %i during bridge startup",
     async (exitCode) => {
       const client = new HopperClient({
@@ -278,6 +317,30 @@ describe("HopperClient", () => {
         });
     },
   );
+
+  it("preserves the bounded private-display diagnostic from an adapter exit", async () => {
+    const client = new HopperClient({
+      launcher: new DiagnosticExitingLauncher(),
+      startupTimeoutMs: 10_000,
+    });
+    clients.push(client);
+    const result = await client.start();
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "HopperProcessError",
+        exitCode: 80,
+        failureCode: "x11_socket_directory_unusable",
+        diagnostic: {
+          socket_directory: "/tmp/.X11-unix",
+          socket_directory_mode: "0777",
+          mount_read_only: true,
+          wsl: true,
+          strategy: "direct",
+        },
+      },
+    });
+  });
 
   it("allows a short-lived launcher to hand off bridge startup", async () => {
     const client = new HopperClient({

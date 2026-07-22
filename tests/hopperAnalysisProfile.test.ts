@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import type { BinaryTarget } from "../src/domain/binaryTarget.js";
 import {
@@ -49,7 +50,7 @@ describe("Hopper analysis profiles", () => {
   });
 
   it("commits launcher build and configured overrides without target coupling", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-hopper-profile-"));
+    directory = await createTestTempDirectory("rea-hopper-profile-");
     const launcher = join(directory, "hopper");
     await writeFile(launcher, "Hopper build A");
     const input = target("mach-o", "arm64");
@@ -117,7 +118,7 @@ describe("Hopper analysis profiles", () => {
   });
 
   it("stops launcher hashing when profile resolution is cancelled", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-hopper-profile-cancel-"));
+    directory = await createTestTempDirectory("rea-hopper-profile-cancel-");
     const launcher = join(directory, "hopper");
     await writeFile(launcher, "Hopper build");
     const controller = new AbortController();

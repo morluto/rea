@@ -1,9 +1,10 @@
-import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 const roots: string[] = [];
 const script = join(process.cwd(), "scripts", "check-dependency-install.mjs");
@@ -18,7 +19,7 @@ const fixture = async (
   installedVersion?: string,
   omitDevDependency = false,
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-deps-"));
+  const root = await createTestTempDirectory("rea-deps-");
   roots.push(root);
   await mkdir(join(root, "node_modules"));
   await writeFile(

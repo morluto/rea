@@ -12,6 +12,7 @@ import {
   HopperStartError,
   hopperStartupFailure,
   HopperTimeoutError,
+  type HopperStartupDiagnostic,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -32,6 +33,7 @@ import {
   type HopperServerInfo,
 } from "./HopperSessionValues.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
+import { hopperLauncherFailureDiagnostic } from "./HopperProcessDiagnostic.js";
 import { parseResponseLine, responseResult } from "./protocol.js";
 
 export type { HopperServerInfo } from "./HopperSessionValues.js";
@@ -81,6 +83,7 @@ export class HopperClient {
   #buffer = "";
   #closing = false;
   #launcherExitCode: number | null | undefined;
+  #launcherFailureDiagnostic: HopperStartupDiagnostic | undefined;
   #startupController: AbortController | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
   #closePromise: Promise<void> | undefined;
@@ -177,10 +180,11 @@ export class HopperClient {
     const socketPath = join(this.#runtimeRoot.path, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
     this.#launcherExitCode = undefined;
+    this.#launcherFailureDiagnostic = undefined;
     const runId = randomUUID();
     const launched: Result<
       BridgeLaunch,
-      HopperStartError | HopperCancelledError
+      HopperStartError | HopperCancelledError | HopperProcessError
     > = await this.#options.launcher
       .launch(
         {
@@ -327,6 +331,7 @@ export class HopperClient {
       this.#token = undefined;
       this.#buffer = "";
       this.#launcherExitCode = undefined;
+      this.#launcherFailureDiagnostic = undefined;
     } finally {
       this.#closing = false;
     }
@@ -356,7 +361,12 @@ export class HopperClient {
         this.#launcherExitCode !== undefined &&
         hopperStartupFailure(this.#launcherExitCode) !== undefined
       )
-        return err(new HopperProcessError(this.#launcherExitCode));
+        return err(
+          new HopperProcessError(
+            this.#launcherExitCode,
+            this.#launcherFailureDiagnostic,
+          ),
+        );
       try {
         await access(socketPath);
       } catch {
@@ -459,12 +469,15 @@ export class HopperClient {
     }
     if (event.type !== "exit") return;
     this.#launcherExitCode = event.code;
+    this.#launcherFailureDiagnostic = hopperLauncherFailureDiagnostic(event);
     this.#options.onDiagnostic?.({
       type: "launcher-exit",
       code: event.code,
     });
     if (launch.ownsProcessLifetime && !this.#closing)
-      this.#failAll(new HopperProcessError(event.code));
+      this.#failAll(
+        new HopperProcessError(event.code, this.#launcherFailureDiagnostic),
+      );
   }
 
   #onData(chunk: string): void {

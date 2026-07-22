@@ -1,9 +1,11 @@
 # Source-built conformance fixtures
 
 These sources are deliberately small semantic oracles for REA providers. Run
-`npm run verify:fixtures` on macOS to compile them into the ignored
+`npm run verify:fixtures` on macOS or Linux to compile them into the ignored
 `build/conformance/` directory, emit a hash-and-toolchain manifest, and verify
-their Mach-O symbols and strings with native command-line tools.
+their platform-native symbols and strings with local command-line tools. The
+portable C, version, and pagination fixtures build as Mach-O on macOS and ELF on
+Linux; Objective-C, Swift, and N-API-like fixtures remain macOS-only.
 
 Only source files are versioned. Generated binaries, generated large-fixture
 source, debug information, and manifests must remain under `build/`.

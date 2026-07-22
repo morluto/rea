@@ -13,10 +13,13 @@ const { default: packageJson } = await import("../package.json", {
 process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpMode =
   args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp");
+const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeFiles = isMcpMode
   ? ["dist/main.js"]
-  : ["dist/cli.js", "dist/cliOutput.js"];
+  : isMcpDoctorMode
+    ? ["dist/main.js", "dist/mcpDoctor.js"]
+    : ["dist/cli.js", "dist/cliOutput.js"];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
@@ -26,12 +29,30 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
 } else if (isMcpMode) {
   const { runEntrypoint } = await import("../dist/main.js");
   await runEntrypoint();
+} else if (isMcpDoctorMode) {
+  const { runProductionMcpDoctorCli } = await import("../dist/mcpDoctor.js");
+  const result = await runProductionMcpDoctorCli(args.slice(2), {
+    dispatcherPath: fileURLToPath(import.meta.url),
+    packageRoot,
+  });
+  process.stdout.write(result.output);
+  process.exitCode = result.exitCode;
 } else {
   const { createCli } = await import("../dist/cli.js");
-  const { sanitizeCliOutput } = await import("../dist/cliOutput.js");
-  await createCli().serve(args, {
-    stdout: (output) => process.stdout.write(sanitizeCliOutput(output)),
-  });
+  const {
+    renderCliOutputArgumentError,
+    sanitizeCliOutput,
+    validateCliOutputArguments,
+  } = await import("../dist/cliOutput.js");
+  const outputArguments = validateCliOutputArguments(args);
+  if (!outputArguments.ok) {
+    process.stdout.write(renderCliOutputArgumentError(outputArguments));
+    process.exitCode = 1;
+  } else {
+    await createCli().serve(args, {
+      stdout: (output) => process.stdout.write(sanitizeCliOutput(output)),
+    });
+  }
 }
 
 async function compiledRuntimeExists(paths) {

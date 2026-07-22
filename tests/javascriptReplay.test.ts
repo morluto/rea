@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, realpath, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { runControlledReplay } from "../src/application/JavaScriptReplayService.js";
 import type {
@@ -379,7 +380,7 @@ describe("controlled JavaScript replay", () => {
   });
 
   it("exports an owner-only source-free reproducer after cleanup", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-reproducer-test-"));
+    const directory = await createTestTempDirectory("rea-reproducer-test-");
     const path = join(directory, "reproducer.json");
     const dependencies = {
       policy,

@@ -1,4 +1,4 @@
-import type * as t from "@babel/types";
+import * as t from "@babel/types";
 
 import type {
   JavaScriptModuleOrigin,
@@ -101,4 +101,43 @@ export const semanticResolutionBlocked = (
         : state.scopesById.get(scope.parentScopeId);
   }
   return false;
+};
+
+/** Resolve one name starting from an explicitly selected lexical scope. */
+export const resolveSemanticBindingFromScope = (
+  scope: JavaScriptSemanticScopeState,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  let candidate: JavaScriptSemanticScopeState | undefined = scope;
+  while (candidate !== undefined) {
+    const binding = candidate.bindings.get(name);
+    if (binding !== undefined) return binding;
+    if (!candidate.bindingsComplete) return undefined;
+    candidate =
+      candidate.parentScopeId === null
+        ? undefined
+        : state.scopesById.get(candidate.parentScopeId);
+  }
+  return undefined;
+};
+
+/** Select the function/program owner for a var declaration. */
+export const semanticVariableScope = (
+  scope: JavaScriptSemanticScopeState,
+  parent: t.Node | null,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticScopeState => {
+  if (!(parent !== null && t.isVariableDeclaration(parent, { kind: "var" })))
+    return scope;
+  let candidate = scope;
+  while (candidate.kind === "block" || candidate.kind === "catch") {
+    const outer =
+      candidate.parentScopeId === null
+        ? undefined
+        : state.scopesById.get(candidate.parentScopeId);
+    if (outer === undefined) break;
+    candidate = outer;
+  }
+  return candidate;
 };

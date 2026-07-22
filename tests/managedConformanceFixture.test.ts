@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { buildManagedPeFixture } from "../scripts/lib/managed-pe-fixture.mjs";
 import { parseBinaryTarget } from "../src/domain/binaryTarget.js";
@@ -17,7 +18,7 @@ afterEach(async () => {
 
 describe("managed conformance fixture", () => {
   it("emits PE32+ headers when the COFF machine is x86-64", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-managed-fixture-"));
+    const workspace = await createTestTempDirectory("rea-managed-fixture-");
     workspaces.push(workspace);
     const path = join(workspace, "fixture.exe");
     await writeFile(path, buildManagedPeFixture({ machine: 0x8664 }));

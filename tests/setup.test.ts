@@ -12,7 +12,11 @@ import {
   type SetupProgressEvent,
   type SetupProviderEnvironment,
 } from "../src/application/Setup.js";
-import type { DoctorCheck } from "../src/application/Doctor.js";
+import type {
+  DoctorCheck,
+  DoctorReport,
+  DoctorScope,
+} from "../src/application/Doctor.js";
 import type { LinuxDistribution } from "../src/application/LinuxHopper.js";
 
 class FakeSetupHost implements SetupHost {
@@ -33,9 +37,11 @@ class FakeSetupHost implements SetupHost {
   configurations = 0;
   skillInstalls = 0;
   doctorCalls = 0;
+  doctorScopes: Array<DoctorScope | undefined> = [];
   checkedHopperPaths: Array<string | undefined> = [];
   configuredProviderEnvironments: SetupProviderEnvironment[] = [];
   doctorHealthy: boolean | undefined;
+  scopedDoctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
   unsupportedHopperVersion = false;
 
@@ -108,12 +114,9 @@ class FakeSetupHost implements SetupHost {
     this.skillInstalls += 1;
     return Promise.resolve(this.skill);
   };
-  doctor = (): Promise<{
-    healthy: boolean;
-    hopperPath?: string;
-    checks: readonly DoctorCheck[];
-  }> => {
+  doctor = (scope?: DoctorScope): Promise<DoctorReport> => {
     this.doctorCalls += 1;
+    this.doctorScopes.push(scope);
     const checks: DoctorCheck[] = [
       ...(this.linuxDemoRuntimeMissing
         ? ([
@@ -135,12 +138,27 @@ class FakeSetupHost implements SetupHost {
           ] as const)
         : []),
     ];
+    const environmentHealthy =
+      this.doctorHealthy ??
+      (this.hopper !== undefined &&
+        !this.linuxDemoRuntimeMissing &&
+        !this.unsupportedHopperVersion);
+    const healthy =
+      scope === undefined
+        ? environmentHealthy
+        : (this.scopedDoctorHealthy ?? environmentHealthy);
     return Promise.resolve({
-      healthy:
-        this.doctorHealthy ??
-        (this.hopper !== undefined &&
-          !this.linuxDemoRuntimeMissing &&
-          !this.unsupportedHopperVersion),
+      healthy,
+      environment_healthy: environmentHealthy,
+      scope: {
+        mode: scope === undefined ? "audit-wide" : "explicit",
+        clients: scope?.clients ?? [],
+        providers: scope?.providers ?? [],
+        skill: scope?.skill === true,
+        target: null,
+      },
+      scope_checks: checks,
+      informational_checks: [],
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
       checks,
     });
@@ -616,6 +634,34 @@ describe("setup workflow", () => {
     expect(result.remediation).toBe(
       "Run rea doctor and apply each reported remediation.",
     );
+  });
+
+  it("uses requested readiness scope without hiding environment drift", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.doctorHealthy = false;
+    host.scopedDoctorHealthy = true;
+    const readinessScope = {
+      clients: ["codex"],
+      providers: [] as string[],
+      skill: true,
+    };
+
+    const result = await runSetup(
+      {
+        ...options(true),
+        proposeHopper: false,
+        installSkill: false,
+        readinessScope,
+      },
+      host,
+    );
+
+    expect(result).toMatchObject({
+      status: "ready",
+      doctor: { healthy: true, environment_healthy: false },
+    });
+    expect(host.doctorScopes).toEqual(expect.arrayContaining([readinessScope]));
   });
 
   it("explains unsupported Node and macOS recovery", async () => {

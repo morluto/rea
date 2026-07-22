@@ -26,14 +26,14 @@ describe("server and catalog identity", () => {
     });
     expect(PRODUCT_IDENTITY.packageVersion).toBe(packageJson.version);
     expect(SDK_IDENTITY.server).toBe("2.0.0-beta.4");
-    expect(CLI_COMMAND_NAMES).toHaveLength(55);
-    expect(new Set(CLI_COMMAND_NAMES).size).toBe(55);
+    expect(CLI_COMMAND_NAMES).toHaveLength(56);
+    expect(new Set(CLI_COMMAND_NAMES).size).toBe(56);
     expect(CATALOG_IDENTITY.counts).toEqual({
-      cli_commands: 55,
+      cli_commands: 56,
       mcp_tools: TOOL_CONTRACTS.length,
       mcp_prompts: 6,
       mcp_resources: 2,
-      mcp_resource_templates: 8,
+      mcp_resource_templates: 9,
     });
     expect(CATALOG_IDENTITY.digests.combined_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });

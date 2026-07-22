@@ -1,11 +1,12 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
 import { startLoopbackReplay } from "../src/application/LoopbackReplay.js";
 import {
   captureProcessScenario,
@@ -814,7 +815,7 @@ describe("process capture adapter", () => {
   });
 
   it("captures PTY, filesystem, descendants, HTTP replay, and redacts environment", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-harness-test-"));
+    const root = await createTestTempDirectory("rea-harness-test-");
     const script = join(root, "fixture.mjs");
     await writeFile(
       script,
@@ -889,7 +890,7 @@ describe("process capture adapter", () => {
   });
 
   it("renders terminal state, records shim invocations, and captures literal checkpoints", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-v3-test-"));
+    const root = await createTestTempDirectory("rea-v3-test-");
     const script = join(root, "scenario.mjs");
     await writeFile(
       script,
@@ -979,7 +980,7 @@ describe("process capture adapter", () => {
   }, 20_000);
 
   it("does not follow or disclose symlink targets outside declared roots", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-symlink-test-"));
+    const root = await createTestTempDirectory("rea-symlink-test-");
     await symlink("/etc/passwd", join(root, "escape"));
     try {
       const capability = await probeProcessCaptureCapability();

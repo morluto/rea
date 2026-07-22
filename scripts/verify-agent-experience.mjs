@@ -52,6 +52,29 @@ try {
       prompt: `Explain how the desktop application at ${targets.javascript} exposes APIs to its renderer. Base the answer on the shipped application artifact, and state what remains unknown.`,
     },
     {
+      id: "javascript-export-shape",
+      expectedFirstTool: "analyze_javascript_application",
+      requiresEvidence: true,
+      requiredToolSubsequence: [
+        "analyze_javascript_application",
+        "analyze_javascript_application",
+        "compare_javascript_export_shapes",
+      ],
+      requiredAnswerTermGroups: [
+        ["/depth", "depth"],
+        [
+          "literal value `1`",
+          "literal `1`",
+          "depth: 1",
+          '"depth": 1',
+          "depth = 1",
+        ],
+        ["static", "inferred"],
+        ["runtime", "replay"],
+      ],
+      prompt: `Without directly reading target files, compare the default export in parser.mjs between ${targets.javascriptShapeLeft} and ${targets.javascriptShapeRight}. Use REA to analyze each shipped artifact and then compare its exact static export return shapes. State the exact heading-shape change, cite produced Evidence, and distinguish static inference from runtime semantics.`,
+    },
+    {
       id: "managed",
       expectedFirstTool: "inspect_managed_artifact",
       requiresEvidence: true,
@@ -108,6 +131,8 @@ try {
       {
         requireEvidence: scenario.requiresEvidence,
         requiredAnswerTermGroups: scenario.requiredAnswerTermGroups,
+        requiredToolSubsequence: scenario.requiredToolSubsequence,
+        forbidInputValidationFailures: true,
       },
     );
     const result = {
@@ -115,13 +140,14 @@ try {
       expectedFirstTool: scenario.expectedFirstTool,
       requiresEvidence: scenario.requiresEvidence,
       qualityCriteria: scenario.requiredAnswerTermGroups,
+      requiredToolSubsequence: scenario.requiredToolSubsequence ?? [],
       exitCode: execution.exitCode,
       stderr: execution.stderr,
       ...metrics,
     };
     results.push(result);
     process.stderr.write(
-      `${scenario.id}: first=${metrics.firstTool ?? "none"}, calls=${String(metrics.reaCalls.length)}, repeats=${String(metrics.repeatedCallCount)}, input_tokens=${String(metrics.inputTokens)}\n`,
+      `${scenario.id}: first=${metrics.firstTool ?? "none"}, calls=${String(metrics.reaCalls.length)}, repeats=${String(metrics.repeatedCallCount)}, validation_failures=${String(metrics.inputValidationFailureCount)}, input_tokens=${String(metrics.inputTokens)}\n`,
     );
   }
 
@@ -141,6 +167,14 @@ try {
         (total, { repeatedCallCount }) => total + repeatedCallCount,
         0,
       ),
+      inputValidationFailureCount: results.reduce(
+        (total, { inputValidationFailureCount }) =>
+          total + inputValidationFailureCount,
+        0,
+      ),
+      requiredToolSubsequence: results.filter(
+        ({ requiredToolSubsequenceMet }) => requiredToolSubsequenceMet,
+      ).length,
       inputTokens: results.reduce(
         (total, { inputTokens }) => total + inputTokens,
         0,
@@ -171,6 +205,8 @@ try {
       naturalUse,
       correctFirstTool,
       repeatedCallCount,
+      inputValidationFailureCount,
+      requiredToolSubsequenceMet,
       inputTokens,
       completionQuality,
       authorityHonesty,
@@ -179,6 +215,8 @@ try {
       !naturalUse ||
       !correctFirstTool ||
       repeatedCallCount !== 0 ||
+      inputValidationFailureCount !== 0 ||
+      !requiredToolSubsequenceMet ||
       inputTokens <= 0 ||
       !completionQuality ||
       !authorityHonesty,
@@ -216,6 +254,23 @@ async function createTargets(root) {
   const javascriptAsar = join(root, "desktop-app.asar");
   await createPackage(javascript, javascriptAsar);
 
+  const javascriptShapeLeft = join(root, "parser-v1");
+  const javascriptShapeRight = join(root, "parser-v2");
+  await Promise.all([
+    mkdir(javascriptShapeLeft, { recursive: true }),
+    mkdir(javascriptShapeRight, { recursive: true }),
+  ]);
+  await Promise.all([
+    cp(
+      join(repositoryRoot, "tests/fixtures/replay/parser.mjs"),
+      join(javascriptShapeLeft, "parser.mjs"),
+    ),
+    cp(
+      join(repositoryRoot, "tests/fixtures/replay/parser-v2.mjs"),
+      join(javascriptShapeRight, "parser.mjs"),
+    ),
+  ]);
+
   const managedProject = join(root, "managed-project");
   const managedOutput = join(root, "managed-output");
   await mkdir(managedProject, { recursive: true });
@@ -246,6 +301,8 @@ async function createTargets(root) {
   return {
     native: "/bin/true",
     javascript: javascriptAsar,
+    javascriptShapeLeft,
+    javascriptShapeRight,
     managed: join(managedOutput, "AgentEval.dll"),
   };
 }

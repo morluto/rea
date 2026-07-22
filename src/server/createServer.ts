@@ -320,6 +320,10 @@ const registerObservationTools = ({
     logger,
     recordEvidence,
     recordEvidenceWithUnknown,
+    evidenceLookup:
+      session === undefined
+        ? undefined
+        : (evidenceId) => session.evidenceById(evidenceId),
     evidenceFilePolicy: options.evidenceFilePolicy ?? {
       roots: [],
       maxBytes: 1,

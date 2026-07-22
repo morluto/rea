@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { writeAnalysisSnapshot } from "../src/application/AnalysisSnapshotFiles.js";
 import { runDirectAnalysis } from "../src/application/DirectAnalysis.js";
@@ -33,7 +34,7 @@ afterEach(async () => {
 
 describe("direct analysis snapshot permissions", () => {
   it("forwards the CLI provider selector ahead of the environment preference", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-direct-provider-"));
+    directory = await createTestTempDirectory("rea-direct-provider-");
     const targetPath = join(directory, "fixture.hop");
     await writeFile(targetPath, "fixture");
     vi.stubEnv("HOPPER_LAUNCHER_PATH", process.execPath);
@@ -60,7 +61,7 @@ describe("direct analysis snapshot permissions", () => {
   });
 
   it("replays a cache hit with snapshot read authority only", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-direct-snapshot-"));
+    directory = await createTestTempDirectory("rea-direct-snapshot-");
     const snapshotPath = join(directory, "analysis.json");
     const launcherPath = join(directory, "hopper-launcher");
     await writeFile(launcherPath, "fixture Hopper launcher");

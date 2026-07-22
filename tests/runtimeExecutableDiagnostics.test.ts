@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, rm, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { inspectRuntimeExecutables } from "../src/application/RuntimeExecutableDiagnostics.js";
 
@@ -145,7 +146,7 @@ describe("runtime executable diagnostics", () => {
 });
 
 const temporaryRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-runtime-diagnostics-"));
+  const root = await createTestTempDirectory("rea-runtime-diagnostics-");
   roots.push(root);
   return root;
 };

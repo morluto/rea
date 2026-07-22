@@ -23,3 +23,13 @@ For version comparison, analyze each version once, then call
 fingerprint, or non-module semantic matches. Module ordinals and minified names
 are not persistent identity. Report added or removed only with complete
 opposite-side coverage; otherwise report unknown.
+
+When the question asks how one exact exported callable's returned object shape
+changed, analyze each version once and then call
+`compare_javascript_export_shapes` with explicit module paths and export names.
+Use the Evidence IDs returned by the two analysis calls. Accept variant pairing
+only through the tool's unique exact literal discriminant. Cite the comparison
+Evidence and report JSON Pointer changes; dynamic values, ambiguous variants,
+and incomplete parent-property coverage stay unknown. This is static inference,
+not runtime behavior. Use `run_controlled_replay` separately only when the user
+needs approved runtime semantics.

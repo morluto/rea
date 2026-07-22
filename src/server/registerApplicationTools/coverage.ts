@@ -9,7 +9,7 @@ import {
   authorizeFileReadWithDeferredWrite,
   authorizeRootPermission,
 } from "../../application/DeferredFileAuthorization.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
+import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import {
   reconstructionCoverageCommitInputSchema,
   reconstructionCoverageQueryInputSchema,
@@ -27,8 +27,10 @@ import { safeParseToolInput } from "../toolInputValidation.js";
 import { coverageWorkspaceUri } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const commitContract = APPLICATION_TOOL_CONTRACTS[5];
-const queryContract = APPLICATION_TOOL_CONTRACTS[6];
+const commitContract = applicationToolContract(
+  "commit_reconstruction_coverage",
+);
+const queryContract = applicationToolContract("query_reconstruction_coverage");
 
 /** Register reconstruction coverage commit and query tools. */
 export const registerCoverageTools = (

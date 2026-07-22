@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
 let fixtureRoot: string | undefined;
@@ -18,7 +19,7 @@ afterEach(async () => {
 
 describe("executable dispatcher", () => {
   it("reserves production MCP routing for bare mode arguments", async () => {
-    fixtureRoot = await mkdtemp(join(tmpdir(), "rea-dispatcher-"));
+    fixtureRoot = await createTestTempDirectory("rea-dispatcher-");
     const scripts = join(fixtureRoot, "scripts");
     const dist = join(fixtureRoot, "dist");
     await Promise.all([mkdir(scripts), mkdir(dist)]);
@@ -38,7 +39,11 @@ describe("executable dispatcher", () => {
       ),
       writeFile(
         join(dist, "cliOutput.js"),
-        "export const sanitizeCliOutput = (output) => output;\n",
+        "export const sanitizeCliOutput = (output) => output; export const validateCliOutputArguments = () => ({ ok: true }); export const renderCliOutputArgumentError = () => '';\n",
+      ),
+      writeFile(
+        join(dist, "mcpDoctor.js"),
+        'export const runProductionMcpDoctorCli = (args) => Promise.resolve({ output: JSON.stringify({ adapter: "mcp-doctor", args }), exitCode: 0 });\n',
       ),
     ]);
 
@@ -52,6 +57,10 @@ describe("executable dispatcher", () => {
 
     await expect(invoke(["mcp"])).resolves.toEqual({ adapter: "mcp" });
     await expect(invoke(["--mcp"])).resolves.toEqual({ adapter: "mcp" });
+    await expect(invoke(["mcp", "doctor", "--json"])).resolves.toEqual({
+      adapter: "mcp-doctor",
+      args: ["--json"],
+    });
     await expect(invoke(["mcp", "add"])).resolves.toEqual({
       adapter: "cli",
       args: ["mcp", "add"],
@@ -63,7 +72,7 @@ describe("executable dispatcher", () => {
   });
 
   it("explains how to restore a missing compiled runtime", async () => {
-    fixtureRoot = await mkdtemp(join(tmpdir(), "rea-dispatcher-"));
+    fixtureRoot = await createTestTempDirectory("rea-dispatcher-");
     const scripts = join(fixtureRoot, "scripts");
     await mkdir(scripts);
     await Promise.all([
@@ -74,7 +83,7 @@ describe("executable dispatcher", () => {
       ),
     ]);
 
-    for (const args of [["mcp"], ["--help"]]) {
+    for (const args of [["mcp"], ["mcp", "doctor"], ["--help"]]) {
       const execution = execFileAsync(process.execPath, [
         join(scripts, "rea.mjs"),
         ...args,

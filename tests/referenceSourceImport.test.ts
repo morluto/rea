@@ -1,10 +1,11 @@
 import fs from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { add, commit, init } from "isomorphic-git";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   importReferenceSource,
@@ -123,7 +124,7 @@ describe("reference source import", () => {
   });
 
   it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-reference-import-"));
+    const parent = await createTestTempDirectory("rea-reference-import-");
     try {
       const leftRoot = await fixture(parent, "left");
       const rightRoot = await fixture(parent, "right");
@@ -157,8 +158,8 @@ describe("reference source import", () => {
   });
 
   it("fails closed outside policy and honors cancellation", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-reference-policy-"));
-    const outside = await mkdtemp(join(tmpdir(), "rea-reference-outside-"));
+    const parent = await createTestTempDirectory("rea-reference-policy-");
+    const outside = await createTestTempDirectory("rea-reference-outside-");
     try {
       const root = await fixture(outside, "tree");
       const denied = await importTree(root, parent);
@@ -182,7 +183,7 @@ describe("reference source import", () => {
   });
 
   it("uses a valid reference root when another configured root is missing", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-reference-roots-"));
+    const parent = await createTestTempDirectory("rea-reference-roots-");
     try {
       const root = await fixture(parent, "tree");
       const imported = await importTree(root, [
@@ -196,7 +197,7 @@ describe("reference source import", () => {
   });
 
   it("records bounded local Git state without invoking Git", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-reference-git-"));
+    const parent = await createTestTempDirectory("rea-reference-git-");
     try {
       const root = await fixture(parent, "repo");
       await init({ fs, dir: root, defaultBranch: "main" });

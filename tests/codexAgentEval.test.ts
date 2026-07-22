@@ -160,4 +160,74 @@ describe("Codex agent release evaluation", () => {
 
     expect(metrics.reaCalls[0]?.error).toBe(true);
   });
+
+  it("requires an ordered tool subsequence and rejects input validation failures", () => {
+    const evidenceId = `ev_${"b".repeat(64)}`;
+    const call = (
+      id: string,
+      tool: string,
+      result: unknown = { evidence_id: evidenceId },
+    ) => ({
+      type: "item.completed",
+      item: {
+        id,
+        type: "mcp_tool_call",
+        server: "rea",
+        tool,
+        arguments: { id },
+        result,
+      },
+    });
+    const final = {
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: `Static inferred evidence ${evidenceId} shows depth: 1; runtime behavior remains unknown without controlled replay authority.`,
+      },
+    };
+    const options = {
+      requireEvidence: true,
+      requiredToolSubsequence: [
+        "analyze_javascript_application",
+        "analyze_javascript_application",
+        "compare_javascript_export_shapes",
+      ],
+      forbidInputValidationFailures: true,
+    };
+    const valid = evaluateCodexEvents(
+      [
+        call("left", "analyze_javascript_application"),
+        call("right", "analyze_javascript_application"),
+        call("compare", "compare_javascript_export_shapes"),
+        final,
+      ],
+      "analyze_javascript_application",
+      options,
+    );
+    expect(valid).toMatchObject({
+      requiredToolSubsequenceMet: true,
+      inputValidationFailureCount: 0,
+      completionQuality: true,
+    });
+
+    const invalid = evaluateCodexEvents(
+      [
+        call("left", "analyze_javascript_application"),
+        call("bad", "compare_javascript_export_shapes", {
+          structured_content: {
+            error: { code: "invalid_request" },
+          },
+          isError: true,
+        }),
+        final,
+      ],
+      "analyze_javascript_application",
+      options,
+    );
+    expect(invalid).toMatchObject({
+      requiredToolSubsequenceMet: false,
+      inputValidationFailureCount: 1,
+      completionQuality: false,
+    });
+  });
 });

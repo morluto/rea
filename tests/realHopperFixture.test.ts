@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { loadRealHopperFixtureTargets } from "../scripts/lib/real-hopper-fixture.mjs";
 
@@ -46,7 +47,7 @@ describe("real Hopper fixture binding", () => {
       /digest/u,
     );
 
-    const outside = await mkdtemp(join(tmpdir(), "rea-hopper-outside-"));
+    const outside = await createTestTempDirectory("rea-hopper-outside-");
     try {
       await writeFile(join(outside, "c"), "primary");
       await rm(join(root ?? "", "c"));
@@ -79,7 +80,7 @@ describe("real Hopper fixture binding", () => {
 });
 
 const fixtureManifest = async (): Promise<string> => {
-  root = await mkdtemp(join(tmpdir(), "rea-hopper-fixture-"));
+  root = await createTestTempDirectory("rea-hopper-fixture-");
   const primary = Buffer.from("primary");
   const secondary = Buffer.from("secondary");
   await Promise.all([

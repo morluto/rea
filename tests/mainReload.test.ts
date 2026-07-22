@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import type { PermissionAuthority } from "../src/application/PermissionAuthority.js";
 import type { ProjectPermissionStore } from "../src/application/ProjectPermissionStore.js";
@@ -139,7 +140,7 @@ describe("runtime permission reload", () => {
 });
 
 const reloadFixture = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-main-reload-"));
+  const directory = await createTestTempDirectory("rea-main-reload-");
   directories.push(directory);
   const oldRoot = join(directory, "old");
   const newRoot = join(directory, "new");

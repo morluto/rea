@@ -8,7 +8,7 @@ import {
   runDoctor,
   systemDoctorHost,
   type DoctorHost,
-  type DoctorProviderInspection,
+  type DoctorScope,
 } from "./Doctor.js";
 import {
   installLinuxHopper,
@@ -36,7 +36,10 @@ import {
   type SetupFailureCode,
   type SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
-import { registrationPermissionEnvironment } from "./SetupRegistrationEnvironment.js";
+import {
+  providerRegistrationEnvironment,
+  registrationPermissionEnvironment,
+} from "./SetupRegistrationEnvironment.js";
 export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 export { registrationPermissionEnvironment } from "./SetupRegistrationEnvironment.js";
 
@@ -99,7 +102,7 @@ export interface SetupHost {
   ): Promise<ClientConfigurationInspection>;
   skillNeedsInstall(): Promise<boolean>;
   installSkill(): Promise<"installed" | "unchanged" | "failed">;
-  doctor(): Promise<Awaited<ReturnType<typeof runDoctor>>>;
+  doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
@@ -135,6 +138,7 @@ export interface SetupOptions {
   readonly proposeHopper?: boolean;
   readonly clientIds?: readonly string[];
   readonly installSkill?: boolean;
+  readonly readinessScope?: DoctorScope;
   readonly onProgress?: (event: SetupProgressEvent) => void;
 }
 
@@ -167,7 +171,11 @@ export const runSetup = async (
   let plannedActions: readonly SetupAction[] = [];
   const clients: Record<string, ClientConfigurationResult> = {};
   const fail = (remediation: string) =>
-    setupFailure(remediation, [host, plannedActions, appliedActions, clients]);
+    setupFailure(
+      remediation,
+      [host, plannedActions, appliedActions, clients],
+      options.readinessScope,
+    );
   const unsupported = await hostRemediation(host, options.installHopper);
   if (unsupported !== undefined) return fail(unsupported);
   let hopperPath = await host.hopperPath();
@@ -180,6 +188,7 @@ export const runSetup = async (
     proposeHopper: options.proposeHopper ?? true,
     selectedClientIds: options.clientIds,
     installSkillSelection: options.installSkill,
+    doctorScope: options.readinessScope,
   });
   if (discovery.blocker !== undefined) return fail(discovery.blocker);
   const selection = await resolveSetupSelection(options, discovery, confirm);
@@ -208,6 +217,7 @@ export const runSetup = async (
       clients,
       detectedClients,
       providerEnvironment,
+      doctorScope: options.readinessScope,
     });
     if ("failure" in install) return install.failure;
     ({ hopperPath, providerEnvironment, detectedClients } = install);
@@ -231,7 +241,7 @@ export const runSetup = async (
     return fail(
       "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
     );
-  const doctor = await host.doctor();
+  const doctor = await host.doctor(options.readinessScope);
   const remediation = finalSetupRemediation(
     host.platform,
     appliedActions.includes("installed_hopper"),
@@ -296,6 +306,7 @@ const installHopperAction = async (input: {
   readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
   readonly detectedClients: readonly SetupClient[];
   readonly providerEnvironment: SetupProviderEnvironment;
+  readonly doctorScope: DoctorScope | undefined;
 }) => {
   const label = "Hopper deep-analysis provider";
   emitProgress(input.options, {
@@ -317,7 +328,7 @@ const installHopperAction = async (input: {
         plannedActions: input.plannedActions,
         appliedActions: input.appliedActions,
         clients: input.clients,
-        doctor: await input.host.doctor(),
+        doctor: await input.host.doctor(input.doctorScope),
         code: installed.code,
         remediation: installed.remediation,
       },
@@ -384,12 +395,13 @@ const setupFailure = async (
     readonly string[],
     Readonly<Record<string, ClientConfigurationResult>>,
   ],
+  scope?: DoctorScope,
 ): Promise<SetupResult> => ({
   status: "needs_human",
   plannedActions,
   appliedActions,
   clients,
-  doctor: await host.doctor(),
+  doctor: await host.doctor(scope),
   remediation,
 });
 
@@ -499,7 +511,7 @@ export const systemSetupHost = (
     inspectClientConfiguration: inspectClientConfiguration,
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),
-    doctor: () => runDoctor(undefined, doctorHost),
+    doctor: (scope) => runDoctor(undefined, doctorHost, scope),
   };
 };
 
@@ -524,14 +536,3 @@ const exists = async (path: string): Promise<boolean> => {
     return false;
   }
 };
-const providerRegistrationEnvironment = (
-  inspections: readonly DoctorProviderInspection[],
-): SetupProviderEnvironment =>
-  Object.fromEntries(
-    inspections
-      .filter(({ available }) => available)
-      .flatMap(({ registrationEnvironment }) =>
-        Object.entries(registrationEnvironment),
-      )
-      .sort(([left], [right]) => left.localeCompare(right)),
-  );

@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { scanAuthorizedArtifactInventory } from "../src/application/AuthorizedArtifactInventory.js";
 
@@ -17,7 +18,7 @@ const LIMITS = {
 
 describe("authorized artifact inventory", () => {
   it("uses a valid input root when another configured root is missing", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-artifact-roots-"));
+    const root = await createTestTempDirectory("rea-artifact-roots-");
     try {
       const path = join(root, "artifact.js");
       await writeFile(path, "export const value = 1;\n");

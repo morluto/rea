@@ -12,7 +12,12 @@ const host = (overrides: Partial<DoctorHost> = {}): DoctorHost => ({
   validTarget: (path) => Promise.resolve(path.includes("Hopper")),
   executable: (path) => Promise.resolve(path.includes("Hopper")),
   supportedLinuxHopper: () => Promise.resolve(true),
-  linuxDemoRuntimeReady: () => Promise.resolve(true),
+  linuxDemoRuntimeCheck: () =>
+    Promise.resolve({
+      name: "hopper-demo-runtime",
+      ok: true,
+      classification: "healthy",
+    }),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
   installedSkillIdentity: () =>
@@ -237,6 +242,86 @@ describe("doctor", () => {
       }),
     );
   });
+
+  it("scopes effective readiness to selected clients without hiding drift", async () => {
+    const registrations = [
+      {
+        client: "codex",
+        config_path: "/home/user/.codex/config.toml",
+        command: ["/current/rea", "mcp"],
+        state: "aligned" as const,
+        remediation: null,
+      },
+      {
+        client: "cursor",
+        config_path: "/home/user/.cursor/mcp.json",
+        command: ["/old/rea", "mcp"],
+        state: "stale" as const,
+        remediation: "Run rea setup to refresh this registration.",
+      },
+    ];
+    const scoped = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve(registrations) }),
+      { clients: ["codex"] },
+    );
+
+    expect(scoped).toMatchObject({
+      healthy: true,
+      environment_healthy: false,
+      scope: { mode: "explicit", clients: ["codex"] },
+    });
+    expect(scoped.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:codex", ok: true }),
+    );
+    expect(scoped.informational_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:cursor", ok: false }),
+    );
+
+    const staleSelected = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve(registrations) }),
+      { clients: ["cursor"] },
+    );
+    expect(staleSelected.healthy).toBe(false);
+  });
+
+  it("requires explicitly selected providers instead of any available provider", async () => {
+    const ghidra = {
+      id: "ghidra",
+      configured: true,
+      available: true,
+      providerVersion: "12.1.2",
+      registrationEnvironment: { GHIDRA_INSTALL_DIR: "/tools/ghidra" },
+      checks: [
+        {
+          name: "configuration",
+          ok: true,
+          code: null,
+          detail: "/tools/ghidra",
+          remediation: null,
+          classification: "config_drift" as const,
+        },
+      ],
+    };
+    const noHopper = host({
+      executable: () => Promise.resolve(false),
+      providerInspections: () => Promise.resolve([ghidra]),
+    });
+
+    const hopper = await runDoctor(undefined, noHopper, {
+      providers: ["hopper"],
+    });
+    expect(hopper).toMatchObject({
+      healthy: false,
+      environment_healthy: true,
+    });
+
+    const selectedGhidra = await runDoctor(undefined, noHopper, {
+      providers: ["ghidra"],
+    });
+    expect(selectedGhidra.healthy).toBe(true);
+  });
   it("accepts an officially supported Linux distribution", async () => {
     const path = "/home/user/.local/share/rea/hopper/bin/Hopper";
     const result = await runDoctor(
@@ -271,7 +356,13 @@ describe("doctor", () => {
             packageFamily: "deb",
             supported: true,
           }),
-        linuxDemoRuntimeReady: () => Promise.resolve(false),
+        linuxDemoRuntimeCheck: () =>
+          Promise.resolve({
+            name: "hopper-demo-runtime",
+            ok: false,
+            classification: "missing_dependency",
+            remediation: "Install Xvfb, xauth, Python 3, libX11, and libXtst.",
+          }),
       }),
     );
     expect(result.healthy).toBe(false);

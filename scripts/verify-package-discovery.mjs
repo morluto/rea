@@ -32,11 +32,17 @@ const REQUIRED_LLM_TOPICS = [
 export async function verifyPackageDiscovery({ cli, environment }) {
   const help = await run(cli, ["--help"], environment);
   const llms = await run(cli, ["--llms"], environment);
-  const doctorExecution = await runWithStatus(
+  const summaryExecution = await runWithStatus(
     cli,
     ["doctor", "--json"],
     environment,
   );
+  const doctorExecution = await runWithStatus(
+    cli,
+    ["doctor", "--detail", "full", "--json"],
+    environment,
+  );
+  const summary = json(summaryExecution.stdout);
   const doctor = json(doctorExecution.stdout);
   const supportedSetupHost =
     doctor.checks?.find(({ name }) => name === "host")?.ok === true;
@@ -52,10 +58,14 @@ export async function verifyPackageDiscovery({ cli, environment }) {
     missingLlms.length !== 0 ||
     doctor.healthy !== expectedDoctorHealth ||
     doctorExecution.status !== (expectedDoctorHealth ? 0 : 1) ||
+    summary.healthy !== doctor.healthy ||
+    summaryExecution.status !== doctorExecution.status ||
+    summary.checks !== undefined ||
+    !Array.isArray(summary.failed_scope_checks) ||
     doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
   )
     throw new Error(
-      `packaged CLI discovery or doctor failed: ${JSON.stringify({ helpSetup: help.includes("setup"), llmsDecompile: llms.includes("decompile"), doctor })}`,
+      `packaged CLI discovery or doctor failed: ${JSON.stringify({ helpSetup: help.includes("setup"), llmsDecompile: llms.includes("decompile"), summary, doctor })}`,
     );
   return { supportedSetupHost };
 }

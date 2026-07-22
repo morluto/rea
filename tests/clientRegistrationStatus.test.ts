@@ -1,15 +1,16 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { readClientRegistrationStatuses } from "../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../src/identity.js";
 
 describe("client registration status", () => {
   it("distinguishes aligned, stale, missing, and invalid registrations", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-registrations-"));
+    const home = await createTestTempDirectory("rea-registrations-");
     await Promise.all([
       mkdir(join(home, ".codex")),
       mkdir(join(home, ".cursor")),
@@ -47,7 +48,7 @@ describe("client registration status", () => {
   });
 
   it("reports an unversioned npx registration as stale", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-registrations-"));
+    const home = await createTestTempDirectory("rea-registrations-");
     await mkdir(join(home, ".codex"));
     await writeFile(
       join(home, ".codex/config.toml"),

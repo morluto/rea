@@ -1,14 +1,8 @@
-import {
-  lstat,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { resolveClientConfigTransactionPath } from "../src/application/ClientConfigPath.js";
 import { configureJsonClient } from "../src/application/Setup.js";
@@ -44,7 +38,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("preserves existing keys, creates a backup, and reads back the MCP entry", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const original =
       '{"theme":"dark","mcpServers":{"other":{"command":"other"}}}\n';
@@ -65,7 +59,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("updates a symlink target without replacing the JSON config symlink", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const targetPath = join(directory, "managed.json");
     const configPath = join(directory, "mcp.json");
     const original = '{"theme":"dark"}\n';
@@ -92,7 +86,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("fails before mutation when a JSON config symlink is dangling", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     await symlink(join(directory, "missing.json"), configPath);
 
@@ -107,7 +101,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("performs no write or second backup when configuration already matches", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
@@ -122,7 +116,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("migrates an unversioned npx registration and preserves sibling configuration", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const original =
       '{"theme":"dark","mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents","mcp"]},"other":{"command":"other"}}}\n';
@@ -146,7 +140,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("persists a custom Hopper launcher and remains idempotent", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
     const client = { name: "cursor", configPath };
@@ -174,7 +168,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("adds exact BYO Ghidra and Java paths without installing dependencies", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const client = { name: "cursor", configPath };
     const environment = {
@@ -201,7 +195,7 @@ describe("JSON client configuration transaction", () => {
   });
 
   it("refuses malformed existing JSON without overwriting it", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+    directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     await writeFile(configPath, "not-json");
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
@@ -214,7 +208,7 @@ describe("JSON client configuration transaction", () => {
   it.each(["null", "[]", '"value"'])(
     "refuses a non-object JSON root without overwriting %s",
     async (original) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      directory = await createTestTempDirectory("rea-setup-");
       const configPath = join(directory, "mcp.json");
       await writeFile(configPath, original);
       expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
@@ -230,7 +224,7 @@ describe("JSON client configuration transaction", () => {
   it.each(["null", "[]", '"value"'])(
     "preserves a non-object mcpServers value %s",
     async (servers) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-setup-"));
+      directory = await createTestTempDirectory("rea-setup-");
       const configPath = join(directory, "mcp.json");
       const original = `{"mcpServers":${servers}}`;
       await writeFile(configPath, original);

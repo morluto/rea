@@ -1,7 +1,6 @@
 import {
   copyFile,
   lstat,
-  mkdtemp,
   mkdir,
   readFile,
   realpath,
@@ -9,9 +8,10 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   configureTomlClient,
@@ -32,7 +32,7 @@ afterEach(async () => {
 
 describe("agent lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-detect-"));
+    const home = await createTestTempDirectory("rea-detect-");
     roots.push(home);
     for (const marker of [
       ".claude",
@@ -60,13 +60,13 @@ describe("agent lifecycle", () => {
     expect(detected.find(({ name }) => name === "devin")?.format).toBe(
       "unsupported",
     );
-    const emptyHome = await mkdtemp(join(tmpdir(), "rea-empty-"));
+    const emptyHome = await createTestTempDirectory("rea-empty-");
     roots.push(emptyHome);
     expect(await detectClients(emptyHome)).toEqual([]);
   });
 
   it("preserves unrelated Codex TOML and supports an installed command", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-toml-"));
+    const home = await createTestTempDirectory("rea-toml-");
     roots.push(home);
     const configPath = join(home, ".codex/config.toml");
     await mkdir(dirname(configPath), { recursive: true });
@@ -106,7 +106,7 @@ describe("agent lifecycle", () => {
   });
 
   it("updates a symlink target without replacing the TOML config symlink", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-toml-symlink-"));
+    const home = await createTestTempDirectory("rea-toml-symlink-");
     roots.push(home);
     const configPath = join(home, ".codex/config.toml");
     const targetPath = join(home, "managed-config.toml");
@@ -128,7 +128,7 @@ describe("agent lifecycle", () => {
   });
 
   it("fails before mutation when a TOML config symlink is dangling", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-toml-symlink-"));
+    const home = await createTestTempDirectory("rea-toml-symlink-");
     roots.push(home);
     const configPath = join(home, ".codex/config.toml");
     await mkdir(dirname(configPath), { recursive: true });
@@ -144,7 +144,7 @@ describe("agent lifecycle", () => {
   });
 
   it("uninstalls only owned entries and refuses purge symlinks", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-"));
+    const home = await createTestTempDirectory("rea-uninstall-");
     roots.push(home);
     const cursor = join(home, ".cursor/mcp.json");
     const skill = join(
@@ -187,7 +187,7 @@ describe("agent lifecycle", () => {
   });
 
   it("removes an owned entry through a symlink without replacing it", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-symlink-"));
+    const home = await createTestTempDirectory("rea-uninstall-symlink-");
     roots.push(home);
     const configPath = join(home, ".cursor/mcp.json");
     const targetPath = join(home, "managed-mcp.json");
@@ -212,7 +212,7 @@ describe("agent lifecycle", () => {
   });
 
   it("fails before mutation when an uninstall config symlink is dangling", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-symlink-"));
+    const home = await createTestTempDirectory("rea-uninstall-symlink-");
     roots.push(home);
     const configPath = join(home, ".cursor/mcp.json");
     await mkdir(dirname(configPath), { recursive: true });
@@ -233,7 +233,7 @@ describe("agent lifecycle", () => {
   });
 
   it("fails closed on malformed client configuration", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-bad-"));
+    const home = await createTestTempDirectory("rea-uninstall-bad-");
     roots.push(home);
     const config = join(home, ".cursor/mcp.json");
     await mkdir(dirname(config), { recursive: true });
@@ -303,7 +303,7 @@ describe("agent lifecycle", () => {
   );
 
   it("reports a managed-path removal failure", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-uninstall-remove-"));
+    const home = await createTestTempDirectory("rea-uninstall-remove-");
     roots.push(home);
     const skillRoot = join(home, ".agents/skills/reverse-engineer-anything");
     await mkdir(skillRoot, { recursive: true });
@@ -337,7 +337,7 @@ const uninstallFixture = async (): Promise<{
   readonly home: string;
   readonly config: string;
 }> => {
-  const home = await mkdtemp(join(tmpdir(), "rea-uninstall-failure-"));
+  const home = await createTestTempDirectory("rea-uninstall-failure-");
   roots.push(home);
   const config = join(home, ".cursor/mcp.json");
   await mkdir(dirname(config), { recursive: true });

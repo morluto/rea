@@ -2,15 +2,6 @@ name: Real Hopper Linux E2E
 
 on:
   workflow_dispatch:
-    inputs:
-      first_target:
-        description: Absolute path to first Linux test binary
-        required: true
-        type: string
-      second_target:
-        description: Absolute path to a distinct Linux test binary
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -56,8 +47,7 @@ jobs:
           npm install --global --ignore-scripts --prefix "${prefix}" "./${tarball}"
           echo "REA_VERIFY_SERVER_COMMAND=${prefix}/bin/rea" >> "${GITHUB_ENV}"
           echo 'REA_VERIFY_SERVER_ARGS_JSON=["mcp"]' >> "${GITHUB_ENV}"
-      - name: Verify two binaries through an alternate launcher symlink
+      - name: Verify source-owned ELF fixtures through an alternate launcher symlink
         env:
-          HOPPER_TARGET_PATH: ${{ inputs.first_target }}
-          HOPPER_SECOND_TARGET_PATH: ${{ inputs.second_target }}
+          REA_HOPPER_CONFORMANCE_MANIFEST_PATH: ${{ github.workspace }}/build/conformance/manifest.json
         run: npm run verify:hopper:linux

@@ -6,6 +6,7 @@ interface CodexMcpCall {
   readonly arguments: unknown;
   readonly evidenceIds: readonly string[];
   readonly error: boolean;
+  readonly errorCode: string | null;
 }
 
 /** Release-evaluation metrics derived from an actual Codex JSONL transcript. */
@@ -15,6 +16,8 @@ export interface CodexAgentMetrics {
   readonly firstTool: string | null;
   readonly reaCalls: readonly CodexMcpCall[];
   readonly repeatedCallCount: number;
+  readonly inputValidationFailureCount: number;
+  readonly requiredToolSubsequenceMet: boolean;
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
@@ -68,6 +71,15 @@ const toolResultFailed = (item: Record<string, unknown>): boolean => {
   return result?.isError === true || structured?.error !== undefined;
 };
 
+const toolResultErrorCode = (item: Record<string, unknown>): string | null => {
+  const result = record(item.result ?? item.output);
+  const structured = record(
+    result?.structured_content ?? result?.structuredContent,
+  );
+  const error = record(structured?.error ?? result?.error ?? item.error);
+  return textValue(error?.code) ?? null;
+};
+
 const callFromItem = (value: unknown): CodexMcpCall | undefined => {
   const item = record(value);
   if (item?.type !== "mcp_tool_call") return undefined;
@@ -80,6 +92,7 @@ const callFromItem = (value: unknown): CodexMcpCall | undefined => {
     arguments: item.arguments ?? item.input ?? {},
     evidenceIds: evidenceIdsFrom(item.result ?? item.output),
     error: toolResultFailed(item),
+    errorCode: toolResultErrorCode(item),
   };
 };
 
@@ -148,6 +161,8 @@ export const evaluateCodexEvents = (
   options: {
     readonly requireEvidence?: boolean;
     readonly requiredAnswerTermGroups?: readonly (readonly string[])[];
+    readonly requiredToolSubsequence?: readonly string[];
+    readonly forbidInputValidationFailures?: boolean;
   } = {},
 ): CodexAgentMetrics => {
   const state: EvaluationState = {
@@ -171,6 +186,13 @@ export const evaluateCodexEvents = (
   const repeatedCallCount = [...signatures.values()].reduce(
     (total, count) => total + Math.max(0, count - 1),
     0,
+  );
+  const inputValidationFailureCount = reaCalls.filter(
+    ({ errorCode }) => errorCode === "invalid_request",
+  ).length;
+  const requiredToolSubsequenceMet = containsOrderedSubsequence(
+    reaCalls.filter(({ error }) => !error).map(({ tool }) => tool),
+    options.requiredToolSubsequence ?? [],
   );
   const finalMessage = state.finalMessages.at(-1) ?? "";
   const evidenceIds = [
@@ -196,6 +218,8 @@ export const evaluateCodexEvents = (
     firstTool: reaCalls[0]?.tool ?? null,
     reaCalls,
     repeatedCallCount,
+    inputValidationFailureCount,
+    requiredToolSubsequenceMet,
     inputTokens: state.inputTokens,
     cachedInputTokens: state.cachedInputTokens,
     outputTokens: state.outputTokens,
@@ -207,7 +231,22 @@ export const evaluateCodexEvents = (
       finalMessage.trim().length >= 80 &&
       authorityHonesty &&
       contentCriteriaMet &&
+      requiredToolSubsequenceMet &&
+      (options.forbidInputValidationFailures !== true ||
+        inputValidationFailureCount === 0) &&
       (options.requireEvidence !== true || finalCitesEvidence),
     authorityHonesty,
   };
+};
+
+const containsOrderedSubsequence = (
+  values: readonly string[],
+  required: readonly string[],
+): boolean => {
+  let index = 0;
+  for (const value of values) {
+    if (value === required[index]) index += 1;
+    if (index === required.length) return true;
+  }
+  return required.length === 0;
 };

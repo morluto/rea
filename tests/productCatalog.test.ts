@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../src/application/SupportedClients.js";
 import {
@@ -113,6 +114,7 @@ describe("canonical product catalog", () => {
     ).toEqual([
       "commit_reconstruction_coverage",
       "compare_application_versions",
+      "compare_javascript_export_shapes",
       "execute_node_characterization",
       "prepare_node_characterization",
       "query_reconstruction_coverage",
@@ -220,7 +222,7 @@ describe("canonical product catalog", () => {
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-generated-check-"));
+    const directory = await createTestTempDirectory("rea-generated-check-");
     temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "stale\n", "utf8");
@@ -245,7 +247,7 @@ describe("canonical product catalog", () => {
   });
 
   it("accepts and preserves native generated-file line endings", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-generated-eol-"));
+    const directory = await createTestTempDirectory("rea-generated-eol-");
     temporaryRoots.push(directory);
     const path = join(directory, "catalog.json");
     await writeFile(path, "current\r\n", "utf8");

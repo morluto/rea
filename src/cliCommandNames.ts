@@ -50,6 +50,7 @@ export const CLI_COMMANDS = Object.freeze({
   reconcileJavaScriptRuntime: "reconcile-javascript-runtime",
   traceApplicationFeature: "trace-application-feature",
   compareApplicationVersions: "compare-application-versions",
+  compareJavaScriptExportShapes: "compare-javascript-export-shapes",
   runControlledReplay: "run-controlled-replay",
   prepareNodeCharacterization: "prepare-node-characterization",
   executeNodeCharacterization: "execute-node-characterization",

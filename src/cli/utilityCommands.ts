@@ -1,8 +1,9 @@
 import { z } from "incur";
 
 import {
+  runCapabilityStatus,
   runProviderAnalysis,
-  runSessionStatus,
+  runProviderStatus,
 } from "../application/DirectAnalysis.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
@@ -38,7 +39,18 @@ const registerCapabilityCommands = (cli: CliInstance, logger: Logger): void => {
         command === "capabilities"
           ? "List provider capabilities and side effects"
           : "List configured analysis providers",
-      run: () => logCliCommand(logger, command, () => runSessionStatus(logger)),
+      options: z.object({
+        detail: z
+          .enum(["summary", "full"])
+          .default("summary")
+          .describe("Summary or complete provider descriptors"),
+      }),
+      run: ({ options }) =>
+        logCliCommand(logger, command, () =>
+          command === CLI_COMMANDS.providers
+            ? runProviderStatus(logger, options.detail)
+            : runCapabilityStatus(logger, options.detail),
+        ),
     });
   }
 };

@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   canonicalizePermissionCeilings,
@@ -19,8 +19,8 @@ import {
 
 describe("permission authority", () => {
   it("distinguishes an elicitable grant from administrator reconfiguration", async () => {
-    const sandbox = await mkdtemp(
-      join(tmpdir(), "rea-permission-remediation-"),
+    const sandbox = await createTestTempDirectory(
+      "rea-permission-remediation-",
     );
     const allowedRoot = join(sandbox, "allowed");
     const outsideRoot = join(sandbox, "outside");
@@ -59,7 +59,7 @@ describe("permission authority", () => {
   });
 
   it("accepts canonical aliases but rejects a symlink escape", async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-"));
+    const sandbox = await createTestTempDirectory("rea-permission-");
     const root = join(sandbox, "root");
     const outside = join(sandbox, "outside");
     await Promise.all([mkdir(root), mkdir(outside)]);
@@ -125,7 +125,7 @@ describe("permission authority", () => {
   });
 
   it("canonicalizes a new write through its existing parent", async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-write-"));
+    const sandbox = await createTestTempDirectory("rea-permission-write-");
     const result = await canonicalizePermissionRequest(
       {
         capability: "evidence_write",
@@ -145,7 +145,7 @@ describe("permission authority", () => {
   });
 
   it("commits a configured policy only after every grant validates", async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-reload-"));
+    const sandbox = await createTestTempDirectory("rea-permission-reload-");
     const oldRoot = join(sandbox, "old");
     const newRoot = join(sandbox, "new");
     const outsideRoot = join(sandbox, "outside");
@@ -189,7 +189,7 @@ describe("permission authority", () => {
   });
 
   it("isolates transient grants and consumption between live connections", async () => {
-    const sandbox = await mkdtemp(join(tmpdir(), "rea-permission-session-"));
+    const sandbox = await createTestTempDirectory("rea-permission-session-");
     const scope = evidenceScope(sandbox);
     const configured = await createPermissionAuthority([scope]);
     expect(configured.ok).toBe(true);
@@ -254,8 +254,8 @@ describe("permission authority", () => {
   });
 
   it("applies configured policy reloads to existing connections", async () => {
-    const sandbox = await mkdtemp(
-      join(tmpdir(), "rea-permission-live-reload-"),
+    const sandbox = await createTestTempDirectory(
+      "rea-permission-live-reload-",
     );
     const allowedRoot = join(sandbox, "allowed");
     const replacementRoot = join(sandbox, "replacement");

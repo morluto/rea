@@ -20,6 +20,12 @@ import {
   requireSafeDiagnostics,
   verifyRealHopperFixture,
 } from "./lib/real-hopper-semantic.mjs";
+import {
+  mcpTextValue,
+  requireEvidenceProvider,
+  requireMcpResult,
+  requireWorkflowEvidenceProvider,
+} from "./lib/mcp-verifier-results.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
 const execFileAsync = promisify(execFile);
 const timeout = 180_000;
@@ -36,54 +42,8 @@ const parseServerArgs = (encoded) => {
 const sessionsBefore = new Set(
   (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
 );
-const textValue = (result) => {
-  const text = result.content?.find((item) => item.type === "text")?.text;
-  if (typeof text !== "string") throw new Error("Tool result omitted text");
-  return text;
-};
-
-const jsonValue = (result) => JSON.parse(textValue(result));
-
-const requireSuccessfulTool = (result, operation) => {
-  if (result.isError === true) {
-    throw new Error(`${operation} failed: ${textValue(result)}`);
-  }
-  const value = jsonValue(result);
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    !("normalized_result" in value)
-  ) {
-    throw new Error(`${operation} omitted its evidence result`);
-  }
-  return value.normalized_result;
-};
-
-const requireHopperEvidence = (result, operation) => {
-  const envelope = jsonValue(result);
-  if (
-    envelope?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
-    envelope?.analysis_profile?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
-    typeof envelope.analysis_profile.provider.version !== "string"
-  )
-    throw new Error(`${operation} omitted its concrete Hopper provenance`);
-};
-
-const requireHopperWorkflowEvidence = (result, operation) => {
-  const envelope = jsonValue(result);
-  const profile = envelope?.analysis_profile;
-  const upstream = profile?.parameters?.upstream_analysis_profile;
-  if (
-    envelope?.provider?.id !== REA_WORKFLOW_PROVIDER.id ||
-    profile?.provider?.id !== REA_WORKFLOW_PROVIDER.id ||
-    upstream?.provider?.id !== HOPPER_PROVIDER_IDENTITY.id ||
-    typeof upstream.provider.version !== "string"
-  ) {
-    throw new Error(
-      `${operation} omitted its composed workflow or upstream Hopper provenance`,
-    );
-  }
-};
+const textValue = mcpTextValue;
+const requireSuccessfulTool = requireMcpResult;
 
 const requireHopperSelection = (status, expected) => {
   const candidates = status.analysis_provider_candidates;
@@ -286,9 +246,9 @@ const verifyCurrentTarget = async (client, options) => {
   };
 };
 
-const fixtureManifestPath = process.env.REA_HOPPER_CONFORMANCE_MANIFEST_PATH;
-if (!fixtureManifestPath)
-  throw new Error("REA_HOPPER_CONFORMANCE_MANIFEST_PATH is required");
+const fixtureManifestPath =
+  process.env.REA_HOPPER_CONFORMANCE_MANIFEST_PATH ??
+  "build/conformance/manifest.json";
 const fixtureTargets = await loadRealHopperFixtureTargets(fixtureManifestPath);
 const targetA = fixtureTargets.primary.path;
 const targetB = fixtureTargets.secondary.path;
@@ -341,7 +301,7 @@ try {
       options,
     );
   const initialSession = await fullSessionStatus();
-  const initialStatus = jsonValue(initialSession);
+  const initialStatus = requireMcpResult(initialSession, "binary_session");
   if (initialStatus.open !== false)
     throw new Error("The verifier did not start without a target");
   requireHopperSelection(initialStatus, {
@@ -353,7 +313,10 @@ try {
     options,
   );
   if (opened.isError === true) throw new Error(textValue(opened));
-  const firstStatus = jsonValue(await fullSessionStatus());
+  const firstStatus = requireMcpResult(
+    await fullSessionStatus(),
+    "binary_session",
+  );
   const providerBinding = requireHopperSelection(firstStatus, {
     targetSupport: "supported",
     selected: true,
@@ -366,8 +329,18 @@ try {
     { name: "binary_overview", arguments: {} },
     options,
   );
-  requireHopperEvidence(documents, "list_documents");
-  requireHopperWorkflowEvidence(overview, "binary_overview");
+  await Promise.all([
+    requireEvidenceProvider(
+      client,
+      documents,
+      "list_documents",
+      HOPPER_PROVIDER_IDENTITY.id,
+    ),
+    requireWorkflowEvidenceProvider(client, overview, "binary_overview", {
+      workflowProviderId: REA_WORKFLOW_PROVIDER.id,
+      upstreamProviderId: HOPPER_PROVIDER_IDENTITY.id,
+    }),
+  ]);
   const segments = await client.callTool(
     { name: "list_segments", arguments: {} },
     options,
@@ -405,7 +378,10 @@ try {
     options,
   );
   if (switched.isError === true) throw new Error(textValue(switched));
-  const secondSession = jsonValue(await fullSessionStatus());
+  const secondSession = requireMcpResult(
+    await fullSessionStatus(),
+    "binary_session",
+  );
   if (secondSession.path !== targetB)
     throw new Error("The real session did not switch to target B");
   requireHopperSelection(secondSession, {
@@ -447,7 +423,10 @@ try {
     options,
   );
   if (closed.isError === true) throw new Error(textValue(closed));
-  const closedSession = jsonValue(await fullSessionStatus());
+  const closedSession = requireMcpResult(
+    await fullSessionStatus(),
+    "binary_session",
+  );
   if (closedSession.open !== false)
     throw new Error("The real session remained open after close_binary");
 

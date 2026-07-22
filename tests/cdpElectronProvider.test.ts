@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { CdpElectronProvider } from "../src/browser/CdpElectronProvider.js";
 import {
@@ -251,7 +252,7 @@ describe("CdpElectronProvider", () => {
   });
 
   const electronFixture = async (): Promise<string> => {
-    const root = await mkdtemp(join(tmpdir(), "rea-electron-provider-"));
+    const root = await createTestTempDirectory("rea-electron-provider-");
     temporary.push(root);
     await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
     await writeFile(join(root, "app.js"), "export const app = true;");

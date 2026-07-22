@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
 import { compareApplicationVersionsEvidence } from "../src/application/JavaScriptApplicationWorkflowService.js";
@@ -131,7 +131,7 @@ describe("JavaScript application workflows", () => {
   });
 
   it("matches rechunked modules by exact source and minified modules by structural fingerprint", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-application-versions-"));
+    const root = await createTestTempDirectory("rea-application-versions-");
     temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([
@@ -189,7 +189,7 @@ describe("JavaScript application workflows", () => {
   });
 
   it("pairs source-map originals without promoting the match to exact", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-source-map-versions-"));
+    const root = await createTestTempDirectory("rea-source-map-versions-");
     temporary.push(root);
     const fixtures = await writeVersionedJavaScriptApplicationFixtures(root);
     const [left, right] = await Promise.all([

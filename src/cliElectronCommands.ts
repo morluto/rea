@@ -194,7 +194,7 @@ const registerJavaScriptApplicationCommand = (
         runCliJavaScriptApplicationAnalysis({
           input_path: args.path,
           approved: options.approved,
-          format: options.format,
+          format: options.artifactFormat,
           source_map_read_approved: options.sourceMapReadApproved,
           limits: {
             max_entries: options.maxEntries,

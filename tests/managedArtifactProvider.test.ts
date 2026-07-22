@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { runProviderAnalysis } from "../src/application/DirectAnalysis.js";
 import type { AnalysisExecution } from "../src/application/AnalysisProvider.js";
@@ -569,7 +570,7 @@ describe("managed PE/CLI static provider", () => {
   });
 
   it("executes as a read-only auxiliary provider with digest, cancellation, and format boundaries", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-provider-"));
+    const directory = await createTestTempDirectory("rea-managed-provider-");
     const bytes = buildManagedPeFixture();
     const path = join(directory, "fixture.exe");
     await writeFile(path, bytes);
@@ -646,7 +647,7 @@ describe("managed PE/CLI static provider", () => {
   });
 
   it("has the same evidence shape through direct CLI analysis plumbing", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-cli-"));
+    const directory = await createTestTempDirectory("rea-managed-cli-");
     const path = join(directory, "fixture.exe");
     await writeFile(path, buildManagedPeFixture());
 

@@ -1,10 +1,11 @@
 import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { PermissionAuthority } from "../src/application/PermissionAuthority.js";
@@ -31,7 +32,7 @@ const now = Date.parse("2026-07-18T00:00:00.000Z");
 
 describe("process-capture MCP elicitation", () => {
   it("completes signed consent through the modern MCP client and server", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-elicit-mcp-"));
+    const root = await createTestTempDirectory("rea-elicit-mcp-");
     const authority = new PermissionAuthority(
       createPermissionPolicy([
         {
@@ -386,7 +387,7 @@ describe("process-capture MCP elicitation", () => {
   it.each(["result", "throw"] as const)(
     "revokes an elicited grant when final authorization ends with %s",
     async (failure) => {
-      const root = await mkdtemp(join(tmpdir(), "rea-elicit-rollback-"));
+      const root = await createTestTempDirectory("rea-elicit-rollback-");
       const scoped = { ...request, roots: [root] };
       const policy = createPermissionPolicy([
         {

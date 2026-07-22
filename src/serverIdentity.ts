@@ -98,3 +98,25 @@ export const createServerIdentity = (input: {
     },
   } as const;
 };
+
+/** Compact identity projection for CLI summaries; MCP retains full identity. */
+export const createServerIdentitySummary = (
+  input: Parameters<typeof createServerIdentity>[0],
+) => {
+  const identity = createServerIdentity(input);
+  return {
+    package: {
+      name: identity.package.name,
+      version: identity.package.version,
+    },
+    server: {
+      name: identity.server.name,
+      version: identity.server.version,
+    },
+    catalog: {
+      counts: identity.catalog.counts,
+      digests: identity.catalog.digests,
+    },
+    alignment: identity.alignment,
+  } as const;
+};

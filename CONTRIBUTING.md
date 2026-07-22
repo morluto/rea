@@ -32,6 +32,14 @@ complete project. The normal test and CI coverage runs enforce the thresholds
 in `vitest.config.ts`; `npm run lint:dead` rejects unused files, exports, and
 dependencies.
 
+Tests that need a temporary directory must use
+`createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`. The
+helper binds exact-path, awaited cleanup to the current Vitest case, including
+failure and timeout completion. Run `npm run verify:test-temp-hygiene` to build
+REA, execute the complete suite under a fresh `TMPDIR`, and reject any remaining
+REA-owned temporary path. Never add a glob cleanup for shared `/tmp/rea-*`
+content.
+
 Set `REA_LOG_LEVEL` to `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
 `silent` to control structured JSON diagnostics. MCP mode defaults to `info` and
 always writes logs to stderr so the stdio protocol remains intact. One-shot CLI
@@ -39,21 +47,23 @@ logging is opt-in and writes to stdout when a level is configured, preserving
 machine-readable command output by default. Request arguments, bridge
 authentication tokens, and environment data are redacted.
 
-Changes that claim real Hopper behavior must also be tested against two distinct binaries:
+Changes that claim real Hopper behavior must also be tested against the
+source-owned, digest-bound conformance manifest. The verifier builds the
+platform-native fixtures before starting Hopper:
 
 ```bash
-HOPPER_TARGET_PATH=/path/to/target-a \
-HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
 npm run verify:hopper
 ```
 
 On a self-hosted Linux runner with the setup-installed Xvfb dependencies, use:
 
 ```bash
-HOPPER_TARGET_PATH=/path/to/target-a \
-HOPPER_SECOND_TARGET_PATH=/path/to/distinct-target-b \
 npm run verify:hopper:linux
 ```
+
+Set `REA_HOPPER_CONFORMANCE_MANIFEST_PATH` only to verify another source-built
+manifest. The normal commands use `build/conformance/manifest.json`; generated
+fixtures and manifests remain ignored and must not be committed.
 
 The macOS and Linux real-Hopper workflows remain separate so a successful mock or package test cannot be reported as platform-runtime proof. Pull requests changing setup, launch, bridge, or Hopper behavior must state which real workflows ran and why either workflow was unavailable.
 

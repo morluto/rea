@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   planManagedRuntimeCorrelationEvidence,
@@ -54,7 +55,7 @@ describe("managed runtime correlation planning", () => {
   });
 
   it("requires an explicit managed_runtime grant under an enabled ceiling", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-runtime-"));
+    const directory = await createTestTempDirectory("rea-managed-runtime-");
     const artifactPath = join(directory, "fixture.dll");
     const executablePath = join(directory, "dotnet");
     await writeFile(artifactPath, buildManagedPeFixture());
@@ -75,7 +76,7 @@ describe("managed runtime correlation planning", () => {
   });
 
   it("records an exact-build non-executing admission plan when authorized", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-runtime-"));
+    const directory = await createTestTempDirectory("rea-managed-runtime-");
     const artifactPath = join(directory, "fixture.dll");
     const executablePath = join(directory, "dotnet");
     await writeFile(artifactPath, buildManagedPeFixture());
@@ -121,7 +122,7 @@ describe("managed runtime correlation planning", () => {
   });
 
   it("rejects a method lock that no longer matches static Evidence", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-runtime-"));
+    const directory = await createTestTempDirectory("rea-managed-runtime-");
     const artifactPath = join(directory, "fixture.dll");
     const executablePath = join(directory, "dotnet");
     await writeFile(artifactPath, buildManagedPeFixture());
@@ -148,7 +149,7 @@ describe("managed runtime correlation planning", () => {
   });
 
   it("rejects a runtime lock for instruction-limited CIL", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-runtime-"));
+    const directory = await createTestTempDirectory("rea-managed-runtime-");
     const artifactPath = join(directory, "fixture.dll");
     const executablePath = join(directory, "dotnet");
     const bytes = buildManagedPeFixture();

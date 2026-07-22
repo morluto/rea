@@ -1,14 +1,8 @@
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   parseBinaryTarget,
@@ -102,7 +96,7 @@ describe("executable header parsing", () => {
 
 describe("binary target I/O", () => {
   it("classifies ZIP profiles and text artifacts without Hopper", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-artifact-target-"));
+    const directory = await createTestTempDirectory("rea-artifact-target-");
     const zip = join(directory, "fixture.apk");
     const script = join(directory, "bundle.js");
     await writeFile(zip, Buffer.from([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0]));
@@ -120,7 +114,7 @@ describe("binary target I/O", () => {
   });
 
   it("does not trust a ZIP-family extension without ZIP magic", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-fake-archive-"));
+    const directory = await createTestTempDirectory("rea-fake-archive-");
     const path = join(directory, "fake.zip");
     await writeFile(path, "not a zip");
     const result = await parseBinaryTarget(path);
@@ -131,7 +125,7 @@ describe("binary target I/O", () => {
   });
 
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "sample.hop"), "database");
     await writeFile(join(directory, "text"), "hello");
     const database = await parseBinaryTarget("sample.hop", directory);
@@ -143,12 +137,12 @@ describe("binary target I/O", () => {
   });
 
   it("rejects non-regular targets before reading them", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     expect((await parseBinaryTarget(directory)).ok).toBe(false);
   });
 
   it("resolves a macOS app bundle to its declared program file", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     const app = join(directory, "Example App.app");
     const contents = join(app, "Contents");
     const programs = join(contents, "MacOS");
@@ -180,7 +174,7 @@ describe("binary target I/O", () => {
       "<plist><dict><key>CFBundleExecutable</key><string>Missing</string></dict></plist>",
     ],
   ])("rejects an app bundle with %s", async (_case, plist) => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     const app = join(directory, "Broken.app");
     const contents = join(app, "Contents");
     await mkdir(join(contents, "MacOS"), { recursive: true });
@@ -192,7 +186,7 @@ describe("binary target I/O", () => {
   it.skipIf(process.platform === "win32")(
     "rejects an app program symlink that leaves the bundle",
     async () => {
-      directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+      directory = await createTestTempDirectory("rea-target-");
       const app = join(directory, "Escaping.app");
       const contents = join(app, "Contents");
       const programs = join(contents, "MacOS");
@@ -209,7 +203,7 @@ describe("binary target I/O", () => {
   );
 
   it("honors an explicit database kind without relying on the file suffix", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "saved-analysis"), "database");
     const result = await parseBinaryTarget(
       "saved-analysis",
@@ -224,7 +218,7 @@ describe("binary target I/O", () => {
   });
 
   it("reads a PE header beyond the initial probe", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-target-"));
+    directory = await createTestTempDirectory("rea-target-");
     const path = join(directory, "delayed.exe");
     await writeFile(path, pe(0x8664, 8192));
     const result = await parseBinaryTarget(path, directory, "x64");

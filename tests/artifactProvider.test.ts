@@ -1,18 +1,18 @@
 import {
   access,
-  mkdtemp,
   mkdir,
   readFile,
   readdir,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { ArtifactProvider } from "../src/artifacts/ArtifactProvider.js";
 import { MachOSliceArtifactReader } from "../src/artifacts/MachOSliceArtifactReader.js";
@@ -37,7 +37,7 @@ import {
 
 describe("artifact graph provider", () => {
   it("inventories app trees deterministically without following symlinks", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-artifacts-"));
+    const root = await createTestTempDirectory("rea-artifacts-");
     const app = join(root, "Fixture.app");
     await mkdir(join(app, "Contents", "Resources"), { recursive: true });
     await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
@@ -102,7 +102,7 @@ describe("artifact graph provider", () => {
   });
 
   it("streams ZIP and official ASAR inventories within shared limits", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-containers-"));
+    const root = await createTestTempDirectory("rea-containers-");
     const zipPath = join(root, "fixture.apk");
     const zipWriter = new ZipWriter(new Uint8ArrayWriter());
     await zipWriter.add("assets/index.js", new TextReader("export default 1;"));
@@ -187,7 +187,7 @@ describe("artifact graph provider", () => {
     registry.add("A.js", "file");
     expect(() => registry.add("a.js", "file")).toThrow(/collision/u);
 
-    const root = await mkdtemp(join(tmpdir(), "rea-bomb-"));
+    const root = await createTestTempDirectory("rea-bomb-");
     const zipPath = join(root, "bomb.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("zeros", new TextReader("0".repeat(100_000)));
@@ -204,7 +204,7 @@ describe("artifact graph provider", () => {
   });
 
   it("extracts only selected occurrences through an exclusively owned output tree", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-extract-"));
+    const root = await createTestTempDirectory("rea-extract-");
     const source = join(root, "source");
     await mkdir(join(source, "assets"), { recursive: true });
     await writeFile(join(source, "assets", "selected.js"), "selected();\n");
@@ -302,7 +302,7 @@ describe("artifact graph provider", () => {
   });
 
   it("paginates wide graphs without changing manifest identity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-wide-"));
+    const root = await createTestTempDirectory("rea-wide-");
     await Promise.all(
       Array.from({ length: 520 }, async (_, index) =>
         writeFile(
@@ -340,7 +340,7 @@ describe("artifact graph provider", () => {
   }, 15_000);
 
   it("uses bounded native lipo metadata for universal slice ranges", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-slices-"));
+    const root = await createTestTempDirectory("rea-slices-");
     const binary = join(root, "fat");
     await writeFile(binary, Buffer.from("0123456789abcdef"));
     const runner: NativeCommandRunner = {

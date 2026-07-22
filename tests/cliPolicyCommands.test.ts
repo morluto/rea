@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   readProjectPermissionStore,
@@ -71,7 +72,7 @@ describe("policy revocation approval", () => {
   );
 
   it("keeps the packaged project store unchanged until --yes is supplied", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-cli-"));
+    const project = await createTestTempDirectory("rea-policy-cli-");
     roots.push(project);
     const store = join(project, ".rea", "permissions.json");
     const grant = {

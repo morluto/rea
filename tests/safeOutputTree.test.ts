@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, readdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { SafeOutputTree } from "../src/artifacts/SafeOutputTree.js";
 
@@ -19,7 +20,7 @@ const LIMITS = {
 
 describe("safe artifact output tree", () => {
   it("removes only its owned tree after digest failure and proves absence", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-safe-output-"));
+    const parent = await createTestTempDirectory("rea-safe-output-");
     const output = join(parent, "published");
     const tree = await SafeOutputTree.create(output, LIMITS);
     await expect(
@@ -39,7 +40,7 @@ describe("safe artifact output tree", () => {
   });
 
   it("publishes files while building and preserves them after sealing", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-safe-output-"));
+    const parent = await createTestTempDirectory("rea-safe-output-");
     const output = join(parent, "published");
     const tree = await SafeOutputTree.create(output, LIMITS);
     const bytes = Buffer.from("visible before seal");
@@ -58,7 +59,7 @@ describe("safe artifact output tree", () => {
   });
 
   it("returns detached cleanup reports", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-safe-output-"));
+    const parent = await createTestTempDirectory("rea-safe-output-");
     const tree = await SafeOutputTree.create(join(parent, "published"), LIMITS);
     const cleanup = await tree.rollback();
     (cleanup.residualPaths as string[]).push("/forged/path");

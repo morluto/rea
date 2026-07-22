@@ -200,6 +200,95 @@ describe("JavaScript semantic analysis", () => {
     expect(bindingsNamed(ir, "method")).toEqual([]);
   });
 
+  it("recovers only direct return sites with literal and unknown object fields", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      export default function parseMarkdown(value) {
+        if (value.startsWith("# "))
+          return { type: "heading", depth: 1, text: value.slice(2) };
+        function nested() { return { type: "nested" }; }
+        const arrow = () => ({ type: "arrow" });
+        void nested; void arrow;
+        return { type: "paragraph", text: value.replaceAll("x", "y") };
+      }
+    `);
+
+    const parse = onlyCallable(ir, "parseMarkdown");
+    expect(parse.returnCoverage).toEqual({
+      status: "complete",
+      retainedCount: 2,
+      omittedCount: 0,
+      limitsReached: [],
+    });
+    expect(parse.returnSites).toHaveLength(2);
+    expect(parse.returnSites[0]?.value).toMatchObject({
+      status: "object",
+      unknownProperties: false,
+      omittedProperties: 0,
+      properties: expect.arrayContaining([
+        { name: "depth", value: { status: "literal", value: 1 } },
+        { name: "type", value: { status: "literal", value: "heading" } },
+        {
+          name: "text",
+          value: {
+            status: "unknown",
+            reason: "Unsupported CallExpression value.",
+          },
+        },
+      ]),
+    });
+    expect(onlyCallable(ir, "nested").returnSites).toHaveLength(1);
+    expect(onlyCallable(ir, "arrow").returnSites).toHaveLength(1);
+    expect(ir.moduleLinks).toContainEqual(
+      expect.objectContaining({
+        exportedName: "default",
+        callableId: parse.callableId,
+      }),
+    );
+  });
+
+  it("retains partial property coverage, empty returns, and return limits", () => {
+    const partial = analyzeJavaScriptSemantics(`
+      const spread = () => ({ type: "spread", ...dynamic });
+      const computed = () => ({ type: "computed", [key]: 1 });
+      function noReturn() { throw new Error("stop"); }
+      function emptyReturn() { return; }
+    `);
+    expect(onlyCallable(partial, "spread").returnSites[0]?.value).toMatchObject(
+      {
+        status: "object",
+        unknownProperties: true,
+        omittedProperties: null,
+      },
+    );
+    expect(
+      onlyCallable(partial, "computed").returnSites[0]?.value,
+    ).toMatchObject({
+      status: "object",
+      unknownProperties: true,
+      omittedProperties: 1,
+    });
+    expect(onlyCallable(partial, "noReturn").returnSites).toEqual([]);
+    expect(onlyCallable(partial, "emptyReturn").returnSites[0]?.value).toEqual({
+      status: "unknown",
+      reason: "Return has no value.",
+    });
+
+    const limited = analyzeJavaScriptSemantics(
+      "function many(value) { if (value) return 1; return 2; }",
+      { maxReturnSites: 1 },
+    );
+    expect(onlyCallable(limited, "many")).toMatchObject({
+      returnSites: [{ value: { status: "literal", value: 1 } }],
+      returnCoverage: {
+        status: "truncated",
+        retainedCount: 1,
+        omittedCount: 1,
+        limitsReached: ["maxReturnSites"],
+      },
+    });
+    expect(limited.coverage.limitsReached).toContain("maxReturnSites");
+  });
+
   it("fails closed on assignment ambiguity, alias cycles, and lattice limits", () => {
     const ambiguous = analyzeJavaScriptSemantics(`
       let current = "first";
@@ -347,6 +436,36 @@ describe("JavaScript semantic analysis", () => {
     expect(ir.limitations.join(" ")).toMatch(/parser recovered/iu);
   });
 
+  it("keeps parser-recovered return shapes partial", () => {
+    const ir = analyzeJavaScriptSemantics(
+      `
+        export default function recovered(value) {
+          const duplicate = 1;
+          const duplicate = 2;
+          return { type: "item", text: render(value) };
+        }
+      `,
+    );
+    const recovered = onlyCallable(ir, "recovered");
+
+    expect(ir.coverage.status).toBe("partial");
+    expect(recovered.returnCoverage).toMatchObject({
+      status: "partial",
+      retainedCount: 1,
+      omittedCount: 0,
+    });
+    expect(recovered.returnSites[0]?.value).toMatchObject({
+      status: "object",
+      properties: expect.arrayContaining([
+        { name: "type", value: { status: "literal", value: "item" } },
+        expect.objectContaining({
+          name: "text",
+          value: expect.objectContaining({ status: "unknown" }),
+        }),
+      ]),
+    });
+  });
+
   it.prop([fc.string({ maxLength: 512 })])(
     "fails closed for arbitrary bounded source text",
     (source) => {
@@ -392,6 +511,15 @@ const onlyBinding = (
   const binding = bindings[0];
   if (binding === undefined) throw new Error(`Missing binding ${name}`);
   return binding;
+};
+
+const onlyCallable = (ir: JavaScriptSemanticIr, name: string) => {
+  const callables = ir.callables.filter(
+    ({ name: candidate }) => candidate === name,
+  );
+  if (callables.length !== 1 || callables[0] === undefined)
+    throw new Error(`Expected one callable named ${name}`);
+  return callables[0];
 };
 
 const topLevelBinding = (

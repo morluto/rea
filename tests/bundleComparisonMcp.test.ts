@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { createEvidence } from "../src/domain/evidence.js";
@@ -36,7 +37,7 @@ const sourceEvidence = (label: string) =>
 
 describe("bundle comparison MCP integration", () => {
   it("reads two approved bounded bundle files and records a compact result", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-bundle-mcp-"));
+    const root = await createTestTempDirectory("rea-bundle-mcp-");
     roots.push(root);
     const leftPath = join(root, "left.json");
     const rightPath = join(root, "right.json");
@@ -79,8 +80,8 @@ describe("bundle comparison MCP integration", () => {
   });
 
   it("rejects a bundle path outside the approved root", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-bundle-root-"));
-    const outside = await mkdtemp(join(tmpdir(), "rea-bundle-outside-"));
+    const root = await createTestTempDirectory("rea-bundle-root-");
+    const outside = await createTestTempDirectory("rea-bundle-outside-");
     roots.push(root, outside);
     const leftPath = join(root, "left.json");
     const rightPath = join(outside, "right.json");
@@ -108,7 +109,7 @@ describe("bundle comparison MCP integration", () => {
   });
 
   it("rejects an oversized approved bundle", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-bundle-size-"));
+    const root = await createTestTempDirectory("rea-bundle-size-");
     roots.push(root);
     const leftPath = join(root, "left.json");
     const rightPath = join(root, "right.json");

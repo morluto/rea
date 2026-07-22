@@ -6,9 +6,14 @@ import type {
 } from "./permissionPolicy.js";
 import {
   hopperStartupFailure,
+  type HopperStartupDiagnostic,
   type HopperStartupFailureCode,
 } from "./hopperStartupFailure.js";
-export { hopperStartupFailure, type HopperStartupFailureCode };
+export {
+  hopperStartupFailure,
+  type HopperStartupDiagnostic,
+  type HopperStartupFailureCode,
+};
 export { projectAnalysisError } from "./analysisErrorProjection.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
@@ -457,7 +462,10 @@ export class HopperProcessError extends HopperError {
   readonly failureCode: HopperStartupFailureCode | undefined;
   override readonly userMessage: string | undefined;
 
-  constructor(readonly exitCode: number | null) {
+  constructor(
+    readonly exitCode: number | null,
+    readonly diagnostic?: HopperStartupDiagnostic,
+  ) {
     super(`Hopper bridge stopped unexpectedly with code ${String(exitCode)}`);
     const failure = hopperStartupFailure(exitCode);
     this.failureCode = failure?.code;

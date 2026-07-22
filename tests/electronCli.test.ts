@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   startFakeCdpBrowser,
@@ -35,7 +36,7 @@ describe("Electron CLI parity", () => {
   it(
     "returns the same root-confined Electron Evidence contracts",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-electron-cli-"));
+      const root = await createTestTempDirectory("rea-electron-cli-");
       temporary.push(root);
       await writeFile(
         join(root, "index.html"),
@@ -88,7 +89,7 @@ describe("Electron CLI parity", () => {
   it(
     "returns the static JavaScript application Evidence contract",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-electron-static-cli-"));
+      const root = await createTestTempDirectory("rea-electron-static-cli-");
       temporary.push(root);
       await writeElectronBoundaryFixture(root);
       const environment = {
@@ -118,9 +119,41 @@ describe("Electron CLI parity", () => {
   );
 
   it(
+    "keeps artifact format separate from structured output format",
+    async () => {
+      const root = await createTestTempDirectory("rea-electron-format-cli-");
+      temporary.push(root);
+      await writeElectronBoundaryFixture(root);
+      const environment = {
+        ...process.env,
+        REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([root]),
+      };
+
+      const analyzed = await runCli(
+        [
+          "--format",
+          "json",
+          "analyze-javascript-application",
+          root,
+          "--approved",
+          "--artifact-format",
+          "directory",
+        ],
+        environment,
+      );
+
+      expect(analyzed).toMatchObject({
+        operation: "analyze_javascript_application",
+        normalized_result: { input_path: root, format: "directory" },
+      });
+    },
+    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  it(
     "routes generic approved analysis of a directory to static JavaScript",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-electron-routed-cli-"));
+      const root = await createTestTempDirectory("rea-electron-routed-cli-");
       temporary.push(root);
       await writeElectronBoundaryFixture(root);
       const environment = {
@@ -149,8 +182,8 @@ describe("Electron CLI parity", () => {
   it(
     "requires explicit approval before generic JavaScript analysis",
     async () => {
-      const root = await mkdtemp(
-        join(tmpdir(), "rea-electron-unapproved-cli-"),
+      const root = await createTestTempDirectory(
+        "rea-electron-unapproved-cli-",
       );
       temporary.push(root);
       await writeElectronBoundaryFixture(root);
@@ -182,7 +215,7 @@ describe("Electron CLI parity", () => {
   it(
     "reads a file and returns the derived static/runtime reconciliation contract",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-runtime-cli-"));
+      const root = await createTestTempDirectory("rea-runtime-cli-");
       const inputPath = join(root, "reconciliation.json");
       temporary.push(root);
       await writeFile(

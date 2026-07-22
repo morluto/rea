@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { loadConfiguredPermissionAuthority } from "../src/application/PermissionConfiguration.js";
@@ -37,7 +38,7 @@ describe("Electron MCP tools", () => {
   });
 
   it("exposes root-confined Electron discovery and inspection as Evidence v2", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-electron-mcp-"));
+    const root = await createTestTempDirectory("rea-electron-mcp-");
     temporary.push(root);
     await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
     await writeFile(
@@ -187,7 +188,7 @@ describe("Electron MCP tools", () => {
   });
 
   it("exposes the target-free static JavaScript application workflow", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-electron-static-mcp-"));
+    const root = await createTestTempDirectory("rea-electron-static-mcp-");
     temporary.push(root);
     await writeElectronBoundaryFixture(root);
     const config = parseConfig({
@@ -276,7 +277,7 @@ describe("Electron MCP tools", () => {
   });
 
   it("reports an unconfigured investigation ceiling before static analysis", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-electron-denied-mcp-"));
+    const root = await createTestTempDirectory("rea-electron-denied-mcp-");
     temporary.push(root);
     await writeElectronBoundaryFixture(root);
     const config = parseConfig({});

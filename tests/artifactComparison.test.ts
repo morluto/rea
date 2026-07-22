@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { inventoryArtifact } from "../src/application/ArtifactInventory.js";
 import {
@@ -62,7 +63,7 @@ const observe = async (
 
 describe("artifact comparison", () => {
   it("classifies deterministic path changes and cites both inventories", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "rea-artifact-compare-"));
+    const parent = await createTestTempDirectory("rea-artifact-compare-");
     const leftPath = join(parent, "left.app");
     const rightPath = join(parent, "right.app");
     await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
@@ -104,7 +105,7 @@ describe("artifact comparison", () => {
   });
 
   it("reports incomplete inventory as truncated, never unchanged", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-artifact-truncated-"));
+    const root = await createTestTempDirectory("rea-artifact-truncated-");
     await writeFile(join(root, "one.txt"), "one");
     const incomplete = await observe(root, { nodeLimit: 1 });
     const comparison = compareArtifacts(incomplete, incomplete, 0, 100);
@@ -118,7 +119,7 @@ describe("artifact comparison", () => {
   });
 
   it("assembles bounded page sets for graphs larger than one page", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-artifact-pages-"));
+    const root = await createTestTempDirectory("rea-artifact-pages-");
     await Promise.all(
       Array.from({ length: 501 }, async (_, index) =>
         writeFile(
@@ -143,7 +144,7 @@ describe("artifact comparison", () => {
   }, 15_000);
 
   it("rejects non-inventory and tampered Evidence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-artifact-invalid-"));
+    const root = await createTestTempDirectory("rea-artifact-invalid-");
     const evidence = await observe(root);
     expect(() =>
       compareArtifacts(

@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { BinarySession } from "../src/application/BinarySession.js";
@@ -23,7 +24,7 @@ describe("guided prompt completion", () => {
   it("reads live documents and paged procedures without ambiguous names", async () => {
     const requests: Array<Readonly<Record<string, unknown>>> = [];
     const session = new BinarySession(() => client(requests));
-    directory = await mkdtemp(join(tmpdir(), "rea-prompt-completion-"));
+    directory = await createTestTempDirectory("rea-prompt-completion-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     expect((await session.open(target)).ok).toBe(true);

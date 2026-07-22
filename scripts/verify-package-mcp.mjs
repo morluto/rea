@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { json } from "./lib/verify-package-core.mjs";
+
+const execute = promisify(execFile);
 
 const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
   if (
@@ -177,6 +181,19 @@ export async function verifyPackageMcp({
   evidenceRoot,
   investigationReplay,
 }) {
+  const diagnosed = json(
+    (
+      await execute(cli, ["mcp", "doctor", "--json"], {
+        env: environment,
+        timeout: 30_000,
+      })
+    ).stdout,
+  );
+  if (
+    diagnosed.healthy !== true ||
+    diagnosed.inventory?.tools?.observed !== TOOL_CONTRACTS.length
+  )
+    throw new Error("packaged production MCP doctor failed");
   const transport = new StdioClientTransport({
     command: cli,
     args: ["mcp"],

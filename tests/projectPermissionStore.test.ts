@@ -1,8 +1,9 @@
-import { chmod, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   readProjectPermissionStore,
@@ -12,7 +13,7 @@ import {
 
 describe("project permission store", () => {
   it("persists explicit project grants atomically with owner-only permissions", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-project-"));
+    const project = await createTestTempDirectory("rea-policy-project-");
     const path = join(project, ".rea", "permissions.json");
     const grant = {
       grant_id: "project:evidence-read",
@@ -38,7 +39,7 @@ describe("project permission store", () => {
   });
 
   it("rejects stores readable by another user class", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-mode-"));
+    const project = await createTestTempDirectory("rea-policy-mode-");
     const path = join(project, "permissions.json");
     const written = await writeProjectPermissionStore(path, project, []);
     expect(written.ok).toBe(true);
@@ -51,8 +52,8 @@ describe("project permission store", () => {
   });
 
   it("binds grants to canonical project identity", async () => {
-    const first = await mkdtemp(join(tmpdir(), "rea-policy-first-"));
-    const second = await mkdtemp(join(tmpdir(), "rea-policy-second-"));
+    const first = await createTestTempDirectory("rea-policy-first-");
+    const second = await createTestTempDirectory("rea-policy-second-");
     const path = join(first, "permissions.json");
     expect((await writeProjectPermissionStore(path, first, [])).ok).toBe(true);
 
@@ -63,7 +64,7 @@ describe("project permission store", () => {
   });
 
   it("rejects a symlink even when its target is owner-only", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-symlink-"));
+    const project = await createTestTempDirectory("rea-policy-symlink-");
     const target = join(project, "target.json");
     const path = join(project, "permissions.json");
     expect((await writeProjectPermissionStore(target, project, [])).ok).toBe(
@@ -78,7 +79,7 @@ describe("project permission store", () => {
   });
 
   it("round-trips managed runtime project grants", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-managed-"));
+    const project = await createTestTempDirectory("rea-policy-managed-");
     const path = join(project, "permissions.json");
     const grant = {
       grant_id: "project:managed-runtime",
@@ -103,7 +104,7 @@ describe("project permission store", () => {
   });
 
   it("classifies malformed JSON as an invalid store", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-invalid-"));
+    const project = await createTestTempDirectory("rea-policy-invalid-");
     const path = join(project, "permissions.json");
     await writeFile(path, "{", { mode: 0o600 });
 
@@ -114,7 +115,7 @@ describe("project permission store", () => {
   });
 
   it("serializes concurrent grant revocations without losing an update", async () => {
-    const project = await mkdtemp(join(tmpdir(), "rea-policy-revoke-"));
+    const project = await createTestTempDirectory("rea-policy-revoke-");
     const path = join(project, ".rea", "permissions.json");
     const grant = (grantId: string) => ({
       grant_id: grantId,

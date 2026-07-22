@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -10,6 +9,8 @@ import {
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
 import { projectAndroidApplicationEvidence } from "../src/application/AndroidApplicationService.js";
 import { runProviderAnalysis } from "../src/application/DirectAnalysis.js";
 import { androidApplicationProjectionResultSchema } from "../src/domain/androidApplication.js";
@@ -17,7 +18,7 @@ import { parseEvidence } from "../src/domain/evidence.js";
 
 describe("Android application projection", () => {
   it("projects deterministic APK components and explicit bridge hypotheses", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-android-"));
+    const root = await createTestTempDirectory("rea-android-");
     const path = join(root, "Fixture.apk");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(
@@ -93,7 +94,7 @@ describe("Android application projection", () => {
   });
 
   it("rejects non-APK inventory Evidence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-android-invalid-"));
+    const root = await createTestTempDirectory("rea-android-invalid-");
     const path = join(root, "fixture.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("one.js", new TextReader("one"));
