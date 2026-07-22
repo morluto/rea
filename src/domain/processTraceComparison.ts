@@ -1,0 +1,53 @@
+import type { ProcessCapture } from "./processCapture.js";
+import {
+  evaluateProcessTraceSide,
+  processTraceComparisonResultSchema,
+  type ProcessTraceComparisonResult,
+} from "./processTraceEvaluation.js";
+import {
+  processTraceSpecificationSchema,
+  type ProcessTraceSpecification,
+} from "./processTraceSpecification.js";
+
+export {
+  processTraceComparisonResultSchema,
+  type ProcessTraceComparisonResult,
+  type ProcessTraceLocation,
+} from "./processTraceEvaluation.js";
+export {
+  processTraceSourceSchema,
+  processTraceSpecificationSchema,
+  type ProcessTraceSource,
+  type ProcessTraceSpecification,
+} from "./processTraceSpecification.js";
+
+/** Compare two captures against an explicit finite trace language. */
+export const compareProcessTraces = (
+  left: ProcessCapture,
+  right: ProcessCapture,
+  specificationInput: ProcessTraceSpecification,
+): ProcessTraceComparisonResult => {
+  const specification =
+    processTraceSpecificationSchema.parse(specificationInput);
+  const leftEvaluation = evaluateProcessTraceSide(left, specification);
+  const rightEvaluation = evaluateProcessTraceSide(right, specification);
+  const diagnostic =
+    leftEvaluation.diagnostic === null
+      ? rightEvaluation.diagnostic === null
+        ? null
+        : { side: "right" as const, ...rightEvaluation.diagnostic }
+      : { side: "left" as const, ...leftEvaluation.diagnostic };
+  return processTraceComparisonResultSchema.parse({
+    verdict:
+      leftEvaluation.result.status === "unknown" ||
+      rightEvaluation.result.status === "unknown"
+        ? "unknown"
+        : leftEvaluation.result.status === "pass" &&
+            rightEvaluation.result.status === "pass"
+          ? "equivalent"
+          : "different",
+    left: leftEvaluation.result,
+    right: rightEvaluation.result,
+    diagnostic,
+  });
+};
