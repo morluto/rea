@@ -41,14 +41,41 @@
     "lint": {},
     "format:check": {},
     "knip": {},
-    "jscpd": {},
-    "scan:todos": {},
+    "jscpd": {
+      "inputs": [
+        ".gitignore",
+        ".jscpd.json",
+        "package.json",
+        "package-lock.json",
+        "src/**",
+        "tests/**"
+      ]
+    },
+    "scan:todos": {
+      "inputs": [
+        "bridge/**/*.{java,py}",
+        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "src/**/*.ts",
+        "tests/**/*.ts"
+      ]
+    },
+    "docs:api": {
+      "inputs": [
+        "package.json",
+        "package-lock.json",
+        "src/**/*.ts",
+        "tsconfig.json",
+        "typedoc.json"
+      ],
+      "outputs": ["build/api-docs/**"],
+      "outputLogs": "new-only"
+    },
     "test:run": {
       "dependsOn": ["build"],
       "cache": false
     },
     "docs:check:built": {
-      "dependsOn": ["build"],
+      "dependsOn": ["build", "docs:api"],
       "cache": false
     }
   }

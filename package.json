@@ -58,7 +58,8 @@
     "build": "tsc -p tsconfig.build.json",
     "precheck": "npm run deps:check",
     "check": "turbo run typecheck lint format:check knip metadata:check",
-    "check:fast": "npm run check",
+    "precheck:fast": "npm run deps:check",
+    "check:fast": "turbo run typecheck lint",
     "precheck:test": "npm run deps:check",
     "check:test": "turbo run typecheck lint format:check knip metadata:check test:run",
     "precheck:pr": "npm run deps:check",
@@ -116,17 +117,20 @@
     "evidence:generate": "npm run build:cached && node scripts/generate-completion-ledger.mjs",
     "evidence:check": "npm run build:cached && node scripts/generate-completion-ledger.mjs --check",
     "docs:api": "typedoc",
-    "docs:generate": "npm run metadata:generate && npm run build:cached && node scripts/generate-skill-metadata.mjs && node scripts/generate-product-catalog.mjs && node scripts/generate-completion-ledger.mjs && npm run docs:api && node scripts/generate-error-schema.mjs",
+    "docs:api:cached": "turbo run docs:api",
+    "docs:generate": "npm run metadata:generate && npm run build:cached && node scripts/generate-skill-metadata.mjs && node scripts/generate-product-catalog.mjs && node scripts/generate-completion-ledger.mjs && npm run docs:api:cached && node scripts/generate-error-schema.mjs",
     "docs:check": "turbo run docs:check:built",
-    "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && npm run docs:api && node scripts/generate-error-schema.mjs --check",
+    "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "npm run build:cached && node scripts/generate-error-schema.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "prepublishOnly": "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
     "prepare": "node scripts/prepare.mjs"
   },
   "lint-staged": {
-    "*.{ts,mjs,json,md,yml,yaml}": "prettier --write",
-    "*.ts": "oxlint --fix"
+    "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [
+      "prettier --write",
+      "oxlint --fix"
+    ],
+    "*.{json,md,yml,yaml}": "prettier --write"
   },
   "dependencies": {
     "@babel/parser": "8.0.4",

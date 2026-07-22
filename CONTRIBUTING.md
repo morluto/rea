@@ -28,11 +28,12 @@ npm run verify:package
 npm pack --dry-run
 ```
 
-`npm run check` runs cached typecheck, lint, formatting, dead-code, and package
-metadata freshness tasks; `check:fast` remains as an alias. Use `npm run
-check:test` when the complete test suite is relevant. Pre-commit formats and
-lints only staged files, and pre-push runs `check`. `check:pr` additionally
-renders API documentation and checks all committed generated metadata. Real
+`npm run check:fast` runs cached typecheck and lint for rapid local feedback.
+`npm run check` adds formatting, dead-code, and package-metadata freshness
+checks; use `npm run check:test` when the complete test suite is relevant.
+Pre-commit formats then lints staged source files, and pre-push runs
+`check:fast`. `check:pr` additionally renders API documentation and checks all
+committed generated metadata. Real
 provider and replay execution remains uncached, but their deterministic build
 prerequisite uses Turbo. CI uploads the rendered TypeDoc site as an `api-docs`
 artifact; the generated HTML is not committed.
