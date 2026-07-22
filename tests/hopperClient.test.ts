@@ -14,6 +14,9 @@ import type {
 } from "../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../src/hopper/HopperClient.js";
 import { LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX } from "../src/hopper/LinuxPrivateDisplayDiagnostic.js";
+import { providerCleanupFailure } from "../src/hopper/HopperDiagnostics.js";
+import { cleanupOwnedProcessGroup } from "../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../src/process/ProviderProcess.js";
 
 const fixturePath = fileURLToPath(
   new URL("./fixtures/fakeHopper.mjs", import.meta.url),
@@ -22,6 +25,7 @@ const fixturePath = fileURLToPath(
 class FixtureLauncher implements BridgeLauncher {
   socketPaths: string[] = [];
   directories: string[] = [];
+  runIds: string[] = [];
   processes: ChildProcess[] = [];
 
   constructor(readonly tokenOverride?: string) {}
@@ -29,6 +33,7 @@ class FixtureLauncher implements BridgeLauncher {
   launch(session: BridgeSession) {
     this.socketPaths.push(session.socketPath);
     this.directories.push(session.directory);
+    this.runIds.push(session.runId);
     const child = spawn(
       process.execPath,
       [
@@ -65,6 +70,39 @@ class SilentLauncher implements BridgeLauncher {
         ownsProcessLifetime: true,
       }),
     );
+  }
+}
+
+class OwnedFixtureLauncher implements BridgeLauncher {
+  ownership:
+    | {
+        readonly runId: string;
+        readonly leaderPid: number;
+        readonly processGroupId: number;
+      }
+    | undefined;
+
+  async launch(session: BridgeSession) {
+    const started = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: [
+        fixturePath,
+        session.socketPath,
+        session.token,
+        session.runId,
+        "cleanup-required",
+      ],
+      runId: session.runId,
+      expectedCommand: null,
+    });
+    this.ownership = started.ownership;
+    return ok({
+      process: started.process,
+      ownsProcessLifetime: true,
+      ownership: started.ownership,
+      shutdownByCleanup: true,
+      cleanup: () => cleanupOwnedProcessGroup(started.ownership),
+    });
   }
 }
 
@@ -164,6 +202,30 @@ afterEach(async () => {
 });
 
 describe("HopperClient", () => {
+  it("sanitizes unexpected owned-cleanup exceptions", () => {
+    expect(
+      providerCleanupFailure(
+        new Error("secret-run-token 22222222-2222-4222-8222-222222222222"),
+      ),
+    ).toEqual({
+      cleaned: false,
+      reason: "owned provider cleanup failed",
+    });
+  });
+
+  it("uses the caller-assigned provider run identity", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      launcher,
+      runId: "11111111-1111-4111-8111-111111111111",
+      startupTimeoutMs: 1_000,
+    });
+    clients.push(client);
+
+    expect((await client.start()).ok).toBe(true);
+    expect(launcher.runIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
+  });
+
   it("keeps the native socket path below macOS sockaddr_un limits", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
@@ -379,6 +441,49 @@ describe("HopperClient", () => {
     await first;
   });
 
+  it("kills only its owned Hopper group and emits sanitized shutdown coordinates", async () => {
+    const unrelated = spawn(
+      process.execPath,
+      ["-e", "process.title = 'Hopper'; setInterval(() => undefined, 1000)"],
+      { detached: true, stdio: "ignore" },
+    );
+    await new Promise<void>((resolve, reject) => {
+      unrelated.once("spawn", resolve);
+      unrelated.once("error", reject);
+    });
+    const launcher = new OwnedFixtureLauncher();
+    const diagnostics: unknown[] = [];
+    const runId = "22222222-2222-4222-8222-222222222222";
+    const client = new HopperClient({
+      launcher,
+      runId,
+      startupTimeoutMs: 1_000,
+      onDiagnostic: (event) => diagnostics.push(event),
+    });
+    clients.push(client);
+
+    try {
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      await client.close();
+
+      const unrelatedPid = unrelated.pid;
+      if (unrelatedPid === undefined)
+        throw new Error("Unrelated Hopper fixture has no PID");
+      expect(() => process.kill(unrelatedPid, 0)).not.toThrow();
+      expect(diagnostics).toContainEqual({
+        type: "owned-shutdown",
+        status: "verified-cleanup",
+        launcher_pid: launcher.ownership?.leaderPid,
+        process_group_id: launcher.ownership?.processGroupId,
+        cleanup_signaled: true,
+        reason: null,
+      });
+      expect(JSON.stringify(diagnostics)).not.toContain(runId);
+    } finally {
+      await stopUnrelatedFixture(unrelated);
+    }
+  });
+
   it("makes sequential double-close leave no runtime or process listeners", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
@@ -444,3 +549,12 @@ describe("HopperClient", () => {
     });
   });
 });
+
+const stopUnrelatedFixture = async (child: ChildProcess): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+  });
+  child.kill("SIGKILL");
+  await exited;
+};

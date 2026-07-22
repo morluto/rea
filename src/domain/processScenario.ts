@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import { replayMachineSchema } from "./replayMachine.js";
 
 const positiveBudget = z.number().int().positive();
 const timedEventBase = { at_ms: z.number().int().nonnegative() };
@@ -241,6 +242,7 @@ export const processScenarioSchema = z
       }),
     replay: z
       .object({
+        machine: replayMachineSchema.nullable().default(null),
         http: z
           .array(
             z.object({
@@ -285,6 +287,7 @@ export const processScenarioSchema = z
           .default([]),
       })
       .default({
+        machine: null,
         http: [],
         websocket_messages: [],
         websocket_connections: [],
@@ -360,6 +363,18 @@ export const processScenarioSchema = z
         code: "custom",
         message: "command shim names must be unique",
         path: ["command_shims"],
+      });
+    if (
+      scenario.replay.machine !== null &&
+      (scenario.replay.http.length > 0 ||
+        scenario.replay.websocket_messages.length > 0 ||
+        scenario.replay.websocket_connections.length > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "a replay machine cannot be combined with static HTTP or WebSocket scripts",
+        path: ["replay"],
       });
   });
 

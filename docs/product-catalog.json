@@ -405,6 +405,14 @@
       "version": 2
     },
     {
+      "id": "evidence_completion_ledger",
+      "version": 1
+    },
+    {
+      "id": "evidence_completion_manifest",
+      "version": 1
+    },
+    {
       "id": "investigation_run",
       "version": 1
     },
@@ -569,10 +577,10 @@
       "mcp_resource_templates": 9
     },
     "digests": {
-      "tools_sha256": "4dca2b113556f78ee65487810f9462d7523c8828a8f642b84b5e74829df84820",
+      "tools_sha256": "937d58e32d18f48970d26219d791838087ae71ac2893950db33bdf2d3bd51bc0",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "94bebbab1a1b3cf47644c38d3de6469de568caa7bd7b842f529ead8ad320a912",
-      "combined_sha256": "64387dcbe22c395e8b683344e5bfd2881e3e88c941b053723165f131c57ed46b"
+      "combined_sha256": "92837c2e99c99a2dd087e4fb01d210cce9b5948051c33db1a404348ef90d8bf2"
     }
   }
 }

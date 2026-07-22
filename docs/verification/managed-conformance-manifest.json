@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "manifest_id": "ecm_87baf2161a85728dd5f8bf3c9d55a4dff6e96b26ccf229363a6cda8ee78c7d24",
+  "verifier": {
+    "id": "rea-managed-conformance",
+    "version": "1"
+  },
+  "environment": {
+    "platform": "linux",
+    "architecture": "x64",
+    "runtime": "node",
+    "runtime_version": "24"
+  },
+  "skill_digests": [
+    {
+      "skill_id": "reverse-engineer-anything",
+      "sha256": "f522ec8b7f29bfdb2c1d8ed9ffe9d550b38474bff6a5cd47f0ddb08882450c11"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "managed.application-graph-projection",
+      "scenario": {
+        "id": "managed-application-graph-projection",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "f17fe6286cb07c6385e786e0aa877564d44123197f02617dfec70c537a33e4ea"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.decompiler-reconstruction-import",
+      "scenario": {
+        "id": "decompiler-reconstruction-import",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "cead4cc99733e4e56a5fd0cec8a0813bbc24e249aa72a10eca4c47ee3b0e129d"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.dotnet-framework-x86-pinvoke",
+      "scenario": {
+        "id": "dotnet-framework-x86-pinvoke",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "f17fe6286cb07c6385e786e0aa877564d44123197f02617dfec70c537a33e4ea"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.ilspy-reconstruction-oracle",
+      "scenario": {
+        "id": "ilspy-reconstruction-oracle",
+        "version": 1
+      },
+      "artifact_sha256s": [],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.malformed-metadata",
+      "scenario": {
+        "id": "malformed-metadata",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "827e10b6391d29edca48c191e2ddd79f3bc1165e46e4ba2f4edf41ab60f45e78"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.managed-native-verification",
+      "scenario": {
+        "id": "managed-native-verification",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "9999999999999999999999999999999999999999999999999999999999999999",
+        "f17fe6286cb07c6385e786e0aa877564d44123197f02617dfec70c537a33e4ea"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.modern-dotnet-anycpu",
+      "scenario": {
+        "id": "modern-dotnet-anycpu",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "92b588ae43d418117fa108c0004b5d0451f6112238d21bad8d75c0eb1da860f0"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.mvid-and-token-drift",
+      "scenario": {
+        "id": "mvid-and-token-drift",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "276395c671a656ab57d583158443c10de552dccfb37dc97cd013f673c0f86b43",
+        "ef009dab7424fdeba996f2524dbe86fd899c96394498cca0463fcfdb228c5572"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.not-managed",
+      "scenario": {
+        "id": "not-managed",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "de74dab8ab034054a811d4248efcda0bed505187a061a806e274ae87bc453754"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.operator-local-manifest",
+      "scenario": {
+        "id": "operator-local-manifest",
+        "version": 1
+      },
+      "artifact_sha256s": [],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.operator-manifest-self-test",
+      "scenario": {
+        "id": "operator-manifest-self-test",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "cdc11ec7fd0f392e43b9b23971cb41ec49fd0a997fc33c24fcc553cd4386ae37"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.runtime-correlation-admission-plan",
+      "scenario": {
+        "id": "runtime-correlation-admission-plan",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "cead4cc99733e4e56a5fd0cec8a0813bbc24e249aa72a10eca4c47ee3b0e129d"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.unicode-obfuscated-identifiers",
+      "scenario": {
+        "id": "unicode-obfuscated-identifiers",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "cead4cc99733e4e56a5fd0cec8a0813bbc24e249aa72a10eca4c47ee3b0e129d"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    },
+    {
+      "claim_id": "managed.x64-ready-to-run-native-body",
+      "scenario": {
+        "id": "x64-ready-to-run-native-body",
+        "version": 1
+      },
+      "artifact_sha256s": [
+        "e47402428322cdcb06f561036d7d108528cbc6e262d92a21f869218a20c80bfb"
+      ],
+      "provider": {
+        "id": "rea-managed-conformance",
+        "version": "1"
+      },
+      "result_schema_version": 1
+    }
+  ]
+}

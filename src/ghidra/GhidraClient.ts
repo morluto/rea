@@ -9,6 +9,7 @@ import { silentLogger, type Logger } from "../logger.js";
 import { PendingOperations } from "../process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import {
   type ProviderProcessDiagnostic,
   type ProviderProcessSnapshot,
@@ -84,6 +85,7 @@ export class GhidraClient {
   #snapshotPath: string | undefined;
   #token: string | undefined;
   #runId: string | undefined;
+  readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #closing = false;
   #processSnapshot: ProviderProcessSnapshot | undefined;
@@ -217,6 +219,11 @@ export class GhidraClient {
     return structuredClone(this.#diagnostics());
   }
 
+  /** Latest token-verified launcher lineage for the active run. */
+  runtimeLineage() {
+    return this.#lineage.snapshot();
+  }
+
   async #start(signal: AbortSignal): Promise<GhidraStartResult> {
     if (signal.aborted)
       return err(this.#failure("cancelled", "Ghidra startup was cancelled"));
@@ -274,7 +281,8 @@ export class GhidraClient {
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");
-    this.#runId = randomUUID();
+    this.#lineage.reset();
+    this.#runId = this.#options.runId ?? randomUUID();
     const launched = await this.#options.launcher
       .launch(
         {
@@ -312,7 +320,7 @@ export class GhidraClient {
       await this.#cleanup();
       return err(failure);
     }
-    return completeGhidraStartupHandshake({
+    const completed = await completeGhidraStartupHandshake({
       deadline,
       request: (method, params, requestOptions) =>
         this.#wire.request(method, params, requestOptions),
@@ -321,6 +329,8 @@ export class GhidraClient {
       failure: this.#failure,
       startupTimeoutMs: this.#options.startupTimeoutMs,
     });
+    if (completed.ok) await this.#lineage.observe(this.#launch);
+    return completed;
   }
 
   async #connect(
@@ -497,6 +507,7 @@ export class GhidraClient {
       transport: this.#options.transport,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
+      ...(this.#runId === undefined ? {} : { runId: this.#runId }),
       ...(this.#runtimeRoot === undefined
         ? {}
         : { runtimeRoot: this.#runtimeRoot.path }),

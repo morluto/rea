@@ -9,6 +9,10 @@ import { PendingOperations } from "../src/process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../src/process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../src/process/ProviderDeadline.js";
 import {
+  cleanupOwnedProcessGroup,
+  observeOwnedProcessLineage,
+} from "../src/process/ProcessOwnership.js";
+import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
   type ProviderProcessDiagnostic,
@@ -16,12 +20,31 @@ import {
 import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
+  waitForDetachedProviderChild,
   waitForProviderProcessReady,
 } from "./fixtures/providerProcess.js";
 
 const processFixturePath = fileURLToPath(
   new URL("./fixtures/providerProcess.mjs", import.meta.url),
 );
+
+const waitForPidExit = async (
+  pid: number,
+  timeoutMs = 2_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (cause: unknown) {
+      if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+        return;
+      throw cause;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Process ${String(pid)} did not exit within the test bound`);
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -253,6 +276,60 @@ describe("provider process lifecycle primitives", () => {
       await stopProviderProcessFixture(spawned.process);
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "cleans a real descendant that starts a distinct process group",
+    async () => {
+      const spawned = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: [processFixturePath, "detached-child"],
+        runId: "provider-process-lineage-run",
+      });
+      let detachedChildPid: number | undefined;
+      try {
+        detachedChildPid = await waitForDetachedProviderChild(spawned.process);
+        const observation = await observeOwnedProcessLineage(spawned.ownership);
+        expect(observation).toEqual({
+          status: "verified",
+          observedAt: expect.stringMatching(
+            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+          ),
+          lineage: {
+            schemaVersion: 1,
+            runId: "provider-process-lineage-run",
+            launcherPid: spawned.process.pid,
+            launcherParentPid: process.pid,
+            processGroupId: spawned.process.pid,
+            descendants: [
+              {
+                pid: detachedChildPid,
+                parentPid: spawned.process.pid,
+                processGroupId: detachedChildPid,
+              },
+            ],
+          },
+        });
+        await expect(
+          cleanupOwnedProcessGroup(spawned.ownership),
+        ).resolves.toEqual({ cleaned: true, signaled: true });
+        await Promise.all([
+          waitForPidExit(spawned.ownership.leaderPid),
+          waitForPidExit(detachedChildPid),
+        ]);
+      } finally {
+        await cleanupOwnedProcessGroup(spawned.ownership);
+        if (detachedChildPid !== undefined)
+          await cleanupOwnedProcessGroup({
+            runId: spawned.ownership.runId,
+            leaderPid: detachedChildPid,
+            processGroupId: detachedChildPid,
+          });
+        await waitForPidExit(spawned.ownership.leaderPid);
+        if (detachedChildPid !== undefined)
+          await waitForPidExit(detachedChildPid);
+      }
+    },
+  );
 
   it("allows interpreter launchers to rely on parent and run-token identity", async () => {
     const spawned = await spawnOwnedProviderProcess({

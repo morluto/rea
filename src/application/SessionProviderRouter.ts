@@ -15,6 +15,7 @@ import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisClient,
+  AnalysisClientContext,
   AnalysisClientFactory,
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
@@ -42,7 +43,10 @@ export interface SessionProviderRoute {
   readonly compatibility: Readonly<Record<string, JsonValue>>;
   readonly binding: AnalysisProviderBinding | null;
   readonly selection: AnalysisProviderSelection | undefined;
-  createClient(target: BinaryTarget): AnalysisClient;
+  createClient(
+    target: BinaryTarget,
+    context: AnalysisClientContext,
+  ): AnalysisClient;
 }
 
 interface LegacyProviderRuntime {
@@ -172,7 +176,8 @@ export class SessionProviderRouter {
       compatibility: {},
       binding: null,
       selection: undefined,
-      createClient: (target) => createLegacyClient(runtime, target, undefined),
+      createClient: (target, context) =>
+        createLegacyClient(runtime, target, undefined, context),
     };
   }
 
@@ -225,11 +230,12 @@ export class SessionProviderRouter {
       compatibility: normalized.value.compatibility,
       binding: null,
       selection: undefined,
-      createClient: (openedTarget) =>
+      createClient: (openedTarget, context) =>
         createLegacyClient(
           runtime,
           openedTarget,
           normalized.value.profile ?? undefined,
+          context,
         ),
     });
   }
@@ -280,8 +286,9 @@ const selectableRoute = (
     compatibility: structuredClone(binding?.compatibility ?? {}),
     binding,
     selection,
-    createClient: (target) =>
-      provider?.createClient(target, binding?.profile) ?? emptyClient(identity),
+    createClient: (target, context) =>
+      provider?.createClient(target, binding?.profile, context) ??
+      emptyClient(identity),
   };
 };
 
@@ -289,10 +296,11 @@ const createLegacyClient = (
   runtime: LegacyProviderRuntime,
   target: BinaryTarget,
   profile: AnalysisProfileCommitment | undefined,
+  context: AnalysisClientContext,
 ): AnalysisClient =>
   typeof runtime.provider === "function"
-    ? runtime.provider(target, profile)
-    : runtime.provider.createClient(target, profile);
+    ? runtime.provider(target, profile, context)
+    : runtime.provider.createClient(target, profile, context);
 
 const emptyClient = (identity: ProviderIdentity): AnalysisClient => ({
   execute: (operation) =>

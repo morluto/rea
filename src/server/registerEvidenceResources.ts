@@ -451,7 +451,11 @@ const evidenceSection = (
   if (section === "process")
     return pick(result, ["process_samples", "exit", "settlement", "cleanup"]);
   if (section === "protocol")
-    return pick(result, ["protocol_events", "shim_events"]);
+    return pick(result, [
+      "protocol_events",
+      "replay_transitions",
+      "shim_events",
+    ]);
   const value = result[section];
   return value === undefined ? undefined : value;
 };

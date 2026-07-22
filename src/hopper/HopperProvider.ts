@@ -4,6 +4,7 @@ import { accessSync, constants } from "node:fs";
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type {
   AnalysisClient,
+  AnalysisClientContext,
   AnalysisProfileResolutionOptions,
   AnalysisProviderCandidate,
   CapabilityDescriptor,
@@ -186,6 +187,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
+    context?: AnalysisClientContext,
   ): AnalysisClient {
     if (target.kind !== "executable" && target.kind !== "database")
       return {
@@ -229,6 +231,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
             }
           : { launchMode: "native" as const }),
       }),
+      ...(context === undefined ? {} : { runId: context.runId }),
       logger: this.logger.child({ layer: "bridge" }),
     });
     return {
@@ -245,6 +248,12 @@ export class HopperProvider implements AnalysisProviderCandidate {
               }),
             }
           : result;
+      },
+      runtimeLineageSnapshots: () => {
+        const observation = client.runtimeLineage();
+        return observation === null
+          ? []
+          : [{ provider: executionProvider, observation }];
       },
       close: () => client.close(),
     };

@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import { createPackage } from "@electron/asar";
 
 import { evaluateCodexEvents } from "../dist/evaluation/CodexAgentEval.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const verifierRun = createVerifierRun();
 const evaluationRoot = await mkdtemp(join(tmpdir(), "rea-agent-eval-"));
 const fixtureRoot = join(evaluationRoot, "targets");
 const skillDestination = join(
@@ -152,6 +154,7 @@ try {
   }
 
   const summary = {
+    verifier_run: await completeVerifierRun(verifierRun),
     schemaVersion: 1,
     codex,
     codexVersion,

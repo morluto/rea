@@ -11,7 +11,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
 const execFileAsync = promisify(execFile);
+const verifierRun = createVerifierRun();
 const command = process.env.REA_VERIFY_SERVER_COMMAND;
 if (process.platform !== "linux" || process.getuid?.() !== 0)
   throw new Error("Linux setup verification requires a root Linux runner");
@@ -113,6 +116,7 @@ if (/\/opt\/hopper\/bin\/Hopper|\bXvfb\b|hopper-demo-x11\.py/u.test(processes))
 
 console.log(
   JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
     status: "verified",
     setup: true,
     cli: true,

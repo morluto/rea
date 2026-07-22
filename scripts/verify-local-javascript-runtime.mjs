@@ -7,6 +7,9 @@ import { analyzeJavaScriptApplication } from "../dist/application/JavaScriptAppl
 import { PermissionAuthority } from "../dist/application/PermissionAuthority.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../dist/application/JavaScriptRuntimeReconciliationService.js";
 import { createPermissionPolicy } from "../dist/domain/permissionPolicy.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const verifierRun = createVerifierRun();
 
 const options = parseArgs({
   options: {
@@ -71,6 +74,7 @@ const result = reconciled.value.normalized_result;
 
 process.stdout.write(
   `${JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
     reconciliation_id: result.reconciliation_id,
     evidence_id: reconciled.value.evidence_id,
     graph_id: result.graph.graph_id,
