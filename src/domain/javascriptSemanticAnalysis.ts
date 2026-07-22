@@ -26,9 +26,15 @@ import type {
 } from "./javascriptSemanticState.js";
 import {
   currentSemanticScope,
+  resolveSemanticBindingFromScope,
   semanticScopeId,
+  semanticVariableScope,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  collectSemanticReturns,
+  resolveSemanticModuleCallables,
+} from "./javascriptSemanticReturns.js";
 import {
   compareCodePoints,
   propertyName,
@@ -77,14 +83,17 @@ export const analyzeJavaScriptSemantics = (
   collectDefinitions(file.program, state);
   const references = collectSemanticReferences(file.program, state);
   const parserPartial = file.errors.length > 0;
+  const bindings = immutableSemanticBindings(state);
+  const callables = collectSemanticReturns(file.program, state, parserPartial);
+  const moduleLinks = resolveSemanticModuleCallables(state, callables);
   return {
     schema: "JavaScriptSemanticIR",
-    schemaVersion: 1,
+    schemaVersion: 2,
     scopes: immutableSemanticScopes(state),
-    bindings: immutableSemanticBindings(state),
-    callables: [...state.callables],
+    bindings,
+    callables,
     references,
-    moduleLinks: [...state.moduleLinks],
+    moduleLinks,
     coverage: {
       status:
         state.limitsReached.size > 0
@@ -105,6 +114,7 @@ export const analyzeJavaScriptSemantics = (
         ? []
         : ["Semantic recovery stopped retaining facts at explicit limits."]),
       "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
+      "Return sites include only direct callable returns; nested callable returns remain separate.",
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
@@ -208,7 +218,7 @@ const bindInnerDeclaration = (
     bindPattern({
       pattern: node.id,
       initializer: node.init ?? null,
-      scope: variableScope(scope, parent, state),
+      scope: semanticVariableScope(scope, parent, state),
       state,
       mutable:
         parent !== null && t.isVariableDeclaration(parent)
@@ -473,46 +483,13 @@ const addAssignment = (
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const binding = resolveFromScope(scope, identifier.name, state);
+  const binding = resolveSemanticBindingFromScope(
+    scope,
+    identifier.name,
+    state,
+  );
   if (binding === undefined) return;
   binding.mutable = true;
   binding.definitions.push({ kind: "assignment", location: range(identifier) });
   binding.initializers.push({ node: initializer, projection: [] });
-};
-
-const resolveFromScope = (
-  scope: JavaScriptSemanticScopeState,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticBindingState | undefined => {
-  let candidate: JavaScriptSemanticScopeState | undefined = scope;
-  while (candidate !== undefined) {
-    const binding = candidate.bindings.get(name);
-    if (binding !== undefined) return binding;
-    if (!candidate.bindingsComplete) return undefined;
-    candidate =
-      candidate.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(candidate.parentScopeId);
-  }
-  return undefined;
-};
-
-const variableScope = (
-  scope: JavaScriptSemanticScopeState,
-  parent: t.Node | null,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticScopeState => {
-  if (!(parent !== null && t.isVariableDeclaration(parent, { kind: "var" })))
-    return scope;
-  let candidate = scope;
-  while (candidate.kind === "block" || candidate.kind === "catch") {
-    const outer =
-      candidate.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(candidate.parentScopeId);
-    if (outer === undefined) break;
-    candidate = outer;
-  }
-  return candidate;
 };

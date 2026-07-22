@@ -1,10 +1,11 @@
 import { Readable } from "node:stream";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { readJavaScriptArtifactFiles } from "../src/application/JavaScriptArtifactFiles.js";
 import { reconstructJavaScriptArtifact } from "../src/application/JavaScriptArtifactReconstruction.js";
@@ -151,7 +152,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("produces deterministic ASAR graphs with unpacked native linkage and complete paths/digests", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-asar-"));
+    const root = await createTestTempDirectory("rea-javascript-asar-");
     const source = join(root, "source");
     await mkdir(source);
     await writeJavaScriptArtifactFixture(source);
@@ -210,7 +211,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("keeps ASAR analysis usable when unpacked native companion bytes are absent", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-asar-missing-"));
+    const root = await createTestTempDirectory("rea-javascript-asar-missing-");
     const source = join(root, "source");
     await mkdir(source);
     await writeJavaScriptArtifactFixture(source);
@@ -253,7 +254,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("recurses into filesystem-backed ASAR containers without losing container-relative paths", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-nested-asar-"));
+    const root = await createTestTempDirectory("rea-javascript-nested-asar-");
     const source = await fixtureDirectory();
     const outer = join(root, "outer");
     const resources = join(outer, "resources");
@@ -362,7 +363,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("uses an unknown omission count when AST traversal reaches its bound", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-ast-limit-"));
+    const root = await createTestTempDirectory("rea-javascript-ast-limit-");
     await writeFile(
       join(root, "large.js"),
       [
@@ -403,7 +404,7 @@ describe("JavaScript artifact reconstruction", () => {
 
   it("does not follow symlinks or read oversized JavaScript text", async () => {
     const root = await fixtureDirectory();
-    const outside = await mkdtemp(join(tmpdir(), "rea-javascript-outside-"));
+    const outside = await createTestTempDirectory("rea-javascript-outside-");
     const outsideFile = join(outside, "secret.js");
     await writeFile(
       outsideFile,
@@ -465,7 +466,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("applies one source-map source budget across every local map", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-source-maps-"));
+    const root = await createTestTempDirectory("rea-javascript-source-maps-");
     await Promise.all([
       writeFile(
         join(root, "a.js.map"),
@@ -506,7 +507,7 @@ describe("JavaScript artifact reconstruction", () => {
   });
 
   it("bounds repeated content observations while retaining every containment path", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-javascript-observations-"));
+    const root = await createTestTempDirectory("rea-javascript-observations-");
     await Promise.all(
       Array.from({ length: 70 }, (_, index) =>
         writeFile(
@@ -617,7 +618,7 @@ class TraversalReader implements ArtifactReader {
 }
 
 const fixtureDirectory = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-javascript-artifact-"));
+  const root = await createTestTempDirectory("rea-javascript-artifact-");
   await writeJavaScriptArtifactFixture(root);
   return root;
 };

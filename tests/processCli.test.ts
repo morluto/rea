@@ -1,11 +1,12 @@
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   captureProcessScenarioFile,
@@ -26,7 +27,7 @@ afterEach(async () => {
 });
 
 const fixture = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-process-cli-"));
+  const root = await createTestTempDirectory("rea-process-cli-");
   roots.push(root);
   return root;
 };

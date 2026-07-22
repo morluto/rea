@@ -43,7 +43,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     return;
   }
   state.callables.push({
-    callableId: `callable:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
+    callableId: semanticCallableIdForNode(node) ?? "callable:unknown:-1:-1",
     kind,
     name: callableName(node, parent),
     containerScopeId: containerScope.scopeId,
@@ -52,6 +52,13 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
         ? null
         : bodyScope.scopeId,
     location: range(node),
+    returnSites: [],
+    returnCoverage: {
+      status: "partial",
+      retainedCount: 0,
+      omittedCount: null,
+      limitsReached: [],
+    },
   });
 };
 
@@ -78,6 +85,7 @@ export const collectSemanticModuleLink = (
       importedName: null,
       localName: defaultDeclarationName(node.declaration),
       exportedName: "default",
+      callableId: semanticCallableIdForNode(node.declaration),
       location: range(node),
     });
   else if (t.isVariableDeclarator(node)) collectRequireLink(node, state);
@@ -278,6 +286,7 @@ const collectNamedExports = (
         importedName: null,
         localName,
         exportedName: localName,
+        callableId: declarationCallableId(node.declaration, localName),
         location: range(node.declaration),
       });
   for (const specifier of node.specifiers)
@@ -349,19 +358,49 @@ const collectCommonJsExport = (
     importedName: origin?.importedPath.at(-1) ?? null,
     localName: t.isIdentifier(node.right) ? node.right.name : null,
     exportedName,
+    callableId: semanticCallableIdForNode(node.right),
     location: range(node),
   });
 };
 
 const addModuleLink = (
   state: JavaScriptSemanticAnalysisState,
-  link: JavaScriptSemanticModuleLink,
+  link: Omit<JavaScriptSemanticModuleLink, "callableId"> & {
+    readonly callableId?: string | null;
+  },
 ): void => {
   if (state.moduleLinks.length >= state.limits.maxModuleLinks) {
     reachSemanticLimit(state, "maxModuleLinks");
     return;
   }
-  state.moduleLinks.push(link);
+  state.moduleLinks.push({ ...link, callableId: link.callableId ?? null });
+};
+
+/** Deterministic callable identity shared by collection and return recovery. */
+export const semanticCallableIdForNode = (node: t.Node): string | null => {
+  const kind = callableKind(node);
+  return kind === undefined
+    ? null
+    : `callable:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
+};
+
+const declarationCallableId = (
+  declaration: t.Declaration,
+  localName: string,
+): string | null => {
+  if (
+    (t.isFunctionDeclaration(declaration) ||
+      t.isClassDeclaration(declaration)) &&
+    declaration.id?.name === localName
+  )
+    return semanticCallableIdForNode(declaration);
+  if (!t.isVariableDeclaration(declaration)) return null;
+  const declarator = declaration.declarations.find(({ id }) =>
+    t.isIdentifier(id, { name: localName }),
+  );
+  return declarator?.init === null || declarator?.init === undefined
+    ? null
+    : semanticCallableIdForNode(declarator.init);
 };
 
 const referenceRole = (

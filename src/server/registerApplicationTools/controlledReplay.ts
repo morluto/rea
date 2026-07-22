@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { runControlledReplayValidated } from "../../application/JavaScriptReplayService.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
+import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import {
   controlledReplayInputSchema,
   controlledReplayOutputSchema,
@@ -15,7 +15,7 @@ import { mcpProgressReporter } from "../mcpProgress.js";
 import { recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const replayContract = APPLICATION_TOOL_CONTRACTS[2];
+const replayContract = applicationToolContract("run_controlled_replay");
 
 /** Register the controlled JavaScript replay tool. */
 export const registerControlledReplayTool = (

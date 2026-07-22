@@ -220,16 +220,7 @@ const optionalHopperDemoCheck = async (
 ): Promise<DoctorCheck | undefined> =>
   host.platform !== "linux" || hopperPath === undefined
     ? undefined
-    : check(
-        "hopper-demo-runtime",
-        await host.linuxDemoRuntimeReady(),
-        undefined,
-        {
-          remediation:
-            "Rerun rea setup to install the Xvfb, xauth, Python, X11, and XTEST packages required for Linux demo sessions.",
-          classification: "missing_dependency",
-        },
-      );
+    : host.linuxDemoRuntimeCheck();
 
 const optionalIlspyCheck = async (
   host: DoctorHost,

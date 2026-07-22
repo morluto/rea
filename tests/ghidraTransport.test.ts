@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { observeGhidraEndpoint } from "../src/ghidra/GhidraTransport.js";
 
@@ -16,7 +17,7 @@ afterEach(async () => {
 
 describe("Ghidra local transport", () => {
   it("observes Unix readiness without interpreting endpoint content", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ghidra-transport-"));
+    const root = await createTestTempDirectory("rea-ghidra-transport-");
     roots.push(root);
     const path = join(root, "bridge.sock");
 
@@ -30,7 +31,7 @@ describe("Ghidra local transport", () => {
   });
 
   it("accepts only an exact IPv4 loopback endpoint record", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ghidra-transport-"));
+    const root = await createTestTempDirectory("rea-ghidra-transport-");
     roots.push(root);
     const path = join(root, "bridge-endpoint.json");
     await writeFile(
@@ -56,7 +57,7 @@ describe("Ghidra local transport", () => {
   ])(
     "rejects an invalid or expanded TCP endpoint: $host:$port",
     async (value) => {
-      const root = await mkdtemp(join(tmpdir(), "rea-ghidra-transport-"));
+      const root = await createTestTempDirectory("rea-ghidra-transport-");
       roots.push(root);
       const path = join(root, "bridge-endpoint.json");
       await writeFile(path, JSON.stringify(value));

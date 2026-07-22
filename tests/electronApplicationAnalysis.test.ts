@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
 import { PermissionAuthority } from "../src/application/PermissionAuthority.js";
@@ -295,7 +295,7 @@ describe("static Electron application analysis", () => {
 });
 
 const fixtureDirectory = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-electron-boundaries-"));
+  const root = await createTestTempDirectory("rea-electron-boundaries-");
   await writeElectronBoundaryFixture(root);
   return root;
 };

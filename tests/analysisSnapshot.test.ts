@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { createAnalysisExecution } from "../src/application/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "../src/application/AnalysisSnapshotCache.js";
@@ -144,7 +145,7 @@ describe("analysis snapshots", () => {
   });
 
   it("writes canonical private v2 JSON and rejects changed query identity", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-snapshot-"));
+    directory = await createTestTempDirectory("rea-snapshot-");
     const path = join(directory, "analysis.json");
     const target = snapshotTarget(TARGET);
     const binding = snapshotBinding(PROFILE);

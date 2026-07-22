@@ -1,11 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
@@ -32,7 +33,7 @@ afterEach(async () => {
 
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-provider-mcp-"));
+    directory = await createTestTempDirectory("rea-provider-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];

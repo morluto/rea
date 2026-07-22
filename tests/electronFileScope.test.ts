@@ -1,9 +1,10 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   authorizedElectronFile,
@@ -22,7 +23,7 @@ describe("Electron file scope", () => {
   });
 
   it("accepts canonical files within a root and rejects escape forms", async () => {
-    const base = await mkdtemp(join(tmpdir(), "rea-electron-scope-"));
+    const base = await createTestTempDirectory("rea-electron-scope-");
     temporary.push(base);
     const root = join(base, "root");
     const outside = join(base, "outside");

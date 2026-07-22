@@ -3,7 +3,11 @@ import { chmod, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { promisify } from "node:util";
 
-import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
+import {
+  HopperCancelledError,
+  HopperProcessError,
+  HopperStartError,
+} from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -11,6 +15,11 @@ import {
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
+import {
+  selectLinuxPrivateDisplayStrategy,
+  type LinuxPrivateDisplayRunnableStrategy,
+  type LinuxPrivateDisplaySelection,
+} from "./LinuxPrivateDisplayProbe.js";
 import writeFileAtomic from "write-file-atomic";
 
 const execFileAsync = promisify(execFile);
@@ -35,7 +44,12 @@ export interface BridgeLauncher {
   launch(
     session: BridgeSession,
     options?: { readonly signal?: AbortSignal },
-  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>>;
+  ): Promise<
+    Result<
+      BridgeLaunch,
+      HopperStartError | HopperCancelledError | HopperProcessError
+    >
+  >;
 }
 
 interface SharedHopperApplicationLauncherOptions {
@@ -57,6 +71,13 @@ export type HopperApplicationLauncherOptions =
       readonly demoHelperPath: string;
     });
 
+export interface HopperApplicationLauncherDependencies {
+  readonly selectPrivateDisplay?: (options: {
+    readonly helperPath: string;
+    readonly signal?: AbortSignal;
+  }) => Promise<LinuxPrivateDisplaySelection>;
+}
+
 /**
  * Launches Hopper through its documented CLI and injects only REA's owned bridge.
  *
@@ -72,12 +93,20 @@ export type HopperApplicationLauncherOptions =
  * macOS LaunchServices may create or reuse.
  */
 export class HopperApplicationLauncher implements BridgeLauncher {
-  constructor(readonly options: HopperApplicationLauncherOptions) {}
+  constructor(
+    readonly options: HopperApplicationLauncherOptions,
+    readonly dependencies: HopperApplicationLauncherDependencies = {},
+  ) {}
 
   async launch(
     session: BridgeSession,
     options: { readonly signal?: AbortSignal } = {},
-  ): Promise<Result<BridgeLaunch, HopperStartError | HopperCancelledError>> {
+  ): Promise<
+    Result<
+      BridgeLaunch,
+      HopperStartError | HopperCancelledError | HopperProcessError
+    >
+  > {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
     const ownsProcessLifetime = usesLinuxDemo(this.options);
     const source = [
@@ -109,12 +138,19 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     try {
       if (options.signal?.aborted === true)
         return err(new HopperCancelledError());
+      const display = await this.#privateDisplay(options.signal);
+      if (!display.ok) return err(display.error);
       const prepared = await prepareHopperApplication(
         this.options.launcherPath,
         options.signal,
       );
       if (!prepared) return err(new HopperCancelledError());
-      const linuxDemo = linuxDemoLaunch(this.options, session, args);
+      const linuxDemo = linuxDemoLaunch(
+        this.options,
+        session,
+        args,
+        display.strategy,
+      );
       const ownershipCommand =
         linuxDemo?.ownershipCommand ?? this.options.launcherPath;
       const started = await spawnOwnedProviderProcess({
@@ -154,12 +190,44 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return err(hopperLaunchFailure(cause, options.signal));
     }
   }
+
+  async #privateDisplay(signal: AbortSignal | undefined): Promise<
+    | {
+        readonly ok: true;
+        readonly strategy: LinuxPrivateDisplayRunnableStrategy | undefined;
+      }
+    | {
+        readonly ok: false;
+        readonly error: HopperProcessError | HopperCancelledError;
+      }
+  > {
+    if (!usesLinuxDemo(this.options)) return { ok: true, strategy: undefined };
+    const selection = await (
+      this.dependencies.selectPrivateDisplay ??
+      selectLinuxPrivateDisplayStrategy
+    )({
+      helperPath: this.options.demoHelperPath,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (signal?.aborted === true)
+      return { ok: false, error: new HopperCancelledError() };
+    return selection.ok
+      ? { ok: true, strategy: selection.strategy }
+      : {
+          ok: false,
+          error: new HopperProcessError(
+            selection.exitCode,
+            selection.diagnostic,
+          ),
+        };
+  }
 }
 
-const linuxDemoLaunch = (
+export const linuxDemoLaunch = (
   options: HopperApplicationLauncherOptions,
   session: BridgeSession,
   hopperArgs: readonly string[],
+  strategy: LinuxPrivateDisplayRunnableStrategy | undefined,
 ):
   | {
       readonly command: string;
@@ -169,19 +237,37 @@ const linuxDemoLaunch = (
   | undefined => {
   if (!usesLinuxDemo(options) || options.demoHelperPath === undefined)
     return undefined;
+  const helperArguments = [
+    options.demoHelperPath,
+    "--strategy",
+    strategy ?? "direct",
+    ...(strategy === "user-mount-namespace" ? ["--mount-private-x11"] : []),
+    "--hopper",
+    options.launcherPath,
+    "--socket",
+    session.socketPath,
+    "--",
+    options.launcherPath,
+    ...hopperArgs,
+  ];
+  if (strategy === "user-mount-namespace")
+    return {
+      command: "/usr/bin/unshare",
+      ownershipCommand: "/usr/bin/python3",
+      args: [
+        "--user",
+        "--map-root-user",
+        "--mount",
+        "--propagation",
+        "private",
+        "/usr/bin/python3",
+        ...helperArguments,
+      ],
+    };
   return {
     command: "/usr/bin/python3",
     ownershipCommand: "/usr/bin/python3",
-    args: [
-      options.demoHelperPath,
-      "--hopper",
-      options.launcherPath,
-      "--socket",
-      session.socketPath,
-      "--",
-      options.launcherPath,
-      ...hopperArgs,
-    ],
+    args: helperArguments,
   };
 };
 

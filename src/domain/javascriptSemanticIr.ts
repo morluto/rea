@@ -7,6 +7,7 @@ export interface JavaScriptSemanticLimits {
   readonly maxCallables: number;
   readonly maxReferences: number;
   readonly maxModuleLinks: number;
+  readonly maxReturnSites: number;
   readonly maxValueDepth: number;
   readonly maxUnionValues: number;
   readonly maxObjectProperties: number;
@@ -19,6 +20,7 @@ export const DEFAULT_JAVASCRIPT_SEMANTIC_LIMITS: JavaScriptSemanticLimits = {
   maxCallables: 20_000,
   maxReferences: 100_000,
   maxModuleLinks: 20_000,
+  maxReturnSites: 20_000,
   maxValueDepth: 16,
   maxUnionValues: 32,
   maxObjectProperties: 256,
@@ -41,11 +43,13 @@ export type JavaScriptSemanticValue =
       readonly status: "object";
       readonly properties: readonly JavaScriptSemanticProperty[];
       readonly unknownProperties: boolean;
+      readonly omittedProperties: number | null;
     }
   | {
       readonly status: "array";
       readonly items: readonly JavaScriptSemanticValue[];
       readonly unknownItems: boolean;
+      readonly omittedItems: number | null;
     }
   | {
       readonly status: "unknown" | "ambiguous" | "cycle" | "limit-reached";
@@ -129,6 +133,22 @@ export interface JavaScriptSemanticCallable {
   readonly containerScopeId: string;
   readonly bodyScopeId: string | null;
   readonly location: JavaScriptSourceRange;
+  readonly returnSites: readonly JavaScriptSemanticReturnSite[];
+  readonly returnCoverage: JavaScriptSemanticReturnCoverage;
+}
+
+/** One direct return expression belonging to exactly one callable. */
+export interface JavaScriptSemanticReturnSite {
+  readonly location: JavaScriptSourceRange;
+  readonly value: JavaScriptSemanticValue;
+}
+
+/** Exact retention state for one callable's direct returns. */
+interface JavaScriptSemanticReturnCoverage {
+  readonly status: "complete" | "partial" | "truncated";
+  readonly retainedCount: number;
+  readonly omittedCount: number | null;
+  readonly limitsReached: readonly (keyof JavaScriptSemanticLimits)[];
 }
 
 /** Static import/export relationship retained for cross-file composition. */
@@ -143,6 +163,7 @@ export interface JavaScriptSemanticModuleLink {
   readonly importedName: string | null;
   readonly localName: string | null;
   readonly exportedName: string | null;
+  readonly callableId: string | null;
   readonly location: JavaScriptSourceRange;
 }
 
@@ -153,10 +174,10 @@ interface JavaScriptSemanticCoverage {
   readonly limitsReached: readonly (keyof JavaScriptSemanticLimits)[];
 }
 
-/** Provider-neutral JavaScript semantic IR v1. */
+/** Provider-neutral JavaScript semantic IR v2. */
 export interface JavaScriptSemanticIr {
   readonly schema: "JavaScriptSemanticIR";
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly scopes: readonly JavaScriptSemanticScope[];
   readonly bindings: readonly JavaScriptSemanticBinding[];
   readonly callables: readonly JavaScriptSemanticCallable[];
@@ -187,7 +208,7 @@ export const semanticBinding = (
 /** Fail-closed result when Babel cannot produce an inert syntax tree. */
 export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   schema: "JavaScriptSemanticIR",
-  schemaVersion: 1,
+  schemaVersion: 2,
   scopes: [],
   bindings: [],
   callables: [],

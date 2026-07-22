@@ -1,9 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../src/contracts/functionComparisonExample.js";
@@ -69,7 +70,7 @@ describe("investigation MCP workflows", () => {
   });
 
   it("runs and reuses a persistent cross-version workspace", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-mcp-"));
+    const directory = await createTestTempDirectory("rea-investigation-mcp-");
     const left = join(directory, "left");
     const right = join(directory, "right");
     const workspace = join(directory, "workspace.json");
@@ -146,7 +147,7 @@ describe("investigation MCP workflows", () => {
   });
 
   it("replays a complete workspace without write authority", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-read-"));
+    const directory = await createTestTempDirectory("rea-investigation-read-");
     const left = join(directory, "left");
     const right = join(directory, "right");
     const workspace = join(directory, "workspace.json");
@@ -211,8 +212,8 @@ describe("investigation MCP workflows", () => {
   });
 
   it("defers input permission for an explicit replay with deleted inputs", async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-investigation-replay-"),
+    const directory = await createTestTempDirectory(
+      "rea-investigation-replay-",
     );
     const left = join(directory, "left");
     const right = join(directory, "right");
@@ -288,7 +289,7 @@ describe("investigation MCP workflows", () => {
   });
 
   it("refuses automatic artifact reads outside operator-approved roots", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-investigation-mcp-"));
+    const directory = await createTestTempDirectory("rea-investigation-mcp-");
     const approvedInputs = join(directory, "approved-inputs");
     const outsideInputs = join(directory, "outside-inputs");
     const evidenceRoot = join(directory, "evidence");

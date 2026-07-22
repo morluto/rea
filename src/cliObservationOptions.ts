@@ -184,7 +184,7 @@ export const javascriptApplicationOptions = z.object({
     .boolean()
     .default(false)
     .describe("Approve reading the application artifact"),
-  format: z
+  artifactFormat: z
     .enum(["auto", "asar", "directory"])
     .default("auto")
     .describe("Application artifact format"),

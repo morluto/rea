@@ -4,10 +4,10 @@ import { join } from "node:path";
 
 import { defineConfig } from "vitest/config";
 
-const TEST_FILES = ["tests/**/*.test.ts"];
+export const TEST_FILES = ["tests/**/*.test.ts"];
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
-const SERIAL_INTEGRATION_TESTS = [
+export const SERIAL_INTEGRATION_TESTS = [
   "tests/applicationWorkflowCli.test.ts",
   "tests/browserCli.test.ts",
   "tests/cliOutput.test.ts",
@@ -42,7 +42,6 @@ const isolatedProjects = {
 
 export default defineConfig({
   test: {
-    include: TEST_FILES,
     env: { TMPDIR: CANONICAL_TEMPORARY_DIRECTORY },
     ...isolatedProjects,
     retry: 2,

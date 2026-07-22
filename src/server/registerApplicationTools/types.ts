@@ -1,4 +1,5 @@
 import type { BinarySessionPort } from "../../application/BinarySession.js";
+import type { EvidenceLookup } from "../../application/EvidenceReferenceResolver.js";
 import type { JavaScriptReplayDependencies } from "../../application/JavaScriptReplayService.js";
 import type { PermissionAuthority } from "../../application/PermissionAuthority.js";
 import type { EvidenceFilePolicy } from "../../domain/evidenceBundle.js";
@@ -11,6 +12,7 @@ export interface ApplicationToolRegistration {
   readonly recordEvidenceWithUnknown:
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
+  readonly evidenceLookup: EvidenceLookup | undefined;
   readonly replay: JavaScriptReplayDependencies;
   readonly evidenceFilePolicy: EvidenceFilePolicy;
   readonly permissionAuthority: PermissionAuthority | undefined;

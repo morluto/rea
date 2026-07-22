@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { reconstructJavaScriptArtifact } from "../src/application/JavaScriptArtifactReconstruction.js";
 import type {
@@ -152,7 +153,7 @@ describe("CommonJS and ESM module relationships", () => {
   });
 
   it("retains exact semantic omissions when the relationship budget truncates", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-module-limit-"));
+    const root = await createTestTempDirectory("rea-module-limit-");
     try {
       await writeFile(
         join(root, "exports.mjs"),
@@ -183,7 +184,7 @@ describe("CommonJS and ESM module relationships", () => {
 });
 
 const moduleFixture = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-module-relationships-"));
+  const root = await createTestTempDirectory("rea-module-relationships-");
   await mkdir(join(root, "node_modules", "fixture-package"), {
     recursive: true,
   });

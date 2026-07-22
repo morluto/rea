@@ -1,15 +1,9 @@
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   readEvidenceBundle,
@@ -50,7 +44,7 @@ const policy = (root: string): EvidenceFilePolicy => ({
 
 describe("evidence bundle filesystem adapter", () => {
   it("round trips canonical bytes and requires explicit overwrite", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-evidence-"));
+    directory = await createTestTempDirectory("rea-evidence-");
     const path = join(directory, "bundle.json");
     const evidenceBundle = bundle();
     const first = await writeEvidenceBundle(
@@ -94,7 +88,7 @@ describe("evidence bundle filesystem adapter", () => {
   });
 
   it("uses valid evidence roots when another configured root is missing", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-evidence-roots-"));
+    directory = await createTestTempDirectory("rea-evidence-roots-");
     const path = join(directory, "bundle.json");
     const configured = {
       ...policy(directory),
@@ -109,7 +103,7 @@ describe("evidence bundle filesystem adapter", () => {
   });
 
   it("rejects traversal and symlink escape from approved roots", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-evidence-"));
+    directory = await createTestTempDirectory("rea-evidence-");
     const root = join(directory, "approved");
     const outside = join(directory, "outside");
     await mkdir(root);
@@ -131,7 +125,7 @@ describe("evidence bundle filesystem adapter", () => {
   });
 
   it("rejects malformed, tampered, oversized, and deeply nested input", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-evidence-"));
+    directory = await createTestTempDirectory("rea-evidence-");
     const malformed = join(directory, "malformed.json");
     await writeFile(malformed, "{");
     expect(

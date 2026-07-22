@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -7,6 +6,8 @@ import { createPackageWithOptions } from "@electron/asar";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { ArtifactProvider } from "../src/artifacts/ArtifactProvider.js";
@@ -22,7 +23,7 @@ describe("artifact graph MCP integration", () => {
   ])(
     "returns actionable local details for an $label ASAR integrity error",
     async ({ unpacked }) => {
-      const root = await mkdtemp(join(tmpdir(), "rea-asar-integrity-mcp-"));
+      const root = await createTestTempDirectory("rea-asar-integrity-mcp-");
       const source = join(root, "source");
       const original = "console.log('ok');\n";
       const changed = "console.log('no');\n";
@@ -94,7 +95,7 @@ describe("artifact graph MCP integration", () => {
   );
 
   it("records an approved mismatch, preserves verified siblings, and never reports equivalence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-asar-continue-mcp-"));
+    const root = await createTestTempDirectory("rea-asar-continue-mcp-");
     const source = join(root, "source");
     await mkdir(source);
     const original = "console.log('ok');\n";
@@ -300,7 +301,7 @@ describe("artifact graph MCP integration", () => {
   });
 
   it("opens archives without Hopper, compares them, and exports linked evidence", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-artifact-mcp-"));
+    const directory = await createTestTempDirectory("rea-artifact-mcp-");
     const archive = join(directory, "fixture.ipa");
     const changedArchive = join(directory, "changed.ipa");
     const writer = new ZipWriter(new Uint8ArrayWriter());

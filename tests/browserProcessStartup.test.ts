@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   BrowserStartupError,
@@ -94,7 +95,7 @@ describe("browser process startup", () => {
 });
 
 const temporaryRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-browser-startup-"));
+  const root = await createTestTempDirectory("rea-browser-startup-");
   roots.push(root);
   return root;
 };

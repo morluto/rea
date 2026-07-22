@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { scanArtifactInventory } from "../src/application/ArtifactInventory.js";
 import {
@@ -38,7 +39,7 @@ const deferred = <Value>() => {
 
 describe("cross-version inventory", () => {
   it("starts both scans together and preserves left/right result order", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-version-inventory-"));
+    const root = await createTestTempDirectory("rea-version-inventory-");
     try {
       const artifact = join(root, "artifact.js");
       await writeFile(artifact, "export const value = 1;\n");

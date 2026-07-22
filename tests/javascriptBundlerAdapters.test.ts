@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { reconstructJavaScriptArtifact } from "../src/application/JavaScriptArtifactReconstruction.js";
 import type {
@@ -106,7 +107,7 @@ describe("Webpack and Rspack runtime adapters", () => {
 });
 
 const bundlerFixture = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-bundler-adapters-"));
+  const root = await createTestTempDirectory("rea-bundler-adapters-");
   await mkdir(join(root, "renderer", "chunks"), { recursive: true });
   await writeFile(
     join(root, "renderer", "chunks", "runtime.js"),

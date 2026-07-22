@@ -2,9 +2,10 @@
 
 REA derives a bounded feature trace from one authenticated JavaScript
 Application Graph and compares two authenticated graph versions. The MCP tools
-are `trace_application_feature` and `compare_application_versions`; their CLI
-equivalents are `rea trace-application-feature` and
-`rea compare-application-versions`.
+are `trace_application_feature`, `compare_application_versions`, and
+`compare_javascript_export_shapes`; their CLI equivalents are
+`rea trace-application-feature`, `rea compare-application-versions`, and
+`rea compare-javascript-export-shapes`.
 
 Both workflows consume Evidence v2 produced by
 `analyze_javascript_application` or `reconcile_javascript_runtime`. They do not
@@ -49,9 +50,32 @@ items, candidate references, graph nodes, edges, and observations. With
 `unknown_registry_approved: true`, unresolved comparison items can be retained
 as a residual unknown in a live session.
 
+## Export return-shape comparison
+
+`compare_javascript_export_shapes` selects exactly one module path and export
+name on each authenticated graph. Missing or duplicate exact selectors return
+candidate inventory and an unknown result; the tool never chooses a fuzzy
+match. An export is linked to a callable only through exact lexical/module
+relationships recovered by the AST analysis.
+
+Direct return expressions, including expression-bodied arrows, are evaluated
+through a bounded execution-free value lattice. Literal object fields are
+static observations. Calls, dynamic spreads, computed keys, parser recovery,
+and exhausted value, property, or return-site limits remain partial or unknown.
+Nested callable returns are not assigned to their parent callable. Projected
+graph observations carry source ranges but never source text.
+
+Return variants pair only when a literal discriminant such as `/type` has one
+unique occurrence on each side and pairing is reciprocal. Changes use JSON
+Pointer paths with `added`, `removed`, `changed`, or `unknown` status. A missing
+field is added or removed only when the relevant parent-property coverage is
+complete on both shapes. The output includes exact selector candidates,
+omissions, Evidence links, coverage, limitations, and a separate controlled
+replay recommendation; it does not execute JavaScript.
+
 ## CLI and verification
 
-Both CLI commands accept inline JSON or a JSON file up to 64 MiB. The input is
+All three CLI commands accept inline JSON or a JSON file up to 64 MiB. The input is
 the same object used by the corresponding MCP tool.
 
 For two operator-provided directories or ASARs, run:
@@ -63,11 +87,14 @@ npm run verify:application-workflows -- \
   --source-map-read-approved
 ```
 
-The verifier reconstructs both versions independently, compares them, and runs
-one literal trace when a seed is available. It prints only graph, artifact, and
-Evidence identifiers plus matching, summary, handoff, and coverage statistics;
+The verifier reconstructs both versions independently, compares them, runs one
+literal trace when a seed is available, and compares the first common exact
+export return shape when present. It prints only graph, artifact, and Evidence
+identifiers plus matching, changes, summary, handoff, and coverage statistics;
 it does not print source text. Use `--seed-kind` and `--seed-value` to select a
-specific route, string, API, channel, module, native export, or node ID.
+specific route, string, API, channel, module, native export, or node ID. Supply
+all four `--left-module-path`, `--left-export-name`, `--right-module-path`, and
+`--right-export-name` options to verify an explicit export pair.
 
 Because source Evidence and derived Evidence are retained by the normal session
 ledger, evidence bundles, analysis snapshots, and investigation workspaces can

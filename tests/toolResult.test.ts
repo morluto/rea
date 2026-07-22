@@ -47,6 +47,46 @@ describe("tool result projection", () => {
     });
     expect(JSON.stringify(result)).not.toContain("expected Hopper");
   });
+  it("projects bounded private-display coordinates without raw stderr", () => {
+    const result = toCallToolResult(
+      err(
+        new HopperProcessError(80, {
+          schema_version: 1,
+          component: "hopper_private_display",
+          operation: "launch",
+          status: "error",
+          failure_code: "x11_socket_directory_unusable",
+          reason: "socket_directory_read_only",
+          socket_directory: "/tmp/.X11-unix",
+          socket_directory_mode: "0777",
+          mount_read_only: true,
+          effective_socket_directory_mode: "1777",
+          effective_mount_read_only: false,
+          wsl: true,
+          strategy: "user-mount-namespace",
+          fallback_reason: null,
+          xvfb_stderr_bytes: 512,
+          xvfb_stderr_truncated: false,
+        }),
+      ),
+      contract,
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        details: {
+          failure_code: "x11_socket_directory_unusable",
+          diagnostics: {
+            socket_directory: "/tmp/.X11-unix",
+            mount_read_only: true,
+            wsl: true,
+            strategy: "user-mount-namespace",
+            xvfb_stderr_truncated: false,
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("cookie");
+  });
   it("classifies output contract failures without naming a provider", () => {
     const result = toCallToolResult(ok({ value: 42 }), contract);
     expect(result).toMatchObject({

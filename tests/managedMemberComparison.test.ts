@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { compareManagedMemberPaths } from "../src/application/ManagedMemberComparisonService.js";
 import { MANAGED_STATIC_PROVIDER } from "../src/application/InvestigationProviders.js";
@@ -256,7 +257,7 @@ describe("managed member comparison", () => {
   });
 
   it("compares two local paths and returns derived Evidence", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-compare-"));
+    const directory = await createTestTempDirectory("rea-managed-compare-");
     const leftPath = join(directory, "left.dll");
     const rightPath = join(directory, "right.dll");
     await writeFile(leftPath, buildManagedPeFixture());

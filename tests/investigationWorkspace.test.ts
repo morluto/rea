@@ -1,7 +1,6 @@
 import {
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   rm,
   stat,
@@ -9,12 +8,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
 import canonicalize from "canonicalize";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { runCrossVersionInvestigation } from "../src/application/CrossVersionInvestigation.js";
 import {
@@ -56,7 +56,7 @@ const policy = (root: string): EvidenceFilePolicy => ({
 });
 
 const fixture = async () => {
-  directory = await mkdtemp(join(tmpdir(), "rea-workspace-"));
+  directory = await createTestTempDirectory("rea-workspace-");
   const left = join(directory, "left");
   const right = join(directory, "right");
   await Promise.all([mkdir(left), mkdir(right)]);
@@ -480,7 +480,7 @@ describe("persistent cross-version investigation workspace", () => {
   });
 
   it("checkpoints bounded integrity contradictions and safely reuses them", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-workspace-integrity-"));
+    directory = await createTestTempDirectory("rea-workspace-integrity-");
     const source = join(directory, "source");
     await mkdir(source);
     await writeFile(join(source, "addon.node"), "verified native addon\n");

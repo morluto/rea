@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
-  mkdtemp,
   mkdir,
   readFile,
   readdir,
@@ -9,11 +8,12 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
@@ -165,7 +165,7 @@ interface InstallerFixture {
 }
 
 const createFixture = async (): Promise<InstallerFixture> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-install-test-"));
+  const root = await createTestTempDirectory("rea-install-test-");
   roots.push(root);
   const home = join(root, "home");
   const bin = join(root, "bin");

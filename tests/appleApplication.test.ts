@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -10,6 +9,8 @@ import {
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
 import { projectAppleApplicationEvidence } from "../src/application/AppleApplicationService.js";
 import { runProviderAnalysis } from "../src/application/DirectAnalysis.js";
 import { appleApplicationProjectionResultSchema } from "../src/domain/appleApplication.js";
@@ -17,7 +18,7 @@ import { parseEvidence } from "../src/domain/evidence.js";
 
 describe("Apple application projection", () => {
   it("projects deterministic IPA components and bridge hypotheses from exact inventory Evidence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-apple-"));
+    const root = await createTestTempDirectory("rea-apple-");
     const path = join(root, "Fixture.ipa");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("Payload/Fixture.app/", undefined, { directory: true });
@@ -103,7 +104,7 @@ describe("Apple application projection", () => {
   });
 
   it("rejects non-IPA Evidence and reports projection truncation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-apple-invalid-"));
+    const root = await createTestTempDirectory("rea-apple-invalid-");
     const path = join(root, "fixture.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("one.js", new TextReader("one"));
@@ -120,7 +121,7 @@ describe("Apple application projection", () => {
   });
 
   it("infers an application root when the IPA omits directory entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-apple-root-"));
+    const root = await createTestTempDirectory("rea-apple-root-");
     const path = join(root, "Fixture.ipa");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(

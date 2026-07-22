@@ -11,7 +11,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 95,
+    "total": 96,
     "families": [
       {
         "id": "direct",
@@ -132,10 +132,11 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 7,
+        "count": 8,
         "tools": [
           "commit_reconstruction_coverage",
           "compare_application_versions",
+          "compare_javascript_export_shapes",
           "execute_node_characterization",
           "prepare_node_characterization",
           "query_reconstruction_coverage",
@@ -311,6 +312,7 @@
       "capabilities": [
         "commit_reconstruction_coverage",
         "compare_application_versions",
+        "compare_javascript_export_shapes",
         "execute_node_characterization",
         "prepare_node_characterization",
         "query_reconstruction_coverage",
@@ -492,7 +494,7 @@
     }
   ],
   "cli": {
-    "primary_count": 55,
+    "primary_count": 56,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -503,6 +505,7 @@
       "commit-reconstruction-coverage",
       "compare",
       "compare-application-versions",
+      "compare-javascript-export-shapes",
       "compare-managed-members",
       "compare-process-captures",
       "compare-web-captures",
@@ -559,17 +562,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 55,
-      "mcp_tools": 95,
+      "cli_commands": 56,
+      "mcp_tools": 96,
       "mcp_prompts": 6,
       "mcp_resources": 2,
-      "mcp_resource_templates": 8
+      "mcp_resource_templates": 9
     },
     "digests": {
-      "tools_sha256": "f0eb8f9d91aac6b509e9b282d0df78003b9ad4133a36c7da4d81dc37221b4037",
+      "tools_sha256": "4dca2b113556f78ee65487810f9462d7523c8828a8f642b84b5e74829df84820",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
-      "resources_sha256": "5dca0fcdad3e78d71a1b6ef7b4f0c12bdcd8e3ec11fcbdd9ccd3a68edadf5c80",
-      "combined_sha256": "f8a4a8392f73780686234656e3e4555539a828e021c72754e4131c83df349b9f"
+      "resources_sha256": "94bebbab1a1b3cf47644c38d3de6469de568caa7bd7b842f529ead8ad320a912",
+      "combined_sha256": "64387dcbe22c395e8b683344e5bfd2881e3e88c941b053723165f131c57ed46b"
     }
   }
 }

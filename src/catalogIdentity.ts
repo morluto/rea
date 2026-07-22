@@ -32,11 +32,13 @@ const promptCatalog = PROMPT_CONTRACTS.map((contract) => ({
   steps: contract.steps,
 })).sort((left, right) => left.name.localeCompare(right.name));
 
-const resourceCatalog = [
+/** Canonical fixed resources exposed by every target-free MCP session. */
+export const MCP_RESOURCE_CATALOG = [
   { name: "server-identity", uri: "rea://server/identity" },
   { name: "active-residual-unknowns", uri: "rea://unknowns/active" },
 ] as const;
-const resourceTemplateCatalog = [
+/** Canonical resource templates exposed by every target-free MCP session. */
+export const MCP_RESOURCE_TEMPLATE_CATALOG = [
   { name: "session-evidence", uri_template: "rea://evidence/{evidenceId}" },
   {
     name: "evidence-section",
@@ -64,6 +66,11 @@ const resourceTemplateCatalog = [
     uri_template:
       "rea://reconstruction-coverage/{workspaceId}/revision/{revision}",
   },
+  {
+    name: "javascript-application-graph-page",
+    uri_template:
+      "rea://evidence/{evidenceId}/application-graph/{collection}/offset/{offset}/limit/{limit}",
+  },
 ] as const;
 
 const digest = (value: unknown): string => {
@@ -79,19 +86,22 @@ export const CATALOG_IDENTITY = {
     cli_commands: CLI_COMMAND_NAMES.length,
     mcp_tools: toolCatalog.length,
     mcp_prompts: promptCatalog.length,
-    mcp_resources: resourceCatalog.length,
-    mcp_resource_templates: resourceTemplateCatalog.length,
+    mcp_resources: MCP_RESOURCE_CATALOG.length,
+    mcp_resource_templates: MCP_RESOURCE_TEMPLATE_CATALOG.length,
   },
   digests: {
     tools_sha256: digest(toolCatalog),
     prompts_sha256: digest(promptCatalog),
-    resources_sha256: digest({ resourceCatalog, resourceTemplateCatalog }),
+    resources_sha256: digest({
+      resourceCatalog: MCP_RESOURCE_CATALOG,
+      resourceTemplateCatalog: MCP_RESOURCE_TEMPLATE_CATALOG,
+    }),
     combined_sha256: digest({
       cli: CLI_COMMAND_NAMES,
       tools: toolCatalog,
       prompts: promptCatalog,
-      resources: resourceCatalog,
-      resource_templates: resourceTemplateCatalog,
+      resources: MCP_RESOURCE_CATALOG,
+      resource_templates: MCP_RESOURCE_TEMPLATE_CATALOG,
     }),
   },
   tools: toolCatalog.map(({ name, surface, effects, annotations }) => ({

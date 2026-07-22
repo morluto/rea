@@ -1,9 +1,17 @@
 import { Cli, z } from "incur";
 
 import {
-  compareApplicationVersionsEvidence,
-  traceApplicationFeatureEvidence,
+  compareApplicationVersionsEvidenceValidated,
+  compareJavaScriptExportShapesEvidenceValidated,
+  traceApplicationFeatureEvidenceValidated,
 } from "./application/JavaScriptApplicationWorkflowService.js";
+import {
+  resolveCompareApplicationVersionsRequest,
+  resolveCompareJavaScriptExportShapesRequest,
+  resolveTraceApplicationFeatureRequest,
+} from "./application/ApplicationWorkflowEvidenceResolver.js";
+import type { EvidenceLookup } from "./application/EvidenceReferenceResolver.js";
+import { readEvidenceBundle } from "./application/EvidenceBundleFiles.js";
 import { runControlledReplay } from "./application/JavaScriptReplayService.js";
 import {
   executeNodeCharacterization,
@@ -49,7 +57,8 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.traceApplicationFeature,
     description:
       "Trace a typed seed through authenticated application Evidence JSON",
-    workflow: traceApplicationFeatureEvidence,
+    resolveInput: resolveTraceApplicationFeatureRequest,
+    workflow: traceApplicationFeatureEvidenceValidated,
   });
   registerJsonCommand({
     cli,
@@ -57,7 +66,17 @@ export const registerApplicationCommands = (
     name: CLI_COMMANDS.compareApplicationVersions,
     description:
       "Compare two authenticated JavaScript Application Graph versions",
-    workflow: compareApplicationVersionsEvidence,
+    resolveInput: resolveCompareApplicationVersionsRequest,
+    workflow: compareApplicationVersionsEvidenceValidated,
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.compareJavaScriptExportShapes,
+    description:
+      "Compare exact static JavaScript export return shapes without execution",
+    resolveInput: resolveCompareJavaScriptExportShapesRequest,
+    workflow: compareJavaScriptExportShapesEvidenceValidated,
   });
   cli.command(CLI_COMMANDS.runControlledReplay, {
     description:
@@ -232,13 +251,10 @@ const configuredAuthority = async (): Promise<
       readonly error: ReturnType<typeof projectAnalysisError>;
     }
 > => {
-  const config = parseConfig(process.env);
-  if (!config.ok)
-    return { ok: false, error: projectAnalysisError(config.error) };
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  return authority.ok
-    ? { ok: true, config: config.value, authority: authority.value }
-    : { ok: false, error: projectAnalysisError(authority.error) };
+  const configured = await loadConfiguredAuthority();
+  return configured.ok
+    ? configured
+    : { ok: false, error: projectAnalysisError(configured.error) };
 };
 
 const replayDependencies = (
@@ -251,45 +267,110 @@ const replayDependencies = (
   authority,
 });
 
-interface JsonCommandOptions {
+interface JsonCommandOptions<Input> {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly name: string;
   readonly description: string;
-  readonly workflow: (
+  readonly resolveInput: (
     input: unknown,
+    lookup?: EvidenceLookup,
+  ) =>
+    | { readonly ok: true; readonly value: Input }
+    | { readonly ok: false; readonly error: AnalysisError };
+  readonly workflow: (
+    input: Input,
   ) =>
     | { readonly ok: true; readonly value: JsonValue }
-    | { readonly ok: false; readonly error: Error };
+    | { readonly ok: false; readonly error: AnalysisError };
 }
 
-const registerJsonCommand = ({
+const registerJsonCommand = <Input>({
   cli,
   logger,
   name,
   description,
+  resolveInput,
   workflow,
-}: JsonCommandOptions): void => {
+}: JsonCommandOptions<Input>): void => {
   cli.command(name, {
     description,
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      evidenceBundle: z
+        .string()
+        .optional()
+        .describe("Authorized Evidence bundle used to resolve Evidence IDs"),
+    }),
+    run: ({ args, options }) =>
       logCliCommand(logger, name, async () => {
         const input = await parseCliJsonInput(args.inputJson, name);
         if (!input.ok) return input.error;
-        const result = workflow(input.value);
+        const lookup = await loadEvidenceLookup(options.evidenceBundle, name);
+        if (!lookup.ok)
+          return {
+            error: "Application workflow failed",
+            ...projectAnalysisError(lookup.error),
+          };
+        const resolved = resolveInput(input.value, lookup.value);
+        if (!resolved.ok)
+          return {
+            error: "Application workflow failed",
+            ...projectAnalysisError(resolved.error),
+          };
+        const result = workflow(resolved.value);
         return result.ok
           ? result.value
           : {
               error: "Application workflow failed",
-              ...projectAnalysisError(
-                result.error instanceof AnalysisInputError
-                  ? result.error
-                  : new AnalysisInputError(name),
-              ),
+              ...projectAnalysisError(result.error),
             };
       }),
   });
+};
+
+const loadEvidenceLookup = async (
+  bundlePath: string | undefined,
+  operation: string,
+): Promise<
+  | { readonly ok: true; readonly value: EvidenceLookup | undefined }
+  | { readonly ok: false; readonly error: AnalysisError }
+> => {
+  if (bundlePath === undefined) return { ok: true, value: undefined };
+  const configured = await loadConfiguredAuthority();
+  if (!configured.ok) return configured;
+  const authorized = await authorizeRootPermission(configured.authority, {
+    capability: "evidence_read",
+    roots: [bundlePath],
+    access: "read",
+    operation,
+  });
+  if (!authorized.ok) return authorized;
+  const loaded = await readEvidenceBundle(
+    bundlePath,
+    configured.config.evidenceFilePolicy,
+  );
+  if (!loaded.ok) return loaded;
+  const records = new Map(
+    loaded.value.records.map((record) => [record.evidence_id, record]),
+  );
+  return { ok: true, value: (evidenceId) => records.get(evidenceId) };
+};
+
+const loadConfiguredAuthority = async (): Promise<
+  | {
+      readonly ok: true;
+      readonly config: AppConfig;
+      readonly authority: PermissionAuthority;
+    }
+  | { readonly ok: false; readonly error: AnalysisError }
+> => {
+  const config = parseConfig(process.env);
+  if (!config.ok) return config;
+  const authority = await loadConfiguredPermissionAuthority(config.value);
+  return authority.ok
+    ? { ok: true, config: config.value, authority: authority.value }
+    : authority;
 };

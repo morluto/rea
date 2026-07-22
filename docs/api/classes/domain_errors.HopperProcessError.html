@@ -21,7 +21,7 @@
 <ul class="tsd-hierarchy">
 <li class="tsd-hierarchy-item"><span class="tsd-hierarchy-target">HopperProcessError</span></li></ul></li></ul></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L455">src/domain/errors.ts:455</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L460">src/domain/errors.ts:460</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,6 +36,7 @@
 <div class="tsd-index-list"><a href="#_tag" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a>
 <a href="#cleanupincomplete" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a>
 <a href="#cleanupresources" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a>
+<a href="#diagnostic" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>diagnostic?</span></a>
 <a href="#exitcode" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>exit<wbr/>Code</span></a>
 <a href="#failurecode" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>failure<wbr/>Code</span></a>
 <a href="#usercategory" class="tsd-index-link tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a>
@@ -48,16 +49,17 @@
 <h3 class="tsd-anchor-link" id="constructor"><span>constructor</span><a href="#constructor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="constructorhopperprocesserror"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">HopperProcessError</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">exitCode</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">HopperProcessError</a><a href="#constructorhopperprocesserror" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="constructorhopperprocesserror"><span class="tsd-signature-keyword">new</span> <span class="tsd-kind-constructor-signature">HopperProcessError</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">exitCode</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">diagnostic</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/domain_hopperStartupFailure.HopperStartupDiagnostic.html" class="tsd-signature-type tsd-kind-interface">HopperStartupDiagnostic</a><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-class">HopperProcessError</a><a href="#constructorhopperprocesserror" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">exitCode</span>: <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">exitCode</span>: <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li>
+<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">diagnostic</span>: <a href="../interfaces/domain_hopperStartupFailure.HopperStartupDiagnostic.html" class="tsd-signature-type tsd-kind-interface">HopperStartupDiagnostic</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">HopperProcessError</a></h4><aside class="tsd-sources">
 <p>Overrides <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#constructor">constructor</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L460">src/domain/errors.ts:460</a></li></ul></aside></div></li></ul></section></section></details>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L465">src/domain/errors.ts:465</a></li></ul></aside></div></li></ul></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="properties-1">Properties<a href="#properties-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -66,41 +68,46 @@
 <div class="tsd-signature"><span class="tsd-kind-property">_tag</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;HopperProcessError&quot;</span></div><aside class="tsd-sources">
 <p>Overrides <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#_tag">_tag</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L456">src/domain/errors.ts:456</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L461">src/domain/errors.ts:461</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="cleanupincomplete"><code class="tsd-tag">Readonly</code><span>cleanup<wbr/>Incomplete</span><a href="#cleanupincomplete" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">cleanupIncomplete</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#cleanupincomplete">cleanupIncomplete</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L54">src/domain/errors.ts:54</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L59">src/domain/errors.ts:59</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="cleanupresources"><code class="tsd-tag">Readonly</code><span>cleanup<wbr/>Resources</span><a href="#cleanupresources" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">cleanupResources</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol"> = []</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#cleanupresources">cleanupResources</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L55">src/domain/errors.ts:55</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L60">src/domain/errors.ts:60</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="diagnostic"><code class="tsd-tag">Optional</code> <code class="tsd-tag">Readonly</code><span>diagnostic</span><a href="#diagnostic" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">diagnostic</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/domain_hopperStartupFailure.HopperStartupDiagnostic.html" class="tsd-signature-type tsd-kind-interface">HopperStartupDiagnostic</a></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L467">src/domain/errors.ts:467</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="exitcode"><code class="tsd-tag">Readonly</code><span>exit<wbr/>Code</span><a href="#exitcode" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">exitCode</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L460">src/domain/errors.ts:460</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L466">src/domain/errors.ts:466</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="failurecode"><code class="tsd-tag">Readonly</code><span>failure<wbr/>Code</span><a href="#failurecode" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">failureCode</span><span class="tsd-signature-symbol">:</span> <a href="../types/domain_hopperStartupFailure.HopperStartupFailureCode.html" class="tsd-signature-type tsd-kind-type-alias">HopperStartupFailureCode</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L457">src/domain/errors.ts:457</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L462">src/domain/errors.ts:462</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member tsd-is-inherited">
 <h3 class="tsd-anchor-link" id="usercategory"><code class="tsd-tag">Readonly</code><span>user<wbr/>Category</span><a href="#usercategory" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">userCategory</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;permission_required&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;cancelled&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol"> = undefined</span></div><aside class="tsd-sources">
 <p>Inherited from <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#usercategory">userCategory</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L52">src/domain/errors.ts:52</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L57">src/domain/errors.ts:57</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="usermessage"><code class="tsd-tag">Readonly</code><span>user<wbr/>Message</span><a href="#usermessage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">userMessage</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <p>Overrides <a href="domain_errors.HopperError.html">HopperError</a>.<a href="domain_errors.HopperError.html#usermessage">userMessage</a></p>
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L458">src/domain/errors.ts:458</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/domain/errors.ts#L463">src/domain/errors.ts:463</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -118,7 +125,7 @@
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Constructors"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Constructors</summary>
 <div><a href="#constructor"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Constructor"><use href="../assets/icons.svg#icon-512"></use></svg><span>constructor</span></a></div></details>
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
-<div><a href="#_tag"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a><a href="#cleanupincomplete" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a><a href="#cleanupresources" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a><a href="#exitcode"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>exit<wbr/>Code</span></a><a href="#failurecode"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>failure<wbr/>Code</span></a><a href="#usercategory" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a><a href="#usermessage"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Message</span></a></div></details></div></details></div>
+<div><a href="#_tag"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>_<wbr/>tag</span></a><a href="#cleanupincomplete" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Incomplete</span></a><a href="#cleanupresources" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>cleanup<wbr/>Resources</span></a><a href="#diagnostic"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>diagnostic</span></a><a href="#exitcode"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>exit<wbr/>Code</span></a><a href="#failurecode"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>failure<wbr/>Code</span></a><a href="#usercategory" class="tsd-is-inherited"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Category</span></a><a href="#usermessage"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>user<wbr/>Message</span></a></div></details></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../index.html">rea-agents</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">

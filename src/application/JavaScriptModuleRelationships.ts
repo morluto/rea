@@ -21,6 +21,7 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { projectJavaScriptExportReturnShapes } from "./JavaScriptReturnShapeProjection.js";
 
 interface SemanticAnalysis {
   readonly ir: JavaScriptSemanticIr;
@@ -136,6 +137,13 @@ export const addJavaScriptModuleRelationships = (
 const addExportRelationship = (input: RelationshipInput): void => {
   const { context, file, semantic, source, link } = input;
   if (link.exportedName === null) return;
+  const baseCoverage = semanticCoverage(semantic);
+  const returnShapes = projectJavaScriptExportReturnShapes({
+    ir: semantic.ir,
+    link,
+    modulePath: file.path,
+    baseCoverage,
+  });
   const exported = context.accumulator.addNode({
     kind: "javascript-module",
     identity: artifactLocalIdentity(
@@ -160,10 +168,26 @@ const addExportRelationship = (input: RelationshipInput): void => {
           path: file.path,
           range: link.location,
           operation: "recover-module-export",
-          coverage: semanticCoverage(semantic),
+          coverage: baseCoverage,
           limitations: semantic.ir.limitations,
         }),
       },
+      ...(returnShapes === null
+        ? []
+        : [
+            {
+              label: `${file.path}:${link.exportedName}:return-shapes`,
+              properties: returnShapes.properties,
+              evidence: staticInferenceEvidence({
+                sha256: file.sha256,
+                path: file.path,
+                range: returnShapes.range,
+                operation: "recover-export-return-shapes",
+                coverage: returnShapes.coverage,
+                limitations: returnShapes.limitations,
+              }),
+            },
+          ]),
     ],
   });
   context.accumulator.addEdge({

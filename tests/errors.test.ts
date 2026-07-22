@@ -76,6 +76,7 @@ describe("analysis error projection", () => {
       [77, "unexpected_display_geometry"],
       [78, "x11_input_failed"],
       [79, "runtime_dependency_unavailable"],
+      [80, "x11_socket_directory_unusable"],
     ] as const;
     for (const [exitCode, code] of expected) {
       const projected = projectAnalysisError(new HopperProcessError(exitCode));

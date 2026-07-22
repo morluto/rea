@@ -304,7 +304,13 @@ const providerErrorDetails = (
   if (error instanceof HopperRemoteError)
     return { provider_code: error.code, diagnostic_type: error.diagnosticType };
   if (error instanceof HopperProcessError && error.failureCode !== undefined)
-    return { failure_code: error.failureCode, exit_code: error.exitCode };
+    return {
+      failure_code: error.failureCode,
+      exit_code: error.exitCode,
+      ...(error.diagnostic === undefined
+        ? {}
+        : { diagnostics: { ...error.diagnostic } }),
+    };
   return undefined;
 };
 

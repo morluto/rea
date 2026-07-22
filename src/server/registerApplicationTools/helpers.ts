@@ -24,38 +24,59 @@ export const recordResult = (
   options: ApplicationToolRegistration,
   contract: (typeof APPLICATION_TOOL_CONTRACTS)[number],
   evidence: Evidence,
-  recordUnknown = false,
+  unknownKind?: "application-version-comparison" | "javascript-export-shape",
 ) => {
-  const recorded = recordUnknown
-    ? options.recordEvidenceWithUnknown?.(evidence, {
-        approved: true,
-        question:
-          "Which application entities remain unmatched or ambiguous across these versions?",
-        severity: "medium",
-        domain: "application-version-comparison",
-        supporting_evidence_ids: [evidence.evidence_id],
-        contradicting_evidence_ids: [],
-        required_authority: "shipped-artifact",
-        required_confidence: "observed",
-        required_environment: null,
-        recommended_probes: [
-          {
-            operation: "analyze_javascript_application",
-            rationale:
-              "Repeat static reconstruction with complete artifacts and source maps when available.",
-          },
-          {
-            operation: "reconcile_javascript_runtime",
-            rationale:
-              "Add approved passive runtime Evidence without promoting it to static fact.",
-          },
-        ],
-        relationships: [],
-      })
-    : options.recordEvidence?.(evidence);
+  const recorded =
+    unknownKind === undefined
+      ? options.recordEvidence?.(evidence)
+      : options.recordEvidenceWithUnknown?.(
+          evidence,
+          unknownRegistration(evidence, unknownKind),
+        );
   if (recorded !== undefined && !recorded.ok)
     return toCallToolResult(recorded, contract);
   return toCallToolResult({ ok: true, value: evidence }, contract, {
     evidenceResourcesAvailable: recorded !== undefined,
   });
 };
+
+const unknownRegistration = (
+  evidence: Evidence,
+  kind: "application-version-comparison" | "javascript-export-shape",
+) => ({
+  approved: true as const,
+  question:
+    kind === "application-version-comparison"
+      ? "Which application entities remain unmatched or ambiguous across these versions?"
+      : "Which selected JavaScript export return shapes remain dynamic, incomplete, or ambiguously paired?",
+  severity: "medium" as const,
+  domain: kind,
+  supporting_evidence_ids: [evidence.evidence_id],
+  contradicting_evidence_ids: [],
+  required_authority: "shipped-artifact" as const,
+  required_confidence: "observed" as const,
+  required_environment: null,
+  recommended_probes: [
+    {
+      operation: "analyze_javascript_application",
+      rationale:
+        "Repeat static reconstruction with complete artifacts and source maps when available.",
+    },
+    ...(kind === "application-version-comparison"
+      ? [
+          {
+            operation: "reconcile_javascript_runtime",
+            rationale:
+              "Add approved passive runtime Evidence without promoting it to static fact.",
+          },
+        ]
+      : [
+          {
+            operation: "run_controlled_replay",
+            rationale:
+              "Validate exact approved module behavior separately when runtime semantics are required.",
+          },
+        ]),
+  ],
+  relationships: [],
+});

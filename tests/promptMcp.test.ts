@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
 import { BinarySession } from "../src/application/BinarySession.js";
@@ -274,7 +275,7 @@ describe("guided prompts over MCP", () => {
   });
 
   it("refreshes wire completions across open, switch, concurrency, and close", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-prompt-mcp-"));
+    const directory = await createTestTempDirectory("rea-prompt-mcp-");
     temporaryDirectories.push(directory);
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");

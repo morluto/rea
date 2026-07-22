@@ -134,7 +134,12 @@ On supported Linux distributions, approved setup verifies Hopper's official
 REA runs the supported demo build on a private Xvfb display and selects Hopper's
 offered demo mode for each analysis session; it does not require the user's
 desktop display. Unattended package-manager access requires
-`--yes --install-hopper`.
+`--yes --install-hopper`. If the host exposes `/tmp/.X11-unix` as an immutable
+mount, REA first verifies the conflict and then uses an unprivileged user and
+mount namespace with a private mode-1777 tmpfs over that directory only. The
+host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
+`sudo`. `rea doctor --provider hopper --detail full --json` reports the selected
+strategy and both host and effective mount facts.
 
 ## Ghidra
 

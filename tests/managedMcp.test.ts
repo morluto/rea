@@ -1,11 +1,12 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { AnalysisProviderRegistry } from "../src/application/AnalysisProviderRegistry.js";
 import { BinarySession } from "../src/application/BinarySession.js";
@@ -19,7 +20,7 @@ import { buildManagedPeFixture } from "./fixtures/managedPe.js";
 
 describe("managed artifact MCP tools", () => {
   it("opens a managed PE and executes the managed static provider through MCP", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-managed-mcp-"));
+    const directory = await createTestTempDirectory("rea-managed-mcp-");
     const path = join(directory, "fixture.exe");
     const rightPath = join(directory, "fixture-renamed.exe");
     const runtimePath = join(directory, "dotnet");

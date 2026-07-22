@@ -1,11 +1,11 @@
+import { applicationVersionComparisonResultSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
+import { applicationFeatureTraceResultSchema } from "../domain/javascriptFeatureTraceSchemas.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
 import {
-  applicationVersionComparisonResultSchema,
-  compareApplicationVersionsInputSchema,
-} from "../domain/javascriptApplicationVersionComparisonSchemas.js";
-import {
-  applicationFeatureTraceResultSchema,
-  traceApplicationFeatureInputSchema,
-} from "../domain/javascriptFeatureTraceSchemas.js";
+  compareApplicationVersionsRequestSchema,
+  compareJavaScriptExportShapesRequestSchema,
+  traceApplicationFeatureRequestSchema,
+} from "./applicationWorkflowInputContracts.js";
 import {
   controlledReplayInputSchema,
   controlledReplayOutputSchema,
@@ -28,12 +28,16 @@ import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
 } from "./javascriptApplicationWorkflowExamples.js";
 
 const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
+);
+const exportShapeComparisonOutputSchema = evidenceResultOf(
+  javaScriptExportShapeComparisonResultSchema,
 );
 const HASH = "0".repeat(64);
 const NODE_PREPARATION_EXAMPLE = jsonObjectSchema.parse({
@@ -105,9 +109,9 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),
     description:
-      "Trace a typed literal seed through an authenticated JavaScript Application Graph with explicit direction, depth, node, edge, and path bounds. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
+      "Trace a typed literal seed through an authenticated JavaScript Application Graph supplied as full Evidence or an Evidence ID returned earlier in this session. Explicit direction, depth, node, edge, and path bounds apply. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
     kind: "application",
-    inputSchema: traceApplicationFeatureInputSchema,
+    inputSchema: traceApplicationFeatureRequestSchema,
     outputSchema: traceOutputSchema,
     examples: [
       {
@@ -120,14 +124,29 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_application_versions",
     ...toolContractMetadata("compare_application_versions"),
     description:
-      "Compare two authenticated JavaScript Application Graph versions using unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus a bounded changed_from graph without fuzzy or module-ordinal pairing.",
+      "Compare two authenticated JavaScript Application Graph versions supplied as full Evidence or Evidence IDs returned earlier in this session. Uses unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus a bounded changed_from graph without fuzzy or module-ordinal pairing.",
     kind: "application",
-    inputSchema: compareApplicationVersionsInputSchema,
+    inputSchema: compareApplicationVersionsRequestSchema,
     outputSchema: comparisonOutputSchema,
     examples: [
       {
         title: "Compare authenticated static and reconciled application graphs",
         input: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "compare_javascript_export_shapes",
+    ...toolContractMetadata("compare_javascript_export_shapes"),
+    description:
+      "Compare bounded static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph, supplied as full Evidence or session Evidence IDs. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes and recommends controlled replay separately without executing JavaScript.",
+    kind: "application",
+    inputSchema: compareJavaScriptExportShapesRequestSchema,
+    outputSchema: exportShapeComparisonOutputSchema,
+    examples: [
+      {
+        title: "Compare one exact parser export without execution",
+        input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
       },
     ],
   },
@@ -257,3 +276,15 @@ export const APPLICATION_TOOL_CONTRACTS = [
     ],
   },
 ] as const satisfies readonly ToolContract[];
+
+/** Resolve one named application contract without relying on array position. */
+export const applicationToolContract = (
+  name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
+): (typeof APPLICATION_TOOL_CONTRACTS)[number] => {
+  const contract = APPLICATION_TOOL_CONTRACTS.find(
+    ({ name: candidate }) => candidate === name,
+  );
+  if (contract === undefined)
+    throw new Error(`Missing application tool contract: ${name}`);
+  return contract;
+};

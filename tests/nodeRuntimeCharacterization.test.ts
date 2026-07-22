@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   executeNodeCharacterization,
@@ -141,7 +142,7 @@ describe("Node runtime characterization", () => {
 });
 
 const createFixture = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-characterization-"));
+  const root = await createTestTempDirectory("rea-characterization-");
   roots.push(root);
   const path = join(root, "bundle.js");
   const source = "const hidden = (value) => value.trim();";

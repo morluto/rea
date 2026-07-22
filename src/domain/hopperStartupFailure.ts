@@ -8,7 +8,33 @@ export type HopperStartupFailureCode =
   | "unsupported_demo_dialog"
   | "unexpected_display_geometry"
   | "x11_input_failed"
-  | "runtime_dependency_unavailable";
+  | "runtime_dependency_unavailable"
+  | "x11_socket_directory_unusable";
+
+export type HopperPrivateDisplayStrategy =
+  | "direct"
+  | "user-mount-namespace"
+  | "unavailable";
+
+/** Bounded, non-secret facts emitted by the Linux private-display adapter. */
+export interface HopperStartupDiagnostic {
+  readonly schema_version: 1;
+  readonly component: "hopper_private_display";
+  readonly operation: "probe" | "launch";
+  readonly status: "ready" | "error";
+  readonly failure_code: HopperStartupFailureCode | null;
+  readonly reason: string;
+  readonly socket_directory: "/tmp/.X11-unix";
+  readonly socket_directory_mode: string | null;
+  readonly mount_read_only: boolean | null;
+  readonly effective_socket_directory_mode: string | null;
+  readonly effective_mount_read_only: boolean | null;
+  readonly wsl: boolean;
+  readonly strategy: HopperPrivateDisplayStrategy;
+  readonly fallback_reason: string | null;
+  readonly xvfb_stderr_bytes: number;
+  readonly xvfb_stderr_truncated: boolean;
+}
 
 const failures = [
   [
@@ -61,6 +87,11 @@ const failures = [
     "runtime_dependency_unavailable",
     "A Linux demo-session dependency is unavailable. Rerun rea setup --yes --install-hopper, then rea doctor.",
   ],
+  [
+    80,
+    "x11_socket_directory_unusable",
+    "REA cannot use the host X11 socket directory for a private display. Run rea doctor --provider hopper for exact mount and namespace diagnostics.",
+  ],
 ] as const;
 
 const HOPPER_STARTUP_FAILURES = new Map<
@@ -71,3 +102,15 @@ const HOPPER_STARTUP_FAILURES = new Map<
 /** Return the stable public failure associated with a Linux demo adapter exit. */
 export const hopperStartupFailure = (exitCode: number | null) =>
   exitCode === null ? undefined : HOPPER_STARTUP_FAILURES.get(exitCode);
+
+/** Return the adapter exit associated with one stable startup failure code. */
+export const hopperStartupExitCode = (
+  code: HopperStartupFailureCode,
+): number | undefined =>
+  failures.find(([, candidate]) => candidate === code)?.[0];
+
+/** Narrow an untrusted diagnostic field to the public startup code union. */
+export const isHopperStartupFailureCode = (
+  value: string,
+): value is HopperStartupFailureCode =>
+  failures.some(([, candidate]) => candidate === value);

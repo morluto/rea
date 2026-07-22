@@ -1,7 +1,9 @@
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { readReferenceSource } from "../src/reference/ReferenceSourceReader.js";
 
@@ -14,7 +16,7 @@ const limits = {
 
 describe("readReferenceSource", () => {
   it("returns explicit entries in canonical code-point path order", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
+    const root = await createTestTempDirectory("rea-reference-");
     await mkdir(join(root, "nested"));
     await writeFile(join(root, "z.js"), "z");
     await writeFile(join(root, "a.js"), "a");
@@ -49,8 +51,8 @@ describe("readReferenceSource", () => {
   });
 
   it("sanitizes internal, external, and missing symlink targets", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
-    const outside = await mkdtemp(join(tmpdir(), "rea-outside-"));
+    const root = await createTestTempDirectory("rea-reference-");
+    const outside = await createTestTempDirectory("rea-outside-");
     await writeFile(join(outside, "secret"), "secret");
     await writeFile(join(root, "local"), "local");
     await symlink("local", join(root, "internal"));
@@ -96,7 +98,7 @@ describe("readReferenceSource", () => {
   });
 
   it("makes byte, file, depth, and path limits explicit per entry", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
+    const root = await createTestTempDirectory("rea-reference-");
     await writeFile(join(root, "a"), "too large");
     await writeFile(join(root, "b"), "b");
     await mkdir(join(root, "deep"));
@@ -130,7 +132,7 @@ describe("readReferenceSource", () => {
   });
 
   it("applies maxEntries as a global limit across every entry kind", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
+    const root = await createTestTempDirectory("rea-reference-");
     await writeFile(join(root, "a"), "a");
     await writeFile(join(root, "b"), "b");
     await writeFile(join(root, "c"), "c");
@@ -148,7 +150,7 @@ describe("readReferenceSource", () => {
   });
 
   it("applies exclusions to normalized paths before reading entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
+    const root = await createTestTempDirectory("rea-reference-");
     await mkdir(join(root, "ignored"));
     await writeFile(join(root, "ignored", "secret"), "secret");
     await writeFile(join(root, "kept"), "kept");
@@ -168,7 +170,7 @@ describe("readReferenceSource", () => {
   });
 
   it("sanitizes exclusion callback failures", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-reference-"));
+    const root = await createTestTempDirectory("rea-reference-");
     await writeFile(join(root, "file"), "value");
     const result = await readReferenceSource(root, limits, {
       shouldExclude: () => {

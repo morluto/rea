@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
@@ -322,7 +323,7 @@ const capability = (
 });
 
 const databaseTarget = async (): Promise<string> => {
-  directory = await mkdtemp(join(tmpdir(), "rea-provider-binding-"));
+  directory = await createTestTempDirectory("rea-provider-binding-");
   const path = join(directory, "fixture.hop");
   await writeFile(path, "fixture");
   return path;

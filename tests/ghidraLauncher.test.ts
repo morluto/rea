@@ -1,9 +1,10 @@
-import { access, chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, chmod, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   ghidraHeadlessArguments,
@@ -112,7 +113,7 @@ describe("Ghidra headless launcher", () => {
     vi.stubEnv("JAVA_TOOL_OPTIONS", "-Duser.home=/unapproved/home");
     vi.stubEnv("JDK_JAVA_OPTIONS", "-XX:MaxRAMPercentage=99");
     vi.stubEnv("_JAVA_OPTIONS", "-Xmx99G");
-    const runtimeRoot = await mkdtemp(join(tmpdir(), "rea-launcher-test-"));
+    const runtimeRoot = await createTestTempDirectory("rea-launcher-test-");
     roots.push(runtimeRoot);
     const token = "secret-token-that-must-not-leak";
     const javaHome =

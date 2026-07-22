@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { probeHomebrew } from "./homebrew.js";
 import {
   linuxHopperBinarySupported,
@@ -27,8 +28,15 @@ import {
   collectDoctorDiagnostics,
   doctorHealthy,
 } from "./DoctorDiagnostics.js";
+import {
+  normalizeDoctorScope,
+  scopeDoctorChecks,
+  type DoctorScopeReport,
+} from "./DoctorScope.js";
 
 const execFileAsync = promisify(execFile);
+/** Deep provider IDs whose readiness can be selected explicitly by doctor. */
+export const DOCTOR_PROVIDER_IDS = ["hopper", "ghidra"] as const;
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
   readonly name: string;
@@ -40,6 +48,7 @@ export interface DoctorCheck {
     | "missing_analysis_engine"
     | "config_drift";
   readonly detail?: string;
+  readonly details?: Readonly<Record<string, JsonValue>>;
   readonly remediation?: string;
 }
 
@@ -75,7 +84,7 @@ export interface DoctorHost {
   validTarget(path: string): Promise<boolean>;
   executable(path: string): Promise<boolean>;
   supportedLinuxHopper(path: string): Promise<boolean>;
-  linuxDemoRuntimeReady(): Promise<boolean>;
+  linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
@@ -98,10 +107,21 @@ interface InstalledSkillIdentity {
 /** Structured result returned by the read-only doctor workflow. */
 export interface DoctorReport {
   readonly healthy: boolean;
+  readonly environment_healthy: boolean;
+  readonly scope: DoctorScopeReport;
+  readonly scope_checks: readonly DoctorCheck[];
+  readonly informational_checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
   readonly providerInspections?: readonly DoctorProviderInspection[];
   readonly checks: readonly DoctorCheck[];
   readonly identity?: DoctorIdentity;
+}
+
+/** Caller-selected readiness boundary; omitted values retain audit semantics. */
+export interface DoctorScope {
+  readonly clients?: readonly string[];
+  readonly providers?: readonly string[];
+  readonly skill?: boolean;
 }
 
 /** Installed-package, skill, client, and runtime identity observations. */
@@ -137,6 +157,7 @@ interface DoctorIdentity {
 export const runDoctor = async (
   target?: string,
   host: DoctorHost = systemDoctorHost(),
+  requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
   const {
     checks: diagnosticChecks,
@@ -146,16 +167,31 @@ export const runDoctor = async (
   } = await collectDoctorDiagnostics(target, host);
   const identity = await collectDoctorIdentity(host, runtimeExecutables);
   const checks = [...diagnosticChecks, ...identity.checks];
+  const providers = {
+    hopperAvailable:
+      hopperPath !== undefined &&
+      checks
+        .filter(({ name }) => name.startsWith("hopper"))
+        .every(({ ok }) => ok),
+    hopperConfigured: host.configuredHopperPath !== undefined,
+    providerInspections,
+  };
+  const environmentHealthy = doctorHealthy(checks, providers);
+  const scope = normalizeDoctorScope(requestedScope, target);
+  const scoped = scopeDoctorChecks({
+    checks,
+    registrations: identity.value.registrations,
+    skillState: identity.value.skill.state,
+    providers,
+    scope,
+  });
   return {
-    healthy: doctorHealthy(checks, {
-      hopperAvailable:
-        hopperPath !== undefined &&
-        checks
-          .filter(({ name }) => name.startsWith("hopper"))
-          .every(({ ok }) => ok),
-      hopperConfigured: host.configuredHopperPath !== undefined,
-      providerInspections,
-    }),
+    healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
+    environment_healthy: environmentHealthy,
+    scope,
+    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
+    informational_checks:
+      scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,
@@ -269,6 +305,7 @@ export interface SystemDoctorHostOptions {
     readonly DoctorProviderInspection[]
   >;
   readonly javascriptReplayCheck?: () => Promise<DoctorCheck>;
+  readonly linuxDemoRuntimeCheck?: () => Promise<DoctorCheck>;
 }
 
 /** Create diagnostics backed by the current process and host commands. */
@@ -290,7 +327,8 @@ export const systemDoctorHost = (
     return (await parseBinaryTarget(path)).ok;
   },
   executable: executableAvailable,
-  linuxDemoRuntimeReady,
+  linuxDemoRuntimeCheck:
+    options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
   supportedLinuxHopper: linuxHopperBinarySupported,
   async brewHopperPath() {
     return probeHomebrew(async (command) => {
@@ -367,20 +405,14 @@ const executableAvailable = async (path: string): Promise<boolean> => {
   }
 };
 
-const linuxDemoRuntimeReady = async (): Promise<boolean> => {
-  try {
-    await access("/usr/bin/Xvfb", constants.X_OK);
-    await access("/usr/bin/xauth", constants.X_OK);
-    await access("/usr/bin/python3", constants.X_OK);
-    await execFileAsync("/usr/bin/python3", [
-      "-c",
-      "import ctypes; ctypes.CDLL('libX11.so.6'); ctypes.CDLL('libXtst.so.6')",
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const uncomposedLinuxDemoRuntimeCheck = (): Promise<DoctorCheck> =>
+  Promise.resolve({
+    name: "hopper-demo-runtime",
+    ok: false,
+    classification: "config_drift",
+    detail: "Linux Hopper private-display diagnostics were not composed",
+    remediation: "Run rea doctor through the production CLI adapter.",
+  });
 
 const manualHopperPaths = async (): Promise<readonly string[]> => {
   const paths: string[] = [];

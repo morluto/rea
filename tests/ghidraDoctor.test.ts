@@ -64,7 +64,12 @@ const doctorHost = (
   executable: (path) =>
     Promise.resolve(hopperAvailable && path.includes("Hopper")),
   supportedLinuxHopper: () => Promise.resolve(true),
-  linuxDemoRuntimeReady: () => Promise.resolve(true),
+  linuxDemoRuntimeCheck: () =>
+    Promise.resolve({
+      name: "hopper-demo-runtime",
+      ok: true,
+      classification: "healthy",
+    }),
   brewHopperPath: () => Promise.resolve(undefined),
   manualHopperPaths: () => Promise.resolve([]),
   providerInspections: () =>

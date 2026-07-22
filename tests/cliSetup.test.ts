@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 const decisionMarker = "REA_SETUP_DECISION:";
@@ -256,7 +256,7 @@ const runJourney = async (
   accessible = false,
   journeyActions: readonly object[] = actions,
 ): Promise<JourneyResult> => {
-  const isolatedHome = await mkdtemp(join(tmpdir(), "rea-cli-setup-test-"));
+  const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cliSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,

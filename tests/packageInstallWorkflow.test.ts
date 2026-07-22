@@ -26,6 +26,14 @@ describe("package installation workflows", () => {
       expect(workflow).not.toContain("npm run rebuild:native");
     for (const workflow of [realHopperLinux, realHopperMac])
       expect(workflow).toContain("npm install --global --ignore-scripts");
+    for (const workflow of [realHopperLinux, realHopperMac])
+      expect(workflow).toContain(
+        "REA_HOPPER_CONFORMANCE_MANIFEST_PATH: ${{ github.workspace }}/build/conformance/manifest.json",
+      );
+    expect(realHopperLinux).not.toContain("HOPPER_TARGET_PATH");
+    expect(realHopperLinux).not.toContain("HOPPER_SECOND_TARGET_PATH");
+    expect(realHopperLinux).not.toContain("first_target");
+    expect(realHopperLinux).not.toContain("second_target");
   });
 
   it("verifies the package before publish and runs published canaries outside the checkout", async () => {

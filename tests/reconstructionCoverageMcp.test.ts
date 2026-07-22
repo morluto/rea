@@ -1,9 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { INVESTIGATION_EXAMPLES } from "../src/contracts/investigationExamples.js";
@@ -21,7 +22,7 @@ const digest = (character: string): string => character.repeat(64);
 
 describe("reconstruction coverage MCP parity", () => {
   it("commits and queries the same evidence-backed fail-closed workspace", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-coverage-mcp-"));
+    const root = await createTestTempDirectory("rea-coverage-mcp-");
     const path = join(root, "coverage.json");
     const policy = {
       roots: [root],

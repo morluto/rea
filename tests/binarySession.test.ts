@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import type { AnalysisClient } from "../src/application/AnalysisProvider.js";
@@ -421,7 +422,7 @@ describe("binary session", () => {
   });
 
   it("keeps the active client when a switch fails", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-session-"));
+    directory = await createTestTempDirectory("bb-session-");
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await writeFile(first, "one");
@@ -458,7 +459,7 @@ describe("binary session", () => {
   });
 
   it("replaces the active client when a canonical path changes contents", async () => {
-    directory = await mkdtemp(join(tmpdir(), "bb-session-"));
+    directory = await createTestTempDirectory("bb-session-");
     const path = join(directory, "mutable.hop");
     await writeFile(path, "one");
     const clients: Array<{
@@ -739,7 +740,7 @@ class TestClient implements AnalysisClient {
 }
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await mkdtemp(join(tmpdir(), "bb-session-"));
+  directory ??= await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");

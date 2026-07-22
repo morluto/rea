@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   readReconstructionCoverageWorkspace,
@@ -385,7 +386,7 @@ describe("reconstruction coverage closure", () => {
   });
 
   it("persists owner-only revisions with CAS and digest-chain enforcement", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-coverage-workspace-"));
+    const root = await createTestTempDirectory("rea-coverage-workspace-");
     const path = join(root, "coverage.json");
     const first = completeWorkspace();
     const filePolicy: EvidenceFilePolicy = {
@@ -426,7 +427,7 @@ describe("reconstruction coverage closure", () => {
   });
 
   it("shares commit and fail-closed query behavior across adapters", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-coverage-service-"));
+    const root = await createTestTempDirectory("rea-coverage-service-");
     const path = join(root, "coverage.json");
     const workspace = completeWorkspace();
     const filePolicy: EvidenceFilePolicy = {

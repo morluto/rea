@@ -4,7 +4,7 @@ import {
   executeNodeCharacterization,
   prepareNodeCharacterization,
 } from "../../application/NodeRuntimeCharacterizationService.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
+import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import {
   nodeCharacterizationExecutionInputSchema,
   nodeCharacterizationExecutionOutputSchema,
@@ -20,8 +20,12 @@ import { mcpProgressReporter } from "../mcpProgress.js";
 import { recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const prepareContract = APPLICATION_TOOL_CONTRACTS[3];
-const executeContract = APPLICATION_TOOL_CONTRACTS[4];
+const prepareContract = applicationToolContract(
+  "prepare_node_characterization",
+);
+const executeContract = applicationToolContract(
+  "execute_node_characterization",
+);
 
 /** Register node runtime characterization prepare and execute tools. */
 export const registerCharacterizationTools = (

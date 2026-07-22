@@ -13,6 +13,7 @@ import type {
   SetupHost,
   SetupProviderEnvironment,
 } from "./Setup.js";
+import type { DoctorScope } from "./Doctor.js";
 
 /** Preflighted client mutation admitted into the setup plan. */
 type SetupClientPlan = Readonly<{
@@ -102,9 +103,10 @@ export const discoverSetupActions = async (input: {
   readonly proposeHopper: boolean;
   readonly selectedClientIds: readonly string[] | undefined;
   readonly installSkillSelection: boolean | undefined;
+  readonly doctorScope: DoctorScope | undefined;
 }) => {
   const { host, providerEnvironment, command } = input;
-  const initialDoctor = await host.doctor();
+  const initialDoctor = await host.doctor(input.doctorScope);
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
     ({ name, ok, detail }) =>
       !ok &&

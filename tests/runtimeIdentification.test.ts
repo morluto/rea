@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -10,6 +9,8 @@ import {
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
 import { runProviderAnalysis } from "../src/application/DirectAnalysis.js";
 import { parseEvidence } from "../src/domain/evidence.js";
 import {
@@ -19,7 +20,7 @@ import {
 
 describe("runtime identification", () => {
   it("identifies APK runtime families and exposes missing semantic providers", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-runtime-"));
+    const root = await createTestTempDirectory("rea-runtime-");
     const path = join(root, "Fixture.apk");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(
@@ -108,7 +109,7 @@ describe("runtime identification", () => {
   });
 
   it("reports bounded runtime-observation truncation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-runtime-limit-"));
+    const root = await createTestTempDirectory("rea-runtime-limit-");
     const path = join(root, "Fixture.apk");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("one.js", new TextReader("one"));
@@ -129,7 +130,7 @@ describe("runtime identification", () => {
   });
 
   it("does not route nested DEX content to the APK-only provider", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-runtime-dex-"));
+    const root = await createTestTempDirectory("rea-runtime-dex-");
     const path = join(root, "Fixture.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(

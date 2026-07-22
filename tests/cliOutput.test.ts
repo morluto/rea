@@ -1,19 +1,81 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
-import { sanitizeCliOutput } from "../src/cliOutput.js";
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
+import {
+  renderCliOutputArgumentError,
+  sanitizeCliOutput,
+  validateCliOutputArguments,
+} from "../src/cliOutput.js";
 
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 const CLI_VARIANT_TIMEOUT_MS = 120_000;
 
 describe("CLI output boundary", () => {
+  it("rejects token windows that would corrupt structured output", () => {
+    for (const format of ["json", "jsonl", "yaml"] as const) {
+      const validation = validateCliOutputArguments([
+        "providers",
+        "--token-limit",
+        "5",
+        "--format",
+        format,
+      ]);
+      expect(validation).toMatchObject({
+        ok: false,
+        format,
+        code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      });
+      if (!validation.ok) {
+        const rendered = renderCliOutputArgumentError(validation);
+        expect(rendered).not.toContain("[truncated:");
+        if (format === "json" || format === "jsonl")
+          expect(JSON.parse(rendered)).toMatchObject({
+            ok: false,
+            error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+          });
+        else
+          expect(rendered).toMatch(
+            /^ok: false\nerror:\n  code: UNSUPPORTED_OUTPUT_COMBINATION\n/u,
+          );
+      }
+    }
+    expect(
+      validateCliOutputArguments([
+        "providers",
+        "--token-limit",
+        "5",
+        "--format",
+        "toon",
+      ]),
+    ).toEqual({ ok: true });
+    expect(
+      validateCliOutputArguments(["providers", "--token-count", "--json"]),
+    ).toEqual({ ok: true });
+  });
+
+  it("fails before emitting a truncated JSON document", async () => {
+    const execution = execFileAsync(
+      process.execPath,
+      ["scripts/rea.mjs", "providers", "--token-limit", "5", "--json"],
+      { cwd: process.cwd() },
+    );
+    const failure = await execution.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ code: 1 });
+    const { stdout } = failure as { readonly stdout: string };
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+    });
+  });
+
   it("preserves normal output and sanitizes text and JSON validation errors", () => {
     expect(sanitizeCliOutput("result: ok\n")).toBe("result: ok\n");
     expect(sanitizeCliOutput("result: VALIDATION_ERROR\n")).toBe(
@@ -101,7 +163,7 @@ describe("CLI output boundary", () => {
   it(
     "preserves artifact diagnostics in ordinary and full JSON output",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-cli-diagnostics-"));
+      const root = await createTestTempDirectory("rea-cli-diagnostics-");
       const source = join(root, "source");
       await mkdir(source);
       await writeFile(join(source, "main.js"), "console.log('ok');\n");

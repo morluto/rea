@@ -1,7 +1,8 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
+
 import {
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
@@ -17,7 +18,7 @@ afterEach(async () => {
 
 describe("canonical skill transaction", () => {
   it("backs up and upgrades a stale managed skill without touching siblings", async () => {
-    const home = await mkdtemp(join(tmpdir(), "rea-skill-test-"));
+    const home = await createTestTempDirectory("rea-skill-test-");
     roots.push(home);
     const destination = join(
       home,

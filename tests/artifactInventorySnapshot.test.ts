@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "./fixtures/temporaryDirectory.js";
 
 import {
   paginateArtifactInventory,
@@ -20,7 +21,7 @@ const LIMITS = {
 
 describe("artifact inventory snapshot", () => {
   it("projects every page from the same completed scan", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-inventory-snapshot-"));
+    const root = await createTestTempDirectory("rea-inventory-snapshot-");
     await writeFile(join(root, "a.txt"), "a");
     await writeFile(join(root, "b.txt"), "b");
     const snapshot = await scanArtifactInventory(root, LIMITS);

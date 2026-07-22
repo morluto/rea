@@ -1,8 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareApplicationVersionsEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
-import { compareApplicationVersionsInputSchema } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
+import { resolveCompareApplicationVersionsRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
+import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { compareApplicationVersionsRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
 import { applicationVersionComparisonResultSchema } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toCallToolResult } from "../toolResult.js";
@@ -11,7 +12,7 @@ import { safeParseToolInput } from "../toolInputValidation.js";
 import { recordResult, recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const compareContract = APPLICATION_TOOL_CONTRACTS[1];
+const compareContract = applicationToolContract("compare_application_versions");
 
 /** Register the provider-neutral JavaScript version comparison tool. */
 export const registerCompareApplicationVersionsTool = (
@@ -23,13 +24,18 @@ export const registerCompareApplicationVersionsTool = (
     toolRegistrationOptions(compareContract),
     async (input) => {
       const parsedInput = safeParseToolInput(
-        compareApplicationVersionsInputSchema,
+        compareApplicationVersionsRequestSchema,
         input,
         compareContract.name,
       );
       if (!parsedInput.ok)
         return toCallToolResult(parsedInput, compareContract);
-      const parsed = parsedInput.value;
+      const resolved = resolveCompareApplicationVersionsRequestValidated(
+        parsedInput.value,
+        options.evidenceLookup,
+      );
+      if (!resolved.ok) return toCallToolResult(resolved, compareContract);
+      const parsed = resolved.value;
       const result = await logToolExecution(
         options.logger,
         compareContract.name,
@@ -53,7 +59,9 @@ export const registerCompareApplicationVersionsTool = (
         options,
         compareContract,
         result.value,
-        parsed.unknown_registry_approved === true && unknown,
+        parsed.unknown_registry_approved === true && unknown
+          ? "application-version-comparison"
+          : undefined,
       );
     },
   );
