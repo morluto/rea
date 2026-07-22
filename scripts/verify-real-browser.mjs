@@ -21,6 +21,7 @@ import {
 import { startBrowserVerifierSite } from "./fixtures/browser-verifier-site.mjs";
 import { startPageCdpProxy } from "./fixtures/page-cdp-proxy.mjs";
 import { sourceMapSummary } from "./lib/browser-verifier-assertions.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const SECRET_VALUES = [
   "network-secret-value",
@@ -29,6 +30,7 @@ const SECRET_VALUES = [
   "websocket-secret-value",
   "ax-private-label-value",
 ];
+const verifierRun = createVerifierRun();
 
 const executable = await browserExecutable();
 const profile = await mkdtemp(join(tmpdir(), "rea-real-browser-"));
@@ -209,6 +211,7 @@ try {
 
   process.stdout.write(
     `${JSON.stringify({
+      verifier_run: await completeVerifierRun(verifierRun),
       browser: observed.value.browser.product,
       endpoint,
       target,

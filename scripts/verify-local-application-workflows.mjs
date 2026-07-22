@@ -14,6 +14,9 @@ import { applicationVersionComparisonResultSchema } from "../dist/domain/javascr
 import { applicationFeatureTraceResultSchema } from "../dist/domain/javascriptFeatureTraceSchemas.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../dist/domain/javascriptExportShapeComparisonSchemas.js";
 import { createPermissionPolicy } from "../dist/domain/permissionPolicy.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const verifierRun = createVerifierRun();
 
 const options = parseArgs({
   options: {
@@ -94,6 +97,7 @@ const exportShapeResult =
 
 process.stdout.write(
   `${JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
     comparison_id: comparisonResult.comparison_id,
     evidence_id: comparison.value.evidence_id,
     left: comparisonResult.left,

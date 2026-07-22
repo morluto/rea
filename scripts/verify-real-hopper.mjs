@@ -27,7 +27,9 @@ import {
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 const execFileAsync = promisify(execFile);
+const verifierRun = createVerifierRun();
 const timeout = 180_000;
 const parseServerArgs = (encoded) => {
   const parsed = JSON.parse(encoded);
@@ -482,9 +484,10 @@ if (
 }
 if (summary === undefined)
   throw new Error("Real-Hopper verification did not produce a summary");
+const completedVerifierRun = await completeVerifierRun(verifierRun);
 await new Promise((resolve, reject) => {
   process.stdout.write(
-    `${JSON.stringify({ ...summary, cleanShutdown: true }, null, 2)}\n`,
+    `${JSON.stringify({ verifier_run: completedVerifierRun, ...summary, cleanShutdown: true }, null, 2)}\n`,
     (cause) => {
       if (cause) reject(cause);
       else resolve();

@@ -91,6 +91,52 @@ export const providerIdentity = z.object({
   version: z.string().nullable(),
 });
 
+const processCoordinates = {
+  launcher_pid: z.number().int().min(1),
+  process_group_id: z.number().int().min(1),
+};
+
+const processLineageObservation = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("unavailable"),
+    observed_at: z.iso.datetime(),
+    ...processCoordinates,
+    reason: z.string().min(1),
+  }),
+  z.object({
+    status: z.literal("verified"),
+    observed_at: z.iso.datetime(),
+    schema_version: z.literal(1),
+    ...processCoordinates,
+    launcher_parent_pid: z.number().int().min(0),
+    descendants: z.array(
+      z.object({
+        pid: z.number().int().min(1),
+        parent_pid: z.number().int().min(0),
+        process_group_id: z.number().int().min(1),
+      }),
+    ),
+  }),
+]);
+
+const analysisRun = z
+  .object({
+    run_id: z.string().uuid(),
+    process_lineage: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("not_observed") }),
+      z.object({
+        status: z.literal("snapshots"),
+        snapshots: z.array(
+          z.object({
+            provider: providerIdentity,
+            observation: processLineageObservation,
+          }),
+        ),
+      }),
+    ]),
+  })
+  .nullable();
+
 const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
 );
@@ -175,6 +221,7 @@ export const sessionProvider = z.object({
   provider: providerIdentity,
   providers: z.array(providerIdentity),
   capabilities: z.array(providerCapability),
+  analysis_run: analysisRun,
   analysis_provider_binding: z
     .object({
       provider: providerIdentity,

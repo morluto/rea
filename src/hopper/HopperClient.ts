@@ -21,6 +21,7 @@ import { PendingOperations } from "../process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
+import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
@@ -45,6 +46,7 @@ const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
 export interface HopperClientOptions {
   readonly launcher: BridgeLauncher;
+  readonly runId?: string;
   readonly requestTimeoutMs?: number;
   readonly startupTimeoutMs?: number;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -79,6 +81,7 @@ export class HopperClient {
   #process: ProviderProcessSupervisor | undefined;
   #runtimeRoot: PrivateRuntimeRoot | undefined;
   #token: string | undefined;
+  readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #buffer = "";
   #closing = false;
@@ -104,6 +107,11 @@ export class HopperClient {
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
       startupTimeoutMs: options.startupTimeoutMs ?? 120_000,
     };
+  }
+
+  /** Latest token-verified launcher lineage for the active run. */
+  runtimeLineage() {
+    return this.#lineage.snapshot();
   }
 
   /** Launch the bridge once and complete its authenticated health handshake. */
@@ -179,9 +187,10 @@ export class HopperClient {
     }
     const socketPath = join(this.#runtimeRoot.path, "bridge.sock");
     this.#token = randomBytes(32).toString("hex");
+    this.#lineage.reset();
     this.#launcherExitCode = undefined;
     this.#launcherFailureDiagnostic = undefined;
-    const runId = randomUUID();
+    const runId = this.#options.runId ?? randomUUID();
     const launched: Result<
       BridgeLaunch,
       HopperStartError | HopperCancelledError | HopperProcessError
@@ -229,7 +238,8 @@ export class HopperClient {
         : health;
     }
     const parsed = parseHopperServerInfo(health.value, runId);
-    if (!parsed.ok) await this.#cleanup();
+    if (parsed.ok) await this.#lineage.observe(this.#launch);
+    else await this.#cleanup();
     return parsed;
   }
 

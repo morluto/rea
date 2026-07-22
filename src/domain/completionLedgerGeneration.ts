@@ -29,6 +29,52 @@ const skillDigestSchema = z.strictObject({
   skill_id: identifierSchema,
   sha256: digestSchema,
 });
+const verifierRunSchema = z
+  .strictObject({
+    schema_version: z.literal(1),
+    run_id: z.string().uuid(),
+    verifier_pid: z.number().int().positive(),
+    parent_pid: z.number().int().nonnegative(),
+    process_lineage: z.discriminatedUnion("status", [
+      z.strictObject({
+        status: z.literal("verified"),
+        schema_version: z.literal(1),
+        observed_at: z.iso.datetime(),
+        launcher_pid: z.number().int().positive(),
+        launcher_parent_pid: z.number().int().nonnegative(),
+        process_group_id: z.number().int().positive(),
+        descendants: z.array(
+          z.strictObject({
+            pid: z.number().int().positive(),
+            parent_pid: z.number().int().nonnegative(),
+            process_group_id: z.number().int().positive(),
+          }),
+        ),
+      }),
+      z.strictObject({
+        status: z.literal("unavailable"),
+        observed_at: z.iso.datetime(),
+        launcher_pid: z.number().int().positive(),
+        launcher_parent_pid: z.number().int().nonnegative(),
+        process_group_id: z.number().int().positive().nullable(),
+        reason: z.string().min(1).max(500),
+      }),
+    ]),
+  })
+  .superRefine((run, context) => {
+    if (run.process_lineage.launcher_pid !== run.verifier_pid)
+      context.addIssue({
+        code: "custom",
+        path: ["process_lineage", "launcher_pid"],
+        message: "Lineage launcher PID must identify the verifier process",
+      });
+    if (run.process_lineage.launcher_parent_pid !== run.parent_pid)
+      context.addIssue({
+        code: "custom",
+        path: ["process_lineage", "launcher_parent_pid"],
+        message: "Lineage parent PID must identify the verifier parent",
+      });
+  });
 const reportClaimSchema = z.strictObject({
   claim_id: identifierSchema,
   scenario: scenarioSchema,
@@ -42,6 +88,7 @@ const reportClaimSchema = z.strictObject({
 const completionVerifierReportObjectSchema = z.strictObject({
   schema_version: z.literal(1),
   verifier: identitySchema,
+  verifier_run: verifierRunSchema,
   environment: environmentSchema,
   claims: z.array(reportClaimSchema).min(1).max(10_000),
 });

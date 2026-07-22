@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   analysisProfilesEqual,
@@ -58,6 +60,7 @@ export class BinarySession
         readonly profile: AnalysisProfileCommitment | null;
         readonly compatibility: Readonly<Record<string, JsonValue>>;
         readonly route: SessionProviderRoute;
+        readonly runId: string;
       }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
@@ -184,7 +187,8 @@ export class BinarySession
       const previous = this.#active;
       this.#active = undefined;
       await previous?.client.close();
-      const client = route.createClient(target);
+      const runId = randomUUID();
+      const client = route.createClient(target, { runId });
       const started = await client.execute("health", {}, options);
       if (!started.ok) {
         await client.close();
@@ -202,6 +206,7 @@ export class BinarySession
         profile,
         compatibility: structuredClone(compatibility),
         route,
+        runId,
       };
       this.#clearRuntimeAvailability();
       if (profile === null) this.clearSnapshot();
@@ -240,6 +245,9 @@ export class BinarySession
       route: this.#currentRoute(),
       router: this.#providerRouter,
       runtimeAvailability: this.#runtimeAvailability,
+      runId: this.#active?.runId,
+      runtimeLineageSnapshots:
+        this.#active?.client.runtimeLineageSnapshots?.() ?? [],
     });
   }
 
@@ -396,11 +404,13 @@ export class BinarySession
           readonly profile: AnalysisProfileCommitment | null;
           readonly compatibility: Readonly<Record<string, JsonValue>>;
           readonly route: SessionProviderRoute;
+          readonly runId: string;
         }
       | undefined,
   ): Promise<void> {
     if (previous === undefined) return;
-    const client = previous.route.createClient(previous.target);
+    const runId = randomUUID();
+    const client = previous.route.createClient(previous.target, { runId });
     const started = await client.execute("health", {});
     if (started.ok)
       this.#active = {
@@ -409,6 +419,7 @@ export class BinarySession
         profile: previous.profile,
         compatibility: previous.compatibility,
         route: previous.route,
+        runId,
       };
     else await client.close();
   }

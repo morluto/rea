@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { createVerifierRun } from "./lib/verifier-run.mjs";
+
 const execFileAsync = promisify(execFile);
+createVerifierRun();
 
 if (process.platform !== "linux")
   throw new Error("Linux real-Hopper verification must run on Linux");

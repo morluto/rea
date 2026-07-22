@@ -396,6 +396,17 @@ selection source, and complete profile commitment. Every candidate reports
 selected. Candidate capability descriptors preserve supported, unsupported,
 and degraded truth independently.
 
+An open target also exposes `analysis_run`. Its run ID is allocated by the
+session before client construction and propagated into selected Hopper or
+Ghidra bridge handshake and process environment. Dynamic clients retain
+provider-attributed lineage snapshots only after revalidating launcher
+parent/command and every observed launcher or descendant run token. `not_observed`
+means no dynamic provider has supplied a snapshot. Once one or more start,
+`snapshots` preserves every provider observation; each remains explicitly
+`unavailable` or `verified` and records its `observed_at` time. Retained
+snapshots are not live inventories, and a point-in-time observation never proves
+historical absence.
+
 The existing flat `provider`, `providers`, and `capabilities` status fields stay
 during the 1.x compatibility window. Their effective deep-operation entries
 come only from the active binding; target-free ambiguity is unavailable rather

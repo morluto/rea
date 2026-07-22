@@ -13,6 +13,7 @@ import type { EvidenceSubjectTarget } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 
 export interface ExecutionOptions {
   readonly signal?: AbortSignal;
@@ -74,14 +75,28 @@ export interface AnalysisOperationPort {
   ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }
 
+/** Retained provider-process observation attributed to its producing provider. */
+export interface ProviderRuntimeLineageSnapshot {
+  readonly provider: ProviderIdentity;
+  readonly observation: ProcessLineageObservation;
+}
+
 /** Provider session bound to exactly one parsed artifact. */
 export interface AnalysisClient extends AnalysisOperationPort {
+  /** Retained token-verified process snapshots for dynamic providers this client started. */
+  runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   close(): Promise<void>;
+}
+
+/** Per-client identity allocated before any provider side effect starts. */
+export interface AnalysisClientContext {
+  readonly runId: string;
 }
 
 export type AnalysisClientFactory = (
   target: BinaryTarget,
   profile?: AnalysisProfileCommitment,
+  context?: AnalysisClientContext,
 ) => AnalysisClient;
 
 export interface ProviderIdentity {
@@ -144,6 +159,7 @@ export interface AnalysisProvider {
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
+    context?: AnalysisClientContext,
   ): AnalysisClient;
 }
 

@@ -210,11 +210,12 @@ describe("Ghidra provider", () => {
       }),
     );
     const start = vi.fn().mockResolvedValue(ok(sessionInfo()));
-    const ghidra = provider(installationHost(), () => ({
+    const clientFactory = vi.fn(() => ({
       start,
       callTool,
       close: () => Promise.resolve(),
     }));
+    const ghidra = provider(installationHost(), clientFactory);
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
     );
@@ -238,8 +239,15 @@ describe("Ghidra provider", () => {
     });
 
     const result = await ghidra
-      .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
+      .createClient(executableTarget("elf", "x86_64"), resolved.value.profile, {
+        runId: "11111111-1111-4111-8111-111111111111",
+      })
       .execute("list_procedures", {});
+    expect(clientFactory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "11111111-1111-4111-8111-111111111111",
+      }),
+    );
     expect(callTool).toHaveBeenCalledWith(
       "list_procedures",
       { document: null, offset: 0, limit: 100 },

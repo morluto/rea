@@ -1,6 +1,9 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { CapabilityDescriptor } from "./AnalysisProvider.js";
+import type {
+  CapabilityDescriptor,
+  ProviderRuntimeLineageSnapshot,
+} from "./AnalysisProvider.js";
 import type {
   SessionProviderRoute,
   SessionProviderRouter,
@@ -14,6 +17,8 @@ interface BinarySessionStatusInput {
     string,
     { readonly available: boolean; readonly reason: string | null }
   >;
+  readonly runId: string | undefined;
+  readonly runtimeLineageSnapshots: readonly ProviderRuntimeLineageSnapshot[];
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -22,6 +27,8 @@ export const binarySessionStatus = ({
   route,
   router,
   runtimeAvailability,
+  runId,
+  runtimeLineageSnapshots,
 }: BinarySessionStatusInput): JsonValue => {
   const configuredProvider = router.configuredIdentity();
   const provider = providerSummary(configuredProvider);
@@ -59,6 +66,13 @@ export const binarySessionStatus = ({
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_run:
+      runId === undefined
+        ? null
+        : {
+            run_id: runId,
+            process_lineage: processLineageStatus(runtimeLineageSnapshots),
+          },
   };
   return target === undefined
     ? { open: false, ...common }
@@ -82,6 +96,47 @@ const providerSummary = ({
   readonly name: string;
   readonly version: string | null;
 }) => ({ id, name, version });
+
+const processLineageStatus = (
+  snapshots: readonly ProviderRuntimeLineageSnapshot[],
+) =>
+  snapshots.length === 0
+    ? { status: "not_observed" }
+    : {
+        status: "snapshots",
+        snapshots: snapshots
+          .slice()
+          .sort((left, right) =>
+            left.provider.id.localeCompare(right.provider.id),
+          )
+          .map(({ provider, observation }) => ({
+            provider: providerSummary(provider),
+            observation:
+              observation.status === "unavailable"
+                ? {
+                    status: observation.status,
+                    observed_at: observation.observedAt,
+                    launcher_pid: observation.launcherPid,
+                    process_group_id: observation.processGroupId,
+                    reason: observation.reason,
+                  }
+                : {
+                    status: observation.status,
+                    observed_at: observation.observedAt,
+                    schema_version: observation.lineage.schemaVersion,
+                    launcher_pid: observation.lineage.launcherPid,
+                    launcher_parent_pid: observation.lineage.launcherParentPid,
+                    process_group_id: observation.lineage.processGroupId,
+                    descendants: observation.lineage.descendants.map(
+                      ({ pid, parentPid, processGroupId }) => ({
+                        pid,
+                        parent_pid: parentPid,
+                        process_group_id: processGroupId,
+                      }),
+                    ),
+                  },
+          })),
+      };
 
 const capabilityStatus = (
   descriptor: Omit<CapabilityDescriptor, "available" | "reason"> & {

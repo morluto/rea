@@ -95,6 +95,7 @@ const clientFor = (
     readonly requestTimeoutMs?: number;
     readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
     readonly transport?: GhidraTransportKind;
+    readonly runId?: string;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -106,6 +107,7 @@ const clientFor = (
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     requestTimeoutMs: options.requestTimeoutMs ?? 100,
+    ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.onDiagnostic === undefined
       ? {}
       : { onDiagnostic: options.onDiagnostic }),
@@ -388,7 +390,9 @@ describe("GhidraClient", () => {
 
   it("retains actionable runtime coordinates after successful cleanup", async () => {
     const launcher = new FixtureLauncher();
-    const client = clientFor(launcher);
+    const client = clientFor(launcher, {
+      runId: "11111111-1111-4111-8111-111111111111",
+    });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
 
     await client.close();
@@ -399,6 +403,7 @@ describe("GhidraClient", () => {
       endpoint_path: launcher.endpointPaths[0],
       project_root: join(launcher.runtimeRoots[0] ?? "", "project"),
       process_id: expect.any(Number),
+      run_id: "11111111-1111-4111-8111-111111111111",
     });
     await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
       code: "ENOENT",

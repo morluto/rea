@@ -183,6 +183,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       return ok({
         process: child,
         ownsProcessLifetime: true,
+        ownership: started.ownership,
         shutdownByCleanup: ownsProcessLifetime,
         cleanup: () => cleanupOwnedProcessGroup(started.ownership),
       });
