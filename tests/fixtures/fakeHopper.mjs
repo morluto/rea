@@ -1,6 +1,13 @@
 import { createServer } from "node:net";
 
-const [socketPath, token, runId] = process.argv.slice(2);
+const [socketPath, token, runId, shutdownMode = "acknowledge"] =
+  process.argv.slice(2);
+const shutdownResult = () => ({
+  shutdown: true,
+  analysis_stopped: true,
+  document_closed: true,
+  ...(shutdownMode === "cleanup-required" ? { cleanup_required: true } : {}),
+});
 const enhancedFixtureResult = (method) => {
   switch (method) {
     case "list_segments":
@@ -126,15 +133,9 @@ const server = createServer((socket) => {
           true,
         );
       } else if (request.method === "shutdown") {
-        send({
-          id: request.id,
-          result: {
-            shutdown: true,
-            analysis_stopped: true,
-            document_closed: true,
-          },
-        });
-        setTimeout(() => server.close(), 2);
+        send({ id: request.id, result: shutdownResult() });
+        if (shutdownMode !== "cleanup-required")
+          setTimeout(() => server.close(), 2);
       } else if (request.method === "hang") {
         // Deliberately leave the request pending.
       } else if (request.method === "exit") {

@@ -751,6 +751,13 @@ Generated completion commitments deliberately exclude this per-execution
 identity, so check mode remains deterministic while live reports remain
 attributable.
 
+Owned Hopper shutdown logs retain the launcher PID, process-group ID, cleanup
+status, and whether a verified group signal was required. They omit the run
+token and unexpected exception text. The real-Hopper verifier also starts an
+unrelated `Hopper`-named sentinel in a distinct process group and fails unless
+that process survives every session close; the sentinel is removed only by the
+verifier after the survival check.
+
 ## Project links
 
 [npm](https://www.npmjs.com/package/rea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/) · [Ghidra](https://github.com/NationalSecurityAgency/ghidra)

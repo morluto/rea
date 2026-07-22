@@ -28,6 +28,11 @@ import {
 } from "../process/ProviderProcess.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import {
+  createOwnedHopperShutdownDiagnostic,
+  type HopperDiagnostic,
+  providerCleanupFailure,
+} from "./HopperDiagnostics.js";
+import {
   isHopperCleanupRequired,
   isHopperShutdownAcknowledgement,
   parseHopperServerInfo,
@@ -54,10 +59,6 @@ export interface HopperClientOptions {
 }
 
 /** Safe launcher telemetry; stderr content is intentionally never exposed. */
-type HopperDiagnostic =
-  | { readonly type: "launcher-stderr"; readonly bytes: number }
-  | { readonly type: "launcher-exit"; readonly code: number | null };
-
 /**
  * Owns one authenticated NDJSON-over-Unix-socket bridge session.
  *
@@ -327,6 +328,16 @@ export class HopperClient {
         const stopped = await this.#process.stop(
           cleanupResult === undefined ? {} : { cleanupResult },
         );
+        const diagnostic = createOwnedHopperShutdownDiagnostic(
+          this.#process.launch,
+          stopped,
+          cleanupResult,
+        );
+        this.#options.onDiagnostic?.(diagnostic);
+        this.#logger.info(
+          diagnostic,
+          "Owned Hopper launcher shutdown completed",
+        );
         if (stopped.status === "incomplete")
           this.#logger.warn(
             { reason: stopped.reason },
@@ -541,11 +552,3 @@ const startupInterruption = (
   deadline.cancelled
     ? new HopperCancelledError()
     : new HopperTimeoutError(deadline.timeoutMs);
-
-const providerCleanupFailure = (cause: unknown): ProcessCleanupResult => ({
-  cleaned: false,
-  reason:
-    cause instanceof Error
-      ? `owned provider cleanup failed: ${cause.message}`
-      : "owned provider cleanup failed",
-});

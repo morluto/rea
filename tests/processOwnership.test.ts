@@ -102,6 +102,40 @@ describe("owned process-group cleanup", () => {
     ]);
   });
 
+  it("leaves an unrelated Hopper process group outside the rooted tree untouched", async () => {
+    const processes = [
+      { pid: 100, parentPid: 1, processGroupId: 100, command: "rea-hopper" },
+      { pid: 101, parentPid: 100, processGroupId: 101, command: "owned-child" },
+      {
+        pid: 900,
+        parentPid: 1,
+        processGroupId: 900,
+        command:
+          "/Applications/Hopper Disassembler.app/Contents/MacOS/Hopper Disassembler",
+      },
+    ].map((process) => ({ ...process, state: "S" }));
+    const environment = vi.fn((pid: number) =>
+      Promise.resolve({
+        REA_PROCESS_RUN_ID: pid === 900 ? "unrelated-run" : "run-token",
+      }),
+    );
+    const signalGroup = vi.fn();
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: () => Promise.resolve(processes),
+      environment,
+      signalGroup,
+    };
+
+    await expect(cleanupOwnedProcessGroup(ownership, adapter)).resolves.toEqual(
+      { cleaned: true, signaled: true },
+    );
+    expect(signalGroup.mock.calls).toEqual([
+      [100, "SIGKILL"],
+      [101, "SIGKILL"],
+    ]);
+    expect(environment.mock.calls.some(([pid]) => pid === 900)).toBe(false);
+  });
+
   it("fails before signaling when any descendant-group member is unowned", async () => {
     const signalGroup = vi.fn();
     const adapter: ProcessOwnershipHost = {

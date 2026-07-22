@@ -29,6 +29,7 @@ describe("evidence MCP resources", () => {
       result: {
         frames: [{ sequence: 0, at_ms: 0, data: "ready" }],
         protocol_events: [],
+        replay_transitions: [],
       },
     });
     session.recordEvidence(capture);

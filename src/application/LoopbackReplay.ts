@@ -9,140 +9,216 @@ import type {
   ProcessScenario,
   ProtocolEvent,
 } from "../domain/processCapture.js";
+import {
+  type ReplayMachineDecision,
+  type ReplayTransitionRecord,
+} from "../domain/replayMachineRuntime.js";
+import {
+  closeReplayServer,
+  listenOnLoopback,
+  recordMachineEvent,
+  readReplayRequestBody,
+  ReplayRecorder,
+  requestHeaders,
+  waitForReplayDelay,
+} from "./LoopbackReplayRecorder.js";
 
 /** Owned loopback replay endpoints and their bounded protocol observations. */
 export interface LoopbackReplay {
   readonly httpUrl: string;
   readonly websocketUrl: string;
   readonly events: ProtocolEvent[];
+  readonly transitions: readonly ReplayTransitionRecord[];
   readonly truncated: boolean;
   close(): Promise<void>;
 }
 
-class ReplayRecorder {
-  readonly events: ProtocolEvent[] = [];
-  readonly started = Date.now();
-  truncated = false;
-
-  constructor(readonly scenario: ProcessScenario) {}
-
-  atMs(): number {
-    return (
-      Math.floor(
-        (Date.now() - this.started) /
-          this.scenario.normalization.time_bucket_ms,
-      ) * this.scenario.normalization.time_bucket_ms
-    );
-  }
-
-  record(event: Omit<ProtocolEvent, "sequence">): void {
-    if (this.events.length < this.scenario.limits.protocol_events)
-      this.events.push({ sequence: this.events.length, ...event });
-    else this.truncated = true;
-  }
+interface HttpReplayRequest {
+  readonly request: IncomingMessage;
+  readonly response: ServerResponse;
+  readonly method: string;
+  readonly path: string;
+  readonly body: string;
+  readonly rawAtMs: number;
+  readonly recordedAtMs: number;
 }
 
-const readRequestBody = async (
-  request: IncomingMessage,
-  limit: number,
-): Promise<string | undefined> => {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of request) {
-    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += value.byteLength;
-    if (bytes > limit) return undefined;
-    chunks.push(value);
+const recordHttpResponse = (
+  recorder: ReplayRecorder,
+  request: Pick<HttpReplayRequest, "method" | "path">,
+  data: string,
+  outcome: ProtocolEvent["outcome"],
+): void =>
+  recorder.record({
+    at_ms: recorder.atMs(),
+    protocol: "http",
+    direction: "response",
+    method: request.method,
+    path: request.path,
+    data,
+    outcome,
+  });
+
+const handleMachineHttp = async (
+  recorder: ReplayRecorder,
+  request: HttpReplayRequest,
+): Promise<void> => {
+  const machine = recorder.machine;
+  if (machine === undefined) return;
+  const decision = machine.dispatch({
+    protocol: "http",
+    connection: "not_applicable",
+    at_ms: request.rawAtMs,
+    recorded_at_ms: request.recordedAtMs,
+    method: request.method,
+    path: request.path,
+    headers: requestHeaders(request.request),
+    body: request.body,
+  });
+  recordMachineEvent(
+    recorder,
+    {
+      at_ms: request.recordedAtMs,
+      protocol: "http",
+      direction: "request",
+      method: request.method,
+      path: request.path,
+      data: request.body,
+    },
+    decision,
+  );
+  if (decision.outcome !== "matched") {
+    request.response.statusCode = decision.outcome === "unmatched" ? 404 : 409;
+    request.response.end();
+    return;
   }
-  return Buffer.concat(chunks).toString("utf8");
+  for (const action of decision.actions) {
+    if (action.type === "delay") await waitForReplayDelay(action.duration_ms);
+    else if (action.type === "disconnect") {
+      request.response.destroy();
+      recordHttpResponse(recorder, request, "", "disconnected");
+      return;
+    } else if (action.type === "http_response") {
+      request.response.statusCode = action.status;
+      for (const [name, value] of Object.entries(action.headers))
+        request.response.setHeader(name, value);
+      request.response.end(action.body);
+      recordHttpResponse(
+        recorder,
+        request,
+        machine.redact(action.body),
+        "matched",
+      );
+    }
+  }
 };
 
-const createHttpHandler = (
+const handleStaticHttp = async (
   recorder: ReplayRecorder,
-): ((request: IncomingMessage, response: ServerResponse) => Promise<void>) => {
-  const calls = new Map<number, number>();
-  return async (request, response) => {
-    const method = request.method ?? "GET";
-    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    const body = await readRequestBody(
-      request,
-      recorder.scenario.limits.protocol_body_bytes,
-    );
-    if (body === undefined) {
-      recorder.truncated = true;
-      response.statusCode = 413;
-      response.end();
-      recorder.record({
-        at_ms: recorder.atMs(),
-        protocol: "http",
-        direction: "request",
-        method,
-        path,
-        data: "<body-over-limit>",
-        outcome: "unmatched",
-      });
-      return;
-    }
-    const index = recorder.scenario.replay.http.findIndex((route) => {
-      if (route.method !== method || route.path !== path) return false;
-      if (route.request_body !== undefined && route.request_body !== body)
-        return false;
-      return Object.entries(route.request_headers).every(
-        ([name, value]) => request.headers[name.toLowerCase()] === value,
-      );
-    });
-    const route = recorder.scenario.replay.http[index];
-    const used = index < 0 ? 0 : (calls.get(index) ?? 0);
-    const outcome =
-      route === undefined
-        ? "unmatched"
-        : used >= route.max_calls
-          ? "script_exhausted"
-          : "matched";
+  request: HttpReplayRequest,
+  calls: Map<number, number>,
+): Promise<void> => {
+  const index = recorder.scenario.replay.http.findIndex((route) =>
+    route.method !== request.method || route.path !== request.path
+      ? false
+      : (route.request_body === undefined ||
+          route.request_body === request.body) &&
+        Object.entries(route.request_headers).every(
+          ([name, value]) =>
+            request.request.headers[name.toLowerCase()] === value,
+        ),
+  );
+  const route = recorder.scenario.replay.http[index];
+  const used = index < 0 ? 0 : (calls.get(index) ?? 0);
+  const outcome =
+    route === undefined
+      ? "unmatched"
+      : used >= route.max_calls
+        ? "script_exhausted"
+        : "matched";
+  recorder.record({
+    at_ms: recorder.atMs(),
+    protocol: "http",
+    direction: "request",
+    method: request.method,
+    path: request.path,
+    data: request.body.length === 0 ? "" : "<redacted-request-body>",
+    outcome,
+  });
+  if (route === undefined || outcome === "script_exhausted") {
+    request.response.statusCode = route === undefined ? 404 : 409;
+    request.response.end();
+    return;
+  }
+  calls.set(index, used + 1);
+  if (route.delay_ms > 0) await waitForReplayDelay(route.delay_ms);
+  if (route.disconnect) {
+    request.response.destroy();
+    recordHttpResponse(recorder, request, "", "disconnected");
+    return;
+  }
+  request.response.statusCode = route.status;
+  for (const [name, value] of Object.entries(route.response_headers))
+    request.response.setHeader(name, value);
+  request.response.end(route.body);
+  recordHttpResponse(recorder, request, route.body, "matched");
+};
+
+const handleHttpRequest = async (
+  recorder: ReplayRecorder,
+  request: IncomingMessage,
+  response: ServerResponse,
+  calls: Map<number, number>,
+): Promise<void> => {
+  const body = await readReplayRequestBody(
+    request,
+    recorder.scenario.limits.protocol_body_bytes,
+  );
+  const method = request.method ?? "GET";
+  const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  if (body === undefined) {
+    recorder.truncated = true;
+    response.statusCode = 413;
+    response.end();
     recorder.record({
       at_ms: recorder.atMs(),
       protocol: "http",
       direction: "request",
       method,
       path,
-      data: body.length === 0 ? "" : "<redacted-request-body>",
-      outcome,
+      data: "<body-over-limit>",
+      outcome: "unmatched",
     });
-    if (route === undefined || outcome === "script_exhausted") {
-      response.statusCode = route === undefined ? 404 : 409;
-      response.end();
-      return;
-    }
-    calls.set(index, used + 1);
-    if (route.delay_ms > 0)
-      await new Promise((resolveDelay) =>
-        setTimeout(resolveDelay, route.delay_ms),
-      );
-    if (route.disconnect) {
-      response.destroy();
-      recorder.record({
-        at_ms: recorder.atMs(),
-        protocol: "http",
-        direction: "response",
-        method,
-        path,
-        data: "",
-        outcome: "disconnected",
-      });
-      return;
-    }
-    response.statusCode = route.status;
-    for (const [name, value] of Object.entries(route.response_headers))
-      response.setHeader(name, value);
-    response.end(route.body);
-    recorder.record({
-      at_ms: recorder.atMs(),
-      protocol: "http",
-      direction: "response",
-      method,
-      path,
-      data: route.body,
-      outcome: "matched",
+    return;
+  }
+  const replayRequest = {
+    request,
+    response,
+    method,
+    path,
+    body,
+    rawAtMs: recorder.rawAtMs(),
+    recordedAtMs: recorder.atMs(),
+  };
+  await (recorder.machine === undefined
+    ? handleStaticHttp(recorder, replayRequest, calls)
+    : recorder.enqueueMachine(() =>
+        handleMachineHttp(recorder, replayRequest),
+      ));
+};
+
+const createHttpHandler = (
+  recorder: ReplayRecorder,
+): ((request: IncomingMessage, response: ServerResponse) => void) => {
+  const calls = new Map<number, number>();
+  return (request, response) => {
+    void handleHttpRequest(recorder, request, response, calls).catch(() => {
+      recorder.truncated = true;
+      if (response.headersSent) response.destroy();
+      else {
+        response.statusCode = 500;
+        response.end();
+      }
     });
   };
 };
@@ -204,6 +280,146 @@ const sendWebSocketScript = async (
   }
 };
 
+const runWebSocketActions = async (
+  client: WebSocket,
+  recorder: ReplayRecorder,
+  decision: Extract<ReplayMachineDecision, { readonly outcome: "matched" }>,
+  path: string,
+): Promise<void> => {
+  for (const action of decision.actions) {
+    if (action.type === "delay") {
+      await waitForReplayDelay(action.duration_ms);
+      continue;
+    }
+    if (action.type === "disconnect") {
+      client.close();
+      recorder.record({
+        at_ms: recorder.atMs(),
+        protocol: "websocket",
+        direction: "sent",
+        method: null,
+        path,
+        data: "",
+        outcome: "disconnected",
+      });
+      return;
+    }
+    if (action.type === "websocket_send" && client.readyState === 1) {
+      client.send(action.data);
+      recorder.record({
+        at_ms: recorder.atMs(),
+        protocol: "websocket",
+        direction: "sent",
+        method: null,
+        path,
+        data: recorder.machine?.redact(action.data) ?? action.data,
+        outcome: "matched",
+      });
+    }
+  }
+};
+
+const handleStaticWebSocket = (
+  client: WebSocket,
+  recorder: ReplayRecorder,
+  connection: number,
+  path: string,
+): void => {
+  client.on("message", (value) =>
+    recorder.record({
+      at_ms: recorder.atMs(),
+      protocol: "websocket",
+      direction: "received",
+      method: null,
+      path,
+      data: value.toString(),
+      outcome: "matched",
+    }),
+  );
+  void sendWebSocketScript(client, connection, recorder);
+};
+
+const handleMachineWebSocket = (options: {
+  readonly client: WebSocket;
+  readonly request: IncomingMessage;
+  readonly recorder: ReplayRecorder;
+  readonly connection: number;
+  readonly path: string;
+}): void => {
+  const { client, request, recorder, connection, path } = options;
+  const machine = recorder.machine;
+  if (machine === undefined) return;
+  void recorder
+    .enqueueMachine(async () => {
+      const connectedAt = recorder.atMs();
+      const connectionDecision = machine.dispatch({
+        protocol: "websocket_connect",
+        connection: connection === 1 ? "initial" : "reconnect",
+        at_ms: recorder.rawAtMs(),
+        recorded_at_ms: connectedAt,
+        method: null,
+        path,
+        headers: requestHeaders(request),
+        body: "",
+      });
+      recordMachineEvent(
+        recorder,
+        {
+          at_ms: connectedAt,
+          protocol: "websocket",
+          direction: "received",
+          method: null,
+          path,
+          data: "",
+        },
+        connectionDecision,
+      );
+      if (connectionDecision.outcome === "matched")
+        await runWebSocketActions(client, recorder, connectionDecision, path);
+      else client.close();
+    })
+    .catch(() => {
+      recorder.truncated = true;
+      client.terminate();
+    });
+  client.on("message", (value) => {
+    const body = value.toString();
+    const rawAtMs = recorder.rawAtMs();
+    const recordedAtMs = recorder.atMs();
+    void recorder
+      .enqueueMachine(async () => {
+        const decision = machine.dispatch({
+          protocol: "websocket_message",
+          connection: connection === 1 ? "initial" : "reconnect",
+          at_ms: rawAtMs,
+          recorded_at_ms: recordedAtMs,
+          method: null,
+          path,
+          headers: {},
+          body,
+        });
+        recordMachineEvent(
+          recorder,
+          {
+            at_ms: recordedAtMs,
+            protocol: "websocket",
+            direction: "received",
+            method: null,
+            path,
+            data: body,
+          },
+          decision,
+        );
+        if (decision.outcome === "matched")
+          await runWebSocketActions(client, recorder, decision, path);
+      })
+      .catch(() => {
+        recorder.truncated = true;
+        client.terminate();
+      });
+  });
+};
+
 const createWebSocketReplay = (
   server: Server,
   recorder: ReplayRecorder,
@@ -215,7 +431,10 @@ const createWebSocketReplay = (
     clientTracking: true,
   });
   server.on("upgrade", (request, socket, head) => {
-    if (new URL(request.url ?? "/", "http://127.0.0.1").pathname !== "/ws") {
+    if (
+      recorder.machine === undefined &&
+      new URL(request.url ?? "/", "http://127.0.0.1").pathname !== "/ws"
+    ) {
       socket.destroy();
       return;
     }
@@ -223,7 +442,7 @@ const createWebSocketReplay = (
       websocket.emit("connection", client, request),
     );
   });
-  websocket.on("connection", (client: WebSocket) => {
+  websocket.on("connection", (client: WebSocket, request: IncomingMessage) => {
     connections += 1;
     if (connections > recorder.scenario.limits.connections) {
       recorder.truncated = true;
@@ -231,42 +450,20 @@ const createWebSocketReplay = (
       return;
     }
     client.on("error", () => undefined);
-    client.on("message", (value) =>
-      recorder.record({
-        at_ms: recorder.atMs(),
-        protocol: "websocket",
-        direction: "received",
-        method: null,
-        path: "/ws",
-        data: value.toString(),
-        outcome: "matched",
-      }),
-    );
-    void sendWebSocketScript(client, connections, recorder);
+    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (recorder.machine === undefined)
+      handleStaticWebSocket(client, recorder, connections, path);
+    else
+      handleMachineWebSocket({
+        client,
+        request,
+        recorder,
+        connection: connections,
+        path,
+      });
   });
   return websocket;
 };
-
-const listen = async (server: Server): Promise<number> => {
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", rejectListen);
-      resolveListen();
-    });
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("loopback replay did not acquire a TCP port");
-  return address.port;
-};
-
-const closeServer = (server: Server): Promise<void> =>
-  new Promise((resolveClose, rejectClose) => {
-    server.close((error) =>
-      error === undefined ? resolveClose() : rejectClose(error),
-    );
-  });
 
 /** Start bounded HTTP and WebSocket replay endpoints on IPv4 loopback only. */
 export const startLoopbackReplay = async (
@@ -275,26 +472,40 @@ export const startLoopbackReplay = async (
   const recorder = new ReplayRecorder(scenario);
   const server = createServer(createHttpHandler(recorder));
   const websocket = createWebSocketReplay(server, recorder);
+  let closePromise: Promise<void> | undefined;
   let port: number;
   try {
-    port = await listen(server);
+    port = await listenOnLoopback(server);
   } catch (cause: unknown) {
-    await closeServer(server).catch(() => undefined);
+    await closeReplayServer(server).catch(() => undefined);
     throw cause;
   }
   return {
     httpUrl: `http://127.0.0.1:${String(port)}`,
     websocketUrl: `ws://127.0.0.1:${String(port)}/ws`,
-    events: recorder.events,
+    get events() {
+      return recorder.events.map((event) => ({ ...event }));
+    },
+    get transitions() {
+      return recorder.transitions.map((transition) => ({
+        ...transition,
+        sensitive_aliases: [...transition.sensitive_aliases],
+      }));
+    },
     get truncated() {
       return recorder.truncated;
     },
     async close() {
-      for (const client of websocket.clients) client.terminate();
-      await new Promise<void>((resolveClose) =>
-        websocket.close(() => resolveClose()),
-      );
-      await closeServer(server);
+      closePromise ??= (async () => {
+        recorder.stopMachineAdmission();
+        for (const client of websocket.clients) client.terminate();
+        await new Promise<void>((resolveClose) =>
+          websocket.close(() => resolveClose()),
+        );
+        await closeReplayServer(server);
+        await recorder.drainMachine();
+      })();
+      await closePromise;
     },
   };
 };

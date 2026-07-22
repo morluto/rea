@@ -115,6 +115,7 @@ export const buildCaptureResult = (
     options.replay.events,
     options.scenario,
   ),
+  replay_transitions: options.replay.transitions,
   files_before: options.before.files,
   files_after: options.after.files,
   filesystem_effects: classifyFilesystemEffects(

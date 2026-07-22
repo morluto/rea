@@ -58,6 +58,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
   ],
   shim_events: [],
   protocol_events: [],
+  replay_transitions: [],
   files_before: [],
   files_after: [],
   filesystem_effects: [],
