@@ -1,4 +1,5 @@
 import type { ProcessCapture } from "./processCapture.js";
+import { replayMachineSchema, type ReplayMachine } from "./replayMachine.js";
 import { digestProcessCommitment } from "./processScenario.js";
 
 /** One pure semantic validation failure in an otherwise shaped v4 capture. */
@@ -54,6 +55,7 @@ const validateOrdering = (
     ["interaction_events", capture.interaction_events],
     ["shim_events", capture.shim_events],
     ["protocol_events", capture.protocol_events],
+    ["replay_transitions", capture.replay_transitions],
   ] as const)
     require(values.every(
       ({ sequence }, index) => sequence === index,
@@ -65,6 +67,7 @@ const validateOrdering = (
     ["filesystem_checkpoints", capture.filesystem_checkpoints],
     ["shim_events", capture.shim_events],
     ["protocol_events", capture.protocol_events],
+    ["replay_transitions", capture.replay_transitions],
   ] as const)
     require(orderedTimestamps(values), name, "timestamps must be ordered");
 };
@@ -144,15 +147,34 @@ const validateShimEvents = (
   }
 };
 
-const validateReplayEvents = (
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+const machinePlan = (
+  replayPlan: Readonly<Record<string, unknown>>,
+): ReplayMachine | undefined => {
+  const parsed = replayMachineSchema.safeParse(replayPlan["machine"]);
+  return parsed.success ? parsed.data : undefined;
+};
+
+const matchesHttpPlan = (
+  value: unknown,
+  event: ProcessCapture["protocol_events"][number],
+): boolean => {
+  if (!isRecord(value)) return false;
+  const route = isRecord(value["trigger"]) ? value["trigger"] : value;
+  return (
+    (route["protocol"] === undefined || route["protocol"] === "http") &&
+    route["method"] === event.method &&
+    route["path"] === event.path
+  );
+};
+
+const validateMatchedHttpEvents = (
   capture: ProcessCapture,
+  plans: readonly unknown[],
   require: RequireInvariant,
 ): void => {
-  const { replay_plan: replayPlan } = capture.manifest;
-  const routes =
-    "http" in replayPlan && Array.isArray(replayPlan.http)
-      ? replayPlan.http
-      : [];
   for (const event of capture.protocol_events) {
     if (
       event.protocol !== "http" ||
@@ -160,16 +182,73 @@ const validateReplayEvents = (
       event.outcome !== "matched"
     )
       continue;
-    const declared = routes.some(
-      (route) =>
-        typeof route === "object" &&
-        route !== null &&
-        "method" in route &&
-        route.method === event.method &&
-        "path" in route &&
-        route.path === event.path,
+    require(plans.some((plan) =>
+      matchesHttpPlan(plan, event),
+    ), "protocol_events", "matched HTTP event has no declared replay route");
+  }
+};
+
+const validateReplayEvents = (
+  capture: ProcessCapture,
+  require: RequireInvariant,
+): void => {
+  const replayPlan = capture.manifest.replay_plan;
+  const routes = Array.isArray(replayPlan["http"]) ? replayPlan["http"] : [];
+  const machine = machinePlan(replayPlan);
+  require(replayPlan["machine"] === undefined ||
+    replayPlan["machine"] === null ||
+    machine !==
+      undefined, "manifest.replay_plan.machine", "replay machine does not satisfy its declared schema");
+  validateMatchedHttpEvents(
+    capture,
+    [...routes, ...(machine?.transitions ?? [])],
+    require,
+  );
+  const plans = new Map(
+    (machine?.transitions ?? []).map((transition) => [
+      transition.id,
+      transition,
+    ]),
+  );
+  const transitionUses = new Map<string, number>();
+  const stateVisits = new Map<string, number>();
+  if (machine !== undefined) stateVisits.set(machine.initial_state, 1);
+  require(machine === undefined ||
+    capture.replay_transitions.length <=
+      machine.max_transitions, "replay_transitions", "replay transition journal exceeds the declared machine limit");
+  for (const [index, transition] of capture.replay_transitions.entries()) {
+    const plan = plans.get(transition.transition_id);
+    require(plan !==
+      undefined, "replay_transitions", "replay transition has no declared machine transition");
+    if (plan === undefined) continue;
+    require(transition.state_before === plan.from &&
+      transition.state_after ===
+        plan.to, "replay_transitions", "replay transition states do not match the declared transition");
+    require(JSON.stringify(transition.sensitive_aliases) ===
+      JSON.stringify(
+        plan.captures
+          .filter(({ sensitive }) => sensitive)
+          .map(({ variable }) => variable)
+          .sort(),
+      ), "replay_transitions", "replay transition sensitive aliases do not match the declared captures");
+    const uses = (transitionUses.get(plan.id) ?? 0) + 1;
+    transitionUses.set(plan.id, uses);
+    require(uses <=
+      plan.max_uses, "replay_transitions", "replay transition journal exceeds the transition use limit");
+    const visits = (stateVisits.get(transition.state_after) ?? 0) + 1;
+    stateVisits.set(transition.state_after, visits);
+    const state = machine?.states.find(
+      ({ name }) => name === transition.state_after,
     );
-    require(declared, "protocol_events", "matched HTTP event has no declared replay route");
+    require(state === undefined ||
+      visits <=
+        state.max_visits, "replay_transitions", "replay transition journal exceeds the state visit limit");
+    if (index === 0)
+      require(transition.state_before ===
+        machine?.initial_state, "replay_transitions", "first replay transition does not start at the declared initial state");
+    if (index > 0)
+      require(capture.replay_transitions[index - 1]!.state_after ===
+        transition.state_before, "replay_transitions", "replay transition states are not contiguous");
   }
 };
 

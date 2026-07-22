@@ -4,12 +4,23 @@ import type { ReplayMachine } from "./replayMachine.js";
 
 type ReplayTransition = ReplayMachine["transitions"][number];
 type ReplayValueSource = ReplayTransition["captures"][number]["value"];
+interface TransitionRecordOptions {
+  readonly sequence: number;
+  readonly atMs: number;
+  readonly stateBefore: string;
+  readonly transition: ReplayTransition;
+  readonly captures: readonly {
+    readonly variable: string;
+    readonly sensitive: boolean;
+  }[];
+}
 
 /** One bounded inbound protocol event offered to a replay machine. */
 export interface ReplayMachineEvent {
   readonly protocol: "http" | "websocket_connect" | "websocket_message";
   readonly connection: "not_applicable" | "initial" | "reconnect";
   readonly at_ms: number;
+  readonly recorded_at_ms?: number;
   readonly method: string | null;
   readonly path: string;
   readonly headers: Readonly<Record<string, string>>;
@@ -19,6 +30,7 @@ export interface ReplayMachineEvent {
 /** Persistable transition journal entry containing aliases, never secrets. */
 export interface ReplayTransitionRecord {
   readonly sequence: number;
+  readonly at_ms: number;
   readonly transition_id: string;
   readonly state_before: string;
   readonly state_after: string;
@@ -140,6 +152,24 @@ const replayValuesEqual = (left: unknown, right: unknown): boolean =>
   isJsonCompatible(left) &&
   isJsonCompatible(right) &&
   (Object.is(left, right) || canonicalize(left) === canonicalize(right));
+
+const createTransitionRecord = ({
+  sequence,
+  atMs,
+  stateBefore,
+  transition,
+  captures,
+}: TransitionRecordOptions): ReplayTransitionRecord => ({
+  sequence,
+  at_ms: atMs,
+  transition_id: transition.id,
+  state_before: stateBefore,
+  state_after: transition.to,
+  sensitive_aliases: captures
+    .filter(({ sensitive }) => sensitive)
+    .map(({ variable }) => variable)
+    .sort(),
+});
 
 /** Stateful evaluator for one validated replay-machine instance. */
 export class ReplayMachineRuntime {
@@ -267,16 +297,13 @@ export class ReplayMachineRuntime {
         this.#sensitiveValues.set(capture.variable, values);
       }
     }
-    const record = {
+    const record = createTransitionRecord({
       sequence: this.#timeline.length,
-      transition_id: transition.id,
-      state_before: this.#state,
-      state_after: transition.to,
-      sensitive_aliases: captures
-        .filter(({ sensitive }) => sensitive)
-        .map(({ variable }) => variable)
-        .sort(),
-    } satisfies ReplayTransitionRecord;
+      atMs: normalizedEvent.recorded_at_ms ?? normalizedEvent.at_ms,
+      stateBefore: this.#state,
+      transition,
+      captures,
+    });
     this.#uses.set(transition.id, used + 1);
     this.#stateVisits.set(transition.to, nextVisits);
     this.#state = transition.to;

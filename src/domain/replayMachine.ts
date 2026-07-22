@@ -15,8 +15,17 @@ const sensitiveHeaderNames = new Set([
   "proxy-authorization",
   "set-cookie",
 ]);
+const headerNameSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u);
+const headerValueSchema = z
+  .string()
+  .max(8_192)
+  .regex(/^[\t\x20-\x7e\x80-\xff]*$/u);
 const replayHeaderMatchersSchema = z
-  .record(z.string().min(1).max(256), z.string().max(8_192))
+  .record(headerNameSchema, headerValueSchema)
   .superRefine((headers, context) => {
     const names = Object.keys(headers).map((name) => name.toLowerCase());
     if (new Set(names).size !== names.length)
@@ -86,7 +95,7 @@ const replayActionSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("http_response"),
     status: z.number().int().min(100).max(599),
-    headers: z.record(z.string(), z.string()).default({}),
+    headers: z.record(headerNameSchema, headerValueSchema).default({}),
     body: z.string().max(1_000_000),
   }),
   z.strictObject({
@@ -220,6 +229,14 @@ const validateReplayVariables = (
   const capturedVariables = new Map<string, boolean>();
   for (const [transitionIndex, transition] of machine.transitions.entries()) {
     for (const capture of transition.captures) {
+      if (capture.sensitive && capture.value.source === "action_json")
+        context.addIssue({
+          code: "custom",
+          message:
+            "sensitive replay captures cannot read literal action JSON persisted in the replay plan",
+          path: ["transitions", transitionIndex, "captures"],
+          input: machine,
+        });
       const sensitivity = capturedVariables.get(capture.variable);
       if (sensitivity !== undefined && sensitivity !== capture.sensitive)
         context.addIssue({

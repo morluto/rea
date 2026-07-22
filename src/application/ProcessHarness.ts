@@ -382,6 +382,7 @@ const completeCapture = async (options: {
   const after = await snapshotRoots(scenario, options.signal);
   const renderedFrames = await runtime.renderer.frames();
   const checkpoints = await runtime.checkpoints.finish(after);
+  await runtime.replay.close();
   const manifest = await createRunManifest(
     scenario,
     runtime.startedAt,

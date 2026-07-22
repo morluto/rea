@@ -130,7 +130,7 @@ export const processDimensionObservations = (
     case "filesystem":
       return filesystemObservations(capture);
     case "protocol":
-      return capture.protocol_events;
+      return [...capture.protocol_events, ...capture.replay_transitions];
     case "process":
       return capture.process_samples;
     case "shim":
@@ -316,7 +316,11 @@ const compareDimensions = (
       filesystemObservations(left),
       filesystemObservations(right),
     ),
-    protocol: classify("protocol", left.protocol_events, right.protocol_events),
+    protocol: classify(
+      "protocol",
+      [...left.protocol_events, ...left.replay_transitions],
+      [...right.protocol_events, ...right.replay_transitions],
+    ),
     process: classify("process", left.process_samples, right.process_samples),
     shim: classify("shim", left.shim_events, right.shim_events),
   };
@@ -365,8 +369,8 @@ export const compareProcessCaptures = (
     ),
     firstCollectionDivergence(
       "protocol",
-      left.protocol_events,
-      right.protocol_events,
+      [...left.protocol_events, ...left.replay_transitions],
+      [...right.protocol_events, ...right.replay_transitions],
     ),
     firstCollectionDivergence(
       "process",
