@@ -70,10 +70,12 @@ export class ReplayRecorder {
   ): ReplayMachineDecision {
     if (this.machine === undefined)
       throw new Error("replay machine is not configured");
-    const decision = this.machine.dispatch(event);
+    return this.machine.dispatch(event);
+  }
+
+  recordTransition(decision: ReplayMachineDecision): void {
     if (decision.transition !== null)
       this.recordEvent("replay_transitions", decision.transition.sequence);
-    return decision;
   }
 
   record(event: Omit<ProtocolEvent, "sequence">): void {
@@ -117,12 +119,14 @@ export const recordMachineEvent = (
   recorder: ReplayRecorder,
   event: Omit<ProtocolEvent, "sequence" | "outcome">,
   decision: ReplayMachineDecision,
-): void =>
+): void => {
   recorder.record({
     ...event,
     data: recorder.machine?.redact(event.data) ?? event.data,
     outcome: decision.outcome,
   });
+  recorder.recordTransition(decision);
+};
 
 export const waitForReplayDelay = (durationMs: number): Promise<void> =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, durationMs));

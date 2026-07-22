@@ -1400,6 +1400,13 @@ describe("process capture adapter", () => {
           ({ collection }) => collection === "replay_transitions",
         ),
       ).toHaveLength(capture.value.replay_transitions.length);
+      for (const [index, entry] of (
+        capture.value.event_journal ?? []
+      ).entries())
+        if (entry.collection === "replay_transitions")
+          expect(capture.value.event_journal?.[index - 1]?.collection).toBe(
+            "protocol_events",
+          );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
