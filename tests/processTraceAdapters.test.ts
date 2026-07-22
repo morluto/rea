@@ -290,7 +290,7 @@ describe("declared trace comparison adapters", () => {
       }),
     ).toMatchObject({
       status: "unchanged",
-      trace: { verdict: "different" },
+      trace: { verdict: "nonconforming" },
     });
   });
 
