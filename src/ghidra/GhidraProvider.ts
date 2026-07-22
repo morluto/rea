@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type AnalysisClientContext,
   type AnalysisOperation,
   type AnalysisProfileResolutionOptions,
   type AnalysisProviderCandidate,
@@ -69,7 +70,8 @@ const SUPPORTED_FORMATS = new Set(["elf", "pe", "mach-o"]);
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
   options: GhidraClientOptions,
-) => Pick<GhidraClient, "start" | "callTool" | "close">;
+) => Pick<GhidraClient, "start" | "callTool" | "close"> &
+  Partial<Pick<GhidraClient, "runtimeLineage">>;
 
 /** Ghidra candidate backed by an isolated read-only headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -172,6 +174,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
+    context?: AnalysisClientContext,
   ): AnalysisClient {
     const installation = this.#inspectInstallation();
     const prerequisites = ghidraClientPrerequisites(
@@ -202,6 +205,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           : "unix-socket",
       providerVersion: prerequisites.value.providerVersion,
       profileDigest: committedProfile.digest,
+      ...(context === undefined ? {} : { runId: context.runId }),
       logger: this.logger.child({ layer: "ghidra-bridge" }),
     });
     return {
@@ -253,6 +257,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             limitations: [...limitationsFor(operation), ...providerLimitations],
           }),
         );
+      },
+      runtimeLineageSnapshots: () => {
+        const observation = client.runtimeLineage?.() ?? null;
+        return observation === null
+          ? []
+          : [{ provider: committedProfile.provider, observation }];
       },
       close: () => client.close(),
     };

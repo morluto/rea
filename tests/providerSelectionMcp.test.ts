@@ -62,6 +62,7 @@ describe("provider selection over MCP", () => {
     );
     expect(before.result).toMatchObject({
       open: false,
+      analysis_run: null,
       analysis_provider_binding: null,
       analysis_provider_candidates: [
         {
@@ -128,6 +129,12 @@ describe("provider selection over MCP", () => {
     );
     expect(status.result).toMatchObject({
       open: true,
+      analysis_run: {
+        run_id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+        ),
+        process_lineage: { status: "not_observed" },
+      },
       analysis_provider_binding: {
         provider: { id: "beta", version: "1" },
         selection_source: "request",

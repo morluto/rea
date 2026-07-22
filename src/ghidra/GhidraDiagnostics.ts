@@ -12,6 +12,7 @@ export interface GhidraDiagnosticsOptions {
   readonly transport: GhidraTransportKind;
   readonly providerVersion: string;
   readonly profileDigest: string;
+  readonly runId?: string;
   readonly runtimeRoot?: string;
   readonly launch?: GhidraLaunch;
   readonly snapshot?: ProviderProcessSnapshot;
@@ -39,6 +40,7 @@ export const createGhidraDiagnostics = (
     transport: options.transport,
     provider_version: options.providerVersion,
     profile_digest: options.profileDigest,
+    ...(options.runId === undefined ? {} : { run_id: options.runId }),
     ...(options.runtimeRoot === undefined
       ? {}
       : {

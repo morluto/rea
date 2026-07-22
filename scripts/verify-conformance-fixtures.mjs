@@ -8,8 +8,10 @@ import {
   sha256,
   sourceDigest,
 } from "./lib/conformance-fixtures.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
+const verifierRun = createVerifierRun();
 const manifestPath = await realpath(
   resolve(process.argv[2] ?? "build/conformance/manifest.json"),
 );
@@ -37,7 +39,7 @@ if (v1 === undefined || v2 === undefined)
 if (v1.artifactSha256 === v2.artifactSha256)
   throw new Error("Version-pair artifacts unexpectedly have equal hashes");
 process.stdout.write(
-  `${JSON.stringify({ verified: manifest.fixtures.length, manifestPath, platform: manifest.platform })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), verified: manifest.fixtures.length, manifestPath, platform: manifest.platform })}\n`,
 );
 
 async function verifyFixture(fixture) {

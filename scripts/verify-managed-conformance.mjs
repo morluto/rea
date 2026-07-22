@@ -30,7 +30,9 @@ import {
   nativeBoundaryLimits,
 } from "./lib/managed-conformance-config.mjs";
 import { createManagedCompletionReport } from "./lib/managed-completion-report.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
+const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
 const {
   fixture,
@@ -439,20 +441,23 @@ try {
   const manifestSelfTest = await runManagedAppManifestSelfTest();
   const operatorManifest = await runOptionalManagedAppManifest();
   const ilspyOracle = await runOptionalIlspyOracle();
-  const completionReport = createManagedCompletionReport({
-    modern,
-    framework,
-    nativeFunctionTarget,
-    readyToRun,
-    obfuscated,
-    left,
-    right,
-    nativeOnly,
-    malformed,
-    manifestSelfTest,
-    operatorManifest,
-    ilspyOracle,
-  });
+  const completionReport = createManagedCompletionReport(
+    {
+      modern,
+      framework,
+      nativeFunctionTarget,
+      readyToRun,
+      obfuscated,
+      left,
+      right,
+      nativeOnly,
+      malformed,
+      manifestSelfTest,
+      operatorManifest,
+      ilspyOracle,
+    },
+    await completeVerifierRun(verifierRun),
+  );
 
   process.stdout.write(
     `${JSON.stringify({

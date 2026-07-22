@@ -584,8 +584,15 @@ operations still work. An explicit unknown, unavailable, or unsupported
 provider fails with candidate IDs, stable rejection codes, and actionable local
 diagnostics. `binary_session`, `rea providers`, and `rea capabilities` expose
 the authoritative `analysis_provider_candidates` and
-`analysis_provider_binding` fields. Reopening the same target without a selector
-keeps its binding; runtime failure never selects another provider silently.
+`analysis_provider_binding` fields. Each open target also has an
+`analysis_run.run_id` allocated before provider startup. When dynamic providers
+start, `analysis_run.process_lineage` changes from `not_observed` to `snapshots`
+and retains one provider-attributed, token-verified observation per started
+provider. Each observation carries `observed_at` and remains `unavailable` or
+`verified`; a verified empty descendant list is distinct from both. Snapshots
+describe bounded observations, not current live state or historical absence.
+Reopening same target without a selector keeps its binding; runtime failure
+never selects another provider silently.
 Ghidra can appear as an available, target-compatible candidate after doctor
 validates its exact installation. Its capability list contains the 18 admitted
 read-only inventory and function-analysis operations; selecting it still does
@@ -729,6 +736,20 @@ Evidence v2 completion ledger from live verifier output. `npm run
 evidence:check` reruns the verifier and fails when artifacts, scenarios,
 providers, schemas, claim counts, Evidence IDs, or the bundled skill have
 drifted. Unsupported claims remain explicit and never count as passes.
+Verifier JSON reports include an ephemeral `verifier_run` UUID allocated before
+the verifier performs work and inherited by its child processes through
+`REA_PROCESS_RUN_ID`. The final report includes the verifier and parent PIDs
+plus `process_lineage` and its ISO `observed_at` timestamp: POSIX verifiers
+report a token-verified, point-in-time launcher process group and live
+descendants, while platforms without an owned
+lineage primitive report `status: "unavailable"` and a reason. An empty verified
+descendant list means no child was live during the final observation; it does
+not claim the verifier launched no children earlier. Nested verifier entrypoints
+in the same process reuse its UUID; each new verifier process replaces any
+inherited parent token with a fresh run identity.
+Generated completion commitments deliberately exclude this per-execution
+identity, so check mode remains deterministic while live reports remain
+attributable.
 
 ## Project links
 

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { BinarySession } from "../src/application/BinarySession.js";
 import { CompositeProvider } from "../src/application/CompositeProvider.js";
@@ -18,6 +21,13 @@ const target: BinaryTarget = {
   format: "analysis-database",
   sha256: "0".repeat(64),
 };
+
+let directory: string | undefined;
+afterEach(async () => {
+  if (directory !== undefined)
+    await rm(directory, { recursive: true, force: true });
+  directory = undefined;
+});
 
 describe("composite analysis provider", () => {
   it("routes disjoint operations and does not start children during health", async () => {
@@ -80,7 +90,91 @@ describe("composite analysis provider", () => {
         ]),
     ).toThrow(/Multiple providers declare operation address_name/u);
   });
+
+  it("retains lineage snapshots from two lazily started dynamic providers", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-composite-lineage-"));
+    const targetPath = join(directory, "fixture.hop");
+    await writeFile(targetPath, "fixture");
+    const first = dynamicProvider("first", "address_name", 100);
+    const second = dynamicProvider("second", "analyze_function", 200);
+    const session = new BinarySession(new CompositeProvider([second, first]));
+
+    expect((await session.open(targetPath)).ok).toBe(true);
+    expect(await session.execute("address_name", {})).toMatchObject({
+      ok: true,
+    });
+    expect(await session.execute("analyze_function", {})).toMatchObject({
+      ok: true,
+    });
+
+    expect(session.status()).toMatchObject({
+      analysis_run: {
+        process_lineage: {
+          status: "snapshots",
+          snapshots: [
+            {
+              provider: { id: "first" },
+              observation: {
+                status: "verified",
+                observed_at: "2026-07-22T10:00:00.000Z",
+                launcher_pid: 100,
+              },
+            },
+            {
+              provider: { id: "second" },
+              observation: {
+                status: "verified",
+                observed_at: "2026-07-22T10:00:00.000Z",
+                launcher_pid: 200,
+              },
+            },
+          ],
+        },
+      },
+    });
+    await session.close();
+  });
 });
+
+const dynamicProvider = (
+  id: string,
+  operation: Exclude<AnalysisOperation, "health">,
+  launcherPid: number,
+): AnalysisProvider => {
+  const identity: ProviderIdentity = { id, name: id, version: "1" };
+  return {
+    identity: () => identity,
+    capabilities: () => [capability(identity, operation)],
+    createClient: (_target, _profile, context) => {
+      if (context === undefined)
+        throw new Error("missing analysis run context");
+      return {
+        execute: (called) =>
+          Promise.resolve(
+            ok(createAnalysisExecution(`${id}:${called}`, identity)),
+          ),
+        runtimeLineageSnapshots: () => [
+          {
+            provider: identity,
+            observation: {
+              status: "verified",
+              observedAt: "2026-07-22T10:00:00.000Z",
+              lineage: {
+                schemaVersion: 1,
+                runId: context.runId,
+                launcherPid,
+                launcherParentPid: 1,
+                processGroupId: launcherPid,
+                descendants: [],
+              },
+            },
+          },
+        ],
+        close: () => Promise.resolve(),
+      };
+    },
+  };
+};
 
 const provider = (
   id: string,

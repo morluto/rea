@@ -14,6 +14,21 @@ const evidenceId = (digit: string): string => `ev_${digest(digit)}`;
 const report = (): CompletionVerifierReport => ({
   schema_version: 1,
   verifier: { id: "managed-conformance", version: "1" },
+  verifier_run: {
+    schema_version: 1,
+    run_id: "11111111-1111-4111-8111-111111111111",
+    verifier_pid: 100,
+    parent_pid: 1,
+    process_lineage: {
+      status: "verified",
+      schema_version: 1,
+      observed_at: "2026-07-22T10:00:00.000Z",
+      launcher_pid: 100,
+      launcher_parent_pid: 1,
+      process_group_id: 100,
+      descendants: [{ pid: 101, parent_pid: 100, process_group_id: 100 }],
+    },
+  },
   environment: {
     platform: "linux",
     architecture: "x64",
@@ -82,6 +97,61 @@ describe("completion ledger generation", () => {
     const reversed = { ...input, claims: [...input.claims].reverse() };
 
     expect(generate(reversed)).toEqual(generate(input));
+  });
+
+  it("keeps ephemeral verifier run identity out of generated commitments", () => {
+    const first = report();
+    const second = {
+      ...first,
+      verifier_run: {
+        ...first.verifier_run,
+        run_id: "22222222-2222-4222-8222-222222222222",
+        verifier_pid: 200,
+        process_lineage: {
+          status: "unavailable" as const,
+          observed_at: "2026-07-22T11:00:00.000Z",
+          launcher_pid: 200,
+          launcher_parent_pid: 1,
+          process_group_id: null,
+          reason: "Windows verifier lineage ownership is unavailable",
+        },
+      },
+    };
+
+    expect(generate(second)).toEqual(generate(first));
+  });
+
+  it("requires a typed verifier-process identity", () => {
+    const input = report();
+    expect(
+      completionVerifierReportSchema.safeParse({
+        ...input,
+        verifier_run: { ...input.verifier_run, run_id: "not-a-uuid" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects malformed verified descendant lineage", () => {
+    const input = report();
+    expect(
+      completionVerifierReportSchema.safeParse({
+        ...input,
+        verifier_run: {
+          ...input.verifier_run,
+          process_lineage: {
+            status: "verified",
+            schema_version: 1,
+            observed_at: "2026-07-22T10:00:00.000Z",
+            launcher_pid: 100,
+            launcher_parent_pid: 1,
+            process_group_id: 100,
+            descendants: [
+              { pid: 101, parent_pid: 100, process_group_id: null },
+            ],
+          },
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it.each([

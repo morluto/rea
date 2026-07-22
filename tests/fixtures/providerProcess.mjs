@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+
 const [mode, value = "0"] = process.argv.slice(2);
 
 const keepAlive = () => {
@@ -35,6 +37,24 @@ switch (mode) {
     await write(process.stdout, "ready\n");
     keepAlive();
     break;
+  case "detached-child": {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "setInterval(() => undefined, 1000); setTimeout(() => process.exit(0), 10000)",
+      ],
+      { detached: true, stdio: "ignore" },
+    );
+    await new Promise((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
+    });
+    await write(process.stdout, `ready:${child.pid}\n`);
+    child.unref();
+    keepAlive();
+    break;
+  }
   default:
     process.stderr.write(`unknown provider-process fixture mode: ${mode}\n`);
     process.exitCode = 64;

@@ -4,6 +4,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type {
   AnalysisClient,
+  AnalysisClientContext,
   AnalysisProfileResolutionOptions,
   AnalysisProvider,
   CapabilityDescriptor,
@@ -88,6 +89,7 @@ export class CompositeProvider implements AnalysisProvider {
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
+    context?: AnalysisClientContext,
   ): AnalysisClient {
     const clients = new Map<AnalysisProvider, AnalysisClient>();
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
@@ -96,6 +98,7 @@ export class CompositeProvider implements AnalysisProvider {
       const created = provider.createClient(
         target,
         profile?.provider.id === provider.identity().id ? profile : undefined,
+        context,
       );
       clients.set(provider, created);
       return created;
@@ -126,6 +129,12 @@ export class CompositeProvider implements AnalysisProvider {
             )
           : clientFor(provider).execute(operation, parameters, options);
       },
+      runtimeLineageSnapshots: () =>
+        [...clients.values()]
+          .flatMap((client) => client.runtimeLineageSnapshots?.() ?? [])
+          .sort((left, right) =>
+            left.provider.id.localeCompare(right.provider.id),
+          ),
       close: async () => {
         await Promise.allSettled(
           [...clients.values()].map(async (client) => client.close()),

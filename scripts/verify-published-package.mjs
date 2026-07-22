@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
+const verifierRun = createVerifierRun();
 const version = process.argv[2];
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? ""))
   throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
@@ -75,5 +77,5 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ package: "rea-agents", version, mcpTools: publishedToolCount, canonicalMcpTools: CATALOG_IDENTITY.counts.mcp_tools })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, mcpTools: publishedToolCount, canonicalMcpTools: CATALOG_IDENTITY.counts.mcp_tools })}\n`,
 );

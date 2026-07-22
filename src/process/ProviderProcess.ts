@@ -33,6 +33,7 @@ export interface SpawnedOwnedProviderProcess {
 export interface ProviderProcessLaunch {
   readonly process: ChildProcess;
   readonly ownsProcessLifetime: boolean;
+  readonly ownership?: OwnedProcessGroup;
   readonly cleanup?: () => Promise<ProcessCleanupResult>;
 }
 

@@ -22,6 +22,7 @@ const fixturePath = fileURLToPath(
 class FixtureLauncher implements BridgeLauncher {
   socketPaths: string[] = [];
   directories: string[] = [];
+  runIds: string[] = [];
   processes: ChildProcess[] = [];
 
   constructor(readonly tokenOverride?: string) {}
@@ -29,6 +30,7 @@ class FixtureLauncher implements BridgeLauncher {
   launch(session: BridgeSession) {
     this.socketPaths.push(session.socketPath);
     this.directories.push(session.directory);
+    this.runIds.push(session.runId);
     const child = spawn(
       process.execPath,
       [
@@ -164,6 +166,19 @@ afterEach(async () => {
 });
 
 describe("HopperClient", () => {
+  it("uses the caller-assigned provider run identity", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({
+      launcher,
+      runId: "11111111-1111-4111-8111-111111111111",
+      startupTimeoutMs: 1_000,
+    });
+    clients.push(client);
+
+    expect((await client.start()).ok).toBe(true);
+    expect(launcher.runIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
+  });
+
   it("keeps the native socket path below macOS sockaddr_un limits", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });

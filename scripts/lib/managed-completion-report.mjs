@@ -150,12 +150,13 @@ const optionalClaims = ({ operatorManifest, ilspyOracle }) => [
 ];
 
 /** Project completed managed assertions into the standard verifier report. */
-export const createManagedCompletionReport = (input) => ({
+export const createManagedCompletionReport = (input, verifierRun) => ({
   schema_version: 1,
   verifier: {
     id: COMPLETION_PROVIDER.id,
     version: COMPLETION_PROVIDER.version,
   },
+  verifier_run: verifierRun,
   environment: {
     platform: process.platform,
     architecture: process.arch,
