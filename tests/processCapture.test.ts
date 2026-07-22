@@ -1694,6 +1694,7 @@ describe("process capture adapter", () => {
           { type: "resize", at_ms: 300, columns: 100, rows: 40 },
           { type: "signal", at_ms: 700, signal: "SIGINT" },
         ],
+        normalization: { time_bucket_ms: 60_000 },
         timeout_ms: 2_000,
         idle_timeout_ms: 2_000,
       }),
@@ -1705,8 +1706,8 @@ describe("process capture adapter", () => {
         allowExternalNetwork: true,
       },
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
+    expect(result.ok).toBe(true);
     const output = result.value.frames.map(({ data }) => data).join("");
     expect(output).toContain("prompt>");
     expect(output).toContain("input:answer unicode:雪");
