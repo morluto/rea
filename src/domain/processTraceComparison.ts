@@ -51,3 +51,11 @@ export const compareProcessTraces = (
     diagnostic,
   });
 };
+
+/** Whether trace conformance or raw declared order differs across captures. */
+export const processTraceOutcomesDiffer = (
+  comparison: ProcessTraceComparisonResult,
+): boolean =>
+  comparison.left.status !== comparison.right.status ||
+  JSON.stringify(comparison.left.raw_trace.map(({ event_id }) => event_id)) !==
+    JSON.stringify(comparison.right.raw_trace.map(({ event_id }) => event_id));

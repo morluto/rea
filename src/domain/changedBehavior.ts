@@ -84,24 +84,29 @@ type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
 
 const EXPECTED_PROVIDERS = {
   compare_process_captures: {
-    predicate: "rea.process-comparison/v3",
+    predicates: ["rea.process-comparison/v3", "rea.process-comparison/v4"],
     id: "rea-process",
     name: "REA deterministic process harness",
     version: "3",
   },
   compare_artifacts: {
-    predicate: "rea.artifact-comparison/v1",
+    predicates: ["rea.artifact-comparison/v1"],
     id: "rea-artifact-comparison",
     name: "REA artifact comparison",
     version: "1",
   },
   compare_functions: {
-    predicate: "rea.function-comparison/v1",
+    predicates: ["rea.function-comparison/v1"],
     id: "rea-function-comparison",
     name: "REA function comparison",
     version: "1",
   },
 } as const;
+
+const acceptsPredicate = (
+  expected: readonly string[],
+  actual: string,
+): boolean => expected.some((predicate) => predicate === actual);
 
 /** Find observed runtime changes and separately report static change candidates. */
 export const findChangedBehavior = (
@@ -182,7 +187,7 @@ const parseComparisonEvidence = (input: unknown): Evidence => {
     .parse(evidence.operation);
   const expected = EXPECTED_PROVIDERS[operation];
   if (
-    evidence.predicate_type !== expected.predicate ||
+    !acceptsPredicate(expected.predicates, evidence.predicate_type) ||
     evidence.provider.id !== expected.id ||
     evidence.provider.name !== expected.name ||
     evidence.provider.version !== expected.version ||

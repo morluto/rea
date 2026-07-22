@@ -46,23 +46,28 @@ const MAX_CANONICAL_BYTES = 32 * 1024 * 1024;
 const providers = {
   behavioral: {
     operation: "compare_process_captures",
-    predicate: "rea.process-comparison/v3",
+    predicates: ["rea.process-comparison/v3", "rea.process-comparison/v4"],
     id: "rea-process",
     name: "REA deterministic process harness",
   },
   "structural-function": {
     operation: "compare_functions",
-    predicate: "rea.function-comparison/v1",
+    predicates: ["rea.function-comparison/v1"],
     id: "rea-function-comparison",
     name: "REA function comparison",
   },
   "structural-artifact": {
     operation: "compare_artifacts",
-    predicate: "rea.artifact-comparison/v1",
+    predicates: ["rea.artifact-comparison/v1"],
     id: "rea-artifact-comparison",
     name: "REA artifact comparison",
   },
 } as const;
+
+const acceptsPredicate = (
+  expected: readonly string[],
+  actual: string,
+): boolean => expected.some((predicate) => predicate === actual);
 
 /** Verify only explicitly declared claims; no global equivalence is inferred. */
 export const verifyReconstruction = (
@@ -229,7 +234,7 @@ const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
   const expected = providers[claim.kind];
   if (
     evidence.operation !== expected.operation ||
-    evidence.predicate_type !== expected.predicate ||
+    !acceptsPredicate(expected.predicates, evidence.predicate_type) ||
     evidence.provider.id !== expected.id ||
     evidence.provider.name !== expected.name ||
     evidence.provider.version !== (claim.kind === "behavioral" ? "3" : "1") ||

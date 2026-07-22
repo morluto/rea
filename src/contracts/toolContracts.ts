@@ -13,6 +13,7 @@ import { callPathInputSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
 import { replayMachineRunInputSchema } from "../domain/replayMachineRun.js";
+import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import {
@@ -385,6 +386,7 @@ export const importEvidenceBundleInputSchema = z.strictObject({
 export const processComparisonInputSchema = z.strictObject({
   left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
   right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+  trace_spec: processTraceSpecificationSchema.optional(),
   max_capture_age_ms: z.number().int().nonnegative().optional(),
   unknown_registry_approved: z
     .literal(true)
@@ -440,7 +442,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_process_captures",
-    "Compare two compatible Process Capture v4 observations across terminal, interaction, exit, settlement, process, filesystem, command-shim, HTTP, and WebSocket evidence, returning the first bounded divergence. Process Capture v3 is unsupported and must be recaptured with capture_process_scenario. Missing or truncated observations are never treated as equivalent.",
+    "Compare two compatible Process Capture v4 observations across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Optional trace_spec validates exact events against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.",
     processComparisonInputSchema,
   ),
   session(

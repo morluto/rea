@@ -43,6 +43,21 @@ const eventDeclarationSchema = z.strictObject({
   id: identifierSchema,
   source: processTraceSourceSchema,
   exact: jsonValueSchema,
+  ignore_fields: z
+    .array(
+      z.enum([
+        "sequence",
+        "at_ms",
+        "scheduled_at_ms",
+        "dispatched_at_ms",
+        "elapsed_ms",
+      ]),
+    )
+    .max(5)
+    .refine((values) => new Set(values).size === values.length, {
+      message: "ignored event fields must be unique",
+    })
+    .optional(),
   cardinality: cardinalitySchema.default({ kind: "required" }),
 });
 
@@ -53,6 +68,15 @@ const partialOrderLanguageSchema = z.strictObject({
       z.strictObject({
         before: identifierSchema,
         after: identifierSchema,
+      }),
+    )
+    .max(4_096)
+    .default([]),
+  not_before: z
+    .array(
+      z.strictObject({
+        event: identifierSchema,
+        anchor: identifierSchema,
       }),
     )
     .max(4_096)
@@ -106,6 +130,23 @@ export const canonicalTraceJson = (value: unknown): string => {
   return serialized;
 };
 
+/** Remove only explicitly declared schedule metadata before exact matching. */
+export const comparableTracePayload = (
+  value: unknown,
+  ignoredFields: readonly string[] = [],
+): unknown => {
+  if (
+    ignoredFields.length === 0 ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  )
+    return value;
+  return Object.fromEntries(
+    Object.entries(value).filter(([name]) => !ignoredFields.includes(name)),
+  );
+};
+
 export const processTraceCardinalityBounds = (
   cardinality: ProcessTraceSpecification["events"][number]["cardinality"],
 ): readonly [number, number] => {
@@ -155,6 +196,18 @@ const buildAdjacency = (
         path,
       });
     adjacency.get(edge.before)?.add(edge.after);
+  }
+  for (const [index, constraint] of language.not_before.entries()) {
+    const path = ["language", "not_before", index];
+    addReferenceIssue(context, known, constraint.event, [...path, "event"]);
+    addReferenceIssue(context, known, constraint.anchor, [...path, "anchor"]);
+    if (constraint.event === constraint.anchor)
+      context.addIssue({
+        code: "custom",
+        message: "not-before constraints must reference distinct events",
+        path,
+      });
+    adjacency.get(constraint.anchor)?.add(constraint.event);
   }
   return adjacency;
 };
@@ -274,7 +327,7 @@ const validatePartialOrder = (
     context.addIssue({
       code: "custom",
       message: "happens-before graph must be acyclic",
-      path: ["language", "happens_before"],
+      path: ["language"],
     });
   const reachable = computeReachability(ids, adjacency);
   const unorderedPairs = validateUnorderedGroups(
@@ -309,6 +362,7 @@ const validateFiniteTraces = (
   if (specification.language.kind !== "finite_traces") return;
   const known = new Set(specification.events.map(({ id }) => id));
   const variantIds = new Set<string>();
+  const variantTraces = new Set<string>();
   for (const [
     variantIndex,
     variant,
@@ -321,6 +375,14 @@ const validateFiniteTraces = (
         path: [...variantPath, "id"],
       });
     variantIds.add(variant.id);
+    const canonicalTrace = canonicalTraceJson(variant.trace);
+    if (variantTraces.has(canonicalTrace))
+      context.addIssue({
+        code: "custom",
+        message: "finite trace variants must not duplicate a trace",
+        path: [...variantPath, "trace"],
+      });
+    variantTraces.add(canonicalTrace);
     for (const [tokenIndex, token] of variant.trace.entries()) {
       const values = typeof token === "string" ? [token] : token.unordered;
       for (const [eventIndex, id] of values.entries())
@@ -352,6 +414,7 @@ export const processTraceSpecificationSchema =
   specificationShapeSchema.superRefine((specification, context) => {
     const ids = new Set<string>();
     const predicates = new Set<string>();
+    const ignoredFieldsBySource = new Map<string, string>();
     for (const [index, event] of specification.events.entries()) {
       if (ids.has(event.id))
         context.addIssue({
@@ -360,7 +423,45 @@ export const processTraceSpecificationSchema =
           path: ["events", index, "id"],
         });
       ids.add(event.id);
-      const predicate = `${event.source}\0${canonicalTraceJson(event.exact)}`;
+      const ignoredFields = [...(event.ignore_fields ?? [])].sort();
+      if (
+        ignoredFields.length > 0 &&
+        (typeof event.exact !== "object" ||
+          event.exact === null ||
+          Array.isArray(event.exact))
+      )
+        context.addIssue({
+          code: "custom",
+          message: "ignored schedule fields require an exact object payload",
+          path: ["events", index, "ignore_fields"],
+        });
+      const ignoredKey = canonicalTraceJson(ignoredFields);
+      const priorIgnoredKey = ignoredFieldsBySource.get(event.source);
+      if (priorIgnoredKey !== undefined && priorIgnoredKey !== ignoredKey)
+        context.addIssue({
+          code: "custom",
+          message:
+            "events from one source must use the same ignored schedule fields",
+          path: ["events", index, "ignore_fields"],
+        });
+      ignoredFieldsBySource.set(event.source, ignoredKey);
+      if (
+        ignoredFields.some(
+          (field) =>
+            typeof event.exact === "object" &&
+            event.exact !== null &&
+            !Array.isArray(event.exact) &&
+            field in event.exact,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          message: "exact payload must omit every ignored schedule field",
+          path: ["events", index, "exact"],
+        });
+      const predicate = `${event.source}\0${canonicalTraceJson(
+        comparableTracePayload(event.exact, ignoredFields),
+      )}`;
       if (predicates.has(predicate))
         context.addIssue({
           code: "custom",
