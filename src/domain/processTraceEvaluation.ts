@@ -4,6 +4,7 @@ import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import type { ProcessCapture } from "./processCapture.js";
 import {
   canonicalTraceJson,
+  comparableTracePayload,
   processTraceCardinalityBounds,
   type ProcessTraceSource,
   type ProcessTraceSpecification,
@@ -260,7 +261,12 @@ const matchRecords = (
     const matches = specification.events.filter(
       (event) =>
         event.source === record.source &&
-        canonicalTraceJson(event.exact) === canonicalTraceJson(record.payload),
+        canonicalTraceJson(
+          comparableTracePayload(event.exact, event.ignore_fields),
+        ) ===
+          canonicalTraceJson(
+            comparableTracePayload(record.payload, event.ignore_fields),
+          ),
     );
     if (matches.length !== 1)
       return failure({
@@ -303,68 +309,131 @@ const cardinalityFailure = (
   return null;
 };
 
-const evaluatePartialOrder = (
+type PartialOrderLanguage = Extract<
+  ProcessTraceSpecification["language"],
+  { readonly kind: "partial_order" }
+>;
+
+const evaluateOrderingConstraints = (
   trace: MatchedTrace,
-  specification: ProcessTraceSpecification,
-): EvaluatedSide => {
-  if (specification.language.kind !== "partial_order")
-    throw new TypeError("Expected a partial-order trace specification");
+  language: PartialOrderLanguage,
+): { readonly failure: EvaluatedSide | null; readonly satisfied: string[] } => {
   const satisfied: string[] = [];
-  for (const edge of specification.language.happens_before) {
+  for (const edge of language.happens_before) {
     const before = trace.locationsById.get(edge.before) ?? [];
     const after = trace.locationsById.get(edge.after) ?? [];
     const lastBefore = before.at(-1);
     const firstAfter = after[0];
+    if (lastBefore === undefined && firstAfter !== undefined)
+      return {
+        failure: failure({
+          kind: "edge",
+          message: `${edge.before} is required when ${edge.after} occurs.`,
+          eventIds: [edge.before, edge.after],
+          locations: [firstAfter],
+          rawTrace: trace.rawTrace,
+        }),
+        satisfied,
+      };
     if (
       lastBefore !== undefined &&
       firstAfter !== undefined &&
       lastBefore.capture_order >= firstAfter.capture_order
     )
-      return failure({
-        kind: "edge",
-        message: `${edge.before} must happen before ${edge.after}.`,
-        eventIds: [edge.before, edge.after],
-        locations: [lastBefore, firstAfter],
-        rawTrace: trace.rawTrace,
-      });
+      return {
+        failure: failure({
+          kind: "edge",
+          message: `${edge.before} must happen before ${edge.after}.`,
+          eventIds: [edge.before, edge.after],
+          locations: [lastBefore, firstAfter],
+          rawTrace: trace.rawTrace,
+        }),
+        satisfied,
+      };
     satisfied.push(`happens_before:${edge.before}:${edge.after}`);
   }
+  for (const constraint of language.not_before) {
+    const events = trace.locationsById.get(constraint.event) ?? [];
+    const anchors = trace.locationsById.get(constraint.anchor) ?? [];
+    const firstEvent = events[0];
+    const firstAnchor = anchors[0];
+    if (firstEvent !== undefined && firstAnchor === undefined)
+      return {
+        failure: failure({
+          kind: "edge",
+          message: `${constraint.anchor} is required when ${constraint.event} occurs.`,
+          eventIds: [constraint.event, constraint.anchor],
+          locations: [firstEvent],
+          rawTrace: trace.rawTrace,
+        }),
+        satisfied,
+      };
+    if (
+      firstEvent !== undefined &&
+      firstAnchor !== undefined &&
+      firstEvent.capture_order < firstAnchor.capture_order
+    )
+      return {
+        failure: failure({
+          kind: "edge",
+          message: `${constraint.event} must not occur before ${constraint.anchor}.`,
+          eventIds: [constraint.event, constraint.anchor],
+          locations: [firstEvent, firstAnchor],
+          rawTrace: trace.rawTrace,
+        }),
+        satisfied,
+      };
+    satisfied.push(`not_before:${constraint.event}:${constraint.anchor}`);
+  }
+  return { failure: null, satisfied };
+};
+
+const boundaryFailure = (
+  trace: MatchedTrace,
+  kind: "prefix" | "suffix",
+  expected: readonly string[],
+): EvaluatedSide | null => {
   const ids = trace.rawTrace.map(({ event_id }) => event_id);
-  const prefix = specification.language.prefix;
-  if (
-    canonicalTraceJson(ids.slice(0, prefix.length)) !==
-    canonicalTraceJson(prefix)
-  )
-    return failure({
-      kind: "prefix",
-      message: "Observed trace does not satisfy the declared prefix.",
-      eventIds: prefix,
-      locations: trace.rawTrace
-        .slice(0, prefix.length)
-        .map(({ location }) => location),
-      rawTrace: trace.rawTrace,
-    });
-  const suffix = specification.language.suffix;
-  if (
-    canonicalTraceJson(suffix.length === 0 ? [] : ids.slice(-suffix.length)) !==
-    canonicalTraceJson(suffix)
-  )
-    return failure({
-      kind: "suffix",
-      message: "Observed trace does not satisfy the declared suffix.",
-      eventIds: suffix,
-      locations: trace.rawTrace
-        .slice(-suffix.length)
-        .map(({ location }) => location),
-      rawTrace: trace.rawTrace,
-    });
+  const actual =
+    kind === "prefix"
+      ? ids.slice(0, expected.length)
+      : expected.length === 0
+        ? []
+        : ids.slice(-expected.length);
+  if (canonicalTraceJson(actual) === canonicalTraceJson(expected)) return null;
+  const locations =
+    kind === "prefix"
+      ? trace.rawTrace.slice(0, expected.length)
+      : trace.rawTrace.slice(-expected.length);
+  return failure({
+    kind,
+    message: `Observed trace does not satisfy the declared ${kind}.`,
+    eventIds: expected,
+    locations: locations.map(({ location }) => location),
+    rawTrace: trace.rawTrace,
+  });
+};
+
+const evaluatePartialOrder = (
+  trace: MatchedTrace,
+  language: PartialOrderLanguage,
+): EvaluatedSide => {
+  const ordering = evaluateOrderingConstraints(trace, language);
+  if (ordering.failure !== null) return ordering.failure;
+  const prefixFailure = boundaryFailure(trace, "prefix", language.prefix);
+  if (prefixFailure !== null) return prefixFailure;
+  const suffixFailure = boundaryFailure(trace, "suffix", language.suffix);
+  if (suffixFailure !== null) return suffixFailure;
+  const satisfied = ordering.satisfied;
   satisfied.push(
-    ...specification.language.unordered_groups.map(
+    ...language.unordered_groups.map(
       ({ events }) => `unordered:${events.join(":")}`,
     ),
   );
-  if (prefix.length > 0) satisfied.push(`prefix:${prefix.join(":")}`);
-  if (suffix.length > 0) satisfied.push(`suffix:${suffix.join(":")}`);
+  if (language.prefix.length > 0)
+    satisfied.push(`prefix:${language.prefix.join(":")}`);
+  if (language.suffix.length > 0)
+    satisfied.push(`suffix:${language.suffix.join(":")}`);
   return {
     result: {
       status: "pass",
@@ -383,7 +452,7 @@ const evaluateMatchedTrace = (
   const invalidCardinality = cardinalityFailure(trace, specification);
   if (invalidCardinality !== null) return invalidCardinality;
   if (specification.language.kind === "partial_order")
-    return evaluatePartialOrder(trace, specification);
+    return evaluatePartialOrder(trace, specification.language);
   const ids = trace.rawTrace.map(({ event_id }) => event_id);
   const variant = evaluateFiniteTrace(ids, specification);
   return variant === null
