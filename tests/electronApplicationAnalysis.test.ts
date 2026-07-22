@@ -247,13 +247,13 @@ describe("static Electron application analysis", () => {
     const evidence = parseEvidence(result.value);
     expect(evidence).toMatchObject({
       operation: "analyze_javascript_application",
-      predicate_type: "rea.javascript-application-analysis/v1",
+      predicate_type: "rea.javascript-application-analysis/v2",
       provider: { id: "rea-javascript-application" },
       authority: "shipped-artifact",
       confidence: "derived",
       subject: { local_path: root, format: "directory" },
       normalized_result: {
-        schema_version: 1,
+        schema_version: 2,
         input_path: root,
         summary: { browser_windows: 3 },
       },

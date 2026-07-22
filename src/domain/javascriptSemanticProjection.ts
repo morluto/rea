@@ -42,8 +42,10 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     reachSemanticLimit(state, "maxCallables");
     return;
   }
+  const callableId =
+    semanticCallableIdForNode(node) ?? "callable:unknown:-1:-1";
   state.callables.push({
-    callableId: semanticCallableIdForNode(node) ?? "callable:unknown:-1:-1",
+    callableId,
     kind,
     name: callableName(node, parent),
     containerScopeId: containerScope.scopeId,
@@ -60,6 +62,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
       limitsReached: [],
     },
   });
+  state.callableNodesById.set(callableId, node);
 };
 
 /** Collect one static import/export relationship for later composition. */
@@ -102,7 +105,7 @@ export const collectSemanticReferences = (
   traverseJavaScriptAst(program, {
     enter: (node, parent) => {
       if (!t.isIdentifier(node) || parent === null) return;
-      const role = referenceRole(node, parent);
+      const role = semanticReferenceRole(node, parent);
       if (role === null) return;
       const key = `${String(node.start)}:${role}:${node.name}`;
       if (seen.has(key)) return;
@@ -403,7 +406,8 @@ const declarationCallableId = (
     : semanticCallableIdForNode(declarator.init);
 };
 
-const referenceRole = (
+/** Classify one identifier occurrence consistently with semantic references. */
+export const semanticReferenceRole = (
   node: t.Identifier,
   parent: t.Node,
 ): JavaScriptSemanticReference["role"] | null => {

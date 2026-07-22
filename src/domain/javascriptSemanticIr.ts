@@ -8,6 +8,12 @@ export interface JavaScriptSemanticLimits {
   readonly maxReferences: number;
   readonly maxModuleLinks: number;
   readonly maxReturnSites: number;
+  readonly maxCallSites: number;
+  readonly maxCallArguments: number;
+  readonly maxArgumentFlows: number;
+  readonly maxCallReturnFlows: number;
+  readonly maxClosureCaptures: number;
+  readonly maxFrontiers: number;
   readonly maxValueDepth: number;
   readonly maxUnionValues: number;
   readonly maxObjectProperties: number;
@@ -21,6 +27,12 @@ export const DEFAULT_JAVASCRIPT_SEMANTIC_LIMITS: JavaScriptSemanticLimits = {
   maxReferences: 100_000,
   maxModuleLinks: 20_000,
   maxReturnSites: 20_000,
+  maxCallSites: 20_000,
+  maxCallArguments: 100_000,
+  maxArgumentFlows: 100_000,
+  maxCallReturnFlows: 100_000,
+  maxClosureCaptures: 100_000,
+  maxFrontiers: 20_000,
   maxValueDepth: 16,
   maxUnionValues: 32,
   maxObjectProperties: 256,
@@ -139,8 +151,69 @@ export interface JavaScriptSemanticCallable {
 
 /** One direct return expression belonging to exactly one callable. */
 export interface JavaScriptSemanticReturnSite {
+  readonly returnSiteId: string;
   readonly location: JavaScriptSourceRange;
+  readonly identityReferenceLocation: JavaScriptSourceRange | null;
   readonly value: JavaScriptSemanticValue;
+}
+
+/** One statically visible call or construction expression. */
+export interface JavaScriptSemanticCallSite {
+  readonly callSiteId: string;
+  readonly kind: "call" | "construct";
+  readonly callerCallableId: string | null;
+  readonly location: JavaScriptSourceRange;
+  readonly calleeLocation: JavaScriptSourceRange;
+  readonly resolution: "exact" | "ambiguous" | "unresolved";
+  readonly calleeCallableIds: readonly string[];
+  readonly arguments: readonly JavaScriptSemanticCallArgument[];
+}
+
+/** One argument occurrence retained without evaluating application code. */
+export interface JavaScriptSemanticCallArgument {
+  readonly index: number;
+  readonly location: JavaScriptSourceRange;
+  readonly spread: boolean;
+}
+
+/** One positional argument that may initialize one local parameter binding. */
+export interface JavaScriptSemanticArgumentFlow {
+  readonly callSiteId: string;
+  readonly argumentIndex: number;
+  readonly argumentLocation: JavaScriptSourceRange;
+  readonly callableId: string;
+  readonly parameterBindingId: string;
+  readonly parameterLocation: JavaScriptSourceRange;
+}
+
+/** One direct local return that may supply a call expression's value. */
+export interface JavaScriptSemanticCallReturnFlow {
+  readonly callSiteId: string;
+  readonly callableId: string;
+  readonly returnSiteId: string;
+  readonly returnLocation: JavaScriptSourceRange;
+}
+
+/** One local binding initialized or assigned from a retained call expression. */
+export interface JavaScriptSemanticCallResultFlow {
+  readonly callSiteId: string;
+  readonly bindingId: string;
+  readonly definitionLocation: JavaScriptSourceRange;
+}
+
+/** One resolved outer lexical binding referenced by a nested callable. */
+export interface JavaScriptSemanticClosureCapture {
+  readonly callableId: string;
+  readonly bindingId: string;
+  readonly referenceLocation: JavaScriptSourceRange;
+}
+
+/** One syntax location where exact local semantic continuation is unavailable. */
+export interface JavaScriptSemanticFrontier {
+  readonly kind: "dynamic-call" | "dynamic-property";
+  readonly callableId: string | null;
+  readonly location: JavaScriptSourceRange;
+  readonly reason: string;
 }
 
 /** Exact retention state for one callable's direct returns. */
@@ -174,15 +247,21 @@ interface JavaScriptSemanticCoverage {
   readonly limitsReached: readonly (keyof JavaScriptSemanticLimits)[];
 }
 
-/** Provider-neutral JavaScript semantic IR v2. */
+/** Provider-neutral JavaScript semantic IR v3. */
 export interface JavaScriptSemanticIr {
   readonly schema: "JavaScriptSemanticIR";
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly scopes: readonly JavaScriptSemanticScope[];
   readonly bindings: readonly JavaScriptSemanticBinding[];
   readonly callables: readonly JavaScriptSemanticCallable[];
   readonly references: readonly JavaScriptSemanticReference[];
   readonly moduleLinks: readonly JavaScriptSemanticModuleLink[];
+  readonly callSites: readonly JavaScriptSemanticCallSite[];
+  readonly argumentFlows: readonly JavaScriptSemanticArgumentFlow[];
+  readonly callReturnFlows: readonly JavaScriptSemanticCallReturnFlow[];
+  readonly callResultFlows: readonly JavaScriptSemanticCallResultFlow[];
+  readonly closureCaptures: readonly JavaScriptSemanticClosureCapture[];
+  readonly frontiers: readonly JavaScriptSemanticFrontier[];
   readonly coverage: JavaScriptSemanticCoverage;
   readonly limitations: readonly string[];
 }
@@ -208,12 +287,18 @@ export const semanticBinding = (
 /** Fail-closed result when Babel cannot produce an inert syntax tree. */
 export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   schema: "JavaScriptSemanticIR",
-  schemaVersion: 2,
+  schemaVersion: 3,
   scopes: [],
   bindings: [],
   callables: [],
   references: [],
   moduleLinks: [],
+  callSites: [],
+  argumentFlows: [],
+  callReturnFlows: [],
+  callResultFlows: [],
+  closureCaptures: [],
+  frontiers: [],
   coverage: { status: "failed", omittedCount: null, limitsReached: [] },
   limitations: [
     "JavaScript parsing failed; no semantic absence claim is available.",

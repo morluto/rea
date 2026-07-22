@@ -93,6 +93,21 @@ const durableSchemaDefinitions = (sources) => [
     ["schema_version"],
   ],
   [
+    "javascript_semantic_graph",
+    sources.javascriptSemanticGraph.javaScriptSemanticGraphSchema,
+    ["schema_version"],
+  ],
+  [
+    "javascript_semantic_query",
+    sources.javascriptSemanticQuery.javaScriptSemanticQueryResultSchema,
+    ["schema_version"],
+  ],
+  [
+    "javascript_semantic_trace",
+    sources.javascriptSemanticTrace.javaScriptSemanticTraceResultSchema,
+    ["schema_version"],
+  ],
+  [
     "javascript_feature_trace",
     sources.javascriptFeatureTrace.applicationFeatureTraceResultSchema,
     ["schema_version"],
@@ -158,7 +173,7 @@ const observationSchemaDefinitions = (sources) => [
   [
     "javascript_application_analysis",
     sources.javascriptApplicationAnalysis
-      .javascriptApplicationAnalysisResultSchema,
+      .javaScriptApplicationAnalysisResultV2Schema,
     ["schema_version"],
   ],
   [

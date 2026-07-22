@@ -19,6 +19,9 @@ import {
   type ArtifactReader,
 } from "../src/artifacts/ArtifactReader.js";
 import { parseJavaScriptApplicationGraph } from "../src/domain/javascriptApplicationGraph.js";
+import { javaScriptApplicationAnalysisResultV2Schema } from "../src/domain/javascriptApplicationAnalysis.js";
+import { createJavaScriptSemanticGraph } from "../src/domain/javascriptSemanticGraph.js";
+import { parseJavaScriptSemanticGraph } from "../src/domain/javascriptSemanticGraphSerialization.js";
 import { writeJavaScriptArtifactFixture } from "./fixtures/javascriptArtifactApplication.js";
 
 describe("JavaScript artifact reconstruction", () => {
@@ -31,6 +34,7 @@ describe("JavaScript artifact reconstruction", () => {
       source_map_read_approved: true,
     });
     const graph = parseJavaScriptApplicationGraph(result.graph);
+    const semanticGraph = parseJavaScriptSemanticGraph(result.semantic_graph);
 
     expect(Reflect.get(globalThis, "__rea_bundle_executed")).toBeUndefined();
     expect(result.input_path).toBe(root);
@@ -106,6 +110,27 @@ describe("JavaScript artifact reconstruction", () => {
         "persists_to",
       ]),
     );
+    expect(semanticGraph.application_graph_id).toBe(graph.graph_id);
+    const { graph_id: _semanticGraphId, ...semanticGraphInput } = semanticGraph;
+    const mismatchedSemanticGraph = createJavaScriptSemanticGraph({
+      ...semanticGraphInput,
+      application_graph_id: `jag_${"f".repeat(64)}`,
+    });
+    const { electron_summary: summary, ...analysisResult } = result;
+    expect(() =>
+      javaScriptApplicationAnalysisResultV2Schema.parse({
+        ...analysisResult,
+        schema_version: 2,
+        summary,
+        semantic_graph: mismatchedSemanticGraph,
+      }),
+    ).toThrow(/must commit the containing application graph/u);
+    expect(
+      semanticGraph.nodes.some(
+        ({ application_node_ids: identifiers }) => identifiers.length > 0,
+      ),
+    ).toBe(true);
+    expect(semanticGraph.relations.length).toBeGreaterThan(0);
     const mainRole = graph.nodes.find(
       (node) =>
         node.kind === "electron-main" &&
@@ -134,6 +159,29 @@ describe("JavaScript artifact reconstruction", () => {
       resolution_status: "resolved",
       limitations: [],
     });
+    const mainAsset = graph.nodes.find(
+      (node) =>
+        node.kind === "javascript-asset" &&
+        node.observations.some(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "artifact-path" &&
+            evidence.location.value.path === "main.js",
+        ),
+    );
+    if (mainAsset === undefined)
+      throw new Error("Expected main JavaScript asset");
+    const mainSemanticNodes = semanticGraph.nodes.filter(
+      ({ identity }) => identity.module_path === "main.js",
+    );
+    const linkedMainSemanticNodes = mainSemanticNodes.filter(
+      ({ application_node_ids: identifiers }) =>
+        identifiers.includes(mainAsset.node_id),
+    );
+    expect(linkedMainSemanticNodes.length).toBeGreaterThan(0);
+    expect(linkedMainSemanticNodes.length).toBeLessThan(
+      mainSemanticNodes.length,
+    );
     for (const role of [mainRole, preloadRole]) {
       expect(role).toBeDefined();
       expect(

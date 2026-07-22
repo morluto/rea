@@ -23,7 +23,7 @@ export const createJavaScriptApplicationEvidence = (
     },
     JAVASCRIPT_APPLICATION_PROVIDER,
     {
-      predicateType: "rea.javascript-application-analysis/v1",
+      predicateType: `rea.javascript-application-analysis/v${String(result.schema_version)}`,
       operation: "analyze_javascript_application",
       parameters: parameters(input),
       result: jsonValueSchema.parse(result),

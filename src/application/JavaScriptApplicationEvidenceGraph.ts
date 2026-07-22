@@ -10,6 +10,7 @@ import {
   type JavaScriptApplicationAnalysisResult,
 } from "../domain/javascriptApplicationAnalysis.js";
 import type { JavaScriptApplicationGraph } from "../domain/javascriptApplicationGraph.js";
+import type { JavaScriptSemanticGraph } from "../domain/javascriptSemanticGraph.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
 import { managedApplicationGraphResultSchema } from "../domain/managedApplicationGraph.js";
 
@@ -22,6 +23,7 @@ export interface ApplicationGraphEvidenceSource {
     | "static-runtime-reconciliation"
     | "managed-application";
   readonly rootArtifactSha256: string;
+  readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
 
 /** Parse and authenticate one REA-produced JavaScript Application Graph Evidence. */
@@ -31,7 +33,10 @@ export const parseApplicationGraphEvidence = (
   const evidence = parseEvidence(input);
   if (
     evidence.operation === "analyze_javascript_application" &&
-    evidence.predicate_type === "rea.javascript-application-analysis/v1" &&
+    [
+      "rea.javascript-application-analysis/v1",
+      "rea.javascript-application-analysis/v2",
+    ].includes(evidence.predicate_type) &&
     providerMatches(evidence, JAVASCRIPT_APPLICATION_PROVIDER)
   )
     return staticApplicationSource(evidence);
@@ -65,6 +70,13 @@ const staticApplicationSource = (
   const result = javascriptApplicationAnalysisResultSchema.parse(
     evidence.normalized_result,
   );
+  if (
+    evidence.predicate_type !==
+    `rea.javascript-application-analysis/v${String(result.schema_version)}`
+  )
+    throw new TypeError(
+      "JavaScript application Evidence predicate does not match its result schema version",
+    );
   analyzeJavaScriptApplicationInputSchema.parse({
     input_path: result.input_path,
     ...evidence.parameters,
@@ -75,6 +87,7 @@ const staticApplicationSource = (
     graph: result.graph,
     kind: "static-application",
     rootArtifactSha256: result.root_artifact_sha256,
+    semanticGraph: result.schema_version === 2 ? result.semantic_graph : null,
   };
 };
 
@@ -109,6 +122,7 @@ const staticRuntimeSource = (
     graph: result.graph,
     kind: "static-runtime-reconciliation",
     rootArtifactSha256: applicationLayer.root_artifact_sha256,
+    semanticGraph: null,
   };
 };
 
@@ -138,6 +152,7 @@ const managedApplicationSource = (
     graph: result.graph,
     kind: "managed-application",
     rootArtifactSha256: result.root_artifact_sha256,
+    semanticGraph: null,
   };
 };
 

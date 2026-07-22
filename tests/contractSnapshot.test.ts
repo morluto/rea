@@ -97,7 +97,7 @@ describe("tool contract surface", () => {
       ...ELECTRON_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
     ];
-    expect(contracts).toHaveLength(78);
+    expect(contracts).toHaveLength(79);
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);

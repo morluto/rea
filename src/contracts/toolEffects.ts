@@ -115,6 +115,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   analyze_javascript_application: evidence,
   reconcile_javascript_runtime: evidence,
   trace_application_feature: evidence,
+  trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
   compare_javascript_export_shapes: evidence,
   run_replay_machine: effects(),

@@ -8,6 +8,7 @@ import {
 } from "../artifacts/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../domain/javascriptApplicationGraph.js";
+import type { JavaScriptSemanticGraph } from "../domain/javascriptSemanticGraph.js";
 import type { ElectronBoundarySummary } from "../domain/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { readJavaScriptArtifactFiles } from "./JavaScriptArtifactFiles.js";
@@ -19,6 +20,7 @@ import {
 } from "./JavaScriptArtifactReconstructionInput.js";
 import { scanCanonicalArtifactInventory } from "./ArtifactInventory.js";
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
+import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
@@ -28,6 +30,7 @@ export interface JavaScriptArtifactReconstructionResult {
   readonly inventory_manifest_id: string;
   readonly inventory_graph_sha256: string;
   readonly graph: JavaScriptApplicationGraph;
+  readonly semantic_graph: JavaScriptSemanticGraph;
   readonly electron_summary: ElectronBoundarySummary;
   readonly statistics: {
     readonly relevant_files: number;
@@ -85,6 +88,11 @@ export const reconstructJavaScriptArtifact = async (
       analysis,
       input,
     );
+    const semanticGraph = buildJavaScriptSemanticGraph({
+      rootArtifactSha256: snapshot.manifest.root_sha256,
+      applicationGraph: graph,
+      analysis,
+    });
     return {
       input_path: path,
       format,
@@ -92,6 +100,7 @@ export const reconstructJavaScriptArtifact = async (
       inventory_manifest_id: snapshot.manifest.manifest_id,
       inventory_graph_sha256: snapshot.manifest.graph_sha256,
       graph,
+      semantic_graph: semanticGraph,
       electron_summary: summarizeElectronBoundaries(analysis),
       statistics: {
         relevant_files: files.files.length,

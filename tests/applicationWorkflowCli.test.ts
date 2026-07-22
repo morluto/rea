@@ -20,6 +20,7 @@ import {
 import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
 import { permissionAuthorityForRoot } from "./fixtures/permissionAuthority.js";
 import { REPLAY_MACHINE_RUN_EXAMPLE } from "../src/contracts/replayMachineExample.js";
+import { javascriptApplicationAnalysisResultSchema } from "../src/domain/javascriptApplicationAnalysis.js";
 
 const execute = promisify(execFile);
 
@@ -62,6 +63,54 @@ describe("application workflow CLI parity", () => {
       normalized_result: {
         schema_version: 1,
         summary: { unknown: expect.any(Number) },
+      },
+    });
+  }, 20_000);
+
+  it("traces the same authenticated semantic graph through the CLI", async () => {
+    const root = await createTestTempDirectory("rea-semantic-cli-");
+    temporary.push(root);
+    await writeFile(
+      join(root, "app.js"),
+      "function add(value) { return value + 1; } add(2);",
+    );
+    const authority = await permissionAuthorityForRoot(
+      root,
+      ["investigation_input"],
+      ["investigation_input"],
+    );
+    const analyzed = await analyzeJavaScriptApplication(authority, {
+      input_path: root,
+      approved: true,
+    });
+    if (!analyzed.ok) throw analyzed.error;
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      analyzed.value.normalized_result,
+    );
+    if (result.schema_version !== 2)
+      throw new TypeError("Expected semantic application Evidence");
+    const seed = result.semantic_graph.relations[0]?.source_node_id;
+    if (seed === undefined)
+      throw new TypeError("Expected at least one semantic relation");
+
+    const traced = await runCli([
+      "trace-javascript-semantics",
+      JSON.stringify({
+        application: analyzed.value,
+        query: {
+          seed: { kind: "semantic-node", node_id: seed },
+          direction: "forward-influence",
+          include_ambiguous_dynamic_edges: true,
+        },
+      }),
+      "--json",
+    ]);
+    expect(traced).toMatchObject({
+      operation: "trace_javascript_semantics",
+      predicate_type: "rea.javascript-semantic-trace/v1",
+      normalized_result: {
+        source_evidence_id: analyzed.value.evidence_id,
+        source_graph_id: result.semantic_graph.graph_id,
       },
     });
   }, 20_000);

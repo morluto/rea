@@ -58,7 +58,8 @@ export const summarizeJavaScriptApplicationEvidence = (
         location: observation.evidence.location,
       };
     });
-  const { graph: _graph, ...summary } = result;
+  const summary =
+    result.schema_version === 1 ? omitGraph(result) : omitGraphs(result);
   const unknowns = new Set([
     ...result.limitations,
     ...result.graph.limitations,
@@ -77,6 +78,19 @@ export const summarizeJavaScriptApplicationEvidence = (
     );
   return javascriptApplicationAnalysisSummarySchema.parse({
     ...summary,
+    ...(result.schema_version === 1
+      ? {}
+      : {
+          semantic_graph: {
+            graph_id: result.semantic_graph.graph_id,
+            nodes: result.semantic_graph.nodes.length,
+            relations: result.semantic_graph.relations.length,
+            unknown_frontiers: result.semantic_graph.unknowns.length,
+            fingerprints: result.semantic_graph.fingerprints.length,
+            coverage: result.semantic_graph.coverage.status,
+            query_tool: "trace_javascript_semantics",
+          },
+        }),
     unknowns: [...unknowns],
     graph: {
       graph_id: result.graph.graph_id,
@@ -100,4 +114,24 @@ export const summarizeJavaScriptApplicationEvidence = (
       },
     },
   });
+};
+
+const omitGraph = (
+  result: Extract<
+    ReturnType<typeof javascriptApplicationAnalysisResultSchema.parse>,
+    { readonly schema_version: 1 }
+  >,
+) => {
+  const { graph: _graph, ...summary } = result;
+  return summary;
+};
+
+const omitGraphs = (
+  result: Extract<
+    ReturnType<typeof javascriptApplicationAnalysisResultSchema.parse>,
+    { readonly schema_version: 2 }
+  >,
+) => {
+  const { graph: _graph, semantic_graph: _semanticGraph, ...summary } = result;
+  return summary;
 };

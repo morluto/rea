@@ -96,7 +96,7 @@ export const analyzeJavaScriptApplicationValidated = async (
     );
     const { electron_summary: summary, ...application } = reconstructed;
     const result = javascriptApplicationAnalysisResultSchema.parse({
-      schema_version: 1,
+      schema_version: 2,
       ...application,
       summary,
       limitations: reconstructed.graph.limitations,

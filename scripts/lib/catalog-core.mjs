@@ -60,6 +60,9 @@ const SOURCE_PATHS = {
   webScreenshot: "dist/domain/webScreenshot.js",
   javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
   javascriptApplicationAnalysis: "dist/domain/javascriptApplicationAnalysis.js",
+  javascriptSemanticGraph: "dist/domain/javascriptSemanticGraph.js",
+  javascriptSemanticQuery: "dist/domain/javascriptSemanticQuerySchemas.js",
+  javascriptSemanticTrace: "dist/domain/javascriptSemanticTraceSchemas.js",
   javascriptFeatureTrace: "dist/domain/javascriptFeatureTraceSchemas.js",
   javascriptVersionComparison:
     "dist/domain/javascriptApplicationVersionComparisonSchemas.js",

@@ -2,10 +2,9 @@
 
 REA derives a bounded feature trace from one authenticated JavaScript
 Application Graph and compares two authenticated graph versions. The MCP tools
-are `trace_application_feature`, `compare_application_versions`, and
-`compare_javascript_export_shapes`; their CLI equivalents are
-`rea trace-application-feature`, `rea compare-application-versions`, and
-`rea compare-javascript-export-shapes`.
+are `trace_application_feature`, `trace_javascript_semantics`,
+`compare_application_versions`, and `compare_javascript_export_shapes`; their
+CLI equivalents use the same names with hyphens.
 
 Both workflows consume Evidence v2 produced by
 `analyze_javascript_application` or `reconcile_javascript_runtime`. They do not
@@ -13,6 +12,13 @@ read an artifact, execute application code, attach to a process, or open a
 native-analysis provider. Static artifact observations, passive runtime
 observations, relationship inferences, and unknown or unavailable facts retain
 their original graph authority.
+
+Current `analyze_javascript_application` Evidence uses result schema v2. It
+retains the structural JavaScript Application Graph and a separate semantic
+relation graph bound to the same root artifact digest and structural graph ID.
+Legacy v1 Evidence remains valid for structural workflows, but semantic tracing
+returns an actionable request to reanalyze it rather than treating missing
+semantic data as an empty graph.
 
 ## Feature tracing
 
@@ -28,6 +34,33 @@ graph. Existing Hopper or Ghidra Evidence is linked only when its subject digest
 matches exactly. Otherwise the result recommends provider-neutral follow-up
 tools and reports `requires-provider-analysis`; it never starts or switches a
 provider implicitly.
+
+## Semantic relation tracing
+
+`trace_javascript_semantics` queries the authenticated companion graph without
+rereading mutable files. A seed may identify a semantic or application node,
+literal, function fingerprint, property, endpoint, event, or boundary field.
+The query declares backward provenance, forward influence, callers, or
+ownership and can restrict admitted relation kinds. Node, relation, depth,
+function, module, seed-match, and page limits are validated against exact
+published ranges. A committed cursor returns the next deterministic relation
+page only for the same graph, query, and limits.
+
+The initial extractor covers lexical definitions and reads, closure captures,
+and uniquely resolved local calls with argument-to-parameter and direct
+return-to-call candidates. Dynamic calls/properties, parser recovery, and bound
+frontiers stay explicit. Promise, event, timer, child-process, request,
+configuration, boundary, resource, and fingerprint families are represented by
+the versioned schema but report unsupported or unknown coverage until their
+extractors supply facts. Missing relations in those families are never reported
+as proven absence.
+
+Semantic relations use static-inference authority. `resolved` means the static
+target identity was unique within admitted analysis; it does not mean the path
+executed. Candidate edges are excluded by default, require explicit opt-in, and
+keep the result ambiguous. Runtime Evidence can later corroborate an exact
+mapped candidate, but structural reachability, semantic influence, runtime
+observation, and causal proof remain separate claims.
 
 ## Version comparison
 
@@ -75,8 +108,8 @@ replay recommendation; it does not execute JavaScript.
 
 ## CLI and verification
 
-All three CLI commands accept inline JSON or a JSON file up to 64 MiB. The input is
-the same object used by the corresponding MCP tool.
+All four CLI commands accept inline JSON or a JSON file up to 64 MiB. The input
+is the same object used by the corresponding MCP tool.
 
 For two operator-provided directories or ASARs, run:
 
