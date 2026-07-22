@@ -62,7 +62,11 @@ interface FakeOptions {
   readonly webMcpChildLeavesScope?: boolean;
   readonly electronFileUrl?: string;
   readonly duplicateElectronInventory?: boolean;
-  readonly urlShapedAllowedTitle?: boolean;
+  readonly urlShapedAllowedTitle?:
+    | boolean
+    | "host-path"
+    | "root-relative"
+    | "prefixed";
 }
 
 /** Start a real HTTP/WebSocket fake at the same seams as a user-owned browser. */
@@ -226,10 +230,7 @@ const targets = (
   {
     id: "allowed-page",
     type: "page",
-    title:
-      options.urlShapedAllowedTitle === true
-        ? `http://127.0.0.1:${String(port)}/app?startup=title-secret#fragment`
-        : "Inspectable application",
+    title: allowedPageTitle(port, options.urlShapedAllowedTitle),
     url: `http://127.0.0.1:${String(port)}/app?token=page-secret#fragment`,
     attached: false,
     ...(options.omitTargetWebSocket === true
@@ -332,6 +333,19 @@ const targets = (
         },
       ]),
 ];
+
+const allowedPageTitle = (
+  port: number,
+  style: FakeOptions["urlShapedAllowedTitle"],
+): string => {
+  const suffix = "/app?startup=title-secret#fragment";
+  const host = `127.0.0.1:${String(port)}`;
+  if (style === true) return `http://${host}${suffix}`;
+  if (style === "host-path") return `${host}${suffix}`;
+  if (style === "root-relative") return suffix;
+  if (style === "prefixed") return `Loading ${host}${suffix}`;
+  return "Inspectable application";
+};
 
 const parseCommand = (text: string): FakeCdpCommand => {
   const value: unknown = JSON.parse(text);
