@@ -35,6 +35,7 @@ import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
+import { collectJavaScriptSemanticCalls } from "./javascriptSemanticCalls.js";
 import {
   compareCodePoints,
   propertyName,
@@ -86,14 +87,16 @@ export const analyzeJavaScriptSemantics = (
   const bindings = immutableSemanticBindings(state);
   const callables = collectSemanticReturns(file.program, state, parserPartial);
   const moduleLinks = resolveSemanticModuleCallables(state, callables);
+  const calls = collectJavaScriptSemanticCalls(file.program, state, callables);
   return {
     schema: "JavaScriptSemanticIR",
-    schemaVersion: 2,
+    schemaVersion: 3,
     scopes: immutableSemanticScopes(state),
     bindings,
     callables,
     references,
     moduleLinks,
+    ...calls,
     coverage: {
       status:
         state.limitsReached.size > 0
@@ -115,6 +118,7 @@ export const analyzeJavaScriptSemantics = (
         : ["Semantic recovery stopped retaining facts at explicit limits."]),
       "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
       "Return sites include only direct callable returns; nested callable returns remain separate.",
+      "Local call, argument, return, and closure relations are static candidates and do not prove runtime invocation.",
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
@@ -139,6 +143,7 @@ const createState = (
     scopeByNode: new WeakMap([[program, root]]),
     bindingsById: new Map(),
     callables: [],
+    callableNodesById: new Map(),
     moduleLinks: [],
     limitsReached: new Set(),
     omittedCount: 0,

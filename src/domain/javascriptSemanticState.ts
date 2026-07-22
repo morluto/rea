@@ -45,6 +45,7 @@ export interface JavaScriptSemanticAnalysisState {
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
   readonly callables: JavaScriptSemanticCallable[];
+  readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
   readonly limitsReached: Set<keyof JavaScriptSemanticLimits>;
   omittedCount: number;

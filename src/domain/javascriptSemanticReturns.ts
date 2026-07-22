@@ -55,6 +55,10 @@ export const collectSemanticReturns = (
       }
       retained += 1;
       sites.push({
+        returnSiteId: semanticReturnSiteId(
+          callable.callableId,
+          expression.location,
+        ),
         location: expression.location,
         value:
           expression.node === null
@@ -75,6 +79,12 @@ export const collectSemanticReturns = (
     };
   });
 };
+
+const semanticReturnSiteId = (
+  callableId: string,
+  location: JavaScriptSemanticReturnSite["location"],
+): string =>
+  `${callableId}:return:${String(location.start.line)}:${String(location.start.column)}:${String(location.end.line)}:${String(location.end.column)}`;
 
 /** Link exports to callables only when lexical resolution is unique and exact. */
 export const resolveSemanticModuleCallables = (

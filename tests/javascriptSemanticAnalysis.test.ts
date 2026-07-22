@@ -200,6 +200,153 @@ describe("JavaScript semantic analysis", () => {
     expect(bindingsNamed(ir, "method")).toEqual([]);
   });
 
+  it("links exact local calls to parameters, returns, and closure captures", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const prefix = "rea";
+      function render(value, { mode }) {
+        return prefix + value + mode;
+      }
+      const alias = render;
+      const result = alias(input, { mode: "fast" });
+    `);
+
+    expect(ir.schemaVersion).toBe(3);
+    const render = onlyCallable(ir, "render");
+    const call = ir.callSites.find(
+      ({ calleeCallableIds }) => calleeCallableIds[0] === render.callableId,
+    );
+    expect(call).toMatchObject({
+      kind: "call",
+      callerCallableId: null,
+      resolution: "exact",
+      calleeCallableIds: [render.callableId],
+      arguments: [
+        { index: 0, spread: false },
+        { index: 1, spread: false },
+      ],
+    });
+    if (call === undefined) throw new Error("Missing render call");
+    expect(
+      ir.argumentFlows
+        .filter(({ callSiteId }) => callSiteId === call.callSiteId)
+        .map(({ argumentIndex, parameterBindingId }) => ({
+          argumentIndex,
+          parameter: semanticBinding(ir, parameterBindingId)?.name,
+        })),
+    ).toEqual([
+      { argumentIndex: 0, parameter: "value" },
+      { argumentIndex: 1, parameter: "mode" },
+    ]);
+    expect(ir.callReturnFlows).toEqual([
+      expect.objectContaining({
+        callSiteId: call.callSiteId,
+        callableId: render.callableId,
+        returnSiteId: render.returnSites[0]?.returnSiteId,
+      }),
+    ]);
+    expect(ir.closureCaptures).toEqual([
+      expect.objectContaining({
+        callableId: render.callableId,
+        bindingId: topLevelBinding(ir, "prefix").bindingId,
+      }),
+    ]);
+    expect(ir.frontiers).toEqual([]);
+  });
+
+  it("retains ambiguous local callees and explicit dynamic frontiers", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function left(value) { return value; }
+      function right(value) { return value; }
+      const selected = chooseLeft ? left : right;
+      selected(input);
+      receiver[key](input);
+      external(input);
+    `);
+
+    const selected = ir.callSites.find(
+      ({ resolution }) => resolution === "ambiguous",
+    );
+    expect(selected?.calleeCallableIds).toEqual(
+      [
+        onlyCallable(ir, "left").callableId,
+        onlyCallable(ir, "right").callableId,
+      ].sort(),
+    );
+    expect(
+      ir.argumentFlows.filter(
+        ({ callSiteId }) => callSiteId === selected?.callSiteId,
+      ),
+    ).toHaveLength(2);
+    expect(ir.frontiers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "dynamic-call",
+          reason: expect.stringMatching(/ambiguous/iu),
+        }),
+        expect.objectContaining({
+          kind: "dynamic-property",
+          reason: expect.stringMatching(/computed member/iu),
+        }),
+        expect.objectContaining({
+          kind: "dynamic-call",
+          reason: "Unresolved call target external.",
+        }),
+      ]),
+    );
+  });
+
+  it("does not project positional argument flow after a spread", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function target(first, second, third) { return third; }
+      target(one, ...rest, three);
+    `);
+
+    expect(ir.argumentFlows.map(({ argumentIndex }) => argumentIndex)).toEqual([
+      0,
+    ]);
+  });
+
+  it("applies independent hard bounds to every new semantic fact family", () => {
+    const ir = analyzeJavaScriptSemantics(
+      `
+        const captured = 1;
+        function target(value, other) { return value + other + captured; }
+        target(1, 2);
+        target(3, 4);
+        object[first];
+        object[second];
+      `,
+      {
+        maxCallSites: 1,
+        maxCallArguments: 1,
+        maxArgumentFlows: 0,
+        maxCallReturnFlows: 0,
+        maxClosureCaptures: 0,
+        maxFrontiers: 1,
+      },
+    );
+
+    expect(ir.callSites).toHaveLength(1);
+    expect(ir.callSites[0]?.arguments).toEqual([
+      expect.objectContaining({ index: 0, spread: false }),
+    ]);
+    expect(ir.argumentFlows).toEqual([]);
+    expect(ir.callReturnFlows).toEqual([]);
+    expect(ir.closureCaptures).toEqual([]);
+    expect(ir.frontiers).toHaveLength(1);
+    expect(ir.coverage).toMatchObject({
+      status: "truncated",
+      limitsReached: expect.arrayContaining([
+        "maxCallSites",
+        "maxCallArguments",
+        "maxArgumentFlows",
+        "maxCallReturnFlows",
+        "maxClosureCaptures",
+        "maxFrontiers",
+      ]),
+    });
+  });
+
   it("recovers only direct return sites with literal and unknown object fields", () => {
     const ir = analyzeJavaScriptSemantics(`
       export default function parseMarkdown(value) {
