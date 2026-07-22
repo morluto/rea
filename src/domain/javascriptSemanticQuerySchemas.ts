@@ -11,18 +11,6 @@ import { jsonValueSchema } from "./jsonValue.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const semanticNodeIdSchema = z.string().regex(/^jsrg_node_[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-
-/** Exact accepted ranges and defaults for one semantic traversal. */
-export const JAVASCRIPT_SEMANTIC_QUERY_LIMIT_RANGES = {
-  max_seed_matches: { minimum: 1, maximum: 1_000, default: 25 },
-  max_nodes: { minimum: 1, maximum: 50_000, default: 2_000 },
-  max_edges: { minimum: 1, maximum: 100_000, default: 4_000 },
-  max_depth: { minimum: 0, maximum: 64, default: 12 },
-  max_functions: { minimum: 1, maximum: 10_000, default: 500 },
-  max_modules: { minimum: 1, maximum: 10_000, default: 500 },
-  page_size: { minimum: 1, maximum: 1_000, default: 200 },
-} as const;
 
 const literalSeedSchema = z.strictObject({
   kind: z.literal("literal"),
@@ -77,17 +65,13 @@ export const javaScriptSemanticQueryLimitsSchema = z.strictObject({
   max_depth: z.number().int().min(0).max(64).default(12),
   max_functions: z.number().int().min(1).max(10_000).default(500),
   max_modules: z.number().int().min(1).max(10_000).default(500),
+  max_unknowns: z.number().int().min(0).max(10_000).default(1_000),
   page_size: z.number().int().min(1).max(1_000).default(200),
 });
 
-const sourceMapAuthoritySchema = z.discriminatedUnion("authority", [
-  z.strictObject({ authority: z.literal("none") }),
-  z.strictObject({
-    authority: z.literal("authenticated"),
-    evidence_id: evidenceIdSchema,
-    source_map_sha256: digestSchema,
-  }),
-]);
+const sourceMapAuthoritySchema = z.strictObject({
+  authority: z.literal("none"),
+});
 
 /** Parsed pure-domain query over one authenticated companion graph. */
 export const javaScriptSemanticQueryInputSchema = z.strictObject({
@@ -96,7 +80,6 @@ export const javaScriptSemanticQueryInputSchema = z.strictObject({
     "backward-provenance",
     "forward-influence",
     "callers",
-    "consumers",
     "ownership",
   ]),
   allowed_relations: z
@@ -120,6 +103,7 @@ export const javaScriptSemanticQueryInputSchema = z.strictObject({
     max_depth: 12,
     max_functions: 500,
     max_modules: 500,
+    max_unknowns: 1_000,
     page_size: 200,
   }),
   cursor: z
@@ -170,6 +154,7 @@ export const javaScriptSemanticQueryResultSchema = z.strictObject({
     traversed_functions: z.number().int().min(0),
     traversed_modules: z.number().int().min(0),
     relevant_unknowns: z.number().int().min(0),
+    retained_unknowns: z.number().int().min(0).max(10_000),
   }),
   coverage: z.strictObject({
     status: z.enum(["complete", "partial", "truncated", "unavailable"]),
@@ -207,6 +192,10 @@ export const javaScriptSemanticQueryResultSchema = z.strictObject({
     }),
     max_modules: z.strictObject({
       minimum: z.literal(1),
+      maximum: z.literal(10_000),
+    }),
+    max_unknowns: z.strictObject({
+      minimum: z.literal(0),
       maximum: z.literal(10_000),
     }),
     page_size: z.strictObject({

@@ -158,7 +158,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 | Managed PE/CLI |    8 | PE/CLI 身份、元数据成员、CIL 哈希、P/Invoke/原生边界声明与验证、应用图谱投影、反编译重建导入、结构化 token 重映射、运行时关联计划与跨版本比较 |
 | 浏览器观察     |    8 | 精确来源 CDP 抓取、bundle/source map 分析、WebMCP 发现、会话时间线、capture diff 与视觉证据                                                   |
 | Electron 分析  |    4 | 限定 canonical 文件根的被动观察、有界静态应用映射，以及基于 Evidence 的静态/运行时对账                                                        |
-| 应用工作流     |    8 | 有界跨层追踪、唯一匹配跨版本图比较、静态导出返回形状比较、经批准的 Linux 隔离 extracted-module replay、托管运行时表征和重建覆盖闭合           |
+| 应用工作流     |    9 | 有界跨层追踪、唯一匹配跨版本图比较、静态导出返回形状比较、经批准的 Linux 隔离 extracted-module replay、托管运行时表征和重建覆盖闭合           |
 | 二进制会话     |   19 | `open_binary`、`binary_session`、证据包、有限重放状态机、进程、制品与函数比较、残余未知项注册表                                               |
 
 ## 与其他编程智能体一起使用

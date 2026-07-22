@@ -12,11 +12,13 @@ import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
-  parseJavaScriptSemanticGraph,
-  serializeJavaScriptSemanticGraph,
   type JavaScriptSemanticGraph,
   type JavaScriptSemanticGraphNode,
 } from "../src/domain/javascriptSemanticGraph.js";
+import {
+  parseJavaScriptSemanticGraph,
+  serializeJavaScriptSemanticGraph,
+} from "../src/domain/javascriptSemanticGraphSerialization.js";
 import { queryJavaScriptSemanticGraph } from "../src/domain/javascriptSemanticQuery.js";
 import { javaScriptSemanticQueryInputSchema } from "../src/domain/javascriptSemanticQuerySchemas.js";
 
@@ -301,10 +303,45 @@ describe("JavaScript semantic relation graph", () => {
         coverage: { ...graph.coverage, omitted_nodes: 1 },
       }),
     ).toThrow(/Complete graph coverage/u);
+    const graphWithUnknown = fixtureGraph(true);
+    const { graph_id: _unknownGraphId, ...unknownGraphInput } =
+      graphWithUnknown;
+    const originalUnknown = graphWithUnknown.unknowns[0];
+    if (originalUnknown === undefined)
+      throw new Error("Expected unknown frontier");
+    const { unknown_id: _unknownId, ...unknownInput } = originalUnknown;
+    expect(() =>
+      createJavaScriptSemanticGraph({
+        ...unknownGraphInput,
+        unknowns: [
+          createJavaScriptSemanticGraphUnknown({
+            ...unknownInput,
+            candidate_node_ids: [`jsrg_node_${"f".repeat(64)}`],
+          }),
+        ],
+      }),
+    ).toThrow(/candidate node is absent/u);
   });
 });
 
 describe("JavaScript semantic query", () => {
+  it("bounds relevant unknown frontiers independently from relation pages", () => {
+    const graph = fixtureGraph(true);
+    const callable = graph.nodes.find(({ kind }) => kind === "function");
+    if (callable === undefined) throw new Error("Expected callable node");
+    const result = queryJavaScriptSemanticGraph(graph, {
+      seed: { kind: "semantic-node", node_id: callable.node_id },
+      direction: "forward-influence",
+      limits: { max_unknowns: 0 },
+    });
+    expect(result).toMatchObject({
+      status: "truncated",
+      unknowns: [],
+      summary: { relevant_unknowns: 1, retained_unknowns: 0 },
+      coverage: { status: "truncated" },
+    });
+  });
+
   it("traces deterministic forward influence and pages without changing identity", () => {
     const graph = fixtureGraph();
     const input = {
@@ -349,7 +386,7 @@ describe("JavaScript semantic query", () => {
       seed: { kind: "literal", value: "TOKEN" },
       direction: "forward-influence",
     });
-    expect(result.status).toBe("partial");
+    expect(result.status).toBe("found");
     expect(result.coverage.status).toBe("partial");
     expect(result.unknowns).toMatchObject([
       { reason: "dynamic-call", relation_kinds: ["calls"] },

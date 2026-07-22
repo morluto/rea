@@ -50,6 +50,7 @@ describe("tool contract inventory", () => {
     ]);
     expect(APPLICATION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "trace_application_feature",
+      "trace_javascript_semantics",
       "compare_application_versions",
       "compare_javascript_export_shapes",
       "run_controlled_replay",

@@ -5,10 +5,12 @@ import {
   compareJavaScriptExportShapesEvidenceValidated,
   traceApplicationFeatureEvidenceValidated,
 } from "./application/JavaScriptApplicationWorkflowService.js";
+import { traceJavaScriptSemanticsEvidenceValidated } from "./application/JavaScriptSemanticTraceService.js";
 import {
   resolveCompareApplicationVersionsRequest,
   resolveCompareJavaScriptExportShapesRequest,
   resolveTraceApplicationFeatureRequest,
+  resolveTraceJavaScriptSemanticsRequest,
 } from "./application/ApplicationWorkflowEvidenceResolver.js";
 import type { EvidenceLookup } from "./application/EvidenceReferenceResolver.js";
 import { readEvidenceBundle } from "./application/EvidenceBundleFiles.js";
@@ -59,6 +61,15 @@ export const registerApplicationCommands = (
       "Trace a typed seed through authenticated application Evidence JSON",
     resolveInput: resolveTraceApplicationFeatureRequest,
     workflow: traceApplicationFeatureEvidenceValidated,
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.traceJavaScriptSemantics,
+    description:
+      "Trace bounded static semantic relations through authenticated application Evidence",
+    resolveInput: resolveTraceJavaScriptSemanticsRequest,
+    workflow: traceJavaScriptSemanticsEvidenceValidated,
   });
   registerJsonCommand({
     cli,

@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import type {
   JavaScriptSemanticArgumentFlow,
   JavaScriptSemanticCallable,
+  JavaScriptSemanticCallResultFlow,
   JavaScriptSemanticCallReturnFlow,
   JavaScriptSemanticCallSite,
   JavaScriptSemanticClosureCapture,
@@ -32,6 +33,7 @@ export interface JavaScriptSemanticCallAnalysis {
   readonly callSites: readonly JavaScriptSemanticCallSite[];
   readonly argumentFlows: readonly JavaScriptSemanticArgumentFlow[];
   readonly callReturnFlows: readonly JavaScriptSemanticCallReturnFlow[];
+  readonly callResultFlows: readonly JavaScriptSemanticCallResultFlow[];
   readonly closureCaptures: readonly JavaScriptSemanticClosureCapture[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
 }
@@ -40,6 +42,7 @@ interface MutableCallAnalysis {
   readonly callSites: JavaScriptSemanticCallSite[];
   readonly argumentFlows: JavaScriptSemanticArgumentFlow[];
   readonly callReturnFlows: JavaScriptSemanticCallReturnFlow[];
+  readonly callResultFlows: JavaScriptSemanticCallResultFlow[];
   readonly closureCaptures: JavaScriptSemanticClosureCapture[];
   readonly frontiers: JavaScriptSemanticFrontier[];
   retainedArguments: number;
@@ -66,6 +69,7 @@ export const collectJavaScriptSemanticCalls = (
     callSites: [],
     argumentFlows: [],
     callReturnFlows: [],
+    callResultFlows: [],
     closureCaptures: [],
     frontiers: [],
     retainedArguments: 0,
@@ -95,7 +99,7 @@ export const collectJavaScriptSemanticCalls = (
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       )
-        collectCallSite(node, owner, context);
+        collectCallSite(node, parent, owner, context);
     },
     exit: (node) => {
       const callableId = semanticCallableIdForNode(node);
@@ -110,6 +114,7 @@ export const collectJavaScriptSemanticCalls = (
     callSites: output.callSites,
     argumentFlows: output.argumentFlows,
     callReturnFlows: output.callReturnFlows,
+    callResultFlows: output.callResultFlows,
     closureCaptures: output.closureCaptures,
     frontiers: output.frontiers,
   };
@@ -117,6 +122,7 @@ export const collectJavaScriptSemanticCalls = (
 
 const collectCallSite = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  parent: t.Node | null,
   owner: JavaScriptSemanticCallable | undefined,
   context: CallCollectionContext,
 ): void => {
@@ -151,6 +157,7 @@ const collectCallSite = (
     arguments: argumentsValue,
   };
   output.callSites.push(site);
+  collectCallResultFlow(site, node, parent, context);
   if (site.resolution !== "exact")
     addFrontier(
       {
@@ -165,6 +172,44 @@ const collectCallSite = (
   collectArgumentFlows(site, node, context);
   if (site.kind === "call")
     collectReturnFlows(site, callableById, state, output);
+};
+
+const collectCallResultFlow = (
+  site: JavaScriptSemanticCallSite,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  parent: t.Node | null,
+  context: CallCollectionContext,
+): void => {
+  const identifier =
+    t.isVariableDeclarator(parent) &&
+    parent.init === node &&
+    t.isIdentifier(parent.id)
+      ? parent.id
+      : t.isAssignmentExpression(parent) &&
+          parent.right === node &&
+          t.isIdentifier(parent.left)
+        ? parent.left
+        : null;
+  if (identifier === null) return;
+  const binding = resolveSemanticBindingState(
+    context.state,
+    identifier,
+    identifier.name,
+  );
+  const identifierRange = range(identifier);
+  const definition = binding?.definitions.find(
+    ({ location }) =>
+      location.start.line === identifierRange.start.line &&
+      location.start.column === identifierRange.start.column &&
+      location.end.line === identifierRange.end.line &&
+      location.end.column === identifierRange.end.column,
+  );
+  if (binding === undefined || definition === undefined) return;
+  context.output.callResultFlows.push({
+    callSiteId: site.callSiteId,
+    bindingId: binding.bindingId,
+    definitionLocation: definition.location,
+  });
 };
 
 const retainedArguments = (

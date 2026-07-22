@@ -1,10 +1,12 @@
 import { applicationVersionComparisonResultSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascriptFeatureTraceSchemas.js";
+import { javaScriptSemanticTraceResultSchema } from "../domain/javascriptSemanticTraceSchemas.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   traceApplicationFeatureRequestSchema,
+  traceJavaScriptSemanticsRequestSchema,
 } from "./applicationWorkflowInputContracts.js";
 import {
   controlledReplayInputSchema,
@@ -33,6 +35,9 @@ import {
 } from "./javascriptApplicationWorkflowExamples.js";
 
 const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
+const semanticTraceOutputSchema = evidenceResultOf(
+  javaScriptSemanticTraceResultSchema,
+);
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
 );
@@ -117,6 +122,28 @@ export const APPLICATION_TOOL_CONTRACTS = [
       {
         title: "Trace one module seed through a retained application graph",
         input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "trace_javascript_semantics",
+    ...toolContractMetadata("trace_javascript_semantics"),
+    description:
+      "Trace bounded static JavaScript data-flow, direct call/return, and closure relations from authenticated analyze_javascript_application v2 Evidence. Queries declare direction and exact node, relation, depth, function, module, and page limits. Dynamic or unsupported semantics remain explicit unknowns; static reachability never claims runtime execution.",
+    kind: "application",
+    inputSchema: traceJavaScriptSemanticsRequestSchema,
+    outputSchema: semanticTraceOutputSchema,
+    examples: [
+      {
+        title: "Trace backward provenance from one semantic node",
+        input: {
+          application_evidence_id: `ev_${HASH}`,
+          query: {
+            seed: { kind: "semantic-node", node_id: `jsrg_node_${HASH}` },
+            direction: "backward-provenance",
+            source_map_authority: { authority: "none" },
+          },
+        },
       },
     ],
   },

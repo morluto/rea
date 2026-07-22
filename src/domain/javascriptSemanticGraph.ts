@@ -53,13 +53,10 @@ const normalizeEvidence = (
   evidence_ids: uniqueSorted(evidence.evidence_ids),
 });
 
-const nodeIdentity = (
-  node: Pick<JavaScriptSemanticGraphNode, "kind" | "identity">,
-) => ({ kind: node.kind, identity: node.identity });
-
 const nodeId = (
   node: Pick<JavaScriptSemanticGraphNode, "kind" | "identity">,
-): string => `jsrg_node_${digestCanonical(nodeIdentity(node))}`;
+): string =>
+  `jsrg_node_${digestCanonical({ kind: node.kind, identity: node.identity })}`;
 
 /** Normalize one semantic entity and derive its artifact-version identifier. */
 export const createJavaScriptSemanticGraphNode = (
@@ -362,6 +359,12 @@ const checkUnknowns = (
         path: ["unknowns", index, "node_id"],
         message: "Unknown frontier node is absent",
       });
+    if (unknown.candidate_node_ids.some((nodeId) => !nodes.has(nodeId)))
+      context.addIssue({
+        code: "custom",
+        path: ["unknowns", index, "candidate_node_ids"],
+        message: "Unknown frontier candidate node is absent",
+      });
     if (
       unknown.relation_kinds.some(
         (kind) => JAVASCRIPT_SEMANTIC_RELATION_FAMILY[kind] !== unknown.family,
@@ -515,32 +518,5 @@ export const createJavaScriptSemanticGraph = (
     graph_id: `jsrg_${digestCanonical(semantic)}`,
   });
 };
-
-/** Parse a stored semantic graph and reject unsupported versions or stale IDs. */
-export const parseJavaScriptSemanticGraph = (
-  input: unknown,
-): JavaScriptSemanticGraph => {
-  const envelope = z
-    .object({ schema: z.string(), schema_version: z.number() })
-    .passthrough()
-    .safeParse(input);
-  if (
-    envelope.success &&
-    envelope.data.schema === "JavaScriptSemanticRelationGraph" &&
-    envelope.data.schema_version !== 1
-  )
-    throw new TypeError(
-      `Unsupported JavaScript Semantic Relation Graph schema version: ${String(envelope.data.schema_version)}`,
-    );
-  return javaScriptSemanticGraphSchema.parse(input);
-};
-
-/** Serialize a verified semantic graph as canonical JSON. */
-export const serializeJavaScriptSemanticGraph = (input: unknown): string =>
-  canonicalJson(parseJavaScriptSemanticGraph(input));
-
-/** Compute the canonical SHA-256 commitment of a verified semantic graph. */
-export const computeJavaScriptSemanticGraphSha256 = (input: unknown): string =>
-  digestCanonical(parseJavaScriptSemanticGraph(input));
 
 export type { JavaScriptSemanticGraphNode, JavaScriptSemanticGraphRelation };

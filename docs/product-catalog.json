@@ -11,7 +11,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 97,
+    "total": 98,
     "families": [
       {
         "id": "direct",
@@ -132,7 +132,7 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 8,
+        "count": 9,
         "tools": [
           "commit_reconstruction_coverage",
           "compare_application_versions",
@@ -141,7 +141,8 @@
           "prepare_node_characterization",
           "query_reconstruction_coverage",
           "run_controlled_replay",
-          "trace_application_feature"
+          "trace_application_feature",
+          "trace_javascript_semantics"
         ]
       },
       {
@@ -318,7 +319,8 @@
         "prepare_node_characterization",
         "query_reconstruction_coverage",
         "run_controlled_replay",
-        "trace_application_feature"
+        "trace_application_feature",
+        "trace_javascript_semantics"
       ]
     },
     {
@@ -427,7 +429,7 @@
     },
     {
       "id": "javascript_application_analysis",
-      "version": 1
+      "version": 2
     },
     {
       "id": "javascript_application_graph",
@@ -439,6 +441,18 @@
     },
     {
       "id": "javascript_feature_trace",
+      "version": 1
+    },
+    {
+      "id": "javascript_semantic_graph",
+      "version": 1
+    },
+    {
+      "id": "javascript_semantic_query",
+      "version": 1
+    },
+    {
+      "id": "javascript_semantic_trace",
       "version": 1
     },
     {
@@ -503,7 +517,7 @@
     }
   ],
   "cli": {
-    "primary_count": 57,
+    "primary_count": 58,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -558,6 +572,7 @@
       "setup",
       "trace",
       "trace-application-feature",
+      "trace-javascript-semantics",
       "uninstall",
       "upgrade",
       "verify-managed-native-boundaries",
@@ -572,17 +587,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 57,
-      "mcp_tools": 97,
+      "cli_commands": 58,
+      "mcp_tools": 98,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 9
     },
     "digests": {
-      "tools_sha256": "073b2d48443034a05ba56b649057f9e5f0ab21afcb39be2c380e5a05bc0cecae",
+      "tools_sha256": "501d405efbf8fc3537d13791f87ac81f3b97f3f328b62710ca0885de7213a62f",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "94bebbab1a1b3cf47644c38d3de6469de568caa7bd7b842f529ead8ad320a912",
-      "combined_sha256": "a555f03ab0881d6e140b15d59ba8d75ba596a16a9690d26a8341d6b32395da5f"
+      "combined_sha256": "71de8a7174176823fd82c2666130233b5a1b4a1613583270d268774775b410bc"
     }
   }
 }

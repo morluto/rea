@@ -21,6 +21,7 @@ import { createPermissionPolicy } from "../src/domain/permissionPolicy.js";
 import { controlledReplayOutputSchema } from "../src/domain/javascriptReplay.js";
 import { nodeCharacterizationPreparationOutputSchema } from "../src/domain/nodeRuntimeCharacterization.js";
 import { analyzeJavaScriptApplication } from "../src/application/JavaScriptApplicationService.js";
+import { javascriptApplicationAnalysisResultSchema } from "../src/domain/javascriptApplicationAnalysis.js";
 import { permissionAuthorityForRoot } from "./fixtures/permissionAuthority.js";
 
 describe("application workflow MCP parity", () => {
@@ -112,6 +113,35 @@ describe("application workflow MCP parity", () => {
         result: {
           evidence_links: [left.value.evidence_id, right.value.evidence_id],
           changes: [expect.objectContaining({ path: "/depth" })],
+        },
+      });
+
+      const analyzed = javascriptApplicationAnalysisResultSchema.parse(
+        left.value.normalized_result,
+      );
+      if (analyzed.schema_version !== 2)
+        throw new TypeError("Expected semantic application Evidence");
+      const seed = analyzed.semantic_graph.relations[0]?.source_node_id;
+      if (seed === undefined)
+        throw new TypeError("Expected at least one semantic relation");
+      const semantic = await client.callTool({
+        name: "trace_javascript_semantics",
+        arguments: {
+          application: left.value,
+          query: {
+            seed: { kind: "semantic-node", node_id: seed },
+            direction: "forward-influence",
+            include_ambiguous_dynamic_edges: true,
+          },
+        },
+      });
+      expect(semantic.isError).not.toBe(true);
+      expect(semantic.structuredContent).toMatchObject({
+        result: {
+          schema_version: 1,
+          source_evidence_id: left.value.evidence_id,
+          source_graph_id: analyzed.semantic_graph.graph_id,
+          summary: { retained_seed_matches: 1 },
         },
       });
     } finally {

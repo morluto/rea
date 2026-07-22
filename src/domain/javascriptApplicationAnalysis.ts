@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
+import { javaScriptSemanticGraphSchema } from "./javascriptSemanticGraph.js";
 
 const MAX_GRAPH_NODES = 100_000;
 const MAX_GRAPH_EDGES = 200_000;
@@ -155,8 +156,8 @@ const reconstructionStatisticsSchema = z.strictObject({
   truncated_scopes: countSchema,
 });
 
-/** Strict high-level result returned inside Evidence v2. */
-export const javascriptApplicationAnalysisResultSchema = z.strictObject({
+/** Legacy structural JavaScript application analysis result. */
+export const javaScriptApplicationAnalysisResultV1Schema = z.strictObject({
   schema_version: z.literal(1),
   input_path: z.string().min(1).max(16_384),
   format: z.enum(["asar", "directory"]),
@@ -168,6 +169,61 @@ export const javascriptApplicationAnalysisResultSchema = z.strictObject({
   statistics: reconstructionStatisticsSchema,
   limitations: z.array(z.string().min(1).max(4_096)).max(1_000),
 });
+
+/** JavaScript application analysis with an authenticated semantic companion. */
+export const javaScriptApplicationAnalysisResultV2Schema =
+  javaScriptApplicationAnalysisResultV1Schema
+    .extend({
+      schema_version: z.literal(2),
+      semantic_graph: javaScriptSemanticGraphSchema,
+    })
+    .superRefine((result, context) => {
+      if (result.semantic_graph.application_graph_id !== result.graph.graph_id)
+        context.addIssue({
+          code: "custom",
+          path: ["semantic_graph", "application_graph_id"],
+          message:
+            "Semantic graph must commit the containing application graph",
+        });
+      if (
+        result.semantic_graph.root_artifact_sha256 !==
+        result.root_artifact_sha256
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["semantic_graph", "root_artifact_sha256"],
+          message: "Semantic graph must commit the containing root artifact",
+        });
+      const applicationNodeIds = new Set(
+        result.graph.nodes.map(({ node_id }) => node_id),
+      );
+      for (const [nodeIndex, node] of result.semantic_graph.nodes.entries())
+        for (const [
+          identifierIndex,
+          identifier,
+        ] of node.application_node_ids.entries())
+          if (!applicationNodeIds.has(identifier))
+            context.addIssue({
+              code: "custom",
+              path: [
+                "semantic_graph",
+                "nodes",
+                nodeIndex,
+                "application_node_ids",
+                identifierIndex,
+              ],
+              message: "Semantic node references an absent application node",
+            });
+    });
+
+/** Strict versioned high-level result returned inside Evidence v2. */
+export const javascriptApplicationAnalysisResultSchema = z.discriminatedUnion(
+  "schema_version",
+  [
+    javaScriptApplicationAnalysisResultV1Schema,
+    javaScriptApplicationAnalysisResultV2Schema,
+  ],
+);
 
 /** Parsed public JavaScript application analysis request. */
 export type AnalyzeJavaScriptApplicationInput = z.infer<

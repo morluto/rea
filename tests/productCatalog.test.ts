@@ -120,6 +120,7 @@ describe("canonical product catalog", () => {
       "query_reconstruction_coverage",
       "run_controlled_replay",
       "trace_application_feature",
+      "trace_javascript_semantics",
     ]);
     expect(
       catalog.providers.find(({ id }) => id === MANAGED_WORKFLOW_PROVIDER.id)

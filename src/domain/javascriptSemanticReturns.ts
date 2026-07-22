@@ -60,6 +60,10 @@ export const collectSemanticReturns = (
           expression.location,
         ),
         location: expression.location,
+        identityReferenceLocation:
+          expression.node !== null && t.isIdentifier(expression.node)
+            ? range(expression.node)
+            : null,
         value:
           expression.node === null
             ? { status: "unknown", reason: "Return has no value." }

@@ -153,6 +153,7 @@ export interface JavaScriptSemanticCallable {
 export interface JavaScriptSemanticReturnSite {
   readonly returnSiteId: string;
   readonly location: JavaScriptSourceRange;
+  readonly identityReferenceLocation: JavaScriptSourceRange | null;
   readonly value: JavaScriptSemanticValue;
 }
 
@@ -191,6 +192,13 @@ export interface JavaScriptSemanticCallReturnFlow {
   readonly callableId: string;
   readonly returnSiteId: string;
   readonly returnLocation: JavaScriptSourceRange;
+}
+
+/** One local binding initialized or assigned from a retained call expression. */
+export interface JavaScriptSemanticCallResultFlow {
+  readonly callSiteId: string;
+  readonly bindingId: string;
+  readonly definitionLocation: JavaScriptSourceRange;
 }
 
 /** One resolved outer lexical binding referenced by a nested callable. */
@@ -251,6 +259,7 @@ export interface JavaScriptSemanticIr {
   readonly callSites: readonly JavaScriptSemanticCallSite[];
   readonly argumentFlows: readonly JavaScriptSemanticArgumentFlow[];
   readonly callReturnFlows: readonly JavaScriptSemanticCallReturnFlow[];
+  readonly callResultFlows: readonly JavaScriptSemanticCallResultFlow[];
   readonly closureCaptures: readonly JavaScriptSemanticClosureCapture[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
   readonly coverage: JavaScriptSemanticCoverage;
@@ -287,6 +296,7 @@ export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   callSites: [],
   argumentFlows: [],
   callReturnFlows: [],
+  callResultFlows: [],
   closureCaptures: [],
   frontiers: [],
   coverage: { status: "failed", omittedCount: null, limitsReached: [] },

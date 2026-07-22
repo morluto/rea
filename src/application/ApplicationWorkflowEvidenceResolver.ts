@@ -4,15 +4,18 @@ import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   traceApplicationFeatureRequestSchema,
+  traceJavaScriptSemanticsRequestSchema,
   type CompareApplicationVersionsRequest,
   type CompareJavaScriptExportShapesRequest,
   type TraceApplicationFeatureRequest,
+  type TraceJavaScriptSemanticsRequest,
 } from "../contracts/applicationWorkflowInputContracts.js";
 import { AnalysisInputError, type AnalysisError } from "../domain/errors.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
+import { traceJavaScriptSemanticsInputSchema } from "../domain/javascriptSemanticTraceSchemas.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   resolveEvidenceReferences,
@@ -26,6 +29,10 @@ const APPLICATION_GRAPH_IDENTITIES = [
     predicate: "rea.javascript-application-analysis/v1",
   },
   {
+    operation: "analyze_javascript_application",
+    predicate: "rea.javascript-application-analysis/v2",
+  },
+  {
     operation: "reconcile_javascript_runtime",
     predicate: "rea.javascript-runtime-reconciliation/v1",
   },
@@ -36,6 +43,7 @@ const APPLICATION_GRAPH_IDENTITIES = [
 ] as const satisfies readonly EvidenceSemanticIdentity[];
 
 type TraceInput = z.output<typeof traceApplicationFeatureInputSchema>;
+type SemanticTraceInput = z.output<typeof traceJavaScriptSemanticsInputSchema>;
 type ComparisonInput = z.output<typeof compareApplicationVersionsInputSchema>;
 type ExportShapeComparisonInput = z.output<
   typeof compareJavaScriptExportShapesInputSchema
@@ -84,6 +92,40 @@ export const resolveTraceApplicationFeatureRequestValidated = (
   return parsed.success
     ? ok(parsed.data)
     : invalid("trace_application_feature", parsed.error, raw);
+};
+
+/** Parse and resolve one semantic trace adapter request. */
+export const resolveTraceJavaScriptSemanticsRequest = (
+  input: unknown,
+  lookup?: EvidenceLookup,
+): Result<SemanticTraceInput, AnalysisError> => {
+  const parsed = traceJavaScriptSemanticsRequestSchema.safeParse(input);
+  return parsed.success
+    ? resolveTraceJavaScriptSemanticsRequestValidated(parsed.data, lookup)
+    : invalid("trace_javascript_semantics", parsed.error, input);
+};
+
+/** Resolve a semantic trace request already parsed by its public contract. */
+export const resolveTraceJavaScriptSemanticsRequestValidated = (
+  input: TraceJavaScriptSemanticsRequest,
+  lookup?: EvidenceLookup,
+): Result<SemanticTraceInput, AnalysisError> => {
+  const application =
+    input.application === undefined
+      ? resolveEvidenceReferences(
+          lookup,
+          input.application_evidence_id === undefined
+            ? []
+            : [input.application_evidence_id],
+          APPLICATION_GRAPH_IDENTITIES,
+        )
+      : ok([input.application]);
+  if (!application.ok) return application;
+  const raw = { application: application.value[0], query: input.query };
+  const parsed = traceJavaScriptSemanticsInputSchema.safeParse(raw);
+  return parsed.success
+    ? ok(parsed.data)
+    : invalid("trace_javascript_semantics", parsed.error, raw);
 };
 
 /** Parse and resolve one comparison adapter request into canonical input. */

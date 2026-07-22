@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
+import { registerTraceJavaScriptSemanticsTool } from "./registerApplicationTools/traceSemantics.js";
 import { registerCompareApplicationVersionsTool } from "./registerApplicationTools/compareVersions.js";
 import { registerCompareJavaScriptExportShapesTool } from "./registerApplicationTools/compareExportShapes.js";
 import { registerControlledReplayTool } from "./registerApplicationTools/controlledReplay.js";
@@ -16,6 +17,7 @@ export const registerApplicationTools = (
   options: ApplicationToolRegistration,
 ): void => {
   registerTraceFeatureTool(server, options);
+  registerTraceJavaScriptSemanticsTool(server, options);
   registerCompareApplicationVersionsTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);
   registerControlledReplayTool(server, options);

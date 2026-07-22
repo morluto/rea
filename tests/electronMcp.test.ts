@@ -229,7 +229,7 @@ describe("Electron MCP tools", () => {
       .object({
         evidence_id: z.string(),
         result: z.object({
-          schema_version: z.literal(1),
+          schema_version: z.literal(2),
           input_path: z.string(),
           unknowns: z.array(z.string()),
           summary: z.object({
@@ -244,6 +244,13 @@ describe("Electron MCP tools", () => {
             top_findings: z.array(z.unknown()),
             pages: z.object({ nodes: z.string(), edges: z.string() }),
           }),
+          semantic_graph: z.object({
+            graph_id: z.string(),
+            nodes: z.number(),
+            relations: z.number(),
+            unknown_frontiers: z.number(),
+            query_tool: z.literal("trace_javascript_semantics"),
+          }),
         }),
       })
       .parse(analyzed.structuredContent);
@@ -256,6 +263,7 @@ describe("Electron MCP tools", () => {
       },
     });
     expect(projected.result.graph.node_count).toBeGreaterThan(0);
+    expect(projected.result.semantic_graph.nodes).toBeGreaterThan(0);
     expect(JSON.stringify(analyzed.structuredContent)).not.toContain(
       '"nodes":[',
     );

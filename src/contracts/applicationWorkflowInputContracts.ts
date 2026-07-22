@@ -4,6 +4,7 @@ import { evidenceSchema } from "../domain/evidence.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
+import { javaScriptSemanticQueryInputSchema } from "../domain/javascriptSemanticQuerySchemas.js";
 
 const evidenceIdSchema = z
   .string()
@@ -37,6 +38,22 @@ export const traceApplicationFeatureRequestSchema = z
     seed: traceApplicationFeatureInputSchema.shape.seed,
     direction: traceApplicationFeatureInputSchema.shape.direction,
     limits: traceApplicationFeatureInputSchema.shape.limits,
+  })
+  .superRefine((input, context) => {
+    requireExactlyOne(context, [
+      "application",
+      input.application,
+      "application_evidence_id",
+      input.application_evidence_id,
+    ]);
+  });
+
+/** MCP/CLI semantic trace request accepting full Evidence or a ledger reference. */
+export const traceJavaScriptSemanticsRequestSchema = z
+  .strictObject({
+    application: evidenceSchema.optional(),
+    application_evidence_id: evidenceIdSchema.optional(),
+    query: javaScriptSemanticQueryInputSchema,
   })
   .superRefine((input, context) => {
     requireExactlyOne(context, [
@@ -121,6 +138,9 @@ export const compareJavaScriptExportShapesRequestSchema = z
 
 export type TraceApplicationFeatureRequest = z.output<
   typeof traceApplicationFeatureRequestSchema
+>;
+export type TraceJavaScriptSemanticsRequest = z.output<
+  typeof traceJavaScriptSemanticsRequestSchema
 >;
 export type CompareApplicationVersionsRequest = z.output<
   typeof compareApplicationVersionsRequestSchema

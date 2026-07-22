@@ -82,18 +82,18 @@ export const digestCanonical = (value: unknown): string => {
 
 const parseStaticLayer = (layer: StaticLayerInput): ParsedStaticLayer => {
   const evidence = parseEvidence(layer.analysis);
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  );
   assertEvidenceIdentity(evidence, {
     operation: "analyze_javascript_application",
-    predicate: "rea.javascript-application-analysis/v1",
+    predicate: `rea.javascript-application-analysis/v${String(result.schema_version)}`,
     providerId: "rea-javascript-application",
     providerName: "REA JavaScript application analyzer",
     providerVersion: "1",
     authority: "shipped-artifact",
     confidence: "derived",
   });
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
   if (
     evidence.subject === null ||
     evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||

@@ -26,6 +26,7 @@ export interface JavaScriptSemanticQueryAssessmentInput {
   readonly frontier: readonly JavaScriptSemanticQueryFrontier[];
   readonly unknowns: readonly JavaScriptSemanticGraphUnknown[];
   readonly candidateRelations: number;
+  readonly unknownsTruncated: boolean;
 }
 
 /** Status, coverage, limits, and limitations derived from one traversal. */
@@ -50,6 +51,7 @@ export const assessJavaScriptSemanticQuery = (
     max_depth: { minimum: 0, maximum: 64 },
     max_functions: { minimum: 1, maximum: 10_000 },
     max_modules: { minimum: 1, maximum: 10_000 },
+    max_unknowns: { minimum: 0, maximum: 10_000 },
     page_size: { minimum: 1, maximum: 1_000 },
   },
 });
@@ -60,7 +62,7 @@ const queryCoverage = (
   status:
     input.graph.coverage.status === "unavailable"
       ? "unavailable"
-      : input.frontier.length > 0
+      : input.frontier.length > 0 || input.unknownsTruncated
         ? "truncated"
         : input.unknowns.length > 0 ||
             input.candidateRelations > 0 ||
@@ -74,15 +76,16 @@ const queryStatus = (
   input: JavaScriptSemanticQueryAssessmentInput,
 ): JavaScriptSemanticQueryResult["status"] => {
   if (input.graph.coverage.status === "unavailable") return "unsupported";
-  if (input.frontier.length > 0) return "truncated";
-  if (input.unknowns.length > 0 || input.graph.coverage.status !== "complete")
-    return "partial";
+  if (input.frontier.length > 0 || input.unknownsTruncated) return "truncated";
   if (input.candidateRelations > 0) return "ambiguous";
   if (
     input.totalSeeds === 0 ||
     (input.hasExpectation && input.expectedMatches === 0)
   )
-    return "no-match";
+    return input.unknowns.length > 0 ||
+      input.graph.coverage.status !== "complete"
+      ? "partial"
+      : "no-match";
   return input.totalSeeds > 1 ? "ambiguous" : "found";
 };
 
@@ -107,6 +110,11 @@ const queryLimitations = (
       : [
           "Relevant dynamic, unsupported, incomplete, or ambiguous semantics remain unknown.",
         ]),
+    ...(input.unknownsTruncated
+      ? [
+          "Relevant unknown frontiers exceeded the caller limit; omitted unknowns remain unresolved.",
+        ]
+      : []),
     ...(input.candidateRelations === 0
       ? []
       : [
