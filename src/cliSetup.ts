@@ -37,7 +37,7 @@ interface SetupCapability {
   readonly hint: string;
 }
 
-/** Run the inline setup picker, exact preflight, and default-No consent. */
+/** Run the inline setup picker, exact preflight, and explicit consent. */
 export const confirmInteractiveSetup = async (
   actions: readonly SetupAction[],
   accessible: boolean,
