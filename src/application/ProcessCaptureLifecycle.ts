@@ -41,6 +41,7 @@ import {
   assertRealPathAuthority,
 } from "./ProcessCaptureAuthority.js";
 import {
+  normalizeProcessElapsedTime,
   normalizeProcessSamples,
   normalizeProcessText,
   redactProtocolEvents,
@@ -364,11 +365,10 @@ export const captureTerminalFrames = (options: {
       return;
     }
     outputBytes += bytes;
-    const atMs =
-      Math.floor(
-        (Date.now() - options.started) /
-          options.scenario.normalization.time_bucket_ms,
-      ) * options.scenario.normalization.time_bucket_ms;
+    const atMs = normalizeProcessElapsedTime(
+      Date.now() - options.started,
+      options.scenario.normalization.time_bucket_ms,
+    );
     const normalized = normalizeProcessText(
       data,
       options.scenario,

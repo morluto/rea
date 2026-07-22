@@ -4,6 +4,12 @@ import type {
   ProcessScenario,
 } from "../domain/processCapture.js";
 
+/** Bucket one elapsed process-capture timestamp under scenario normalization. */
+export const normalizeProcessElapsedTime = (
+  elapsedMs: number,
+  timeBucketMs: number,
+): number => Math.floor(elapsedMs / timeBucketMs) * timeBucketMs;
+
 /** Normalize and redact one terminal/protocol payload under scenario rules. */
 export const normalizeProcessText = (
   value: string,
@@ -69,9 +75,10 @@ export const normalizeProcessSamples = (
       : normalized;
   };
   return samples.map((sample) => ({
-    at_ms:
-      Math.floor(sample.at_ms / scenario.normalization.time_bucket_ms) *
+    at_ms: normalizeProcessElapsedTime(
+      sample.at_ms,
       scenario.normalization.time_bucket_ms,
+    ),
     pid: mapping.get(sample.pid) ?? 1,
     parent_pid: mapping.get(sample.parent_pid) ?? 0,
     process_group_id:

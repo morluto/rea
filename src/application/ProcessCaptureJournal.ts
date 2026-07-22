@@ -6,7 +6,10 @@ import type {
   ProcessScenario,
   RecordProcessCaptureEvent,
 } from "../domain/processCapture.js";
-import { normalizeProcessText } from "./ProcessNormalization.js";
+import {
+  normalizeProcessElapsedTime,
+  normalizeProcessText,
+} from "./ProcessNormalization.js";
 import type { TerminalRenderer } from "./TerminalRenderer.js";
 
 /** Mutable observation-order ledger whose writer is shared by capture producers. */
@@ -55,7 +58,14 @@ export const scheduleScenarioInteractions = (
           if (event.type === "input") terminal.write(event.data);
           else if (event.type === "resize") {
             terminal.resize(event.columns, event.rows);
-            renderer.resize(event.columns, event.rows, dispatchedAt);
+            renderer.resize(
+              event.columns,
+              event.rows,
+              normalizeProcessElapsedTime(
+                dispatchedAt,
+                scenario.normalization.time_bucket_ms,
+              ),
+            );
           } else terminal.kill(event.signal);
         } catch {
           outcome = "failed";
