@@ -2,7 +2,11 @@ import { createServer, type Server } from "node:http";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ProcessScenario, ShimEvent } from "../domain/processCapture.js";
+import type {
+  ProcessScenario,
+  RecordProcessCaptureEvent,
+  ShimEvent,
+} from "../domain/processCapture.js";
 
 interface Invocation {
   readonly command: string;
@@ -52,6 +56,7 @@ export const startCommandShimReplay = async (
   scenario: ProcessScenario,
   temporaryRoot: string,
   started: number,
+  recordEvent: RecordProcessCaptureEvent = () => undefined,
 ): Promise<CommandShimReplay> => {
   const binPath = join(temporaryRoot, "shims");
   await mkdir(binPath);
@@ -94,9 +99,10 @@ export const startCommandShimReplay = async (
               ? "exhausted"
               : "matched";
         if (events.length >= scenario.limits.protocol_events) truncated = true;
-        else
+        else {
+          const index = events.length;
           events.push({
-            sequence: events.length,
+            sequence: index,
             at_ms: Math.max(0, Date.now() - started),
             command: invocation.command,
             route_index:
@@ -105,6 +111,8 @@ export const startCommandShimReplay = async (
             working_directory: invocation.working_directory,
             outcome,
           });
+          recordEvent("shim_events", index);
+        }
         if (outcome !== "matched" || route === undefined) {
           response.writeHead(409).end();
           return;

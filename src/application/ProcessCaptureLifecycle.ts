@@ -13,6 +13,8 @@ import type {
   ProcessPolicyDecision,
   ProcessSample,
   ProcessScenario,
+  ProcessCaptureEventJournalEntry,
+  RecordProcessCaptureEvent,
   TerminalFrame,
 } from "../domain/processCapture.js";
 import {
@@ -56,6 +58,7 @@ interface TerminalExitOptions {
   readonly timers: Set<NodeJS.Timeout>;
   readonly interactions: InteractionEvent[];
   readonly dispatchedEventIndexes: ReadonlySet<number>;
+  readonly recordEvent: RecordProcessCaptureEvent;
 }
 
 interface CaptureResultOptions {
@@ -79,6 +82,7 @@ interface CaptureResultOptions {
   readonly shimEvents: ProcessCapture["shim_events"];
   readonly settlement: ProcessCapture["settlement"];
   readonly manifest: ProcessCapture["manifest"];
+  readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
 }
 
 export const buildCaptureResult = (
@@ -88,12 +92,7 @@ export const buildCaptureResult = (
   manifest: options.manifest,
   normalization: options.scenario.normalization,
   frames: options.frames,
-  rendered_frames: [...options.renderedFrames]
-    .sort(
-      (left, right) =>
-        left.at_ms - right.at_ms || left.sequence - right.sequence,
-    )
-    .map((frame, sequence) => ({ ...frame, sequence })),
+  rendered_frames: options.renderedFrames,
   interaction_events: options.interactions,
   exit: {
     code:
@@ -116,6 +115,7 @@ export const buildCaptureResult = (
     options.scenario,
   ),
   replay_transitions: options.replay.transitions,
+  event_journal: options.eventJournal,
   files_before: options.before.files,
   files_after: options.after.files,
   filesystem_effects: classifyFilesystemEffects(
@@ -189,9 +189,12 @@ export const observeSettlement = async (
   runId: string,
   processGroupIds: readonly number[],
   settleMs: number,
+  recordEvent: RecordProcessCaptureEvent = () => undefined,
 ): Promise<Omit<ProcessCapture["settlement"], "cleanup_outcome">> => {
-  if (process.platform === "win32")
+  if (process.platform === "win32") {
+    recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };
+  }
   const started = Date.now();
   let consecutiveEmpty = 0;
   let deadlineReached = false;
@@ -205,17 +208,22 @@ export const observeSettlement = async (
         }),
       ),
     );
-    if (observations.some(({ state }) => state === "unverifiable"))
+    if (observations.some(({ state }) => state === "unverifiable")) {
+      recordEvent("lifecycle", 1);
       return { state: "unverifiable", elapsed_ms: Date.now() - started };
+    }
     if (observations.every(({ state }) => state === "empty")) {
       consecutiveEmpty += 1;
-      if (consecutiveEmpty >= 2)
+      if (consecutiveEmpty >= 2) {
+        recordEvent("lifecycle", 1);
         return { state: "quiesced", elapsed_ms: Date.now() - started };
+      }
     } else consecutiveEmpty = 0;
     deadlineReached = Date.now() - started >= settleMs;
     if (deadlineReached) break;
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
   }
+  recordEvent("lifecycle", 1);
   return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };
 };
 
@@ -228,6 +236,7 @@ export const awaitTerminalExit = async ({
   timers,
   interactions,
   dispatchedEventIndexes,
+  recordEvent,
 }: TerminalExitOptions): Promise<{
   exitCode: number;
   signal?: number;
@@ -239,10 +248,12 @@ export const awaitTerminalExit = async ({
     // exit from harness-owned timeout, idle-timeout, and cancellation cleanup.
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
     terminal.onExit((exit) => {
+      recordEvent("lifecycle", 0);
       for (const [eventIndex, event] of scenario.events.entries()) {
         if (dispatchedEventIndexes.has(eventIndex)) continue;
+        const sequence = interactions.length;
         interactions.push({
-          sequence: interactions.length,
+          sequence,
           scheduled_at_ms: event.at_ms,
           dispatched_at_ms: Math.max(0, Date.now() - started),
           type: event.type,
@@ -254,6 +265,7 @@ export const awaitTerminalExit = async ({
                 : event.signal,
           outcome: "target_exited",
         });
+        recordEvent("interaction_events", sequence);
       }
       for (const timer of timers) {
         clearTimeout(timer);
@@ -337,6 +349,7 @@ export const captureTerminalFrames = (options: {
   readonly onOutput: () => void;
   readonly renderer: TerminalRenderer;
   readonly checkpoints: ProcessCheckpoints;
+  readonly recordEvent: RecordProcessCaptureEvent;
 }): (() => boolean) => {
   let outputBytes = 0;
   let truncated = false;
@@ -362,11 +375,13 @@ export const captureTerminalFrames = (options: {
       options.temporaryRoot,
       options.terminal.pid,
     );
+    const sequence = options.frames.length;
     options.frames.push({
-      sequence: options.frames.length,
+      sequence,
       at_ms: atMs,
       data: normalized,
     });
+    options.recordEvent("frames", sequence);
     options.renderer.write(data, atMs);
     options.checkpoints.observeTerminal(normalized);
   });

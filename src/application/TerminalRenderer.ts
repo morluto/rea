@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
 
-import type { RenderedTerminalFrame } from "../domain/processCapture.js";
+import type {
+  RecordProcessCaptureEvent,
+  RenderedTerminalFrame,
+} from "../domain/processCapture.js";
 
 const require = createRequire(import.meta.url);
 // SAFETY: both pinned xterm packages publish CommonJS at runtime and matching declarations.
@@ -17,6 +20,7 @@ interface TerminalRendererOptions {
   readonly maxFrames: number;
   readonly maxBytes: number;
   readonly normalize: (value: string) => string;
+  readonly recordEvent?: RecordProcessCaptureEvent;
 }
 
 /** Owns one headless terminal and serializes writes into deterministic frames. */
@@ -112,8 +116,9 @@ export class TerminalRenderer {
       return;
     }
     this.#capturedBytes += bytes;
+    const sequence = this.#frames.length;
     this.#frames.push({
-      sequence: this.#frames.length,
+      sequence,
       at_ms: atMs,
       columns: this.#terminal.cols,
       rows: this.#terminal.rows,
@@ -123,5 +128,6 @@ export class TerminalRenderer {
       lines,
       serialized_state: serializedState,
     });
+    this.options.recordEvent?.("rendered_frames", sequence);
   }
 }

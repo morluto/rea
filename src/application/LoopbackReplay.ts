@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type {
   ProcessScenario,
   ProtocolEvent,
+  RecordProcessCaptureEvent,
 } from "../domain/processCapture.js";
 import {
   type ReplayMachineDecision,
@@ -65,7 +66,7 @@ const handleMachineHttp = async (
 ): Promise<void> => {
   const machine = recorder.machine;
   if (machine === undefined) return;
-  const decision = machine.dispatch({
+  const decision = recorder.dispatchMachine({
     protocol: "http",
     connection: "not_applicable",
     at_ms: request.rawAtMs,
@@ -352,7 +353,7 @@ const handleMachineWebSocket = (options: {
   void recorder
     .enqueueMachine(async () => {
       const connectedAt = recorder.atMs();
-      const connectionDecision = machine.dispatch({
+      const connectionDecision = recorder.dispatchMachine({
         protocol: "websocket_connect",
         connection: connection === 1 ? "initial" : "reconnect",
         at_ms: recorder.rawAtMs(),
@@ -388,7 +389,7 @@ const handleMachineWebSocket = (options: {
     const recordedAtMs = recorder.atMs();
     void recorder
       .enqueueMachine(async () => {
-        const decision = machine.dispatch({
+        const decision = recorder.dispatchMachine({
           protocol: "websocket_message",
           connection: connection === 1 ? "initial" : "reconnect",
           at_ms: rawAtMs,
@@ -468,8 +469,9 @@ const createWebSocketReplay = (
 /** Start bounded HTTP and WebSocket replay endpoints on IPv4 loopback only. */
 export const startLoopbackReplay = async (
   scenario: ProcessScenario,
+  recordEvent: RecordProcessCaptureEvent = () => undefined,
 ): Promise<LoopbackReplay> => {
-  const recorder = new ReplayRecorder(scenario);
+  const recorder = new ReplayRecorder(scenario, recordEvent);
   const server = createServer(createHttpHandler(recorder));
   const websocket = createWebSocketReplay(server, recorder);
   let closePromise: Promise<void> | undefined;

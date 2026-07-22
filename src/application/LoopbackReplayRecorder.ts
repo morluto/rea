@@ -2,6 +2,7 @@ import type { IncomingMessage, Server } from "node:http";
 import type {
   ProcessScenario,
   ProtocolEvent,
+  RecordProcessCaptureEvent,
 } from "../domain/processCapture.js";
 import {
   ReplayMachineRuntime,
@@ -18,7 +19,10 @@ export class ReplayRecorder {
   #machineAdmissionOpen = true;
   truncated = false;
 
-  constructor(readonly scenario: ProcessScenario) {
+  constructor(
+    readonly scenario: ProcessScenario,
+    private readonly recordEvent: RecordProcessCaptureEvent = () => undefined,
+  ) {
     this.machine =
       scenario.replay.machine === null
         ? undefined
@@ -61,10 +65,25 @@ export class ReplayRecorder {
     await this.#machineQueue;
   }
 
+  dispatchMachine(
+    event: Parameters<ReplayMachineRuntime["dispatch"]>[0],
+  ): ReplayMachineDecision {
+    if (this.machine === undefined)
+      throw new Error("replay machine is not configured");
+    const decision = this.machine.dispatch(event);
+    if (decision.transition !== null)
+      this.recordEvent("replay_transitions", decision.transition.sequence);
+    return decision;
+  }
+
   record(event: Omit<ProtocolEvent, "sequence">): void {
-    if (this.events.length < this.scenario.limits.protocol_events)
-      this.events.push({ sequence: this.events.length, ...event });
-    else this.truncated = true;
+    if (this.events.length >= this.scenario.limits.protocol_events) {
+      this.truncated = true;
+      return;
+    }
+    const sequence = this.events.length;
+    this.events.push({ sequence, ...event });
+    this.recordEvent("protocol_events", sequence);
   }
 }
 

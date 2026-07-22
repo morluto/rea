@@ -1,7 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ProcessSample } from "../domain/processCapture.js";
+import type {
+  ProcessSample,
+  RecordProcessCaptureEvent,
+} from "../domain/processCapture.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
 
 const execFileAsync = promisify(execFile);
@@ -452,6 +455,7 @@ export const startProcessSampler = (options: {
   readonly started: number;
   readonly limit: number;
   readonly samples: ProcessSample[];
+  readonly recordEvent?: RecordProcessCaptureEvent;
 }): (() => Promise<{ readonly partial: boolean }>) => {
   const { rootPid, runId, started, limit, samples } = options;
   const identities = new Map<number, string>();
@@ -501,7 +505,9 @@ export const startProcessSampler = (options: {
             continue;
           }
           lastObservations.set(value.pid, observation);
+          const index = samples.length;
           samples.push(value);
+          options.recordEvent?.("process_samples", index);
         }
       })
       .catch((cause: unknown) => {

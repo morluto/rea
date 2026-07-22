@@ -2,6 +2,7 @@ import type {
   FileState,
   FilesystemCheckpoint,
   ProcessScenario,
+  RecordProcessCaptureEvent,
 } from "../domain/processCapture.js";
 import { snapshotRoots, type SnapshotResult } from "./FilesystemSnapshot.js";
 
@@ -36,14 +37,21 @@ export class ProcessCheckpoints {
   readonly #terminalCounts = new Map<string, number>();
   readonly #terminalTails = new Map<string, string>();
   readonly #timers = new Set<NodeJS.Timeout>();
+  readonly #signal: AbortSignal | undefined;
+  readonly #recordEvent: RecordProcessCaptureEvent;
   #pending: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly scenario: ProcessScenario,
     private readonly started: number,
     before: SnapshotResult,
-    private readonly signal: AbortSignal | undefined,
+    options: {
+      readonly signal: AbortSignal | undefined;
+      readonly recordEvent?: RecordProcessCaptureEvent;
+    } = { signal: undefined },
   ) {
+    this.#signal = options.signal;
+    this.#recordEvent = options.recordEvent ?? (() => undefined);
     this.#captures.push({
       name: "before",
       at_ms: 0,
@@ -51,6 +59,7 @@ export class ProcessCheckpoints {
       effects: [],
       truncated: before.truncated,
     });
+    this.#recordEvent("filesystem_checkpoints", 0);
     this.#captured.add("before");
     for (const checkpoint of scenario.checkpoints) {
       if (checkpoint.trigger.type !== "time") continue;
@@ -100,8 +109,9 @@ export class ProcessCheckpoints {
     // together. Each effect set is intentionally relative to the immediately
     // preceding checkpoint, which preserves transient create/delete behavior.
     this.#pending = this.#pending.then(async () => {
-      const snapshot = await snapshotRoots(this.scenario, this.signal);
+      const snapshot = await snapshotRoots(this.scenario, this.#signal);
       const previous = this.#captures.at(-1)?.files ?? [];
+      const index = this.#captures.length;
       this.#captures.push({
         name,
         at_ms: Math.max(0, Date.now() - this.started),
@@ -109,6 +119,7 @@ export class ProcessCheckpoints {
         effects: classifyFilesystemEffects(previous, snapshot.files),
         truncated: snapshot.truncated,
       });
+      this.#recordEvent("filesystem_checkpoints", index);
     });
   }
 
@@ -119,6 +130,7 @@ export class ProcessCheckpoints {
     for (const timer of this.#timers) clearTimeout(timer);
     await this.#pending;
     const previous = this.#captures.at(-1)?.files ?? [];
+    const index = this.#captures.length;
     this.#captures.push({
       name: "after_settlement",
       at_ms: Math.max(0, Date.now() - this.started),
@@ -126,6 +138,7 @@ export class ProcessCheckpoints {
       effects: classifyFilesystemEffects(previous, after.files),
       truncated: after.truncated,
     });
+    this.#recordEvent("filesystem_checkpoints", index);
     return structuredClone(this.#captures);
   }
 

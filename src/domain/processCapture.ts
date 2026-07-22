@@ -110,6 +110,35 @@ export interface ProtocolEvent {
     | "limit_exhausted";
 }
 
+/** Capture collection whose members participate in global observation order. */
+export const PROCESS_CAPTURE_EVENT_COLLECTIONS = [
+  "frames",
+  "rendered_frames",
+  "interaction_events",
+  "lifecycle",
+  "process_samples",
+  "filesystem_checkpoints",
+  "shim_events",
+  "protocol_events",
+  "replay_transitions",
+] as const;
+
+export type ProcessCaptureEventCollection =
+  (typeof PROCESS_CAPTURE_EVENT_COLLECTIONS)[number];
+
+/** One reference from global observation order into a capture collection. */
+export interface ProcessCaptureEventJournalEntry {
+  readonly capture_order: number;
+  readonly collection: ProcessCaptureEventCollection;
+  readonly index: number;
+}
+
+/** Shared observation callback used by every process-capture producer. */
+export type RecordProcessCaptureEvent = (
+  collection: ProcessCaptureEventCollection,
+  index: number,
+) => void;
+
 /**
  * Process Capture v4 observation set.
  *
@@ -156,6 +185,12 @@ export interface ProcessCapture {
   readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
   readonly replay_transitions: readonly ReplayTransitionRecord[];
+  /**
+   * Global observation order across independently recorded collections.
+   *
+   * Absence is accepted for captures written before this journal existed.
+   */
+  readonly event_journal?: readonly ProcessCaptureEventJournalEntry[];
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
   readonly filesystem_effects: readonly FileEffect[];
@@ -328,6 +363,15 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       }),
     )
     .default([]),
+  event_journal: z
+    .array(
+      z.object({
+        capture_order: z.number().int().nonnegative(),
+        collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
+        index: z.number().int().nonnegative(),
+      }),
+    )
+    .default([]),
   files_before: z.array(fileStateSchema),
   files_after: z.array(fileStateSchema),
   filesystem_effects: z.array(fileEffectSchema),
@@ -383,3 +427,9 @@ export {
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
+export {
+  compareProcessTraces,
+  processTraceComparisonResultSchema,
+  processTraceSourceSchema,
+  processTraceSpecificationSchema,
+} from "./processTraceComparison.js";
