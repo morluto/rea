@@ -39,6 +39,10 @@ import {
   resolveProcessResult,
 } from "./ProcessCaptureLifecycle.js";
 import { assertNotCancelled } from "./ProcessCaptureAuthority.js";
+import {
+  createProcessCaptureJournal,
+  scheduleScenarioInteractions,
+} from "./ProcessCaptureJournal.js";
 
 export { probeProcessCaptureCapability } from "./ProcessCaptureCapability.js";
 
@@ -75,65 +79,6 @@ const makeEnvironment = (
     .filter((part) => part.length > 0)
     .join(":");
   return environment;
-};
-
-interface ScenarioEventOptions {
-  readonly scenario: ProcessScenario;
-  readonly getTerminal: () => IPty | undefined;
-  readonly timers: Set<NodeJS.Timeout>;
-  readonly interactions: InteractionEvent[];
-  readonly renderer: TerminalRenderer;
-  readonly started: number;
-  readonly dispatchedEventIndexes: Set<number>;
-  readonly recordEvent: RecordProcessCaptureEvent;
-}
-
-const scheduleScenarioEvents = (options: ScenarioEventOptions): void => {
-  const { scenario, getTerminal, timers, interactions, renderer, started } =
-    options;
-  for (const [eventIndex, event] of scenario.events.entries()) {
-    const timer = setTimeout(() => {
-      options.dispatchedEventIndexes.add(eventIndex);
-      const terminal = getTerminal();
-      const dispatchedAt = Math.max(0, Date.now() - started);
-      let outcome: InteractionEvent["outcome"] = "dispatched";
-      if (terminal === undefined) outcome = "target_exited";
-      else {
-        try {
-          if (event.type === "input") terminal.write(event.data);
-          else if (event.type === "resize") {
-            terminal.resize(event.columns, event.rows);
-            renderer.resize(event.columns, event.rows, dispatchedAt);
-          } else terminal.kill(event.signal);
-        } catch {
-          outcome = "failed";
-        }
-      }
-      const sequence = interactions.length;
-      interactions.push({
-        sequence,
-        scheduled_at_ms: event.at_ms,
-        dispatched_at_ms: dispatchedAt,
-        type: event.type,
-        data:
-          event.type === "input"
-            ? event.sensitive
-              ? `<redacted-input:${String(Buffer.byteLength(event.data))}-bytes>`
-              : normalizeProcessText(
-                  event.data,
-                  scenario,
-                  "<no-temporary-root>",
-                  -1,
-                )
-            : event.type === "resize"
-              ? `${String(event.columns)}x${String(event.rows)}`
-              : event.signal,
-        outcome,
-      });
-      options.recordEvent("interaction_events", sequence);
-    }, event.at_ms);
-    timers.add(timer);
-  }
 };
 
 interface StartedCaptureRuntime {
@@ -248,7 +193,7 @@ const startCaptureRuntime = async (options: {
       renderer,
       checkpoints,
     });
-    scheduleScenarioEvents({
+    scheduleScenarioInteractions({
       ...options,
       getTerminal: () => terminal,
       renderer,
@@ -443,14 +388,7 @@ const runProcessScenario = async (
   );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
-  const eventJournal: ProcessCaptureEventJournalEntry[] = [];
-  const recordEvent: RecordProcessCaptureEvent = (collection, index) => {
-    eventJournal.push({
-      capture_order: eventJournal.length,
-      collection,
-      index,
-    });
-  };
+  const { entries: eventJournal, recordEvent } = createProcessCaptureJournal();
   let runtime: StartedCaptureRuntime | undefined;
   const timers = new Set<NodeJS.Timeout>();
   let capture: ProcessCapture | undefined;

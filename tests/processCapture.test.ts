@@ -20,6 +20,7 @@ import {
   type ProcessPreparationHost,
 } from "../src/application/ProcessCaptureLifecycle.js";
 import { ProcessCheckpoints } from "../src/application/ProcessCheckpoints.js";
+import { createProcessCaptureJournal } from "../src/application/ProcessCaptureJournal.js";
 import { normalizeProcessSamples } from "../src/application/ProcessNormalization.js";
 import {
   isInitializedPtyRoot,
@@ -491,6 +492,14 @@ describe("process capture domain", () => {
   });
 
   it("accepts old captures without a journal and validates complete journals", () => {
+    const journal = createProcessCaptureJournal();
+    journal.recordEvent("lifecycle", 0);
+    journal.recordEvent("lifecycle", 1);
+    expect(journal.entries).toEqual([
+      { capture_order: 0, collection: "lifecycle", index: 0 },
+      { capture_order: 1, collection: "lifecycle", index: 1 },
+    ]);
+
     const capture = emptyCapture();
     const { event_journal: _eventJournal, ...oldCapture } = capture;
     expect(parseProcessCapture(oldCapture).event_journal).toEqual([]);
