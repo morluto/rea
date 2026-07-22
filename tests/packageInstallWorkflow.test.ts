@@ -18,6 +18,12 @@ describe("package installation workflows", () => {
 
     expect(continuousIntegration).toContain("os: [ubuntu-latest, macos-14]");
     expect(continuousIntegration).toContain("npm run verify:package");
+    expect(continuousIntegration).toContain("name: Static checks");
+    expect(continuousIntegration).toContain("npm run check:ci");
+    expect(continuousIntegration).toContain("needs: changes");
+    expect(continuousIntegration).toContain(
+      "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+    );
     for (const workflow of [
       continuousIntegration,
       realHopperLinux,

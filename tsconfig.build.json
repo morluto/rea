@@ -1,9 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "incremental": true,
     "rootDir": "src",
-    "tsBuildInfoFile": "node_modules/.cache/rea-tsconfig-build.tsbuildinfo",
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],

@@ -13,6 +13,7 @@ describe("package identity", () => {
         bin: z.record(z.string(), z.string()),
         scripts: z.object({
           start: z.string(),
+          "metadata:check": z.string(),
           prebuild: z.string(),
           prepare: z.string(),
           prepack: z.string(),
@@ -42,13 +43,14 @@ describe("package identity", () => {
       `npx -y ${packageJson.name}@${PRODUCT_IDENTITY.packageVersion} mcp`,
     );
     expect(packageJson.scripts.start).toBe("node scripts/rea.mjs mcp");
+    expect(packageJson.scripts["metadata:check"]).toBe(
+      "node scripts/generate-package-metadata.mjs --check",
+    );
     expect(packageJson.scripts.prebuild).toBe(
-      "npm run deps:check && node scripts/generate-package-metadata.mjs --check",
+      "npm run deps:check && npm run metadata:check",
     );
-    expect(packageJson.scripts.prepare).toBe("husky");
-    expect(packageJson.scripts.prepack).toBe(
-      "npm run build && node scripts/generate-skill-metadata.mjs --check",
-    );
+    expect(packageJson.scripts.prepare).toBe("node scripts/prepare.mjs");
+    expect(packageJson.scripts.prepack).toBe("node scripts/prepack.mjs");
     expect(packageJson.scripts.prepublishOnly).toBe(
       "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
     );

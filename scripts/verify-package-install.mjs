@@ -100,5 +100,17 @@ export async function verifyPackageInstall({
     throw new Error(
       `packaged CLI did not degrade without the optional PTY binary: ${JSON.stringify(noOptionalCapability)}`,
     );
+  await verifyInstalledPackageCanRepack(prefix, environment);
   return { cli, packageRunnerCli };
 }
+
+const verifyInstalledPackageCanRepack = async (prefix, environment) => {
+  const installedPackageRoot = join(prefix, "lib/node_modules/rea-agents");
+  const repackedTarball = (
+    await exec("npm", ["pack", "--silent"], {
+      cwd: installedPackageRoot,
+      env: environment,
+    })
+  ).stdout.trim();
+  await rm(join(installedPackageRoot, repackedTarball), { force: true });
+};
