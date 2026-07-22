@@ -15,9 +15,10 @@ describe("package identity", () => {
           start: z.string(),
           "metadata:check": z.string(),
           prebuild: z.string(),
+          "precheck:fast": z.string(),
+          "check:fast": z.string(),
           prepare: z.string(),
           prepack: z.string(),
-          prepublishOnly: z.string(),
         }),
       })
       .parse(
@@ -49,10 +50,9 @@ describe("package identity", () => {
     expect(packageJson.scripts.prebuild).toBe(
       "npm run deps:check && npm run metadata:check",
     );
+    expect(packageJson.scripts["precheck:fast"]).toBe("npm run deps:check");
+    expect(packageJson.scripts["check:fast"]).toBe("turbo run typecheck lint");
     expect(packageJson.scripts.prepare).toBe("node scripts/prepare.mjs");
     expect(packageJson.scripts.prepack).toBe("node scripts/prepack.mjs");
-    expect(packageJson.scripts.prepublishOnly).toBe(
-      "npm run deps:check && node scripts/generate-skill-metadata.mjs --check",
-    );
   });
 });

@@ -63,6 +63,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run lint:fix`: auto-fix oxlint violations where possible.
 - `npm run format:check`: verify Prettier formatting.
 - `npm run check`: run cached typecheck, lint, format:check, knip, and package-metadata freshness tasks.
+- `npm run check:fast`: run only cached typecheck and lint for rapid local and pre-push feedback.
 - `npm run check:ci`: run the static gate plus duplicate-code and debt-marker scans.
 - `npm run check:test`: run the cached static tasks plus the uncached complete test suite.
 - `npm run check:pr`: run the test gate plus uncached generated-document validation for PR preparation.
@@ -79,12 +80,13 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
 - `npm run docs:api`: render uncommitted API documentation from JSDoc comments into `build/api-docs/` using TypeDoc.
+- `npm run docs:api:cached`: render API documentation through Turbo or restore a valid local result.
 - `npm run docs:generate`: refresh committed metadata and render the uncommitted API documentation.
 - `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc rendering, and the error JSON schema.
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
 
-Pre-commit hooks via Husky format and lint staged files. Pre-push runs `npm run check`. Use `npm run lint:fix` to auto-correct violations locally.
+Pre-commit hooks via Husky format then lint staged source files. Pre-push runs `npm run check:fast`; CI owns the broader static and generated-document gates. Use `npm run lint:fix` to auto-correct violations locally.
 
 ## Configuration & Environment Variables
 
