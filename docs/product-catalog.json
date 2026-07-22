@@ -405,6 +405,14 @@
       "version": 2
     },
     {
+      "id": "evidence_completion_ledger",
+      "version": 1
+    },
+    {
+      "id": "evidence_completion_manifest",
+      "version": 1
+    },
+    {
       "id": "investigation_run",
       "version": 1
     },

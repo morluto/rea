@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">LinuxHopperInstallHost</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-call-signature" href="#cleanup-1">cleanup</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#createtemporarydirectory-1">createTemporaryDirectory</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#distribution-1">distribution</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxDistribution.html" class="tsd-signature-type tsd-kind-interface">LinuxDistribution</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#download-1">download</a><span class="tsd-signature-symbol">(</span><br/>        <span class="tsd-kind-parameter">url</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">signal</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">AbortSignal</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxHopperDownload.html" class="tsd-signature-type tsd-kind-interface">LinuxHopperDownload</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#installpackage-1">installPackage</a><span class="tsd-signature-symbol">(</span><br/>        <span class="tsd-kind-parameter">family</span><span class="tsd-signature-symbol">:</span> <a href="../types/application_LinuxHopper.LinuxPackageFamily.html" class="tsd-signature-type tsd-kind-type-alias">LinuxPackageFamily</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">archive</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#launcherstatus-1">launcherStatus</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_LinuxHopper.LinuxHopperLauncherStatus.html" class="tsd-signature-type tsd-kind-type-alias">LinuxHopperLauncherStatus</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#writearchive-1">writeArchive</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">bytes</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Uint8Array</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L82">src/application/LinuxHopper.ts:82</a></li></ul></aside>
+<li>Defined in src/application/LinuxHopper.ts:82</li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -47,7 +47,7 @@
 <li><span><span class="tsd-kind-parameter">path</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L92">src/application/LinuxHopper.ts:92</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:92</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="createtemporarydirectory"><span>create<wbr/>Temporary<wbr/>Directory</span><a href="#createtemporarydirectory" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -56,7 +56,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L88">src/application/LinuxHopper.ts:88</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:88</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="distribution"><span>distribution</span><a href="#distribution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -65,7 +65,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxDistribution.html" class="tsd-signature-type tsd-kind-interface">LinuxDistribution</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L83">src/application/LinuxHopper.ts:83</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:83</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="download"><span>download</span><a href="#download" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -79,7 +79,7 @@
 <li><span><span class="tsd-kind-parameter">options</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">signal</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">AbortSignal</span> <span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxHopperDownload.html" class="tsd-signature-type tsd-kind-interface">LinuxHopperDownload</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L84">src/application/LinuxHopper.ts:84</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:84</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="installpackage"><span>install<wbr/>Package</span><a href="#installpackage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -93,7 +93,7 @@
 <li><span><span class="tsd-kind-parameter">archive</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L90">src/application/LinuxHopper.ts:90</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:90</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="launcherstatus"><span>launcher<wbr/>Status</span><a href="#launcherstatus" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -106,7 +106,7 @@
 <li><span><span class="tsd-kind-parameter">path</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_LinuxHopper.LinuxHopperLauncherStatus.html" class="tsd-signature-type tsd-kind-type-alias">LinuxHopperLauncherStatus</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L91">src/application/LinuxHopper.ts:91</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/LinuxHopper.ts:91</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="writearchive"><span>write<wbr/>Archive</span><a href="#writearchive" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -120,7 +120,7 @@
 <li><span><span class="tsd-kind-parameter">bytes</span>: <span class="tsd-signature-type">Uint8Array</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/LinuxHopper.ts#L89">src/application/LinuxHopper.ts:89</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in src/application/LinuxHopper.ts:89</li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

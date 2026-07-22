@@ -64,6 +64,8 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run verify:ghidra:windows`: build and run the real Windows Ghidra verifier against `GHIDRA_INSTALL_DIR` and the source-owned x64 PE fixture.
 - `npm run verify:browser`: build and run the real Chrome verifier against `REA_BROWSER_EXECUTABLE` or a platform-default Chrome-family executable.
 - `npm run verify:managed`: build and run the source-owned managed PE/CLI conformance verifier for artifact triage, member inspection, managed/native boundary declarations, token drift comparison, malformed metadata, non-managed degradation, managed application-graph projection, manifest-verifier self-test, and optional BYO ILSpy oracle checks; set `REA_MANAGED_APP_MANIFEST_PATH` to verify an operator-local managed app manifest, including optional graph/trace assertions, and set `REA_ILSPY_CMD_PATH` to an absolute `ilspycmd` path to run the real ILSpy reconstruction oracle.
+- `npm run evidence:generate`: regenerate the managed conformance manifest and Evidence v2 completion ledger from live verifier output.
+- `npm run evidence:check`: rerun managed conformance and fail on generated manifest, completion ledger, or bundled skill drift.
 - `npm run verify:replay`: build and run the real Linux Bubblewrap/seccomp/cgroup verifier against source-owned replay fixtures; set `REA_REPLAY_INPUT_PATH` to verify an operator-local manifest.
 - `npm run verify:package`: pack and test the CLI, setup transaction, skill, and canonical target-free MCP catalog in an isolated environment.
 - `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.

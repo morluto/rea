@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "ledger_id": "ecl_a56a75b91375c9c9501d1545fee9977e74f57dbd1bf413a370f9cd1ed26987bd",
+  "records": [
+    {
+      "claim_id": "managed.application-graph-projection",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_4d6821cdd212a77507dfbdf995fc8b086cd63b3f1d39dee4a2e12f62a6f0609d"
+      ]
+    },
+    {
+      "claim_id": "managed.decompiler-reconstruction-import",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_cd9015f39a60251bee1b01baf5189de7427e5810f130aed39770f17ae69cee44"
+      ]
+    },
+    {
+      "claim_id": "managed.dotnet-framework-x86-pinvoke",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_af02c0218a01138bd1f0f5ca052f95d348dfacb540040ab72d6ddc9889e3a7e4"
+      ]
+    },
+    {
+      "claim_id": "managed.ilspy-reconstruction-oracle",
+      "status": "unsupported",
+      "evidence_ids": [
+        "ev_5df12074aeb26d67bc954fd9230076bd0c3ce9969600e19c59ba02090a9988f2"
+      ]
+    },
+    {
+      "claim_id": "managed.malformed-metadata",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_5d6aadf199ae090e0ddebc10a51aab8a410fa778a6ae8454fedfb10d240cdac2"
+      ]
+    },
+    {
+      "claim_id": "managed.managed-native-verification",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_9f1862276fe8869b86105eb91154603922eeb95fec33a10c354b2d6c9c3fe077"
+      ]
+    },
+    {
+      "claim_id": "managed.modern-dotnet-anycpu",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_c9aef74724cf555bcedce8a9dbf46327b2f92b95b03eb363f966885d429e6882"
+      ]
+    },
+    {
+      "claim_id": "managed.mvid-and-token-drift",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_55808bf3ee5ec9d87cee751462077a6bce88701c4fcf66822ba1d7d33706706b"
+      ]
+    },
+    {
+      "claim_id": "managed.not-managed",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_a8166506ca91a4595b825f355836bb4becf35852c8547c55408c09698f4953a6"
+      ]
+    },
+    {
+      "claim_id": "managed.operator-local-manifest",
+      "status": "unsupported",
+      "evidence_ids": [
+        "ev_03d1a151446834fbee7c093e82121b714a0cc1e6167ad84f47a79ffb9e2602ce"
+      ]
+    },
+    {
+      "claim_id": "managed.operator-manifest-self-test",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_74d7f9c75a4476196664542d790e2532435f2a1c54349b481967e51e2ccc9453"
+      ]
+    },
+    {
+      "claim_id": "managed.runtime-correlation-admission-plan",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_5a80df0b92dc2280361e900ce590bc88ea52eba3dc8e216a0ce282f503e3cb05"
+      ]
+    },
+    {
+      "claim_id": "managed.unicode-obfuscated-identifiers",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_3b61c79ec152c70693278a70ad2ca6528ce0a9c9ab389d3ec9e4520de79082a7"
+      ]
+    },
+    {
+      "claim_id": "managed.x64-ready-to-run-native-body",
+      "status": "pass",
+      "evidence_ids": [
+        "ev_81f41b1b3809c2fe1964f7abbcbd2faeb14c723938639c2e0bb16cd58746aa1a"
+      ]
+    }
+  ],
+  "summary": {
+    "total": 14,
+    "pass": 12,
+    "fail": 0,
+    "unsupported": 2,
+    "truncated": 0,
+    "unknown": 0,
+    "complete": false
+  }
+}

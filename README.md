@@ -724,6 +724,12 @@ and browser prompts through a real local Codex CLI. Its JSON report measures
 natural MCP use, first-tool routing, repeated calls, actual Codex token usage,
 completion quality, and explicit treatment of authority and unknowns.
 
+`npm run evidence:generate` regenerates the managed conformance manifest and
+Evidence v2 completion ledger from live verifier output. `npm run
+evidence:check` reruns the verifier and fails when artifacts, scenarios,
+providers, schemas, claim counts, Evidence IDs, or the bundled skill have
+drifted. Unsupported claims remain explicit and never count as passes.
+
 ## Project links
 
 [npm](https://www.npmjs.com/package/rea-agents) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md) · [Hopper](https://www.hopperapp.com/) · [Ghidra](https://github.com/NationalSecurityAgency/ghidra)

@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">SetupHost</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#nodeversion">nodeVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#platform">platform</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Platform</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#clientneedsconfigure-1">clientNeedsConfigure</a><span class="tsd-signature-symbol">(</span><br/>        <span class="tsd-kind-parameter">client</span><span class="tsd-signature-symbol">:</span> <a href="application_SupportedClients.SetupClient.html" class="tsd-signature-type tsd-kind-interface">SetupClient</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">providerEnvironment</span><span class="tsd-signature-symbol">:</span> <a href="../types/application_Setup.SetupProviderEnvironment.html" class="tsd-signature-type tsd-kind-type-alias">SetupProviderEnvironment</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">command</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#configureclient-1">configureClient</a><span class="tsd-signature-symbol">(</span><br/>        <span class="tsd-kind-parameter">client</span><span class="tsd-signature-symbol">:</span> <a href="application_SupportedClients.SetupClient.html" class="tsd-signature-type tsd-kind-interface">SetupClient</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">providerEnvironment</span><span class="tsd-signature-symbol">:</span> <a href="../types/application_Setup.SetupProviderEnvironment.html" class="tsd-signature-type tsd-kind-type-alias">SetupProviderEnvironment</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">command</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_Setup.ClientConfigurationResult.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationResult</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#detectedclients-1">detectedClients</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">readonly</span> <a href="application_SupportedClients.SetupClient.html" class="tsd-signature-type tsd-kind-interface">SetupClient</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#doctor-1">doctor</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">scope</span><span class="tsd-signature-symbol">?:</span> <a href="application_Doctor.DoctorScope.html" class="tsd-signature-type tsd-kind-interface">DoctorScope</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_Doctor.DoctorReport.html" class="tsd-signature-type tsd-kind-interface">DoctorReport</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#hopperpath-1">hopperPath</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#inspectclientconfiguration-1">inspectClientConfiguration</a><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">(</span><br/>        <span class="tsd-kind-parameter">client</span><span class="tsd-signature-symbol">:</span> <a href="application_SupportedClients.SetupClient.html" class="tsd-signature-type tsd-kind-interface">SetupClient</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">providerEnvironment</span><span class="tsd-signature-symbol">:</span> <a href="../types/application_Setup.SetupProviderEnvironment.html" class="tsd-signature-type tsd-kind-type-alias">SetupProviderEnvironment</a><span class="tsd-signature-symbol">,</span><br/>        <span class="tsd-kind-parameter">command</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_Setup.ClientConfigurationInspection.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationInspection</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#installhopper-1">installHopper</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">replaceExisting</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_SetupInstallFailure.SetupHopperInstallResult.html" class="tsd-signature-type tsd-kind-type-alias">SetupHopperInstallResult</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#installskill-1">installSkill</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">&quot;failed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;unchanged&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;installed&quot;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#linuxdistribution-1">linuxDistribution</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxDistribution.html" class="tsd-signature-type tsd-kind-interface">LinuxDistribution</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#macosversion-1">macosVersion</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#providerenvironment-1">providerEnvironment</a><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#skillneedsinstall-1">skillNeedsInstall</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L79">src/application/Setup.ts:79</a></li></ul></aside>
+<li>Defined in src/application/Setup.ts:79</li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -49,12 +49,12 @@
 <h3 class="tsd-anchor-link" id="nodeversion"><code class="tsd-tag">Readonly</code><span>node<wbr/>Version</span><a href="#nodeversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">nodeVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L81">src/application/Setup.ts:81</a></li></ul></aside></section>
+<li>Defined in src/application/Setup.ts:81</li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="platform"><code class="tsd-tag">Readonly</code><span>platform</span><a href="#platform" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">platform</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Platform</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L80">src/application/Setup.ts:80</a></li></ul></aside></section></section></details>
+<li>Defined in src/application/Setup.ts:80</li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -72,7 +72,7 @@
 <li><span><span class="tsd-kind-parameter">command</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L93">src/application/Setup.ts:93</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:93</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="configureclient"><span>configure<wbr/>Client</span><a href="#configureclient" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -87,7 +87,7 @@
 <li><span><span class="tsd-kind-parameter">command</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_Setup.ClientConfigurationResult.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L88">src/application/Setup.ts:88</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:88</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="detectedclients"><span>detected<wbr/>Clients</span><a href="#detectedclients" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -96,7 +96,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">readonly</span> <a href="application_SupportedClients.SetupClient.html" class="tsd-signature-type tsd-kind-interface">SetupClient</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L87">src/application/Setup.ts:87</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:87</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="doctor"><span>doctor</span><a href="#doctor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -109,7 +109,7 @@
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">scope</span>: <a href="application_Doctor.DoctorScope.html" class="tsd-signature-type tsd-kind-interface">DoctorScope</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_Doctor.DoctorReport.html" class="tsd-signature-type tsd-kind-interface">DoctorReport</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L105">src/application/Setup.ts:105</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:105</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="hopperpath"><span>hopper<wbr/>Path</span><a href="#hopperpath" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -118,7 +118,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L84">src/application/Setup.ts:84</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:84</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="inspectclientconfiguration"><code class="tsd-tag">Optional</code><span>inspect<wbr/>Client<wbr/>Configuration</span><a href="#inspectclientconfiguration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -133,7 +133,7 @@
 <li><span><span class="tsd-kind-parameter">command</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_Setup.ClientConfigurationInspection.html" class="tsd-signature-type tsd-kind-type-alias">ClientConfigurationInspection</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L98">src/application/Setup.ts:98</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:98</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="installhopper"><span>install<wbr/>Hopper</span><a href="#installhopper" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -146,7 +146,7 @@
 <li><span><span class="tsd-kind-parameter">replaceExisting</span>: <span class="tsd-signature-type">boolean</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/application_SetupInstallFailure.SetupHopperInstallResult.html" class="tsd-signature-type tsd-kind-type-alias">SetupHopperInstallResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L85">src/application/Setup.ts:85</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:85</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="installskill"><span>install<wbr/>Skill</span><a href="#installskill" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -155,7 +155,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">&quot;failed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;unchanged&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;installed&quot;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L104">src/application/Setup.ts:104</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:104</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="linuxdistribution"><span>linux<wbr/>Distribution</span><a href="#linuxdistribution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -164,7 +164,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="application_LinuxHopper.LinuxDistribution.html" class="tsd-signature-type tsd-kind-interface">LinuxDistribution</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L83">src/application/Setup.ts:83</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:83</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="macosversion"><span>macos<wbr/>Version</span><a href="#macosversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -173,7 +173,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L82">src/application/Setup.ts:82</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:82</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="providerenvironment"><code class="tsd-tag">Optional</code><span>provider<wbr/>Environment</span><a href="#providerenvironment" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -182,7 +182,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L86">src/application/Setup.ts:86</a></li></ul></aside></div></li></ul></section>
+<li>Defined in src/application/Setup.ts:86</li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="skillneedsinstall"><span>skill<wbr/>Needs<wbr/>Install</span><a href="#skillneedsinstall" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -191,7 +191,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/morluto/rea/blob/main/src/application/Setup.ts#L103">src/application/Setup.ts:103</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in src/application/Setup.ts:103</li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
