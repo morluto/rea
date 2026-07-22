@@ -56,6 +56,7 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
+import { registerReplayMachineTool } from "./registerReplayMachineTool.js";
 import {
   sessionAvailabilityPolicy,
   type SessionAvailability,
@@ -395,6 +396,19 @@ export interface SessionToolOptions {
   readonly availabilityPolicy?: () => SessionAvailability;
 }
 
+const registerRecordAndReplayTools = (
+  server: McpServer,
+  session: BinarySessionPort,
+  logger: Logger,
+): void => {
+  registerUnknownTools({
+    server,
+    session,
+    contracts: SESSION_TOOL_CONTRACTS,
+  });
+  registerReplayMachineTool(server, logger);
+};
+
 export const registerSessionTools = (
   server: McpServer,
   session: BinarySessionPort,
@@ -489,9 +503,5 @@ export const registerSessionTools = (
       ? {}
       : { permissionAuthority: options.permissionAuthority }),
   });
-  registerUnknownTools({
-    server,
-    session,
-    contracts: SESSION_TOOL_CONTRACTS,
-  });
+  registerRecordAndReplayTools(server, session, logger);
 };

@@ -137,7 +137,7 @@ describe("tool contract surface", () => {
     expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(names.sort());
   });
 
-  it("keeps exactly eighteen additive session contracts", () => {
+  it("keeps exactly nineteen additive session contracts", () => {
     expect(
       SESSION_TOOL_CONTRACTS.map(({ name, kind }) => ({ name, kind })),
     ).toEqual([
@@ -159,6 +159,7 @@ describe("tool contract surface", () => {
       { name: "record_unknown", kind: "session" },
       { name: "update_unknown", kind: "session" },
       { name: "verify_unknown_resolution", kind: "session" },
+      { name: "run_replay_machine", kind: "session" },
     ]);
     expect(
       SESSION_TOOL_CONTRACTS.find(

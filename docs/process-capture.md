@@ -129,6 +129,27 @@ Unmatched and exhausted calls are recorded. Shim observations are bounded by
 the scenario protocol-event limit; exceeding it marks the whole capture
 truncated while replay continues.
 
+## Run a replay machine directly
+
+Use `rea run-replay-machine ./run.json` to validate a finite replay machine
+against an ordered `events` array without launching a process or opening a
+socket. MCP clients use `run_replay_machine` with the same `{ machine, events }`
+input. The result retains one decision per offered event, a transition journal
+with capture alias metadata, and one redacted action-table entry per used
+transition. It never returns request bodies, request headers, or captured
+values. It also reports the initial and final states, whether the final state is
+terminal, configured limits, and committed usage.
+
+The direct boundary accepts at most 10,000 events, 4 MiB of declared action
+JSON, 1,024 action text fields, and 1,024 possible sensitive-capture operations.
+These caps bound both returned content and secret-redaction work.
+
+Refused events remain data rather than aborting the run. Outcomes distinguish
+unmatched events, invalid states, failed guards, exhausted transitions, invalid
+captures, unexpected reconnects, and exhausted limits. This direct runner
+evaluates the same domain runtime used by loopback Process Capture, but performs
+no network or target execution.
+
 ## Compare captures
 
 Compare two saved Evidence records with:

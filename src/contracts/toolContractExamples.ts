@@ -3,6 +3,7 @@ import { UNKNOWN_CONTRACT_EXAMPLES } from "./unknownContractExamples.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "./artifactComparisonExample.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
 import { INVESTIGATION_EXAMPLES } from "./investigationExamples.js";
+import { REPLAY_MACHINE_RUN_EXAMPLE } from "./replayMachineExample.js";
 
 /** Canonical examples for contracts whose required inputs have no defaults. */
 export const TOOL_EXAMPLE_OVERRIDES: Readonly<
@@ -39,6 +40,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
     executable: "/usr/bin/true",
     working_directory: "/tmp",
   },
+  run_replay_machine: REPLAY_MACHINE_RUN_EXAMPLE,
   compare_process_captures: {
     left_evidence_id: `ev_${"0".repeat(64)}`,
     right_evidence_id: `ev_${"1".repeat(64)}`,

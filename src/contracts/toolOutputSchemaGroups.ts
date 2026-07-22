@@ -35,6 +35,7 @@ import { changedBehaviorResultSchema } from "../domain/changedBehavior.js";
 import { callPathResultSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
+import { replayMachineRunOutputSchema } from "../domain/replayMachineRun.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import {
   addressList,
@@ -365,4 +366,5 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       unknown: residualUnknownSchema,
     }),
   ),
+  run_replay_machine: lifecycleResultOf(replayMachineRunOutputSchema),
 };

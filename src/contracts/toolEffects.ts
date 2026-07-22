@@ -117,6 +117,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   trace_application_feature: evidence,
   compare_application_versions: evidence,
   compare_javascript_export_shapes: evidence,
+  run_replay_machine: effects(),
   run_controlled_replay: effects({
     mutatesSession: true,
     writesFilesystem: true,
