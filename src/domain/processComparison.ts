@@ -300,6 +300,7 @@ const applyTraceVerdict = (
   ): ComparisonStatus => {
     const exact = dimensions[dimension];
     if (!covered.has(dimension)) return exact;
+    if (trace.verdict === "nonconforming") return exact;
     if (trace.verdict === "different")
       return traceShowsDifference ? "changed" : exact;
     if (

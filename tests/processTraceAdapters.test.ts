@@ -294,6 +294,54 @@ describe("declared trace comparison adapters", () => {
     });
   });
 
+  it("does not mask distinct payloads when both traces are nonconforming", () => {
+    const withTerminal = (data: string) =>
+      processCaptureSchema.parse({
+        ...capture,
+        frames: [{ sequence: 0, at_ms: 1, data }],
+        event_journal: [
+          {
+            capture_order: 0,
+            collection: "filesystem_checkpoints",
+            index: 0,
+          },
+          { capture_order: 1, collection: "frames", index: 0 },
+          { capture_order: 2, collection: "lifecycle", index: 0 },
+          { capture_order: 3, collection: "lifecycle", index: 1 },
+          {
+            capture_order: 4,
+            collection: "filesystem_checkpoints",
+            index: 1,
+          },
+        ],
+      });
+    const specification: ProcessTraceSpecification = {
+      version: 1,
+      events: [
+        {
+          id: "expected",
+          source: "terminal_raw",
+          exact: { sequence: 0, at_ms: 1, data: "expected" },
+          cardinality: { kind: "required" },
+        },
+      ],
+      language: {
+        kind: "finite_traces",
+        variants: [{ id: "expected", trace: ["expected"] }],
+      },
+    };
+
+    expect(
+      compareProcessCaptures(withTerminal("left"), withTerminal("right"), {
+        traceSpecification: specification,
+      }),
+    ).toMatchObject({
+      status: "changed",
+      terminal: "changed",
+      trace: { verdict: "nonconforming" },
+    });
+  });
+
   it("returns identical CLI and MCP results and derived Evidence identity", async () => {
     const left = captureEvidence("left");
     const right = captureEvidence("right");
