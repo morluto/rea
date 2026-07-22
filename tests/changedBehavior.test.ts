@@ -24,6 +24,7 @@ const right = source("2");
 const comparison = (
   operation: "compare_process_captures" | "compare_artifacts",
   result: JsonValue,
+  processPredicateVersion: "v3" | "v4" = "v3",
 ): Evidence => {
   const process = operation === "compare_process_captures";
   return createEvidence(
@@ -37,7 +38,7 @@ const comparison = (
     },
     {
       predicateType: process
-        ? "rea.process-comparison/v3"
+        ? `rea.process-comparison/${processPredicateVersion}`
         : "rea.artifact-comparison/v1",
       operation,
       parameters: {},
@@ -123,6 +124,15 @@ const artifactResult = (
 });
 
 describe("changed behavior", () => {
+  it("accepts declared-trace process comparison Evidence v4", () => {
+    const result = findChangedBehavior(
+      [comparison("compare_process_captures", processResult(), "v4")],
+      0,
+      100,
+    );
+    expect(result.behavior_status).toBe("observed_unchanged");
+  });
+
   it("reports interaction and shim-only process changes", () => {
     const evidence = comparison(
       "compare_process_captures",

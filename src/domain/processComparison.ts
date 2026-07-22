@@ -5,10 +5,14 @@ import { validateProcessCapture } from "./processCapture.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import {
   compareProcessTraces,
+  processTraceOutcomesDiffer,
   processTraceComparisonResultSchema,
-  type ProcessTraceSource,
   type ProcessTraceSpecification,
 } from "./processTraceComparison.js";
+import {
+  dimensionsForTraceSources,
+  traceCoversObservedDimension,
+} from "./processTraceDimensionProjection.js";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -276,82 +280,19 @@ const truncatedComparison = (): ProcessCaptureComparison => ({
   limitations: ["At least one capture is truncated."],
 });
 
-const dimensionsForTraceSources = (
-  sources: ReadonlySet<ProcessTraceSource>,
-): ReadonlySet<(typeof PROCESS_COMPARISON_DIMENSIONS)[number]> => {
-  const dimensions = new Set<(typeof PROCESS_COMPARISON_DIMENSIONS)[number]>();
-  for (const source of sources) {
-    if (source.startsWith("terminal_")) dimensions.add("terminal");
-    else if (source === "interaction") dimensions.add("interaction");
-    else if (source === "lifecycle") dimensions.add("exit");
-    else if (source === "filesystem") dimensions.add("filesystem");
-    else if (
-      source === "http" ||
-      source === "websocket" ||
-      source === "replay_transition"
-    )
-      dimensions.add("protocol");
-    else if (source === "process") dimensions.add("process");
-    else if (source === "shim") dimensions.add("shim");
-  }
-  return dimensions;
-};
-
-const traceCoversObservedDimension = (
-  dimension: (typeof PROCESS_COMPARISON_DIMENSIONS)[number],
-  sources: ReadonlySet<ProcessTraceSource>,
-  left: ProcessCapture,
-  right: ProcessCapture,
-): boolean => {
-  const any = <Value>(
-    leftValues: readonly Value[],
-    rightValues: readonly Value[],
-  ): boolean => leftValues.length > 0 || rightValues.length > 0;
-  switch (dimension) {
-    case "terminal":
-      return (
-        (!any(left.frames, right.frames) || sources.has("terminal_raw")) &&
-        (!any(left.rendered_frames, right.rendered_frames) ||
-          sources.has("terminal_rendered"))
-      );
-    case "interaction":
-      return sources.has("interaction");
-    case "exit":
-      return sources.has("lifecycle");
-    case "filesystem":
-      return false;
-    case "protocol":
-      return (
-        (![...left.protocol_events, ...right.protocol_events].some(
-          ({ protocol }) => protocol === "http",
-        ) ||
-          sources.has("http")) &&
-        (![...left.protocol_events, ...right.protocol_events].some(
-          ({ protocol }) => protocol === "websocket",
-        ) ||
-          sources.has("websocket")) &&
-        (!any(left.replay_transitions, right.replay_transitions) ||
-          sources.has("replay_transition"))
-      );
-    case "process":
-      return sources.has("process");
-    case "shim":
-      return sources.has("shim");
-  }
-};
-
 const applyTraceVerdict = (
   dimensions: ComparisonDimensions,
   specification: ProcessTraceSpecification,
   trace: ReturnType<typeof compareProcessTraces>,
   captures: readonly [left: ProcessCapture, right: ProcessCapture],
 ): ComparisonDimensions => {
-  const traceStatus: ComparisonStatus =
-    trace.verdict === "equivalent"
-      ? "unchanged"
-      : trace.verdict === "different"
-        ? "changed"
-        : "unknown";
+  const traceShowsDifference = processTraceOutcomesDiffer(trace);
+  const traceStatus =
+    trace.verdict === "unknown"
+      ? "unknown"
+      : trace.verdict === "equivalent" || !traceShowsDifference
+        ? "unchanged"
+        : "changed";
   const sources = new Set(specification.events.map(({ source }) => source));
   const covered = dimensionsForTraceSources(sources);
   const statusFor = (
@@ -359,7 +300,8 @@ const applyTraceVerdict = (
   ): ComparisonStatus => {
     const exact = dimensions[dimension];
     if (!covered.has(dimension)) return exact;
-    if (trace.verdict === "different") return "changed";
+    if (trace.verdict === "different")
+      return traceShowsDifference ? "changed" : exact;
     if (
       trace.verdict === "unknown" &&
       ["changed", "added", "removed"].includes(exact)

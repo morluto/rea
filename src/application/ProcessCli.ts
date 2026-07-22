@@ -3,12 +3,15 @@ import { readFile } from "node:fs/promises";
 import { parseConfig } from "../config.js";
 import {
   AnalysisError,
+  AnalysisInputError,
   AnalysisProtocolError,
   PermissionRequiredError,
   projectAnalysisError,
 } from "../domain/errors.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
 import {
   compareProcessCaptures,
   LEGACY_PROCESS_CAPTURE_MESSAGE,
@@ -76,24 +79,41 @@ export const captureProcessScenarioFile = async (path: string) => {
 export const compareProcessEvidenceFiles = async (
   leftPath: string,
   rightPath: string,
+  traceSpecPath?: string,
 ) => {
   try {
     const left = parseCaptureEvidence(await readJson(leftPath));
     const right = parseCaptureEvidence(await readJson(rightPath));
-    const comparison = compareProcessCaptures(left.capture, right.capture);
+    const traceSpecification =
+      traceSpecPath === undefined
+        ? undefined
+        : parseTraceSpecification(await readJson(traceSpecPath));
+    const comparison =
+      traceSpecification === undefined
+        ? compareProcessCaptures(left.capture, right.capture)
+        : compareProcessCaptures(left.capture, right.capture, {
+            traceSpecification,
+          });
     return createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-comparison/v3",
+      predicateType:
+        traceSpecification === undefined
+          ? "rea.process-comparison/v3"
+          : "rea.process-comparison/v4",
       operation: "compare_process_captures",
       parameters: {
         left_evidence_id: left.id,
         right_evidence_id: right.id,
         left_normalization: left.capture.normalization,
         right_normalization: right.capture.normalization,
+        ...(traceSpecification === undefined
+          ? {}
+          : { trace_spec: jsonValueSchema.parse(traceSpecification) }),
       },
       result: jsonValueSchema.parse(comparison),
       confidence: "derived",
       authority: "analyst-inference",
       limitations: comparison.limitations,
+      locations: [...left.locations, ...right.locations],
       evidenceLinks: [left.id, right.id],
     });
   } catch (cause: unknown) {
@@ -128,10 +148,21 @@ const parseCaptureEvidence = (input: unknown) => {
     return {
       id: evidence.evidence_id,
       capture: parseProcessCapture(evidence.normalized_result),
+      locations: evidence.locations,
     };
   } catch {
     throw invalidCaptureEvidence();
   }
+};
+
+const parseTraceSpecification = (input: unknown) => {
+  const parsed = processTraceSpecificationSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  throw new AnalysisInputError(
+    "compare-process-captures",
+    { cause: parsed.error },
+    projectInputIssues(parsed.error.issues, input),
+  );
 };
 
 const invalidCaptureEvidence = (): ProcessCliFailure =>

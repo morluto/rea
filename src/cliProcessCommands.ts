@@ -34,10 +34,14 @@ export const registerProcessCommands = (
     args: z.object({
       left: z.string().describe("Left capture Evidence JSON path"),
       right: z.string().describe("Right capture Evidence JSON path"),
+      traceSpec: z
+        .string()
+        .optional()
+        .describe("Optional partial-order or finite-trace specification path"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "compare-process-captures", () =>
-        compareProcessEvidenceFiles(args.left, args.right),
+        compareProcessEvidenceFiles(args.left, args.right, args.traceSpec),
       ),
   });
 };

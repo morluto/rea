@@ -158,6 +158,47 @@ Compare two saved Evidence records with:
 rea compare-process-captures authority.json reconstruction.json
 ```
 
+Pass an optional third path, `rea compare-process-captures authority.json
+reconstruction.json trace.json`, when valid executions may differ in declared
+concurrent ordering. MCP callers pass the same object as `trace_spec` to
+`compare_process_captures`. A trace specification declares exact named events
+and chooses one language:
+
+- `partial_order` requires every event pair to be related by a
+  `happens_before` edge (including transitive edges) or an explicit
+  `unordered_groups` declaration. `not_before` expresses negative ordering
+  constraints without inferring causality. Optional `prefix` and `suffix`
+  arrays remain exact.
+- `finite_traces` lists the complete accepted variants. An `unordered` token
+  accepts permutations of exactly its declared event multiset; it does not
+  drop or broadly sort events.
+
+Each event uses one source family (`terminal_raw`, `terminal_rendered`,
+`interaction`, `lifecycle`, `process`, `filesystem`, `http`, `websocket`,
+`shim`, or `replay_transition`), an exact JSON payload, and a discriminated
+cardinality: `required`, `optional`, `exact`, or `range`. Specifications with
+duplicate or overlapping predicates, unknown references, cycles, implicit
+ordering gaps, ordered/unordered conflicts, or finite variants that violate
+cardinality are rejected before comparison.
+
+Event payloads are exact by default. To compare schedules whose recorder
+metadata necessarily changes, an event may explicitly list top-level
+`ignore_fields` from the bounded set `sequence`, `at_ms`, `scheduled_at_ms`,
+`dispatched_at_ms`, and `elapsed_ms`; its `exact` object must omit those fields.
+All predicates for one source use the same ignore set, so relaxed metadata
+cannot create declaration-order matching ambiguity. Other payload fields are
+never dropped or normalized by trace comparison.
+
+Process Capture records a monotonic `event_journal` at observation time. Trace
+comparison uses only this capture order for cross-source causality; timestamps
+are retained as event data but never promoted into happens-before evidence.
+Older captures without a complete journal, truncated captures, and relevant
+residual unknowns return a trace verdict of `unknown`. A passing result retains
+each side's raw journal locations and identifies either the matched finite
+variant or the complete satisfied constraint set. A failure returns the first
+declaration-ordered predicate, cardinality, edge, prefix, suffix, or language
+violation with its relevant event locations.
+
 The result classifies terminal, interaction, exit, filesystem, protocol,
 process, and shim behavior. `first_divergence` points to the earliest observed
 difference. Residual unknowns prevent a claim of complete equivalence, but they

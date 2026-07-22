@@ -160,7 +160,7 @@ const EXPECTED = {
     "REA function comparison",
   ],
   compare_process_captures: [
-    "rea.process-comparison/v3",
+    ["rea.process-comparison/v3", "rea.process-comparison/v4"],
     "rea-process",
     "REA deterministic process harness",
   ],
@@ -405,7 +405,9 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
   const expected = EXPECTED[evidence.operation as keyof typeof EXPECTED];
   if (
     expected === undefined ||
-    evidence.predicate_type !== expected[0] ||
+    !(Array.isArray(expected[0])
+      ? expected[0].includes(evidence.predicate_type)
+      : evidence.predicate_type === expected[0]) ||
     evidence.provider.id !== expected[1] ||
     evidence.provider.name !== expected[2] ||
     evidence.provider.version !==

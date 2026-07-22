@@ -5,7 +5,7 @@ import {
   processComparisonInputSchema,
   SESSION_TOOL_CONTRACTS,
 } from "../contracts/toolContracts.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createEvidence, type EvidenceLocation } from "../domain/evidence.js";
 import { EvidenceIntegrityError } from "../domain/errors.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
@@ -21,6 +21,16 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { safeParseToolInput } from "./toolInputValidation.js";
 import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+
+const PROCESS_CAPTURE_EVIDENCE = {
+  operation: "capture_process_scenario",
+  predicate: "rea.process-capture/v4",
+} as const;
+
+const sourceLocations = (
+  left: readonly EvidenceLocation[] | undefined,
+  right: readonly EvidenceLocation[] | undefined,
+): readonly EvidenceLocation[] => [...(left ?? []), ...(right ?? [])];
 
 /** Register deterministic process-capture comparison and contradiction tracking. */
 export const registerProcessComparisonTool = (
@@ -40,20 +50,16 @@ export const registerProcessComparisonTool = (
       );
       if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
       const parsed = parsedInput.value;
-      const expected = {
-        operation: "capture_process_scenario",
-        predicate: "rea.process-capture/v4",
-      };
       const leftRecord = resolveSessionEvidenceIds(
         session,
         [parsed.left_evidence_id],
-        expected,
+        PROCESS_CAPTURE_EVIDENCE,
       );
       if (!leftRecord.ok) return toCallToolResult(leftRecord, contract);
       const rightRecord = resolveSessionEvidenceIds(
         session,
         [parsed.right_evidence_id],
-        expected,
+        PROCESS_CAPTURE_EVIDENCE,
       );
       if (!rightRecord.ok) return toCallToolResult(rightRecord, contract);
       let comparison: ReturnType<typeof compareProcessCaptures>;
@@ -71,6 +77,9 @@ export const registerProcessComparisonTool = (
             ...(parsed.max_capture_age_ms === undefined
               ? {}
               : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
+            ...(parsed.trace_spec === undefined
+              ? {}
+              : { traceSpecification: parsed.trace_spec }),
             now,
           }),
         );
@@ -89,18 +98,28 @@ export const registerProcessComparisonTool = (
         );
       }
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-comparison/v3",
+        predicateType:
+          parsed.trace_spec === undefined
+            ? "rea.process-comparison/v3"
+            : "rea.process-comparison/v4",
         operation: contract.name,
         parameters: {
           left_evidence_id: parsed.left_evidence_id,
           right_evidence_id: parsed.right_evidence_id,
           left_normalization: leftCapture.normalization,
           right_normalization: rightCapture.normalization,
+          ...(parsed.trace_spec === undefined
+            ? {}
+            : { trace_spec: jsonValueSchema.parse(parsed.trace_spec) }),
         },
         result: jsonValueSchema.parse(comparison),
         confidence: "derived",
         authority: "analyst-inference",
         limitations: comparison.limitations,
+        locations: sourceLocations(
+          leftRecord.value[0]?.locations,
+          rightRecord.value[0]?.locations,
+        ),
         evidenceLinks: [parsed.left_evidence_id, parsed.right_evidence_id],
       });
       return toCallToolResult(
