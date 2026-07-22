@@ -57,7 +57,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run test:fast`: run the parallel test project without the serial integration group.
 - `npm run test:integration`: run the serial filesystem, process, and CLI integration group.
 - `npm run test:watch`: watch tests affected by working-tree changes in the parallel project, without coverage.
-- `npm run test:coverage`: run the complete suite with coverage; CI owns verbose and JUnit reporting.
+- `npm run test:coverage`: run the complete suite with coverage; CI shards the suite and owns JUnit reporting.
 - `npm run typecheck`: run strict TypeScript checks without emitting files.
 - `npm run lint`: apply oxlint rules (complexity, max-lines, unused vars, and TypeScript-specific checks).
 - `npm run lint:fix`: auto-fix oxlint violations where possible.

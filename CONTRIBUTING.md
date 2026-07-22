@@ -40,14 +40,15 @@ artifact; the generated HTML is not committed.
 Local `npm test` runs without coverage, retries, or verbose output. Use `npm run
 test:fast` for the parallel group, `npm run test:integration` for serial
 filesystem/process/CLI cases, and `npm run test:watch` to watch tests affected by
-working-tree changes. CI runs `npm run test:ci`, which adds coverage, retries,
-verbose output, and JUnit results. Coverage thresholds remain in
+working-tree changes. CI splits the complete suite across two native Vitest
+shards, then merges their coverage and JUnit reports. `npm run test:ci` runs the
+equivalent unsharded gate locally. Coverage thresholds remain in
 `vitest.config.ts`.
 
 CI installs dependencies once for all static checks, cancels superseded PR
-runs, and skips package and Windows lanes when a PR changes only files outside
-the package/runtime/test boundary. TypeDoc renders only in pull-request CI; it
-does not run in local commit or pre-push hooks, or in post-merge `main` CI.
+runs, and skips package, Windows, and full test lanes for documentation-only
+pull requests. TypeDoc renders only in pull-request CI; it does not run in local
+commit or pre-push hooks, or in post-merge `main` CI.
 
 Tests that need a temporary directory must use
 `createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`. The

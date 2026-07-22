@@ -20,6 +20,18 @@ describe("package installation workflows", () => {
     expect(continuousIntegration).toContain("npm run verify:package");
     expect(continuousIntegration).toContain("name: Static checks");
     expect(continuousIntegration).toContain("npm run check:ci");
+    expect(continuousIntegration).toContain("shard: [1/2, 2/2]");
+    expect(continuousIntegration).toContain("needs: [changes, test-shard]");
+    expect(continuousIntegration).toContain("if-no-files-found: error");
+    expect(continuousIntegration).toContain("overwrite: true");
+    expect(continuousIntegration).toContain(
+      "code: ${{ steps.package.outputs.required }}",
+    );
+    expect(continuousIntegration).toContain("CODE_REQUIRED:");
+    expect(continuousIntegration).toContain(
+      'test "${CODE_REQUIRED}" != "true" || test "${SHARD_RESULT}" = "success"',
+    );
+    expect(continuousIntegration).toContain("npm run test:ci:merge");
     expect(continuousIntegration).toContain("needs: changes");
     expect(continuousIntegration).toContain(
       "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
