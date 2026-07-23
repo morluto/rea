@@ -115,6 +115,7 @@ describe("server and catalog identity", () => {
           {
             operation: "inspect_macho",
             available: false,
+            availability_code: "unsupported_host",
             reason: "Native macOS utilities require macOS.",
           },
         ],

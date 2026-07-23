@@ -66,6 +66,7 @@ const providerCapability = z.object({
   operation: z.string(),
   available: z.boolean(),
   reason: z.string().nullable(),
+  availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
   input_contract_version: z.number().int().min(1),
   output_contract_version: z.number().int().min(1),
   pagination: z.enum(["none", "offset", "cursor"]),
