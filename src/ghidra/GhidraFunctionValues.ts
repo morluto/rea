@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
 import {
+  functionInstructionWindowSchema,
   functionDossierSchema,
   type FunctionDossier,
 } from "../domain/hopperValues.js";
@@ -24,6 +25,7 @@ export const GHIDRA_FUNCTION_OPERATIONS = [
   "procedure_callers",
   "procedure_info",
   "procedure_pseudo_code",
+  "read_function_instructions",
   "procedure_references",
   "xrefs",
 ] as const;
@@ -88,6 +90,13 @@ const inputSchemas = {
   procedure_callers: z.object(directProcedure).strict(),
   procedure_info: z.object(directProcedure).strict(),
   procedure_pseudo_code: z.object(directProcedure).strict(),
+  read_function_instructions: z
+    .object({
+      ...directProcedure,
+      offset: z.number().int().min(0).max(100_000).default(0),
+      limit: z.number().int().min(1).max(500).default(64),
+    })
+    .strict(),
   procedure_references: z
     .object({
       ...directProcedure,
@@ -281,6 +290,9 @@ const ghidraFunctionDossier = functionDossierSchema.superRefine(
       });
   },
 );
+const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
+  .extend({ procedure: procedureIdentity })
+  .strict();
 
 const resultSchemas = {
   analyze_function: ghidraFunctionDossier,
@@ -289,6 +301,7 @@ const resultSchemas = {
   procedure_callers: z.array(ghidraCanonicalAddressSchema),
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
+  read_function_instructions: ghidraFunctionInstructionWindow,
   procedure_references: procedureReferences,
   xrefs: z.array(ghidraCanonicalAddressSchema),
 } satisfies Readonly<Record<GhidraFunctionOperation, z.ZodType>>;

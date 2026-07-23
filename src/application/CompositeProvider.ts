@@ -10,6 +10,7 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
 /** Synthetic compatibility identity for a deterministic provider set. */
 export const compositeProviderIdentity = (
@@ -103,6 +104,16 @@ export class CompositeProvider implements AnalysisProvider {
       clients.set(provider, created);
       return created;
     };
+    const closeWithOutcome: NonNullable<
+      AnalysisClient["closeWithOutcome"]
+    > = async (options) => {
+      const outcomes = await Promise.all(
+        [...clients.entries()].map(([provider, client]) =>
+          closeAnalysisClient(client, provider.identity().id, options),
+        ),
+      );
+      return outcomes.find((outcome) => !outcome.ok) ?? ok(null);
+    };
     return {
       execute: (operation, parameters, options) => {
         if (operation === "health")
@@ -135,10 +146,15 @@ export class CompositeProvider implements AnalysisProvider {
           .sort((left, right) =>
             left.provider.id.localeCompare(right.provider.id),
           ),
+      requestActivitySnapshots: () =>
+        [...clients.values()]
+          .flatMap((client) => client.requestActivitySnapshots?.() ?? [])
+          .sort((left, right) =>
+            left.provider.id.localeCompare(right.provider.id),
+          ),
+      closeWithOutcome,
       close: async () => {
-        await Promise.allSettled(
-          [...clients.values()].map(async (client) => client.close()),
-        );
+        await closeWithOutcome();
       },
     };
   }

@@ -148,6 +148,7 @@ const projectSessionStatus = (options: {
     active_provider: activeProvider,
     target: open ? targetFrom(options.status) : null,
     alignment: options.serverIdentity.alignment,
+    analysis_activity: options.status.analysis_activity,
     recommended_actions: recommendedActions(
       open,
       options.serverIdentity.alignment.state,

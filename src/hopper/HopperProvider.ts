@@ -255,6 +255,26 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ? []
           : [{ provider: executionProvider, observation }];
       },
+      requestActivitySnapshots: () => {
+        const activity = client.requestActivity();
+        return [
+          {
+            provider: executionProvider,
+            active:
+              activity === null
+                ? null
+                : {
+                    requestId: activity.requestId,
+                    operation: activity.operation,
+                    elapsedMs: activity.elapsedMs,
+                    timeoutMs: activity.timeoutMs,
+                    callerState: activity.callerState,
+                  },
+            queuedRequests: activity?.queuedRequests ?? 0,
+          },
+        ];
+      },
+      closeWithOutcome: (options) => client.closeWithOutcome(options),
       close: () => client.close(),
     };
   }

@@ -16,6 +16,7 @@ export const registerCoreAnalysisCommands = (
 ): void => {
   registerCoreCommands(cli, logger);
   registerFunctionCommand(cli, logger);
+  registerInstructionsCommand(cli, logger);
   registerSearchCommand(cli, logger);
   registerXrefsCommand(cli, logger);
   registerTraceCommand(cli, logger);
@@ -278,6 +279,54 @@ const registerFunctionCommand = (cli: CliInstance, logger: Logger): void => {
             limit: options.limit,
             max_pseudocode_chars: options.maxPseudocodeChars,
             max_instructions: options.maxInstructions,
+          },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
+        ),
+      ),
+  });
+};
+
+const registerInstructionsCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.instructions, {
+    description: "Read one bounded raw-instruction window without decompiling",
+    args: z.object({
+      path: z.string().describe("App or program path"),
+      address: z.string().describe("Procedure name or address"),
+    }),
+    options: z.object({
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(100_000)
+        .default(0)
+        .describe("Zero-based instruction offset"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(64)
+        .describe("Maximum raw instructions to return"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load and update a local analysis snapshot"),
+      provider: providerSelectionOption,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.instructions, () =>
+        runDirectAnalysis(
+          args.path,
+          "read_function_instructions",
+          {
+            procedure: args.address,
+            offset: options.offset,
+            limit: options.limit,
           },
           directAnalysisOptions(logger, options.snapshot, options.provider),
         ),

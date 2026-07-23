@@ -17,6 +17,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   procedure_callees: { procedure: "main" },
   procedure_callers: { procedure: "main" },
   procedure_info: { procedure: "main" },
+  read_function_instructions: { procedure: "main" },
   procedure_references: { procedure: "main" },
   procedure_pseudo_code: { procedure: "main" },
   resolve_containing_procedure: { address: "0x1000" },

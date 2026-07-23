@@ -23,6 +23,7 @@ import type { ReconstructionCoverageWorkspace } from "../domain/reconstructionCo
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
+  ExecutionOptions,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
 
@@ -37,7 +38,9 @@ export interface BinarySessionPort extends AnalysisOperationPort {
       readonly providerId?: AnalysisProviderSelector;
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
-  close(): Promise<Result<null, AnalysisError>>;
+  close(
+    options?: Pick<ExecutionOptions, "progress">,
+  ): Promise<Result<null, AnalysisError>>;
   status(): JsonValue;
   activeTarget(): BinaryTarget | undefined;
   recordEvidence(

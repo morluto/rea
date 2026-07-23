@@ -13,7 +13,7 @@ The P0 accepts exactly:
 - an operator-installed official Ghidra 12.1.2 distribution;
 - a 64-bit full JDK 21;
 - an explicit native, non-managed, non-DLL x86-64 PE application; and
-- the existing 18 read-only Ghidra inventory and function-analysis operations.
+- the existing 19 read-only Ghidra inventory and function-analysis operations.
 
 Hopper, Ghidra GUI state, mutation, controlled JavaScript replay, process
 capture, browser/Electron observation, artifact extraction, and general
@@ -146,7 +146,7 @@ npm run verify:ghidra:windows
 
 The verifier creates an ignored deterministic x86-64 PE fixture, checks its
 fixed SHA-256, opens Ghidra 12.1.2 through the production Java bridge, exercises
-all 18 admitted operations, verifies the target/snapshot/import digest chain,
+all 19 admitted operations, verifies the target/snapshot/import digest chain,
 and checks endpoint, project, process, and runtime cleanup. The GitHub workflow
 accepts only the fixed `real-ghidra-windows` repository-dispatch event against
 default-branch `main`, a protected `real-ghidra-windows` environment, and a

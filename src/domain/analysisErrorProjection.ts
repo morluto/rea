@@ -60,6 +60,7 @@ export const projectAnalysisError = (
 };
 
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
+  if (error.cleanupIncomplete) return "cleanup_incomplete";
   if (error instanceof ReplayPlanStaleError) return "plan_stale";
   if (error instanceof PermissionRequiredError) return "permission_required";
   if (error instanceof ProviderSelectionError)
@@ -295,6 +296,12 @@ const providerErrorDetails = (
     return {
       provider_id: error.providerId,
       operation: error.operation,
+      ...(error.cleanupIncomplete
+        ? {
+            cleanup: "incomplete",
+            resources: [...error.cleanupResources],
+          }
+        : {}),
       ...(error.diagnostics === undefined
         ? {}
         : { diagnostics: error.diagnostics }),

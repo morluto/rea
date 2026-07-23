@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { OFFICIAL_TOOL_CONTRACTS } from "../src/contracts/toolContracts.js";
 import type { HopperStartupDiagnostic } from "../src/domain/hopperStartupFailure.js";
+import { projectAnalysisError } from "../src/domain/errors.js";
 import { ok } from "../src/domain/result.js";
 import type {
   BridgeLauncher,
@@ -103,6 +104,27 @@ class OwnedFixtureLauncher implements BridgeLauncher {
       shutdownByCleanup: true,
       cleanup: () => cleanupOwnedProcessGroup(started.ownership),
     });
+  }
+}
+
+class UnconfirmedFixtureLauncher implements BridgeLauncher {
+  launch(session: BridgeSession) {
+    return Promise.resolve(
+      ok({
+        process: spawn(
+          process.execPath,
+          [
+            fixturePath,
+            session.socketPath,
+            session.token,
+            session.runId,
+            "unconfirmed",
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        ),
+        ownsProcessLifetime: false,
+      }),
+    );
   }
 }
 
@@ -235,10 +257,16 @@ describe("HopperClient", () => {
     expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(104);
   });
 
-  it("parses fragmented health and correlates concurrent responses", async () => {
+  it("serializes concurrent calls until the active Hopper reply arrives", async () => {
     const client = await startClient();
     const slow = client.callTool("echo", { label: "slow", delay: 30 });
     const fast = client.callTool("echo", { label: "fast", delay: 1 });
+    let fastSettled = false;
+    void fast.then(() => {
+      fastSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fastSettled).toBe(false);
     await expect(Promise.all([slow, fast])).resolves.toEqual([
       { ok: true, value: { label: "slow", delay: 30 } },
       { ok: true, value: { label: "fast", delay: 1 } },
@@ -250,7 +278,7 @@ describe("HopperClient", () => {
     const results = await Promise.all(
       OFFICIAL_TOOL_CONTRACTS.map(({ name }) => client.callTool(name, {})),
     );
-    expect(results).toHaveLength(33);
+    expect(results).toHaveLength(34);
     expect(results.every((result) => result.ok)).toBe(true);
   });
 
@@ -309,6 +337,45 @@ describe("HopperClient", () => {
     await expect(client.callTool("echo", { value: "alive" })).resolves.toEqual({
       ok: true,
       value: { value: "alive" },
+    });
+  });
+
+  it("retains timed-out bridge activity until the late reply releases the queue", async () => {
+    const client = await startClient();
+    const progress: string[] = [];
+    const result = await client.callTool(
+      "echo",
+      { delay: 60 },
+      {
+        timeoutMs: 5,
+        progress: {
+          report: (update) => {
+            progress.push(update.message);
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperTimeoutError" },
+    });
+    expect(client.requestActivity()).toMatchObject({
+      operation: "echo",
+      callerState: "timed_out",
+      timeoutMs: 5,
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("started on Hopper's serial bridge"),
+      ]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(client.requestActivity()).toBeNull();
+    await expect(client.callTool("echo", { alive: true })).resolves.toEqual({
+      ok: true,
+      value: { alive: true },
     });
   });
 
@@ -439,6 +506,36 @@ describe("HopperClient", () => {
     await client.close();
     expect(firstSettled).toBe(true);
     await first;
+  });
+
+  it("reports unconfirmed unowned document cleanup as a typed close failure", async () => {
+    const client = new HopperClient({
+      launcher: new UnconfirmedFixtureLauncher(),
+      startupTimeoutMs: 1_000,
+    });
+    clients.push(client);
+    expect((await client.start()).ok).toBe(true);
+
+    const closed = await client.closeWithOutcome();
+
+    expect(closed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        cleanupIncomplete: true,
+        cleanupResources: ["hopper-document"],
+      },
+    });
+    if (!closed.ok)
+      expect(projectAnalysisError(closed.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          provider_id: "hopper",
+          operation: "close_binary",
+          cleanup: "incomplete",
+          resources: ["hopper-document"],
+        },
+      });
   });
 
   it("kills only its owned Hopper group and emits sanitized shutdown coordinates", async () => {

@@ -237,13 +237,13 @@ On Windows, set the same variables in PowerShell and run `rea doctor --json`; au
 
 REA loads its packaged Java `HeadlessScript` with `-scriptPath`, copies and digest-verifies the target in an ephemeral runtime, enables `-readOnly` and `-deleteProject`, caps auto-analysis at 300 seconds with two CPUs and a 2 GiB Java heap, and authenticates every request. Linux uses a mode-0600 Unix socket. Windows P0 uses token-authenticated IPv4 loopback and a token-free endpoint record because Node path-based IPC does not connect to Java AF_UNIX sockets on Windows. The bridge verifies Ghidra's imported-byte SHA-256 before serving any operation.
 
-The Ghidra adapter declares 18 direct and enhanced operations. Its ten inventory operations are `list_documents`, `list_procedures`, `list_strings`, `list_names`, `list_segments`, `address_name`, `procedure_address`, `resolve_containing_procedure`, `search_procedures`, and `search_strings`. It also admits `procedure_info`, `procedure_pseudo_code`, `procedure_assembly`, `procedure_callers`, `procedure_callees`, `procedure_references`, `xrefs`, and `analyze_function`. These capabilities enable the shared Swift/Objective-C inventory workflows, `binary_overview`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, `trace_feature`, and complete function dossiers. Default-space addresses are lowercase `0x` hexadecimal. Other spaces, including `EXTERNAL`, use `<percent-encoded-space>:0x<hex>`. Symbol results identify primary, dynamic, external, type, and source facts; procedures distinguish external functions and thunks; strings identify charset, missing-terminator state, byte length, and value truncation; memory-block ends are exclusive and permissions come directly from Ghidra.
+The Ghidra adapter declares 19 direct and enhanced operations. Its ten inventory operations are `list_documents`, `list_procedures`, `list_strings`, `list_names`, `list_segments`, `address_name`, `procedure_address`, `resolve_containing_procedure`, `search_procedures`, and `search_strings`. It also admits `procedure_info`, `procedure_pseudo_code`, `procedure_assembly`, `read_function_instructions`, `procedure_callers`, `procedure_callees`, `procedure_references`, `xrefs`, and `analyze_function`. `read_function_instructions` is the offset-paginated fast path for raw instruction windows: it does not invoke the decompiler or whole-program name/string inventories, and is also exposed as `rea instructions`. These capabilities enable the shared Swift/Objective-C inventory workflows, `binary_overview`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, `trace_feature`, and complete function dossiers. Default-space addresses are lowercase `0x` hexadecimal. Other spaces, including `EXTERNAL`, use `<percent-encoded-space>:0x<hex>`. Symbol results identify primary, dynamic, external, type, and source facts; procedures distinguish external functions and thunks; strings identify charset, missing-terminator state, byte length, and value truncation; memory-block ends are exclusive and permissions come directly from Ghidra.
 
 The bridge serves operations only after auto-analysis completes. Each Program owns one persistent `DecompInterface`; a bounded 32-request FIFO serializes Ghidra API access, and every decompile has a 30-second native deadline. Reference results preserve Ghidra's call/jump/data/read/write/indirect/computed/external facts, while unresolved targetless flows remain explicitly unknown. Synthetic entry-point references without actionable memory sources are omitted. Pseudocode and assembly are provider-specific observations, not original source or Hopper-equivalent text. An analysis timeout, scan or inventory safety limit, request timeout, or oversized response fails explicitly instead of returning a partial result labeled complete.
 
 `npm run verify:ghidra` compiles source-owned x86-64 debug and stripped ELF, AArch64 ELF, x86-64 PE, and x86-64 Mach-O fixtures. Against real Ghidra 12.1.2 it validates every admitted operation, direct and indirect calls, imports/exports/thunks, typed references, strings/xrefs, multi-block CFG, cancellation, deadlines, concurrency, malformed inputs, and complete process/project cleanup. Set `REA_CC`, `REA_CLANG`, or `REA_LLD_LINK` only when the corresponding compiler command is not on `PATH`.
 
-`npm run verify:ghidra:windows` uses a deterministic source-owned native x86-64 PE application and requires all 18 operations, target/snapshot/import digest linkage, authenticated loopback transport, and cleanup on a controlled Windows x64 Ghidra 12.1.2 runner. This proof does not establish Job Object ownership, private DACLs, or reparse-point-safe authority.
+`npm run verify:ghidra:windows` uses a deterministic source-owned native x86-64 PE application and requires all 19 operations, target/snapshot/import digest linkage, authenticated loopback transport, and cleanup on a controlled Windows x64 Ghidra 12.1.2 runner. This proof does not establish Job Object ownership, private DACLs, or reparse-point-safe authority.
 
 To remove only REA-owned MCP registrations and the managed skill:
 
@@ -373,7 +373,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 
 | Tool family               | Count | Examples                                                                                                                                                                                                                                  |
 | ------------------------- | ----: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    33 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                                                                                                                          |
+| Native inspection         |    34 | procedures, pseudocode, assembly, strings, names, segments, callers, callees, xrefs, annotations                                                                                                                                          |
 | Investigation workflows   |    10 | `binary_overview`, `analyze_function`, `batch_decompile`, `trace_feature`, call graphs, Swift and Objective-C discovery                                                                                                                   |
 | Native macOS utilities    |     5 | Mach-O metadata, code signatures, plists, architectures, Swift demangling; Hopper-free and provenance-bearing                                                                                                                             |
 | Artifact graph            |     2 | deterministic directory, ZIP/APK/IPA/MSIX/AppX, and ASAR inventory; explicitly selected extraction into an absent owned tree                                                                                                              |
@@ -592,10 +592,17 @@ and retains one provider-attributed, token-verified observation per started
 provider. Each observation carries `observed_at` and remains `unavailable` or
 `verified`; a verified empty descendant list is distinct from both. Snapshots
 describe bounded observations, not current live state or historical absence.
+For providers with serial work, `analysis_activity` distinguishes `idle`,
+`busy`, and `timed_out_busy`, and reports the active operation, elapsed time,
+caller state, timeout, and queued-request count. A caller timeout therefore
+does not falsely imply that Hopper's Python thread is available. `close_binary`
+clears the REA session but returns `cleanup_incomplete` when authenticated
+document shutdown, owned process cleanup, or private runtime removal cannot be
+verified.
 Reopening same target without a selector keeps its binding; runtime failure
 never selects another provider silently.
 Ghidra can appear as an available, target-compatible candidate after doctor
-validates its exact installation. Its capability list contains the 18 admitted
+validates its exact installation. Its capability list contains the 19 admitted
 read-only inventory and function-analysis operations; selecting it still does
 not make Hopper-only GUI or mutation operations available and never triggers a
 silent fallback.
@@ -627,7 +634,11 @@ REA starts Hopper when needed; Hopper does not need to be running first. Hopper'
 
 REA derives explicit format and architecture arguments to prevent common FAT and ARM selection dialogs. Other Hopper or macOS dialogs may still require a person. REA reports timeouts and remediation through CLI or MCP results instead of attempting to answer UI prompts.
 
-Closing a REA session shuts down its bridge and removes its private socket directory. It does not quit a Hopper application the user may be using.
+Hopper bridge calls pass through a bounded serial FIFO because Hopper's Python API runs on one dedicated thread. Queue wait counts against the caller deadline; a timeout settles the caller but does not release the wire slot until Hopper actually replies. `binary_session.analysis_activity` exposes that detached work and MCP progress reports elapsed time. Successful decompilation text is cached per document and procedure, shared by pseudocode and dossier requests, and invalidated after rename or comment mutation.
+
+Hopper's synchronous public Python calls cannot stream a partial response after the caller deadline. Use `read_function_instructions` or `rea instructions` when raw instruction orientation is enough: this path does not decompile or scan whole-program name/string inventories. If a dossier has already timed out, inspect `analysis_activity`; do not assume a raw request can enter the serial bridge until that detached Hopper call actually returns.
+
+Closing a REA session shuts down its bridge and removes its private socket directory. It does not quit a Hopper application the user may be using. If shutdown or cleanup cannot be verified, `close_binary` returns `cleanup_incomplete` with the affected local resources.
 
 ## Advanced process-capture setup
 

@@ -78,7 +78,7 @@ describe("provider-neutral architecture", () => {
     if (!config.ok) return;
     const provider = new HopperProvider(config.value, silentLogger);
     const capabilities = provider.capabilities();
-    expect(capabilities).toHaveLength(34);
+    expect(capabilities).toHaveLength(35);
     expect(new Set(capabilities.map(({ operation }) => operation)).size).toBe(
       capabilities.length,
     );

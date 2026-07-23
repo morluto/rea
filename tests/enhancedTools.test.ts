@@ -546,7 +546,7 @@ describe("enhanced MCP tools", () => {
         arguments: { detail: "detailed", limit: 1 },
       }),
     );
-    expect(procedureOffsets).toEqual([0, 500]);
+    expect(procedureOffsets).toEqual([0]);
     expect(result).toEqual({
       document: "fixture",
       detail: "detailed",

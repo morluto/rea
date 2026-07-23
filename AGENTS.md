@@ -41,7 +41,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `tests/`: Vitest suite. `tests/fixtures/` holds reusable provider-process fixtures, source-owned synthetic JavaScript graph and Electron/Webpack/Rspack artifact trees, and the fake launcher, Hopper bridge, and CDP seams.
 - `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
 - `scripts/verify-real-ghidra.mjs`: real Linux Ghidra verifier for x86-64 debug/stripped ELF, AArch64 ELF, PE, and Mach-O function semantics plus complete cleanup.
-- `scripts/verify-real-ghidra-windows.mjs`: real Windows x64 Ghidra P0 verifier for the source-owned native PE fixture, all 18 admitted operations, digest linkage, loopback transport, and cleanup.
+- `scripts/verify-real-ghidra-windows.mjs`: real Windows x64 Ghidra P0 verifier for the source-owned native PE fixture, all 19 admitted operations, digest linkage, loopback transport, and cleanup.
 - `scripts/verify-real-browser.mjs`: real Chrome end-to-end verifier for the passive CDP provider.
 - `scripts/print-mcp-config.mjs`: prints an MCP server config with absolute paths filled in (`npm run config:print -- /path/to/binary`).
 

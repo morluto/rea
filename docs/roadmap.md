@@ -11,11 +11,11 @@ additively; Devin is reported but left unchanged.
 
 The Ghidra foundation supports Linux x64 with exact Ghidra 12.1.2 and a 64-bit
 full JDK 21. An experimental Windows x64 P0 admits approved native x86-64 PE
-applications through the same 18-operation Java bridge. Doctor validates those coordinates; approved Linux/macOS setup propagates them
+applications through the same 19-operation Java bridge. Doctor validates those coordinates; approved Linux/macOS setup propagates them
 to MCP registrations without installing or modifying either dependency. REA's
 packaged Java bridge then proves an isolated read-only headless import,
 post-analysis handshake, complete cleanup, ten admitted read-only inventory
-operations, and eight function-analysis operations. Real source-owned x86-64
+operations, and nine function-analysis operations. Real source-owned x86-64
 debug/stripped ELF, AArch64 ELF, PE, and Mach-O fixtures cover program,
 procedure, string, symbol, external/thunk, memory, resolution, search,
 decompilation, assembly, calls, typed references, xrefs, and CFG semantics.

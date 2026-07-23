@@ -52,6 +52,19 @@ describe("Ghidra function-analysis boundary values", () => {
         collection_offset: { basic_blocks: 0, outgoing_references: 0 },
       },
     });
+    expect(
+      parseGhidraFunctionInput("read_function_instructions", {
+        procedure: "main",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        document: null,
+        procedure: "main",
+        offset: 0,
+        limit: 64,
+      },
+    });
     expect(parseGhidraFunctionInput("xrefs", {})).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisInputError" },
@@ -65,14 +78,39 @@ describe("Ghidra function-analysis boundary values", () => {
   });
 
   it("keeps the admitted operation set closed", () => {
-    expect(GHIDRA_FUNCTION_OPERATIONS).toHaveLength(8);
+    expect(GHIDRA_FUNCTION_OPERATIONS).toHaveLength(9);
     expect(isGhidraFunctionOperation("analyze_function")).toBe(true);
+    expect(isGhidraFunctionOperation("read_function_instructions")).toBe(true);
     expect(isGhidraFunctionOperation("procedure_pseudo_code")).toBe(true);
     expect(isGhidraFunctionOperation("list_procedures")).toBe(false);
     expect(isGhidraFunctionOperation("set_comment")).toBe(false);
   });
 
   it("parses provider-classified function facts and reference kinds", () => {
+    expect(
+      parseGhidraFunctionResult("read_function_instructions", {
+        procedure: ghidraFunctionIdentity(),
+        instructions: ghidraBounded(["0x401000: push rbp"]),
+        instructions_scanned: 1,
+        instruction_scan_truncated: false,
+        limitations: ["Ghidra-specific instruction text."],
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      parseGhidraFunctionResult("read_function_instructions", {
+        procedure: {
+          ...ghidraFunctionIdentity(),
+          address: "0X401000",
+        },
+        instructions: ghidraBounded(["0x401000: push rbp"]),
+        instructions_scanned: 1,
+        instruction_scan_truncated: false,
+        limitations: ["Ghidra-specific instruction text."],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
     expect(
       parseGhidraFunctionResult("procedure_info", {
         name: "fixture_main",

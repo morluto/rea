@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import {
   HopperCancelledError,
+  type AnalysisError,
   type HopperError,
   HopperProcessError,
   HopperProtocolError,
@@ -16,36 +17,35 @@ import {
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { silentLogger, type Logger } from "../logger.js";
-import { PendingOperations } from "../process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
-import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
+import type { HopperDiagnostic } from "./HopperDiagnostics.js";
+import { cleanupHopperSession } from "./HopperCleanup.js";
 import {
-  createOwnedHopperShutdownDiagnostic,
-  type HopperDiagnostic,
-  providerCleanupFailure,
-} from "./HopperDiagnostics.js";
-import {
-  isHopperCleanupRequired,
-  isHopperShutdownAcknowledgement,
   parseHopperServerInfo,
   type HopperServerInfo,
 } from "./HopperSessionValues.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import { hopperLauncherFailureDiagnostic } from "./HopperProcessDiagnostic.js";
-import { parseResponseLine, responseResult } from "./protocol.js";
+import {
+  HopperRequestQueue,
+  type HopperRequestActivity,
+} from "./HopperRequestQueue.js";
+import { HopperResponseStream } from "./HopperResponseStream.js";
+import { responseResult } from "./protocol.js";
 
 export type { HopperServerInfo } from "./HopperSessionValues.js";
 
-const MAX_LINE_BYTES = 10 * 1024 * 1024;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
+const MAX_QUEUED_REQUESTS = 64;
 const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
@@ -72,10 +72,8 @@ export class HopperClient {
     Pick<HopperClientOptions, "requestTimeoutMs" | "startupTimeoutMs">
   > &
     HopperClientOptions;
-  readonly #pending = new PendingOperations<
-    number,
-    Result<JsonValue, HopperError>
-  >();
+  readonly #requests: HopperRequestQueue;
+  readonly #responses: HopperResponseStream;
   readonly #logger: Logger;
   #socket: Socket | undefined;
   #launch: BridgeLaunch | undefined;
@@ -84,15 +82,14 @@ export class HopperClient {
   #token: string | undefined;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
-  #buffer = "";
   #closing = false;
   #launcherExitCode: number | null | undefined;
   #launcherFailureDiagnostic: HopperStartupDiagnostic | undefined;
   #startupController: AbortController | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
-  #closePromise: Promise<void> | undefined;
+  #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   readonly #onSocketData = (chunk: string): void => {
-    this.#onData(chunk);
+    this.#responses.push(chunk);
   };
   readonly #onSocketError = (): void => {
     this.#failAll(new HopperProcessError(null));
@@ -108,11 +105,40 @@ export class HopperClient {
       requestTimeoutMs: options.requestTimeoutMs ?? 30_000,
       startupTimeoutMs: options.startupTimeoutMs ?? 120_000,
     };
+    this.#requests = new HopperRequestQueue(
+      MAX_QUEUED_REQUESTS,
+      ({ id, method, params }, failed) => {
+        const socket = this.#socket;
+        const token = this.#token;
+        if (socket === undefined || socket.destroyed || token === undefined) {
+          failed();
+          return;
+        }
+        socket.write(
+          `${JSON.stringify({ id, token, method, params })}\n`,
+          (cause) => {
+            if (cause !== undefined && cause !== null) failed();
+          },
+        );
+      },
+    );
+    this.#responses = new HopperResponseStream({
+      accept: (response) =>
+        this.#requests.accept(response.id, responseResult(response)),
+      hasQueued: (id) => this.#requests.hasQueued(id),
+      nextRequestId: () => this.#nextId,
+      abort: (message, cause) => this.#abortProtocol(message, cause),
+    });
   }
 
   /** Latest token-verified launcher lineage for the active run. */
   runtimeLineage() {
     return this.#lineage.snapshot();
+  }
+
+  /** Observe a request that still occupies Hopper after caller timeout/cancel. */
+  requestActivity(): HopperRequestActivity | null {
+    return this.#requests.activity();
   }
 
   /** Launch the bridge once and complete its authenticated health handshake. */
@@ -251,6 +277,7 @@ export class HopperClient {
     options: {
       readonly signal?: AbortSignal;
       readonly timeoutMs?: number;
+      readonly progress?: ProgressReporter;
     } = {},
   ): Promise<Result<JsonValue, HopperError>> {
     const started = await this.start(options.signal);
@@ -260,11 +287,18 @@ export class HopperClient {
 
   /** Stop the bridge, settle outstanding requests, and remove session artifacts. */
   close(): Promise<void> {
+    return this.closeWithOutcome().then(() => undefined);
+  }
+
+  /** Stop the bridge and report whether every owned resource was verified clean. */
+  closeWithOutcome(
+    options: { readonly progress?: ProgressReporter } = {},
+  ): Promise<Result<null, AnalysisError>> {
     const starting = this.#startPromise;
     const controller = this.#startupController;
     controller?.abort();
     this.#closePromise ??= Promise.resolve().then(() =>
-      this.#close(starting, controller),
+      this.#close(starting, controller, options),
     );
     return this.#closePromise;
   }
@@ -272,10 +306,11 @@ export class HopperClient {
   async #close(
     starting: Promise<Result<HopperServerInfo, HopperError>> | undefined,
     controller: AbortController | undefined,
-  ): Promise<void> {
+    options: { readonly progress?: ProgressReporter },
+  ): Promise<Result<null, AnalysisError>> {
     try {
       await starting?.catch(() => undefined);
-      await this.#cleanup();
+      return await this.#cleanup(options);
     } finally {
       if (this.#startPromise === starting) this.#startPromise = undefined;
       if (this.#startupController === controller) {
@@ -285,90 +320,39 @@ export class HopperClient {
     }
   }
 
-  async #cleanup(): Promise<void> {
+  async #cleanup(
+    options: { readonly progress?: ProgressReporter } = {},
+  ): Promise<Result<null, AnalysisError>> {
     this.#closing = true;
     try {
-      const socket = this.#socket;
-      let cleanupResult: ProcessCleanupResult | undefined;
-      if (socket !== undefined && !socket.destroyed) {
-        const shutdown = await this.#request(
-          "shutdown",
-          {},
-          { timeoutMs: SHUTDOWN_TIMEOUT_MS },
-        ).catch(() => err(new HopperProcessError(null)));
-        if (
-          shutdown.ok &&
-          isHopperCleanupRequired(shutdown.value) &&
-          this.#launch?.shutdownByCleanup === true &&
-          this.#launch.cleanup !== undefined
-        ) {
-          cleanupResult = await this.#launch
-            .cleanup()
-            .catch(providerCleanupFailure);
-          if (!cleanupResult.cleaned) {
-            await this.#fallbackDocumentShutdown();
-            cleanupResult = await this.#launch
-              .cleanup()
-              .catch(providerCleanupFailure);
-          }
-        } else if (
-          !shutdown.ok ||
-          !isHopperShutdownAcknowledgement(shutdown.value)
-        )
-          this.#logger.warn(
-            { status: shutdown.ok ? "invalid-acknowledgement" : "failed" },
-            "Hopper document shutdown was not confirmed",
-          );
-      }
-      this.#failAll(new HopperProcessError(null));
-      if (socket !== undefined) this.#detachSocket(socket);
-      socket?.destroy();
+      return await cleanupHopperSession({
+        socket: this.#socket,
+        launch: this.#launch,
+        processSupervisor: this.#process,
+        runtimeRoot: this.#runtimeRoot,
+        activeRequest: this.#requests.activity(),
+        progress: options.progress,
+        logger: this.#logger,
+        onDiagnostic: this.#options.onDiagnostic,
+        request: (method) =>
+          this.#request(method, {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS }),
+        releaseTransport: (socket) => {
+          this.#failAll(new HopperProcessError(null));
+          if (socket !== undefined) this.#detachSocket(socket);
+          socket?.destroy();
+        },
+      });
+    } finally {
       this.#socket = undefined;
-      if (this.#process !== undefined) {
-        const stopped = await this.#process.stop(
-          cleanupResult === undefined ? {} : { cleanupResult },
-        );
-        const diagnostic = createOwnedHopperShutdownDiagnostic(
-          this.#process.launch,
-          stopped,
-          cleanupResult,
-        );
-        this.#options.onDiagnostic?.(diagnostic);
-        this.#logger.info(
-          diagnostic,
-          "Owned Hopper launcher shutdown completed",
-        );
-        if (stopped.status === "incomplete")
-          this.#logger.warn(
-            { reason: stopped.reason },
-            "Owned launcher cleanup failed closed",
-          );
-      }
       this.#process = undefined;
       this.#launch = undefined;
-      const runtimeRoot = this.#runtimeRoot;
       this.#runtimeRoot = undefined;
-      await runtimeRoot?.close();
       this.#token = undefined;
-      this.#buffer = "";
+      this.#responses.reset();
       this.#launcherExitCode = undefined;
       this.#launcherFailureDiagnostic = undefined;
-    } finally {
       this.#closing = false;
     }
-  }
-
-  async #fallbackDocumentShutdown(): Promise<void> {
-    const fallback = await this.#request(
-      "shutdown_document",
-      {},
-      { timeoutMs: SHUTDOWN_TIMEOUT_MS },
-    ).catch(() => err(new HopperProcessError(null)));
-    if (!fallback.ok || !isHopperShutdownAcknowledgement(fallback.value))
-      this.#logger.warn(
-        { status: fallback.ok ? "invalid-acknowledgement" : "failed" },
-        "Hopper document shutdown fallback was not confirmed",
-      );
   }
 
   async #connect(
@@ -413,7 +397,11 @@ export class HopperClient {
   async #request(
     method: string,
     params: JsonValue,
-    options: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+    options: {
+      readonly signal?: AbortSignal;
+      readonly timeoutMs?: number;
+      readonly progress?: ProgressReporter;
+    },
   ): Promise<Result<JsonValue, HopperError>> {
     const socket = this.#socket;
     const token = this.#token;
@@ -425,20 +413,11 @@ export class HopperClient {
     const id = this.#nextId++;
     const startedAt = performance.now();
     const timeoutMs = options.timeoutMs ?? this.#options.requestTimeoutMs;
-    const response = this.#pending.wait(id, {
+    const result = await this.#requests.run(id, method, params, {
       timeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      timeoutValue: () => err(new HopperTimeoutError(timeoutMs)),
-      cancelledValue: () => err(new HopperCancelledError()),
+      ...(options.progress !== undefined ? { progress: options.progress } : {}),
     });
-    socket.write(
-      `${JSON.stringify({ id, token, method, params })}\n`,
-      (cause) => {
-        if (cause !== undefined && cause !== null)
-          this.#pending.settle(id, err(new HopperProcessError(null)));
-      },
-    );
-    const result = await response;
     this.#logger[result.ok ? "debug" : "warn"](
       {
         method,
@@ -501,46 +480,13 @@ export class HopperClient {
       );
   }
 
-  #onData(chunk: string): void {
-    this.#buffer += chunk;
-    let newline = this.#buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (Buffer.byteLength(line) > MAX_LINE_BYTES) {
-        this.#abortProtocol("Hopper response exceeded the maximum line size");
-        return;
-      }
-      if (line.length > 0) this.#onLine(line);
-      newline = this.#buffer.indexOf("\n");
-    }
-    if (Buffer.byteLength(this.#buffer) > MAX_LINE_BYTES) {
-      this.#abortProtocol("Hopper response exceeded the maximum line size");
-    }
-  }
-
-  #onLine(line: string): void {
-    const parsed = parseResponseLine(line);
-    if (!parsed.ok) {
-      this.#abortProtocol(parsed.error.message, parsed.error);
-      return;
-    }
-    if (!this.#pending.has(parsed.value.id)) {
-      if (parsed.value.id >= this.#nextId) {
-        this.#abortProtocol("Hopper returned an unknown response id");
-      }
-      return;
-    }
-    this.#pending.settle(parsed.value.id, responseResult(parsed.value));
-  }
-
   #abortProtocol(message: string, cause?: Error): void {
     this.#failAll(new HopperProtocolError(message, { cause }));
     this.#socket?.destroy();
   }
 
   #failAll(error: HopperError): void {
-    this.#pending.failAll(() => err(error));
+    this.#requests.failAll(error);
   }
 }
 

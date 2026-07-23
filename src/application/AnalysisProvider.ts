@@ -81,10 +81,29 @@ export interface ProviderRuntimeLineageSnapshot {
   readonly observation: ProcessLineageObservation;
 }
 
+/** One provider's current serial-request activity, including detached callers. */
+export interface ProviderRequestActivitySnapshot {
+  readonly provider: ProviderIdentity;
+  readonly active: {
+    readonly requestId: number;
+    readonly operation: string;
+    readonly elapsedMs: number;
+    readonly timeoutMs: number;
+    readonly callerState: "waiting" | "timed_out" | "cancelled";
+  } | null;
+  readonly queuedRequests: number;
+}
+
 /** Provider session bound to exactly one parsed artifact. */
 export interface AnalysisClient extends AnalysisOperationPort {
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
+  /** Current provider work that may outlive a timed-out or cancelled caller. */
+  requestActivitySnapshots?(): readonly ProviderRequestActivitySnapshot[];
+  /** Close with a typed result when the provider can verify cleanup. */
+  closeWithOutcome?(
+    options?: Pick<ExecutionOptions, "progress">,
+  ): Promise<Result<null, AnalysisError>>;
   close(): Promise<void>;
 }
 

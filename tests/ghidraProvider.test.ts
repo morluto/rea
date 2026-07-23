@@ -48,7 +48,7 @@ describe("Ghidra provider", () => {
     expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
       GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
     );
-    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(18);
+    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(19);
     expect(Object.isFrozen(ghidra.capabilities())).toBe(true);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
@@ -389,7 +389,7 @@ describe("Ghidra provider", () => {
 
 const sessionInfo = () => ({
   name: "REA Ghidra bridge" as const,
-  bridge_version: 4 as const,
+  bridge_version: 5 as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "a".repeat(64),
   provider: { id: "ghidra" as const, version: "12.1.2" },

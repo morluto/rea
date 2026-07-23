@@ -37,6 +37,7 @@ import {
 import type { ToolContract, ToolExample } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
+import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 
 export { binarySessionInputSchema } from "./sessionStatusContract.js";
 
@@ -239,6 +240,11 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "procedure_info",
     "Return bounded metadata for one procedure identified by symbol or address: entrypoint, signature, locals, size, and block count. Follow with decompilation or assembly for behavior.",
     z.object({ procedure, document }),
+  ),
+  official(
+    "read_function_instructions",
+    "Read one offset-paginated window of raw instructions for an analyzed procedure without decompilation, caller discovery, or whole-program string/name scans. Use this fast path for instruction-level orientation; follow next_offset when truncated.",
+    functionInstructionInputSchema,
   ),
   official(
     "procedure_references",

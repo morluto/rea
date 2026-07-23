@@ -16,6 +16,7 @@ import type {
   AnalysisClient,
   AnalysisExecution,
   AnalysisClientFactory,
+  ExecutionOptions,
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
   AnalysisOperationPort,
@@ -37,6 +38,7 @@ import {
   type BinarySessionOpenOptions,
 } from "./BinarySessionOpen.js";
 import { prepareSessionExecution } from "./BinarySessionExecution.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 export type { BinarySessionPort } from "./BinarySessionPort.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
@@ -186,7 +188,17 @@ export class BinarySession
       await this.#drainCalls();
       const previous = this.#active;
       this.#active = undefined;
-      await previous?.client.close();
+      if (previous !== undefined) {
+        const closed = await closeAnalysisClient(
+          previous.client,
+          previous.route.identity.id,
+        );
+        if (!closed.ok) {
+          this.clearSessionRecords();
+          this.#clearRuntimeAvailability();
+          return closed;
+        }
+      }
       const runId = randomUUID();
       const client = route.createClient(target, { runId });
       const started = await client.execute("health", {}, options);
@@ -226,15 +238,24 @@ export class BinarySession
   }
 
   /** Close the active target, if any. */
-  close(): Promise<Result<null, AnalysisError>> {
+  close(
+    options: Pick<ExecutionOptions, "progress"> = {},
+  ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async () => {
       const previous = this.#active;
       this.#active = undefined;
       await this.#drainCalls();
-      await previous?.client.close();
+      const closed =
+        previous === undefined
+          ? ok(null)
+          : await closeAnalysisClient(
+              previous.client,
+              previous.route.identity.id,
+              options,
+            );
       this.clearSessionRecords();
       this.#clearRuntimeAvailability();
-      return ok(null);
+      return closed;
     });
   }
 
@@ -248,6 +269,8 @@ export class BinarySession
       runId: this.#active?.runId,
       runtimeLineageSnapshots:
         this.#active?.client.runtimeLineageSnapshots?.() ?? [],
+      requestActivitySnapshots:
+        this.#active?.client.requestActivitySnapshots?.() ?? [],
     });
   }
 

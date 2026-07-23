@@ -6,7 +6,7 @@
   target binding, analysis-profile commitment, and snapshot/Evidence migration
   are implemented. Ghidra discovery, target/profile resolution, doctor checks,
   the private headless-session foundation, ten read-only inventory capabilities,
-  and eight function-analysis capabilities are implemented with real
+  and nine function-analysis capabilities are implemented with real
   cross-format conformance.
 
 ## Context

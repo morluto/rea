@@ -55,6 +55,22 @@ describe("Hopper bridge truthfulness", () => {
     expect(bridgeSource).toContain('params.get("collection_offset", {})');
   });
 
+  it("provides a raw-instruction fast path without decompilation or global scans", () => {
+    const start = bridgeSource.indexOf("def _read_function_instructions");
+    const end = bridgeSource.indexOf("\ndef _analyze_function", start);
+    const implementation = bridgeSource.slice(start, end);
+    expect(implementation).toContain("_instruction_addresses(");
+    expect(implementation).toContain("offset + limit + 1");
+    expect(implementation).not.toContain("decompile(");
+    expect(implementation).not.toContain("_search_inventory(");
+    expect(implementation).not.toContain("_strings(");
+    expect(implementation).not.toContain("_name_map(");
+    expect(bridgeSource).toContain(
+      "pseudo = _pseudocode(document, procedure) or",
+    );
+    expect(bridgeSource).toContain("return _pseudocode(document, procedure)");
+  });
+
   it("projects opaque Hopper locals into an exact provenance-bearing shape", () => {
     expect(bridgeSource).toContain("def _procedure_locals(procedure):");
     expect(bridgeSource).toContain('"description": str(local)');

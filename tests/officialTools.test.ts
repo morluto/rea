@@ -32,6 +32,7 @@ const VALID_INPUTS: Readonly<
   procedure_callees: { procedure: "main" },
   procedure_callers: { procedure: "main" },
   procedure_info: { procedure: "main" },
+  read_function_instructions: { procedure: "main" },
   procedure_references: { procedure: "main" },
   procedure_pseudo_code: { procedure: "main" },
   resolve_containing_procedure: { address: "0x1000" },
@@ -114,6 +115,20 @@ const outputFor = (name: string): JsonValue => {
       query_address: "0x1000",
       found: true,
       procedure: { address: "0x1000", name: "main" },
+    };
+  if (name === "read_function_instructions")
+    return {
+      procedure: { address: "0x1000", name: "main" },
+      instructions: {
+        items: ["0x1000: ret"],
+        total: 1,
+        returned: 1,
+        truncated: false,
+        next_offset: null,
+      },
+      instructions_scanned: 1,
+      instruction_scan_truncated: false,
+      limitations: ["Provider-specific instruction text."],
     };
   if (name === "procedure_references")
     return {
