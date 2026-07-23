@@ -103,13 +103,17 @@ export class ProcessCheckpoints {
 
   /** Queue one idempotent named snapshot. */
   capture(name: string): void {
+    this.#scheduleCapture(name, this.#signal);
+  }
+
+  #scheduleCapture(name: string, signal: AbortSignal | undefined): void {
     if (this.#captured.has(name)) return;
     this.#captured.add(name);
     // Serialize scans even when time, terminal, and lifecycle triggers fire
     // together. Each effect set is intentionally relative to the immediately
     // preceding checkpoint, which preserves transient create/delete behavior.
     this.#pending = this.#pending.then(async () => {
-      const snapshot = await snapshotRoots(this.scenario, this.#signal);
+      const snapshot = await snapshotRoots(this.scenario, signal);
       const previous = this.#captures.at(-1)?.files ?? [];
       const index = this.#captures.length;
       this.#captures.push({
@@ -121,6 +125,32 @@ export class ProcessCheckpoints {
       });
       this.#recordEvent("filesystem_checkpoints", index);
     });
+  }
+
+  /** Queue one named snapshot and return its exact captured record. */
+  async captureAndRead(
+    name: string,
+    signal?: AbortSignal,
+  ): Promise<{
+    readonly index: number;
+    readonly checkpoint: FilesystemCheckpoint;
+  }> {
+    const captureSignal =
+      signal === undefined
+        ? this.#signal
+        : this.#signal === undefined
+          ? signal
+          : AbortSignal.any([this.#signal, signal]);
+    this.#scheduleCapture(name, captureSignal);
+    const scheduled = this.#pending;
+    await scheduled;
+    const index = this.#captures.findIndex(
+      ({ name: capturedName }) => capturedName === name,
+    );
+    const checkpoint = this.#captures[index];
+    if (index < 0 || checkpoint === undefined)
+      throw new Error(`filesystem checkpoint was not captured: ${name}`);
+    return { index, checkpoint: structuredClone(checkpoint) };
   }
 
   /** Finish pending snapshots and return them in observation order. */

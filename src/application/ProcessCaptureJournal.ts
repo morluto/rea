@@ -16,15 +16,62 @@ import type { TerminalRenderer } from "./TerminalRenderer.js";
 export interface ProcessCaptureJournal {
   readonly entries: readonly ProcessCaptureEventJournalEntry[];
   readonly recordEvent: RecordProcessCaptureEvent;
+  readonly record: (
+    collection: ProcessCaptureEventJournalEntry["collection"],
+    index: number,
+  ) => ProcessCaptureEventJournalEntry;
+  readonly subscribe: (
+    listener: (entry: ProcessCaptureEventJournalEntry) => void,
+  ) => () => void;
 }
 
 /** Create one monotonic event journal for a process capture. */
 export const createProcessCaptureJournal = (): ProcessCaptureJournal => {
   const entries: ProcessCaptureEventJournalEntry[] = [];
+  const listeners = new Set<(entry: ProcessCaptureEventJournalEntry) => void>();
+  const notifications: ProcessCaptureEventJournalEntry[] = [];
+  let delivering = false;
+  const deliverNotifications = (): void => {
+    if (delivering) return;
+    delivering = true;
+    const failures: unknown[] = [];
+    try {
+      for (;;) {
+        const notification = notifications.shift();
+        if (notification === undefined) break;
+        for (const listener of Array.from(listeners))
+          try {
+            listener(notification);
+          } catch (cause: unknown) {
+            failures.push(cause);
+          }
+      }
+    } finally {
+      delivering = false;
+    }
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        "process capture journal subscriber failed",
+      );
+  };
+  const record = (
+    collection: ProcessCaptureEventJournalEntry["collection"],
+    index: number,
+  ): ProcessCaptureEventJournalEntry => {
+    const entry = { capture_order: entries.length, collection, index };
+    entries.push(entry);
+    notifications.push(entry);
+    deliverNotifications();
+    return entry;
+  };
   return {
     entries,
-    recordEvent: (collection, index) => {
-      entries.push({ capture_order: entries.length, collection, index });
+    record,
+    recordEvent: (collection, index) => void record(collection, index),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
 };
