@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.4.0](https://github.com/morluto/rea/compare/rea-agents-2.3.0...rea-agents-2.4.0) (2026-07-23)
+
+
+### Features
+
+* **artifacts:** support MSIX and AppX packages ([6e6cce1](https://github.com/morluto/rea/commit/6e6cce1bf3cbd9c48799bee9969c53d66c42162e))
+* expand reactive capture and package analysis ([9da1794](https://github.com/morluto/rea/commit/9da179425e83df9f255597437320c1ab6ff5c5c2))
+* **process:** add reactive capture scenarios ([69761e9](https://github.com/morluto/rea/commit/69761e95b63ec7617aa161f7a1b4e3c8847a6175))
+
+
+### Bug Fixes
+
+* **capabilities:** expose typed availability codes ([b906def](https://github.com/morluto/rea/commit/b906defbff28885a1d39f78da7c2b7170a7108c6))
+
 ## [2.3.0](https://github.com/morluto/rea/compare/rea-agents-2.2.0...rea-agents-2.3.0) (2026-07-23)
 
 

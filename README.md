@@ -479,7 +479,7 @@ Setup detects Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, 
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@2.3.0", "mcp"]
+      "args": ["-y", "rea-agents@2.4.0", "mcp"]
     }
   }
 }
