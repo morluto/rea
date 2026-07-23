@@ -5,6 +5,11 @@ import {
   LEGACY_PROCESS_CAPTURE_MESSAGE,
   normalizationSchema,
 } from "./processScenario.js";
+import type {
+  ProcessReactiveOutcome,
+  ProcessReactiveTransitionRecord,
+} from "./processReactiveRuntime.js";
+import { PROCESS_REACTIVE_LIMITS } from "./processReactiveScenario.js";
 import type { ReplayTransitionRecord } from "./replayMachineRuntime.js";
 
 export * from "./processScenario.js";
@@ -133,6 +138,18 @@ export interface ProcessCaptureEventJournalEntry {
   readonly index: number;
 }
 
+/** Ordered control input that terminated or superseded a reactive run. */
+export interface ProcessReactiveControlRecord {
+  readonly sequence: number;
+  readonly kind:
+    | "state_deadline"
+    | "scenario_deadline"
+    | "target_lost"
+    | "cancelled"
+    | "cleanup_failed";
+  readonly after_capture_order: number;
+}
+
 /** Shared observation callback used by every process-capture producer. */
 export type RecordProcessCaptureEvent = (
   collection: ProcessCaptureEventCollection,
@@ -185,6 +202,13 @@ export interface ProcessCapture {
   readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
   readonly replay_transitions: readonly ReplayTransitionRecord[];
+  readonly reactive_run: {
+    readonly status: "running" | "finished";
+    readonly outcome: ProcessReactiveOutcome | null;
+    readonly active_state: string;
+    readonly transitions: readonly ProcessReactiveTransitionRecord[];
+    readonly controls: readonly ProcessReactiveControlRecord[];
+  } | null;
   /**
    * Global observation order across independently recorded collections.
    *
@@ -363,6 +387,75 @@ export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
       }),
     )
     .default([]),
+  reactive_run: z
+    .object({
+      status: z.enum(["running", "finished"]),
+      outcome: z
+        .enum([
+          "passed",
+          "predicate_timeout",
+          "scenario_deadline",
+          "ambiguous_match",
+          "action_rejected",
+          "target_lost",
+          "capture_incomplete",
+          "cancelled",
+          "cleanup_failed",
+        ])
+        .nullable(),
+      active_state: z.string().min(1).max(64),
+      controls: z
+        .array(
+          z.object({
+            sequence: z.number().int().nonnegative(),
+            kind: z.enum([
+              "state_deadline",
+              "scenario_deadline",
+              "target_lost",
+              "cancelled",
+              "cleanup_failed",
+            ]),
+            after_capture_order: z.number().int().min(-1),
+          }),
+        )
+        .default([]),
+      transitions: z
+        .array(
+          z.object({
+            sequence: z.number().int().nonnegative(),
+            transition_id: z.string().min(1).max(64),
+            state_before: z.string().min(1).max(64),
+            state_after: z.string().min(1).max(64).nullable(),
+            outcome: z
+              .enum([
+                "passed",
+                "predicate_timeout",
+                "scenario_deadline",
+                "ambiguous_match",
+                "action_rejected",
+                "target_lost",
+                "capture_incomplete",
+                "cancelled",
+                "cleanup_failed",
+              ])
+              .nullable(),
+            trigger_event_ids: z
+              .array(z.string().min(1))
+              .max(PROCESS_REACTIVE_LIMITS.predicates),
+            action_event_ids: z
+              .array(z.string().min(1))
+              .max(PROCESS_REACTIVE_LIMITS.actionsPerTransition),
+            action_types: z
+              .array(
+                z.enum(["send_input", "resize", "send_signal", "checkpoint"]),
+              )
+              .max(PROCESS_REACTIVE_LIMITS.actionsPerTransition),
+          }),
+        )
+        .max(PROCESS_REACTIVE_LIMITS.transitions),
+    })
+    .nullable()
+    .default(null),
   event_journal: z
     .array(
       z.object({

@@ -147,6 +147,7 @@ const capabilityStatus = (
   operation: descriptor.operation,
   available: descriptor.available,
   reason: descriptor.reason,
+  availability_code: descriptor.availabilityCode ?? null,
   input_contract_version: descriptor.inputContractVersion,
   output_contract_version: descriptor.outputContractVersion,
   pagination: descriptor.pagination,

@@ -65,6 +65,7 @@ export type ProcessReactiveInput =
       readonly state_entry_capture_order: number;
     }
   | { readonly kind: "scenario_deadline" }
+  | { readonly kind: "target_lost" }
   | { readonly kind: "cancelled" }
   | { readonly kind: "cleanup_failed" };
 
@@ -123,6 +124,33 @@ export type ProcessReactiveDecision =
 const counterValue = (counters: readonly Counter[], id: string): number =>
   counters.find((counter) => counter.id === id)?.count ?? 0;
 
+type ObservationAdmission =
+  | { readonly kind: "new"; readonly snapshot: ProcessReactiveSnapshot }
+  | { readonly kind: "invalid" };
+
+const observeInput = (
+  snapshot: ProcessReactiveSnapshot,
+  observation: ProcessObservation,
+): ObservationAdmission => {
+  const duplicate = snapshot.observations.find(
+    ({ event_id }) => event_id === observation.event_id,
+  );
+  if (duplicate !== undefined) return { kind: "invalid" };
+  const prior = snapshot.observations.at(-1);
+  if (
+    (prior !== undefined && observation.capture_order <= prior.capture_order) ||
+    snapshot.observations.length >= PROCESS_REACTIVE_LIMITS.retainedObservations
+  )
+    return { kind: "invalid" };
+  return {
+    kind: "new",
+    snapshot: {
+      ...snapshot,
+      observations: [...snapshot.observations, observation],
+    },
+  };
+};
+
 /** Create the initial immutable reducer state for one validated scenario. */
 export const createProcessReactiveSnapshot = (
   scenario: ProcessReactiveScenario,
@@ -166,6 +194,8 @@ const reduceControlInput = (
       : { kind: "waiting", snapshot, evaluations: [] };
   if (input.kind === "scenario_deadline")
     return finishedDecision(snapshot, "scenario_deadline");
+  if (input.kind === "target_lost")
+    return finishedDecision(snapshot, "target_lost");
   return finishedDecision(snapshot, "cancelled");
 };
 
@@ -179,23 +209,10 @@ export const reduceProcessReactiveScenario = (
   if (controlDecision !== null) return controlDecision;
   if (input.kind !== "observation")
     return finishedDecision(snapshot, "capture_incomplete");
-  const prior = snapshot.observations.at(-1);
-  if (
-    (prior !== undefined &&
-      input.observation.capture_order <= prior.capture_order) ||
-    snapshot.observations.some(
-      ({ event_id }) => event_id === input.observation.event_id,
-    )
-  )
+  const admitted = observeInput(snapshot, input.observation);
+  if (admitted.kind === "invalid")
     return finishedDecision(snapshot, "capture_incomplete");
-  if (
-    snapshot.observations.length >= PROCESS_REACTIVE_LIMITS.retainedObservations
-  )
-    return finishedDecision(snapshot, "capture_incomplete");
-  const observed = {
-    ...snapshot,
-    observations: [...snapshot.observations, input.observation],
-  };
+  const observed = admitted.snapshot;
   const state = scenario.states.find(({ id }) => id === observed.active_state);
   if (state === undefined) return finishedDecision(observed, "target_lost");
   const budget = { remaining: PROCESS_REACTIVE_LIMITS.evaluationWork };

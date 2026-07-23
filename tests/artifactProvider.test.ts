@@ -179,6 +179,71 @@ describe("artifact graph provider", () => {
     });
   });
 
+  it.each([
+    ["fixture.msix", "msix"],
+    ["fixture.appxbundle", "appx"],
+  ] as const)(
+    "reuses the hardened ZIP reader for %s package inventory",
+    async (name, format) => {
+      const root = await createTestTempDirectory("rea-windows-package-");
+      const path = join(root, name);
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      await writer.add(
+        "Assets/main.js",
+        new TextReader("export default 'windows';"),
+      );
+      await writer.add(
+        "VFS/ProgramFilesX64/App/addon.node",
+        new TextReader("native"),
+      );
+      await writeFile(path, await writer.close());
+
+      const parsed = await parseBinaryTarget(path);
+      expect(parsed.ok && parsed.value).toMatchObject({
+        kind: "archive",
+        format,
+      });
+      if (!parsed.ok) return;
+      const result = await inventory(parsed.value);
+      expect(result.manifest.root_format).toBe(format);
+      expect(result.nodes.items.map(({ kind }) => kind)).toEqual(
+        expect.arrayContaining(["javascript", "native-addon"]),
+      );
+      const selected = result.occurrences.items.find(
+        ({ logical_path: logicalPath }) => logicalPath === "Assets/main.js",
+      );
+      expect(selected).toBeDefined();
+      if (selected === undefined) return;
+      const output = join(root, "output");
+      const extracted = await new ArtifactProvider()
+        .createClient(parsed.value)
+        .execute(
+          "extract_artifact",
+          artifactExtractionInputSchema.parse({
+            approved: true,
+            output_root: output,
+            occurrence_ids: [selected.occurrence_id],
+          }),
+        );
+      expect(extracted.ok).toBe(true);
+      expect(await readFile(join(output, "Assets", "main.js"), "utf8")).toBe(
+        "export default 'windows';",
+      );
+      expect(
+        parseEvidence(
+          await runProviderAnalysis(path, "inventory_artifact", {
+            node_limit: 10,
+            occurrence_limit: 10,
+            edge_limit: 10,
+          }),
+        ),
+      ).toMatchObject({
+        operation: "inventory_artifact",
+        subject: { format },
+      });
+    },
+  );
+
   it("rejects unsafe, colliding, and over-ratio entries", async () => {
     expect(() => normalizeArtifactPath("../escape", limits())).toThrow(
       /normalized/u,

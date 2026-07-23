@@ -127,8 +127,16 @@ interface CapabilityEffects {
 }
 
 type CapabilityAvailability =
-  | { readonly available: true; readonly reason: null }
-  | { readonly available: false; readonly reason: string };
+  | {
+      readonly available: true;
+      readonly reason: null;
+      readonly availabilityCode?: null;
+    }
+  | {
+      readonly available: false;
+      readonly reason: string;
+      readonly availabilityCode?: ProviderRejectionCode;
+    };
 
 interface CapabilityLimits {
   readonly maxResults: number | null;

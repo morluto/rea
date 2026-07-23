@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import {
+  processReactiveScenarioSchema,
+  type ProcessReactiveScenario,
+} from "./processReactiveScenario.js";
 import { replayMachineSchema } from "./replayMachine.js";
 
 const positiveBudget = z.number().int().positive();
@@ -51,6 +55,29 @@ export const digestProcessCommitment = (value: unknown): string => {
   return createHash("sha256").update(serialized).digest("hex");
 };
 
+const reactiveScenarioCommitment = (
+  scenario: ProcessReactiveScenario | null,
+): Readonly<Record<string, unknown>> | null =>
+  scenario === null
+    ? null
+    : {
+        ...scenario,
+        states: scenario.states.map((state) => ({
+          ...state,
+          on: state.on.map((transition) => ({
+            ...transition,
+            actions: transition.actions.map((action) =>
+              action.type === "send_input" && action.sensitive
+                ? {
+                    ...action,
+                    data: `<redacted-input:${String(Buffer.byteLength(action.data))}-bytes>`,
+                  }
+                : action,
+            ),
+          })),
+        })),
+      };
+
 /** Build the secret-safe scenario projection committed by Process Capture v4. */
 export const processScenarioCommitment = (
   scenario: ProcessScenario,
@@ -63,6 +90,7 @@ export const processScenarioCommitment = (
       scenario.secret_aliases.includes(name) ? "<redacted-secret>" : value,
     ]),
   ),
+  reactive: reactiveScenarioCommitment(scenario.reactive),
   unknown_registry_approved: scenario.unknown_registry_approved === true,
   executable_sha256: executableSha256 ?? null,
 });
@@ -86,6 +114,7 @@ export const processComparisonContract = (
   normalization: scenario.normalization,
   command_shims: scenario.command_shims,
   replay: scenario.replay,
+  reactive: reactiveScenarioCommitment(scenario.reactive),
 });
 
 /**
@@ -292,6 +321,7 @@ export const processScenarioSchema = z
         websocket_messages: [],
         websocket_connections: [],
       }),
+    reactive: processReactiveScenarioSchema.nullable().default(null),
   })
   .strict()
   .superRefine((scenario, context) => {

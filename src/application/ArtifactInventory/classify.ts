@@ -2,12 +2,15 @@ import { open } from "node:fs/promises";
 
 import { classifyArtifactPath } from "../ArtifactGraphConstruction.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
+import { zipPackageFormatForPath } from "../../domain/zipPackageFormat.js";
 
 const classifyContainerExtension = (
   path: string,
 ): ArtifactNode["format"] | undefined => {
   const lower = path.toLowerCase();
-  for (const format of ["asar", "ipa", "apk", "zip", "dmg", "pkg"] as const)
+  const zipPackage = zipPackageFormatForPath(lower);
+  if (zipPackage !== undefined) return zipPackage;
+  for (const format of ["asar", "dmg", "pkg"] as const)
     if (lower.endsWith(`.${format}`)) return format;
   return undefined;
 };

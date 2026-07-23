@@ -24,8 +24,8 @@ parser and must not become an implicit setup dependency.
 ## Packages and extraction
 
 Call `inventory_artifact` before extraction for application bundles, archives,
-ZIP/APK/IPA, ASAR, or DMG inputs. Continue deterministic occurrence pages from
-the returned offset only when needed. Cite graph manifest IDs.
+ZIP/APK/IPA/MSIX/AppX, ASAR, or DMG inputs. Continue deterministic occurrence
+pages from the returned offset only when needed. Cite graph manifest IDs.
 
 `extract_artifact` requires explicit approval, an absent absolute output root,
 and selected occurrence IDs. Never extract every entry implicitly. Symlinks and

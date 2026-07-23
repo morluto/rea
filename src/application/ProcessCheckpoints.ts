@@ -106,6 +106,12 @@ export class ProcessCheckpoints {
     this.#scheduleCapture(name, this.#signal);
   }
 
+  /** Read one committed checkpoint for synchronous journal projection. */
+  at(index: number): FilesystemCheckpoint | undefined {
+    const checkpoint = this.#captures[index];
+    return checkpoint === undefined ? undefined : structuredClone(checkpoint);
+  }
+
   #scheduleCapture(name: string, signal: AbortSignal | undefined): void {
     if (this.#captured.has(name)) return;
     this.#captured.add(name);

@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
+import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
 export interface ArtifactEntry {
@@ -23,7 +24,7 @@ export interface ArtifactEntry {
 
 /** Read-only adapter over one directory, archive, or virtual container. */
 export interface ArtifactReader {
-  readonly format: "directory" | "zip" | "ipa" | "apk" | "asar" | "file";
+  readonly format: "directory" | ZipPackageFormat | "asar" | "file";
   entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry>;
   open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable>;
   provenance(): readonly ArtifactCommand[];

@@ -1,4 +1,5 @@
 import type { ProcessCapture } from "./processCapture.js";
+import { validateProcessCaptureReactiveRun } from "./processCaptureReactiveValidation.js";
 import { replayMachineSchema, type ReplayMachine } from "./replayMachine.js";
 import { digestProcessCommitment } from "./processScenario.js";
 
@@ -314,5 +315,6 @@ export const validateProcessCapture = (
   validateLifecycle(capture, require);
   validateShimEvents(capture, require);
   validateReplayEvents(capture, require);
+  validateProcessCaptureReactiveRun(capture, require);
   return issues;
 };

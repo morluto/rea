@@ -4,7 +4,7 @@ description: Reverse engineer native, managed, Electron/JavaScript, packaged, an
 metadata:
   version: "23"
   tool_count: 98
-  catalog_digest: "71de8a7174176823fd82c2666130233b5a1b4a1613583270d268774775b410bc"
+  catalog_digest: "aa413204625f3aeb62732d0f732b9b8b24832eea4520214b1e6bd204e599bcd6"
 ---
 
 # REA
@@ -22,7 +22,8 @@ Choose the first tool from the target the user supplied. Do not call
 
 - ASAR or extracted JavaScript/Electron tree:
   `analyze_javascript_application`.
-- Archive, application package, ZIP/APK/IPA, or DMG: `inventory_artifact`.
+- Archive, application package, ZIP/APK/IPA/MSIX/AppX, or DMG:
+  `inventory_artifact`.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
 - User-owned browser page already open: `list_browser_targets`.
 - User-owned Electron runtime already open: `list_electron_targets`.

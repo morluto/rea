@@ -71,6 +71,7 @@ interface CaptureResultOptions {
   };
   readonly samples: readonly ProcessSample[];
   readonly replay: LoopbackReplay;
+  readonly reactiveRun: ProcessCapture["reactive_run"];
   readonly before: SnapshotResult;
   readonly after: SnapshotResult;
   readonly truncated: boolean;
@@ -116,6 +117,7 @@ export const buildCaptureResult = (
     options.scenario,
   ),
   replay_transitions: options.replay.transitions,
+  reactive_run: options.reactiveRun,
   event_journal: options.eventJournal,
   files_before: options.before.files,
   files_after: options.after.files,

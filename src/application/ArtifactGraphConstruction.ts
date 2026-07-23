@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { extname } from "node:path";
 
 import canonicalize from "canonicalize";
 
@@ -13,6 +12,7 @@ import type {
   ArtifactNode,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
+import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -130,7 +130,9 @@ export const createRootNode = (input: {
     size: input.digest?.bytes ?? 0,
     kind:
       input.directory ||
-      ["zip", "ipa", "apk", "asar", "dmg", "pkg"].includes(input.format)
+      ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(
+        input.format,
+      )
         ? "container"
         : classifyArtifactPath(input.path).kind,
     format: input.format,
@@ -264,7 +266,7 @@ export const classifyArtifactPath = (
   if (/\.(?:m?js|cjs)$/u.test(lower))
     return { kind: "javascript", format: "javascript-bundle" };
   if (lower.endsWith(".asar")) return { kind: "container", format: "asar" };
-  const archiveFormat = archiveFormatForExtension(extname(lower));
+  const archiveFormat = zipPackageFormatForPath(lower);
   if (archiveFormat !== undefined)
     return { kind: "container", format: archiveFormat };
   if (/\.framework(?:\/|$)/u.test(lower))
@@ -349,21 +351,6 @@ const relationFor = (path: string): ArtifactEdge["relation"] => {
   if (lower.endsWith(".map")) return "maps-source";
   if (lower.includes(".framework/")) return "embeds";
   return "contains";
-};
-
-const archiveFormatForExtension = (
-  extension: string,
-): "zip" | "ipa" | "apk" | undefined => {
-  switch (extension) {
-    case ".zip":
-      return "zip";
-    case ".ipa":
-      return "ipa";
-    case ".apk":
-      return "apk";
-    default:
-      return undefined;
-  }
 };
 
 const depth = (path: string): number => path.split("/").length;

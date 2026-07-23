@@ -12,6 +12,7 @@ const statusSchema = z.object({
       operation: z.string(),
       available: z.boolean(),
       reason: z.string().nullable(),
+      availability_code: z.string().nullable().optional(),
     }),
   ),
 });
@@ -29,6 +30,7 @@ type ToolKind = (typeof TOOL_CONTRACTS)[number]["kind"];
 type ProviderDescriptor = {
   readonly available: boolean;
   readonly reason: string | null;
+  readonly availability_code?: string | null;
 };
 type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
@@ -86,8 +88,15 @@ export const buildCapabilityInventory = (
   policy: AvailabilityPolicy,
 ) => {
   const status = statusSchema.parse(sessionStatus);
-  const descriptors = new Map(
-    status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
+  const descriptors = new Map<string, ProviderDescriptor>(
+    status.capabilities.map((descriptor) => [
+      descriptor.operation,
+      {
+        available: descriptor.available,
+        reason: descriptor.reason,
+        availability_code: descriptor.availability_code ?? null,
+      },
+    ]),
   );
   return TOOL_CONTRACTS.map((contract) => {
     const availability = availabilityFor({
@@ -237,7 +246,7 @@ const providerAvailability = ({
     };
   if (
     !descriptor.available &&
-    descriptor.reason?.toLowerCase().includes("require macos") === true
+    descriptor.availability_code === "unsupported_host"
   )
     return {
       reason: "unsupported_host",
@@ -254,10 +263,7 @@ const providerAvailability = ({
 
 const composedAvailability = (
   name: string,
-  descriptors: ReadonlyMap<
-    string,
-    { readonly available: boolean; readonly reason: string | null }
-  >,
+  descriptors: ReadonlyMap<string, ProviderDescriptor>,
 ): {
   readonly reason: ToolAvailabilityReason;
   readonly remediation: string | null;
@@ -280,7 +286,7 @@ const composedAvailability = (
   if (unavailable !== undefined)
     return {
       reason:
-        unavailable.reason?.toLowerCase().includes("require macos") === true
+        unavailable.availability_code === "unsupported_host"
           ? "unsupported_host"
           : "provider_unavailable",
       remediation:

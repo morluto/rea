@@ -124,6 +124,7 @@ const applyProcessReactiveTransition = (input: {
 const effectObservationMatchesAction = (
   action: ProcessReactiveScenario["states"][number]["on"][number]["actions"][number],
   observation: ProcessObservation,
+  committedSensitiveInputs: boolean,
 ): boolean => {
   const payload =
     typeof observation.payload === "object" &&
@@ -153,9 +154,11 @@ const effectObservationMatchesAction = (
     return (
       payload["type"] === "input" &&
       payload["data"] ===
-        (action.sensitive
-          ? `<redacted-input:${String(Buffer.byteLength(action.data))}-bytes>`
-          : action.data)
+        expectedInputEvidence(
+          action.data,
+          action.sensitive,
+          committedSensitiveInputs,
+        )
     );
   if (action.type === "resize")
     return (
@@ -164,6 +167,16 @@ const effectObservationMatchesAction = (
     );
   return payload["type"] === "signal" && payload["data"] === action.signal;
 };
+
+const expectedInputEvidence = (
+  data: string,
+  sensitive: boolean,
+  committedSensitiveInput: boolean,
+): string =>
+  !sensitive ||
+  (committedSensitiveInput && /^<redacted-input:\d+-bytes>$/.test(data))
+    ? data
+    : `<redacted-input:${String(Buffer.byteLength(data))}-bytes>`;
 
 const failedProposal = (
   proposed: Extract<ProcessReactiveDecision, { readonly kind: "proposal" }>,
@@ -180,6 +193,7 @@ export const commitProcessReactiveProposal = (
   scenario: ProcessReactiveScenario,
   proposed: Extract<ProcessReactiveDecision, { readonly kind: "proposal" }>,
   results: readonly ProcessReactiveEffectResult[],
+  options: { readonly committedSensitiveInputs?: boolean } = {},
 ): ProcessReactiveDecision => {
   if (results.some(({ status }) => status === "target_lost"))
     return failedProposal(proposed, "target_lost");
@@ -227,7 +241,11 @@ export const commitProcessReactiveProposal = (
     const effectObservation = result.observation;
     if (
       action === undefined ||
-      !effectObservationMatchesAction(action, effectObservation) ||
+      !effectObservationMatchesAction(
+        action,
+        effectObservation,
+        options.committedSensitiveInputs ?? false,
+      ) ||
       !Number.isSafeInteger(effectObservation.capture_order) ||
       effectObservation.capture_order <= previousOrder ||
       knownEventIds.has(effectObservation.event_id)

@@ -22,6 +22,8 @@ export const createReader = async (
     case "zip":
     case "ipa":
     case "apk":
+    case "msix":
+    case "appx":
       return new ZipArtifactReader(path, format);
     case "asar":
       return new AsarArtifactReader(path);

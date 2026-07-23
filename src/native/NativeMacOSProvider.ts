@@ -75,6 +75,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
           ? ({ available: true, reason: null } as const)
           : ({
               available: false,
+              availabilityCode: "unsupported_host",
               reason: "Native macOS utilities require macOS.",
             } as const);
         return Object.freeze({

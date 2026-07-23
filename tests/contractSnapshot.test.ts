@@ -85,19 +85,8 @@ describe("tool contract surface", () => {
     });
   });
 
-  it("advertises complete typed schemas and annotations for all analysis tools", () => {
-    const contracts = [
-      ...OFFICIAL_TOOL_CONTRACTS,
-      ...ENHANCED_TOOL_CONTRACTS,
-      ...NATIVE_TOOL_CONTRACTS,
-      ...ARTIFACT_TOOL_CONTRACTS,
-      ...MANAGED_TOOL_CONTRACTS,
-      ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
-      ...BROWSER_TOOL_CONTRACTS,
-      ...ELECTRON_TOOL_CONTRACTS,
-      ...APPLICATION_TOOL_CONTRACTS,
-    ];
-    expect(contracts).toHaveLength(79);
+  it("advertises complete typed schemas and annotations for every public tool", () => {
+    const contracts = TOOL_CONTRACTS;
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);

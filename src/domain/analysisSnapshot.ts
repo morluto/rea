@@ -37,6 +37,8 @@ const formatSchema = z.enum([
   "zip",
   "ipa",
   "apk",
+  "msix",
+  "appx",
   "asar",
   "dmg",
   "pkg",

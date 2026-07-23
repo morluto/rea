@@ -184,9 +184,15 @@ const triggerSources = (
 ): readonly string[] => {
   if (trigger.kind === "terminal_text") return [];
   if (trigger.kind === "event")
-    return ["terminal_raw", "interaction", "filesystem"].includes(
-      trigger.source,
-    )
+    return [
+      "terminal_raw",
+      "interaction",
+      "process",
+      "filesystem",
+      "http",
+      "websocket",
+      "shim",
+    ].includes(trigger.source)
       ? []
       : [trigger.source];
   return trigger.kind === "repeat"

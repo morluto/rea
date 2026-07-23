@@ -95,17 +95,34 @@ describe("executable header parsing", () => {
 });
 
 describe("binary target I/O", () => {
-  it("classifies ZIP profiles and text artifacts without Hopper", async () => {
+  it("classifies ZIP package families and text artifacts without Hopper", async () => {
     const directory = await createTestTempDirectory("rea-artifact-target-");
     const zip = join(directory, "fixture.apk");
+    const msix = join(directory, "fixture.msixbundle");
+    const appx = join(directory, "fixture.appx");
     const script = join(directory, "bundle.js");
-    await writeFile(zip, Buffer.from([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0]));
+    const emptyZip = Buffer.from([0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0]);
+    await Promise.all([
+      writeFile(zip, emptyZip),
+      writeFile(msix, emptyZip),
+      writeFile(appx, emptyZip),
+    ]);
     await writeFile(script, "export default 1;\n");
     const archive = await parseBinaryTarget(zip);
+    const msixArchive = await parseBinaryTarget(msix);
+    const appxArchive = await parseBinaryTarget(appx);
     const javascript = await parseBinaryTarget(script);
     expect(archive.ok && archive.value).toMatchObject({
       kind: "archive",
       format: "apk",
+    });
+    expect(msixArchive.ok && msixArchive.value).toMatchObject({
+      kind: "archive",
+      format: "msix",
+    });
+    expect(appxArchive.ok && appxArchive.value).toMatchObject({
+      kind: "archive",
+      format: "appx",
     });
     expect(javascript.ok && javascript.value).toMatchObject({
       kind: "artifact",

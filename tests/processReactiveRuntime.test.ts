@@ -194,6 +194,27 @@ describe("process reactive runtime", () => {
     });
   });
 
+  it("treats redaction-shaped live input as ordinary sensitive data", () => {
+    const scenario = scenarioWith([
+      finish("ready", terminalTrigger(), 100, [
+        {
+          type: "send_input",
+          data: "<redacted-input:1-bytes>",
+          sensitive: true,
+        },
+      ]),
+    ]);
+    const decision = offer(
+      scenario,
+      createProcessReactiveSnapshot(scenario),
+      observation("terminal_raw", 0, { data: "Ready" }),
+    );
+    expect(decision).toMatchObject({
+      kind: "transition",
+      record: { outcome: "passed" },
+    });
+  });
+
   it("reports only the minimal terminal chunk span containing the occurrence", () => {
     const scenario = scenarioWith([finish("ready", terminalTrigger())]);
     let snapshot = createProcessReactiveSnapshot(scenario);
@@ -638,5 +659,16 @@ describe("process reactive runtime", () => {
       kind: "finished",
       outcome: "capture_incomplete",
     });
+    const duplicate = observation("shim", 1, { name: "later" });
+    expect(offer(scenario, first.snapshot, duplicate)).toMatchObject({
+      kind: "finished",
+      outcome: "capture_incomplete",
+    });
+    expect(
+      offer(scenario, first.snapshot, {
+        ...duplicate,
+        payload: { name: "changed" },
+      }),
+    ).toMatchObject({ kind: "finished", outcome: "capture_incomplete" });
   });
 });

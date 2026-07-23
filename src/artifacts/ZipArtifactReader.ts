@@ -9,6 +9,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
 } from "./ArtifactReader.js";
+import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
@@ -41,12 +42,12 @@ class NodeFileReader extends Reader<string> {
 
 /** Lazy Zip64-capable reader with CRC and overlap verification on every read. */
 export class ZipArtifactReader implements ArtifactReader {
-  readonly format: "zip" | "ipa" | "apk";
+  readonly format: ZipPackageFormat;
   readonly #source: NodeFileReader;
   readonly #reader: ZipReader<string>;
   readonly #entries = new Map<string, Entry>();
 
-  constructor(path: string, format: "zip" | "ipa" | "apk") {
+  constructor(path: string, format: ZipPackageFormat) {
     this.format = format;
     this.#source = new NodeFileReader(path);
     this.#reader = new ZipReader(this.#source, {

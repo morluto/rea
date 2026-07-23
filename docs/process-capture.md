@@ -115,6 +115,37 @@ redacted from recorded text. The command-shim directory is placed first in the
 captured process `PATH`; any remaining `PATH` must be explicitly supplied or
 inherited under operator policy.
 
+## Reactive process scenarios
+
+Set `reactive` to a Process Reactive Scenario v1 declaration when interaction
+must follow observed output instead of guessed delays. The graph declares an
+initial state, absolute scenario and state deadlines, explicitly prioritized
+transitions, bounded uses and visits, trigger predicates, ordered actions, and
+either a next state or `passed` outcome.
+
+The admitted runtime slice matches decoded UTF-8 terminal literals and exact
+`terminal_raw`, `interaction`, `process`, `filesystem`, `http`, `websocket`, or
+`shim` journal events. Process events are sampled observations, not an
+event-complete lifecycle. Filesystem events identify named checkpoints; shim
+events identify a command and route. Live predicates receive the same normalized
+and redacted payload later persisted in Evidence. Predicates may compose with
+bounded `all`, `any`, `sequence`, and `repeat` nodes and may select a frontier at
+scenario start, state entry, a prior checkpoint, or an exact event ID. Actions
+can write PTY input, resize it, signal the root process, or capture a named
+filesystem checkpoint. `terminal_rendered`, `lifecycle`, and `replay_transition`
+event triggers and non-root signal selectors fail during preflight before the
+target launches.
+
+Reactive results are recorded in `reactive_run`, including the terminal outcome,
+active state, matched event IDs, action evidence IDs, and deterministic
+transition journal. Terminal controls also commit the last admitted observation
+order, so later output cannot be moved ahead of a timeout, cancellation, or
+target loss during validation. If the process exits before the graph finishes,
+the outcome is `target_lost`; state/scenario deadlines remain distinct
+`predicate_timeout`/`scenario_deadline` outcomes. Timed `events` remain
+available for fixed schedules, but they are not silently translated into the
+reactive graph.
+
 ## Checkpoints and deterministic shims
 
 Checkpoint triggers may use an elapsed time, a terminal literal and occurrence
