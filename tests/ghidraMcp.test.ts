@@ -306,7 +306,7 @@ const installationHost = (): GhidraInstallationHost => ({
 
 const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   name: "REA Ghidra bridge" as const,
-  bridge_version: 4 as const,
+  bridge_version: 5 as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: profileDigest,
   provider: { id: "ghidra" as const, version: "12.1.2" },
@@ -431,6 +431,16 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
   ],
   ["procedure_pseudo_code", () => "int fixture_main(void) { return 42; }"],
   [
+    "read_function_instructions",
+    () => ({
+      procedure: ghidraFunctionIdentity(),
+      instructions: ghidraBounded(["0x401000: CALL 0x401020", "0x401005: RET"]),
+      instructions_scanned: 2,
+      instruction_scan_truncated: false,
+      limitations: ["Ghidra-specific instruction text."],
+    }),
+  ],
+  [
     "procedure_references",
     (input, _limit) => ({
       procedure: ghidraFunctionIdentity(),
@@ -459,12 +469,12 @@ const resultFor = (
 };
 
 const page = (items: readonly JsonValue[], limit: number): JsonValue => ({
-  items: [...items],
+  items: items.slice(0, limit),
   offset: 0,
   limit,
   total: items.length,
-  next_offset: null,
-  has_more: false,
+  next_offset: items.length > limit ? limit : null,
+  has_more: items.length > limit,
 });
 
 const stringItem = (address: string, value: string): JsonValue => ({

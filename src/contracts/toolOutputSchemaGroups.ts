@@ -6,7 +6,10 @@ import {
 } from "../domain/processCapture.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
-import { referenceKindSchema } from "../domain/hopperValues.js";
+import {
+  functionInstructionWindowSchema,
+  referenceKindSchema,
+} from "../domain/hopperValues.js";
 import {
   demangleSwiftSchema,
   inspectMachoSchema,
@@ -39,6 +42,7 @@ import { replayMachineRunOutputSchema } from "../domain/replayMachineRun.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import {
   addressList,
+  analysisActivity,
   addressedEntry,
   bounded,
   containingProcedureResolution,
@@ -82,6 +86,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   procedure_callees: resultOf(addressList),
   procedure_callers: resultOf(addressList),
   procedure_info: procedureInfoOutput,
+  read_function_instructions: resultOf(functionInstructionWindowSchema),
   procedure_references: resultOf(
     z.object({
       procedure: procedureIdentity,
@@ -297,6 +302,7 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
           reasons: z.array(z.string()),
           remediation: z.string().nullable(),
         }),
+        analysis_activity: analysisActivity,
         recommended_actions: z.array(z.string()),
       }),
       z.object({

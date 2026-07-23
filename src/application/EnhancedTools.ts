@@ -309,22 +309,24 @@ export class EnhancedTools {
     input: { detail: "concise" | "detailed"; limit: number },
     signal?: AbortSignal,
   ): EnhancedResult {
-    const [segmentsResult, documentsResult, procedures, stringsResult] =
+    const [segmentsResult, documentsResult, proceduresResult, stringsResult] =
       await Promise.all([
         this.#call("list_segments", {}, signal),
         this.#call("list_documents", {}, signal),
-        this.#allAddressed("list_procedures", signal),
-        this.#call("list_strings", {}, signal),
+        this.#call("list_procedures", { offset: 0, limit: 1 }, signal),
+        this.#call("list_strings", { offset: 0, limit: 1 }, signal),
       ]);
     if (!segmentsResult.ok) return segmentsResult;
     if (!documentsResult.ok) return documentsResult;
-    if (!procedures.ok) return procedures;
+    if (!proceduresResult.ok) return proceduresResult;
     if (!stringsResult.ok) return stringsResult;
 
     const segments = parseSegments(segmentsResult.value);
     if (!segments.ok) return segments;
     const documents = parseDocuments(documentsResult.value);
     if (!documents.ok) return documents;
+    const procedureCount = parseListCount(proceduresResult.value, "procedures");
+    if (!procedureCount.ok) return procedureCount;
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
@@ -339,7 +341,7 @@ export class EnhancedTools {
             : { name, start, end },
         ),
       segment_count: segments.value.length,
-      procedure_count: procedures.value.length,
+      procedure_count: procedureCount.value,
       string_count: stringCount.value,
     });
   }

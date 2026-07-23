@@ -16,6 +16,7 @@ MAX_LINE_BYTES = 10 * 1024 * 1024
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 _selected_document = None
 _search_inventory_cache = {}
+_pseudocode_cache = {}
 MAX_SEARCH_PATTERN_LENGTH = 256
 MAX_SEARCH_VALUE_LENGTH = 4096
 
@@ -225,12 +226,35 @@ def _invalidate_search_inventory(document):
             del _search_inventory_cache[key]
 
 
+def _invalidate_pseudocode(document):
+    """Discard cached decompilation after an analysis annotation changes."""
+    document_id = id(document)
+    for key in list(_pseudocode_cache):
+        if key[0] == document_id:
+            del _pseudocode_cache[key]
+
+
+def _pseudocode(document, procedure):
+    """Reuse one provider decompilation for repeated bounded projections."""
+    key = (id(document), procedure.getEntryPoint())
+    if key not in _pseudocode_cache:
+        _pseudocode_cache[key] = procedure.decompile()
+    return _pseudocode_cache[key]
+
+
 def _search_inventory(document, kind):
     """Cache an immutable, address-sorted inventory for an unchanged document."""
     key = (id(document), kind)
     inventory = _search_inventory_cache.get(key)
     if inventory is None:
-        values = _procedure_map(document) if kind == "procedure" else _strings(document)
+        if kind == "procedure":
+            values = _procedure_map(document)
+        elif kind == "string":
+            values = _strings(document)
+        elif kind == "name":
+            values = {_hex(address): value for address, value in _name_map(document).items()}
+        else:
+            raise ValueError("Unknown inventory kind")
         inventory = tuple(sorted(values.items(), key=lambda item: int(item[0], 16)))
         _search_inventory_cache[key] = inventory
     return inventory
@@ -507,6 +531,22 @@ def _name_map(document):
     return result
 
 
+def _render_instruction(segment, address):
+    instruction = segment.getInstructionAtAddress(address)
+    if instruction is None:
+        return None
+    arguments = [
+        instruction.getFormattedArgument(index)
+        for index in range(instruction.getArgumentCount())
+    ]
+    suffix = ", ".join(value for value in arguments if value is not None)
+    return "%s: %s%s" % (
+        _hex(address),
+        instruction.getInstructionString(),
+        (" " + suffix) if suffix else "",
+    )
+
+
 def _assembly(procedure, limit=None):
     """Render bounded assembly while guarding against malformed instruction cycles."""
     lines = []
@@ -520,9 +560,9 @@ def _assembly(procedure, limit=None):
             instruction = segment.getInstructionAtAddress(address)
             if instruction is None:
                 break
-            arguments = [instruction.getFormattedArgument(index) for index in range(instruction.getArgumentCount())]
-            suffix = ", ".join(value for value in arguments if value is not None)
-            lines.append("%s: %s%s" % (_hex(address), instruction.getInstructionString(), (" " + suffix) if suffix else ""))
+            line = _render_instruction(segment, address)
+            if line is not None:
+                lines.append(line)
             if limit is not None and len(lines) >= limit:
                 return "\n".join(lines)
             length = instruction.getInstructionLength()
@@ -530,6 +570,45 @@ def _assembly(procedure, limit=None):
                 break
             address += length
     return "\n".join(lines)
+
+
+def _read_function_instructions(document, params):
+    """Read one bounded raw-instruction window without invoking decompilation."""
+    procedure = _procedure(document, params.get("procedure"))
+    offset = _offset(params, "offset")
+    limit = params.get("limit", 64)
+    if offset > 100000:
+        raise ValueError("offset must not exceed 100000")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 500:
+        raise ValueError("limit must be an integer between 1 and 500")
+    addresses, scan_truncated = _instruction_addresses(
+        procedure, offset + limit + 1
+    )
+    start = min(offset, len(addresses))
+    end = min(len(addresses), start + limit)
+    segment = procedure.getSegment()
+    items = []
+    for address in addresses[start:end]:
+        line = _render_instruction(segment, address)
+        if line is not None:
+            items.append(line)
+    has_more = scan_truncated or end < len(addresses)
+    return {
+        "procedure": _procedure_identity(procedure),
+        "instructions": {
+            "items": items,
+            "total": None if scan_truncated else len(addresses),
+            "returned": len(items),
+            "truncated": has_more,
+            "next_offset": end if has_more else None,
+        },
+        "instructions_scanned": len(addresses),
+        "instruction_scan_truncated": scan_truncated,
+        "limitations": [
+            "Instruction text and ordering are Hopper-specific representations.",
+            "The fast path does not decompile the procedure or scan whole-program names and strings.",
+        ],
+    }
 
 
 def _analyze_function(document, params):
@@ -560,8 +639,8 @@ def _analyze_function(document, params):
             "end": _hex(block.getEndingAddress()),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
-    pseudo = procedure.decompile() or ""
-    assembly_lines = _assembly(procedure).splitlines() if params.get("include_assembly", False) else []
+    pseudo = _pseudocode(document, procedure) or ""
+    assembly_lines = _assembly(procedure, max_instructions).splitlines() if params.get("include_assembly", False) else []
     callers = sorted((_procedure_identity(item) for item in procedure.getAllCallerProcedures()), key=lambda item: int(item["address"], 16))
     callees = sorted((_procedure_identity(item) for item in procedure.getAllCalleeProcedures()), key=lambda item: int(item["address"], 16))
     comments = []
@@ -595,8 +674,14 @@ def _analyze_function(document, params):
             incoming.append(item)
         if source in procedure_addresses:
             outgoing.append(item)
-    string_map = {int(address, 16): value for address, value in _strings(document).items()}
-    name_map = _name_map(document)
+    string_map = {
+        int(address, 16): value
+        for address, value in _search_inventory(document, "string")
+    }
+    name_map = {
+        int(address, 16): value
+        for address, value in _search_inventory(document, "name")
+    }
     referenced_strings = []
     referenced_names = []
     for edge in outgoing:
@@ -615,7 +700,13 @@ def _analyze_function(document, params):
     return {
         "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "classification": None, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)},
         "pseudocode": {"text": pseudo_text, "total_chars": len(pseudo), "returned_chars": len(pseudo_text), "truncated": pseudo_next < len(pseudo), "next_offset": pseudo_next if pseudo_next < len(pseudo) else None},
-        "assembly": _bounded(assembly_lines, assembly_offset, max_instructions),
+        "assembly": _bounded(
+            assembly_lines,
+            assembly_offset,
+            max_instructions,
+            None,
+            instruction_scan_truncated if params.get("include_assembly", False) else False,
+        ),
         "comments": collection("comments", comments, instruction_scan_truncated),
         "callers": collection("callers", callers), "callees": collection("callees", callees),
         "incoming_references": collection("incoming_references", incoming, instruction_scan_truncated),
@@ -674,6 +765,8 @@ def _dispatch(method, params):
 
     if method == "analyze_function":
         return _analyze_function(document, params)
+    if method == "read_function_instructions":
+        return _read_function_instructions(document, params)
     if method == "resolve_containing_procedure":
         address = _address(document, params.get("address"))
         procedure, reason = _containing_procedure(document, address)
@@ -740,19 +833,16 @@ def _dispatch(method, params):
             })
         return result
     if method == "list_procedures":
-        return _page(_procedure_map(document), params.get("offset", 0), params.get("limit", 100))
+        return _page(dict(_search_inventory(document, "procedure")), params.get("offset", 0), params.get("limit", 100))
     if method == "list_strings":
-        values = _strings(document)
+        values = dict(_search_inventory(document, "string"))
         requested = params.get("address")
         if requested is not None:
             key = _hex(_address(document, requested))
             values = {key: values[key]} if key in values else {}
         return _page(values, params.get("offset", 0), params.get("limit", 100))
     if method == "list_names":
-        result = {}
-        for segment in document.getSegmentsList():
-            for item in segment.getNamedAddresses():
-                result[_hex(item)] = segment.getNameAtAddress(item)
+        result = dict(_search_inventory(document, "name"))
         requested = params.get("address")
         if requested is not None:
             key = _hex(_address(document, requested))
@@ -768,7 +858,7 @@ def _dispatch(method, params):
         if method == "procedure_assembly":
             return _assembly(procedure)
         if method == "procedure_pseudo_code":
-            return procedure.decompile()
+            return _pseudocode(document, procedure)
         if method == "procedure_callers":
             return sorted((_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()), key=lambda value: int(value, 16))
         if method == "procedure_callees":
@@ -779,12 +869,18 @@ def _dispatch(method, params):
             return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure), "classification": None}
     if method == "set_address_name":
         address = _address(document, params.get("address"))
-        result = document.setNameAtAddress(address, params["name"])
-        _invalidate_search_inventory(document)
+        try:
+            result = document.setNameAtAddress(address, params["name"])
+        finally:
+            _invalidate_search_inventory(document)
+            _invalidate_pseudocode(document)
         return result
     if method == "set_addresses_names":
-        result = {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
-        _invalidate_search_inventory(document)
+        try:
+            result = {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
+        finally:
+            _invalidate_search_inventory(document)
+            _invalidate_pseudocode(document)
         return result
     if method in ("set_comment", "set_inline_comment"):
         address = _address(document, params.get("address"))
@@ -792,6 +888,7 @@ def _dispatch(method, params):
         setter = segment.setCommentAtAddress if method == "set_comment" else segment.setInlineCommentAtAddress
         getter = segment.getCommentAtAddress if method == "set_comment" else segment.getInlineCommentAtAddress
         setter(address, params["comment"])
+        _invalidate_pseudocode(document)
         return getter(address) == params["comment"]
     if method == "list_bookmarks":
         return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]

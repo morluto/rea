@@ -49,6 +49,7 @@ export {
 type DirectAnalysisTool =
   | "binary_overview"
   | "procedure_pseudo_code"
+  | "read_function_instructions"
   | "analyze_function"
   | "search_strings"
   | "search_procedures"

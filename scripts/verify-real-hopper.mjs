@@ -26,6 +26,7 @@ import {
   requireMcpResult,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
+import { verifyHopperFunctionBasics } from "./lib/real-hopper-function-basics.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-pagination.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
@@ -155,42 +156,11 @@ const verifyCurrentTarget = async (client, options) => {
     "list_procedures",
   );
   const firstAddress = firstProcedureAddress(procedures);
-  const containment = requireSuccessfulTool(
-    await client.callTool(
-      {
-        name: "resolve_containing_procedure",
-        arguments: { address: firstAddress },
-      },
-      options,
-    ),
-    "resolve_containing_procedure",
+  const basics = await verifyHopperFunctionBasics(
+    client,
+    options,
+    firstAddress,
   );
-  if (
-    containment?.found !== true ||
-    containment.procedure?.address !== firstAddress
-  ) {
-    throw new Error(
-      "resolve_containing_procedure returned the wrong procedure",
-    );
-  }
-  const references = requireSuccessfulTool(
-    await client.callTool(
-      {
-        name: "procedure_references",
-        arguments: {
-          procedure: firstAddress,
-          direction: "outgoing",
-          limit: 10,
-          max_instructions: 100,
-        },
-      },
-      options,
-    ),
-    "procedure_references",
-  );
-  if (!Array.isArray(references?.references?.items)) {
-    throw new Error("procedure_references returned an invalid bounded result");
-  }
   const relationships = await verifyRelationships(
     client,
     options,
@@ -245,7 +215,8 @@ const verifyCurrentTarget = async (client, options) => {
     callerCount: relationships.procedure_callers.length,
     calleeCount: relationships.procedure_callees.length,
     xrefCount: relationships.xrefs.length,
-    outgoingReferenceCount: references.references.items.length,
+    outgoingReferenceCount: basics.outgoingReferenceCount,
+    instructionWindowCount: basics.instructionWindowCount,
   };
 };
 

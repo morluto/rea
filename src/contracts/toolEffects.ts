@@ -60,6 +60,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   procedure_callees: evidence,
   procedure_callers: evidence,
   procedure_info: evidence,
+  read_function_instructions: evidence,
   procedure_references: evidence,
   procedure_pseudo_code: evidence,
   resolve_containing_procedure: evidence,

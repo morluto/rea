@@ -4,7 +4,7 @@ Status: the Ghidra read-only analysis provider is shipped on Linux x64 and has
 an experimental Windows x64 P0 for approved native PE applications. It
 validates an exact bring-your-own Ghidra 12.1.2/JDK 21 environment, resolves a
 provider/version/profile commitment, runs one isolated read-only headless
-import, and publishes 18 operation-level capabilities after the authenticated
+import, and publishes 19 operation-level capabilities after the authenticated
 post-analysis handshake.
 
 The provider-neutral target, provider registry, deterministic target binding,
@@ -69,14 +69,14 @@ Unix socket. Windows uses authenticated IPv4 loopback with a strict token-free
 endpoint record. Both transports report actual
 Ghidra/language/compiler/analysis/import-digest metadata, accept only the exact
 authenticated `ping`, `shutdown`, and ten
-inventory plus eight function-analysis methods, and deletes the socket. Close,
+inventory plus nine function-analysis methods, and deletes the socket. Close,
 cancellation, timeout,
 malformed protocol, or process exit stops the owned process resources and
 removes the entire runtime root. Windows P0 uses bounded `taskkill` tree
 termination and explicitly does not claim Job Object, private-DACL, or
 reparse-point authority; see [Windows Ghidra P0](windows-ghidra-p0.md).
 
-The provider catalog lists only the 18 proved Ghidra operations. GUI cursor,
+The provider catalog lists only the 19 proved Ghidra operations. GUI cursor,
 navigation, and mutation operations remain absent; the router therefore
 reports them unavailable instead of borrowing Hopper semantics or inferring
 capability from a successful import.
@@ -103,13 +103,14 @@ capability from a successful import.
 | Serialization           | A bounded FIFO admits at most 32 active-plus-queued requests and sends one Program request at a time. Queue wait counts against the caller's deadline, and queued cancellation is prompt. This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                          |
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                          |
 | Assembly and pseudocode | Assembly is bounded Ghidra Listing text; pseudocode is bounded Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                 |
+| Instruction fast path   | `read_function_instructions` returns one offset-paginated raw Listing window without invoking the decompiler or whole-program name/string inventories. It reports scan work, exact-or-unknown totals, truncation, and continuation metadata.                                                                                               |
 | Calls and references    | Callers/callees contain only resolved functions. Reference edges preserve exact ReferenceManager type and call/jump/data/read/write/indirect/computed/conditional/terminal/external facts. Targetless computed flow remains unknown. Synthetic entry-point references without actionable memory sources are omitted explicitly.            |
 | CFG                     | Dossiers use `BasicBlockModel` and retain only non-call successors inside the function body. CFG topology is address-normalized for comparison; provider-specific block construction remains a declared difference.                                                                                                                        |
 | Bounds                  | Direct assembly fails above 100,000 instructions or the wire ceiling. Dossiers scan at most 5,000 requested instructions, return bounded independent pages, mark unknown totals after an incomplete scan, and paginate pseudocode by Unicode code points.                                                                                  |
 
 `npm run verify:ghidra` compiles the versioned C oracles into x86-64 debug and
 stripped ELF, AArch64 ELF, x86-64 PE, and x86-64 Mach-O targets. It proves all
-18 operations, external functions, resolved thunks, exports, stripped-name
+19 operations, external functions, resolved thunks, exports, stripped-name
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, semantic enhanced workflows, cancellation, deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
@@ -118,7 +119,7 @@ cover analysis/decompile timeouts, process exit, queue saturation, and malformed
 wire output.
 
 `npm run verify:ghidra:windows` generates a deterministic source-owned native
-x86-64 PE application, proves all 18 operations through the production Windows
+x86-64 PE application, proves all 19 operations through the production Windows
 launcher and loopback transport, checks target/snapshot/import SHA-256 linkage,
 and requires project, endpoint, process, and runtime cleanup. Passing that lane
 proves only the documented P0 boundary, not the remaining Windows security
@@ -146,7 +147,7 @@ only the generic process mechanisms.
 
 | Provider                                                                                    | License / automation surface                                                                                                                                           | What it brings                                                                                                                                          | REA fit and blockers                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Read-only analysis shipped: exact BYO checks, isolated state, bounded process and queue, packaged bridge, 18 admitted inventory/function operations, and real ELF/PE/Mach-O x86-64 plus AArch64 conformance. GUI and mutation semantics remain intentionally unavailable. |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Broad static analysis, many processors and formats, scripting, and project/database workflows                                                           | Read-only analysis shipped: exact BYO checks, isolated state, bounded process and queue, packaged bridge, 19 admitted inventory/function operations, and real ELF/PE/Mach-O x86-64 plus AArch64 conformance. GUI and mutation semantics remain intentionally unavailable. |
 | [Rizin](https://github.com/rizinorg/rizin) / [rz-pipe](https://github.com/rizinorg/rz-pipe) | Rizin repository contains LGPL-3.0 and GPL-3.0 components; `rizin`, `rz-bin`, and language bridges through `rzpipe`                                                    | Portable CLI analysis, disassembly/debugging, many architectures and file formats, JSON command output                                                  | Good candidate for a process-backed Linux provider and fast metadata fallback. License/component inventory must be preserved; command output needs version-pinned parsers and semantic conformance before evidence is trusted.                                            |
 | [LIEF](https://github.com/lief-project/LIEF)                                                | Apache-2.0; C++, Python, and other bindings                                                                                                                            | Deterministic parsing and modification of ELF, PE, Mach-O, COFF, and related executable formats; headers, sections, symbols, relocations, and functions | Best near-term complement, not a decompiler replacement. It can cover format metadata and artifact evidence without a long-lived analysis process; function semantics, pseudocode, CFG, and cross-reference parity remain out of scope unless separately demonstrated.    |
 | [Binary Ninja](https://docs.binary.ninja/dev/index.html)                                    | API/documentation components are MIT, while the analysis product is licensed by edition; commercial, Ultimate, or Headless license is required for headless automation | Python/Core/C++/Rust APIs, headless loading, IL layers, function analysis, plugins, and configurable analysis                                           | Strong technical fit for a native provider, especially function dossiers. Commercial licensing, license-secret handling, native runtime packaging, and multithreaded lifecycle rules are material deployment blockers.                                                    |

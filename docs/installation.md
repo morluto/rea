@@ -151,7 +151,7 @@ REA's Ghidra provider is bring-your-own and supports Linux x64 with the exact
 official Ghidra 12.1.2 release and a 64-bit full JDK 21. An experimental
 Windows x64 P0 supports approved native x86-64 PE applications. It supplies
 discovery, analysis-profile commitment, an isolated read-only headless session,
-ten bounded inventory/name/search operations, and eight function-analysis
+ten bounded inventory/name/search operations, and nine function-analysis
 operations covering metadata, decompilation, assembly, resolved calls, typed
 references, xrefs, CFG, and dossiers. GUI state and analysis mutations remain
 unavailable through Ghidra.

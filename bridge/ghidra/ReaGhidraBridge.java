@@ -72,7 +72,7 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 
 public final class ReaGhidraBridge extends HeadlessScript {
-    private static final int BRIDGE_VERSION = 4;
+    private static final int BRIDGE_VERSION = 5;
     private static final int MAX_DESCRIPTOR_BYTES = 16 * 1024;
     private static final int MAX_REQUEST_CHARACTERS = 256 * 1024;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -123,6 +123,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "procedure_callers",
         "procedure_info",
         "procedure_pseudo_code",
+        "read_function_instructions",
         "procedure_references",
         "xrefs"
     };
@@ -311,6 +312,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "procedure_callers" -> procedureCalls(request.params, true);
             case "procedure_info" -> procedureInfo(request.params);
             case "procedure_pseudo_code" -> procedurePseudocode(request.params);
+            case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
             case "search_procedures" -> search(request.params, true);
@@ -388,6 +390,51 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw functionLimit("Procedure assembly exceeds the 100000-instruction limit");
         }
         return GSON.toJsonTree(renderAssembly(scan.instructions));
+    }
+
+    private JsonObject readFunctionInstructions(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "procedure", "offset", "limit"));
+        requireDocument(params);
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        int offset = requireBoundedInteger(params, "offset", 0, 100_000);
+        int limit = requireBoundedInteger(params, "limit", 1, 500);
+        InstructionScan scan = scanInstructions(function, offset + limit + 1);
+        int start = Math.min(offset, scan.instructions.size());
+        int end = Math.min(scan.instructions.size(), start + limit);
+        JsonArray items = new JsonArray();
+        for (String line : renderAssemblyLines(scan.instructions.subList(start, end))) {
+            items.add(line);
+        }
+        boolean hasMore = scan.truncated || end < scan.instructions.size();
+        JsonObject instructions = new JsonObject();
+        instructions.add("items", items);
+        if (scan.truncated) {
+            instructions.add("total", JsonNull.INSTANCE);
+        }
+        else {
+            instructions.addProperty("total", scan.instructions.size());
+        }
+        instructions.addProperty("returned", items.size());
+        instructions.addProperty("truncated", hasMore);
+        if (hasMore) {
+            instructions.addProperty("next_offset", end);
+        }
+        else {
+            instructions.add("next_offset", JsonNull.INSTANCE);
+        }
+
+        JsonArray limitations = new JsonArray();
+        limitations.add("Instruction text and ordering are Ghidra-specific representations.");
+        limitations.add(
+            "The fast path does not invoke the decompiler or scan whole-program names and strings."
+        );
+        JsonObject result = new JsonObject();
+        result.add("procedure", procedureIdentity(function));
+        result.add("instructions", instructions);
+        result.addProperty("instructions_scanned", scan.instructions.size());
+        result.addProperty("instruction_scan_truncated", scan.truncated);
+        result.add("limitations", limitations);
+        return result;
     }
 
     private JsonArray procedureCalls(JsonObject params, boolean callers) throws Exception {

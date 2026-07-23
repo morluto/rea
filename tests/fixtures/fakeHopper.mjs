@@ -5,7 +5,7 @@ const [socketPath, token, runId, shutdownMode = "acknowledge"] =
 const shutdownResult = () => ({
   shutdown: true,
   analysis_stopped: true,
-  document_closed: true,
+  document_closed: shutdownMode !== "unconfirmed",
   ...(shutdownMode === "cleanup-required" ? { cleanup_required: true } : {}),
 });
 const enhancedFixtureResult = (method) => {

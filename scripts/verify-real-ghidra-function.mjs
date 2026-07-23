@@ -44,10 +44,27 @@ export async function verifyDebugFunctionOperations(
   if (entryString === undefined)
     throw new Error("Ghidra debug string function probe is unavailable");
 
-  const [info, assembly, pseudocode, callees, callers, outgoing, entryXrefs] =
-    await collectEntryFunctionData(client, entry);
+  const [
+    info,
+    assembly,
+    instructionWindow,
+    pseudocode,
+    callees,
+    callers,
+    outgoing,
+    entryXrefs,
+  ] = await collectEntryFunctionData(client, entry);
   assertLocalProcedureInfo(info, entry.address);
   assertProviderText(assembly, pseudocode, entry.address);
+  if (
+    instructionWindow.procedure?.address !== entry.address ||
+    instructionWindow.instructions?.items?.length !== 1 ||
+    instructionWindow.instructions.returned !== 1 ||
+    instructionWindow.instructions_scanned < 1
+  )
+    throw new Error(
+      "Ghidra read_function_instructions failed its bounded fast-path contract",
+    );
   assertEntryCallGraph({ branch, indirect, main, callees, callers });
   const { xrefOwners, xrefOwnerFailures } = await resolveXrefOwners(
     client,
@@ -83,6 +100,10 @@ export async function verifyDebugFunctionOperations(
     entry: dossierSummary(entryDossier),
     branch: dossierSummary(branchDossier),
     indirect: dossierSummary(indirectDossier),
+    instruction_window: {
+      returned: instructionWindow.instructions.returned,
+      truncated: instructionWindow.instructions.truncated,
+    },
     cancellation,
     timeout,
     concurrency: concurrent,
@@ -98,6 +119,12 @@ async function collectEntryFunctionData(client, entry) {
     functionCall(client, "procedure_assembly", {
       document: null,
       procedure: entry.value,
+    }),
+    functionCall(client, "read_function_instructions", {
+      document: null,
+      procedure: entry.value,
+      offset: 0,
+      limit: 1,
     }),
     functionCall(client, "procedure_pseudo_code", {
       document: null,

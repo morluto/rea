@@ -146,6 +146,7 @@ try {
     "procedure_callers",
     "procedure_info",
     "procedure_pseudo_code",
+    "read_function_instructions",
     "procedure_references",
   ])
     await functionOperation(operation, { procedure: procedure.value });

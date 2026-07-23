@@ -49,6 +49,7 @@ const PAGINATED_OPERATIONS: ReadonlySet<string> = new Set([
   "search_procedures",
   "search_strings",
   "procedure_references",
+  "read_function_instructions",
   "analyze_function",
 ]);
 const SEARCH_OPERATIONS: ReadonlySet<string> = new Set([
@@ -118,6 +119,12 @@ export const limitationsFor = (operation: string): readonly string[] => {
         ...common,
         "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output; each decompile has a 30-second native deadline.",
         "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
+      ];
+    case "read_function_instructions":
+      return [
+        ...common,
+        "This bounded fast path reads only the requested function instruction window and does not invoke the decompiler or whole-program string/name inventories.",
+        "Instruction text is Ghidra-specific and does not claim textual equivalence with Hopper output.",
       ];
     case "procedure_assembly":
       return [

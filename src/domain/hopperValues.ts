@@ -143,6 +143,18 @@ const boundedSchema = <T extends z.ZodType>(item: T) =>
         });
       }
     });
+
+/** Provider-neutral bounded raw-instruction window for one analyzed function. */
+export const functionInstructionWindowSchema = z
+  .object({
+    procedure: procedureIdentitySchema,
+    instructions: boundedSchema(z.string()),
+    instructions_scanned: z.number().int().min(0),
+    instruction_scan_truncated: z.boolean(),
+    limitations: z.array(z.string()),
+  })
+  .strict();
+
 const availableReferenceKindSchema = z
   .object({
     available: z.literal(true),

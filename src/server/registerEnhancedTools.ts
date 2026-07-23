@@ -49,9 +49,8 @@ export const registerEnhancedTools = (
   analysis: AnalysisOperationPort,
   options: EnhancedToolRegistration,
 ): void => {
-  const services = new EnhancedTools(analysis);
   for (const contract of ENHANCED_TOOL_CONTRACTS) {
-    registerEnhancedTool(server, services, contract, {
+    registerEnhancedTool(server, analysis, contract, {
       logger: options.logger,
       activeTarget: options.activeTarget,
       analysisProfile: options.analysisProfile,
@@ -63,7 +62,7 @@ export const registerEnhancedTools = (
 
 const registerEnhancedTool = (
   server: McpServer,
-  services: EnhancedTools,
+  analysis: AnalysisOperationPort,
   contract: ToolContract,
   registration: {
     readonly logger: Logger;
@@ -91,6 +90,13 @@ const registerEnhancedTool = (
       if (!validatedCall.ok) return toCallToolResult(validatedCall, contract);
       const parsedInput = validatedCall.value.input;
       const parameters = jsonParameters(parsedInput);
+      const services = new EnhancedTools({
+        execute: (operation, operationParameters, executionOptions) =>
+          analysis.execute(operation, operationParameters, {
+            ...executionOptions,
+            progress,
+          }),
+      });
       const result = await logToolExecution(registration.logger, name, () =>
         services.executeValidated(validatedCall.value, context.mcpReq.signal),
       );

@@ -14,6 +14,7 @@ import {
   HopperStartError,
   ProviderAdapterError,
 } from "../src/domain/errors.js";
+import { ProviderCleanupError } from "../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../src/domain/result.js";
 import { createEvidenceBundle } from "../src/domain/evidenceBundle.js";
 import { createAnalysisProfile } from "../src/domain/analysisProfile.js";
@@ -123,6 +124,19 @@ describe("binary session", () => {
               },
             },
           ],
+          requestActivitySnapshots: () => [
+            {
+              provider: provider.identity(),
+              active: {
+                requestId: 7,
+                operation: "analyze_function",
+                elapsedMs: 31_000,
+                timeoutMs: 30_000,
+                callerState: "timed_out",
+              },
+              queuedRequests: 2,
+            },
+          ],
           close: () => Promise.resolve(),
         };
       },
@@ -183,6 +197,22 @@ describe("binary session", () => {
             },
           ],
         },
+      },
+      analysis_activity: {
+        status: "timed_out_busy",
+        providers: [
+          {
+            provider: { id: "fixture", name: "Fixture", version: "1" },
+            active: {
+              request_id: 7,
+              operation: "analyze_function",
+              elapsed_ms: 31_000,
+              timeout_ms: 30_000,
+              caller_state: "timed_out",
+            },
+            queued_requests: 2,
+          },
+        ],
       },
     });
     expect(operations).toEqual(["health", "address_name"]);
@@ -723,6 +753,50 @@ describe("binary session", () => {
     await session.open(second);
     expect(overlapped).toBe(false);
     await session.close();
+  });
+
+  it("clears session state while preserving a typed provider cleanup failure", async () => {
+    const [first] = await targets();
+    const cleanupError = new ProviderCleanupError(
+      "fixture",
+      ["fixture-document"],
+      { reason: "shutdown acknowledgement missing" },
+    );
+    const session = new BinarySession(() => ({
+      execute: () => Promise.resolve(ok(null)),
+      closeWithOutcome: () => Promise.resolve(err(cleanupError)),
+      close: () => Promise.resolve(),
+    }));
+    expect((await session.open(first)).ok).toBe(true);
+
+    expect(await session.close()).toEqual(err(cleanupError));
+    expect(session.status()).toMatchObject({
+      open: false,
+      analysis_activity: { status: "not_observed", providers: [] },
+    });
+  });
+
+  it("does not start a replacement after the active provider cleanup is unconfirmed", async () => {
+    const [first, second] = await targets();
+    const cleanupError = new ProviderCleanupError(
+      "fixture",
+      ["fixture-document"],
+      { reason: "shutdown acknowledgement missing" },
+    );
+    let created = 0;
+    const session = new BinarySession(() => {
+      created += 1;
+      return {
+        execute: () => Promise.resolve(ok(null)),
+        closeWithOutcome: () => Promise.resolve(err(cleanupError)),
+        close: () => Promise.resolve(),
+      };
+    });
+    expect((await session.open(first)).ok).toBe(true);
+
+    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(created).toBe(1);
+    expect(session.status()).toMatchObject({ open: false });
   });
 });
 

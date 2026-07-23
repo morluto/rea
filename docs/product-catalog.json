@@ -11,12 +11,12 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 98,
+    "total": 99,
     "families": [
       {
         "id": "direct",
         "surface": "official-proxy",
-        "count": 33,
+        "count": 34,
         "tools": [
           "address_name",
           "comment",
@@ -40,6 +40,7 @@
           "procedure_info",
           "procedure_pseudo_code",
           "procedure_references",
+          "read_function_instructions",
           "resolve_containing_procedure",
           "search_procedures",
           "search_strings",
@@ -193,6 +194,7 @@
         "procedure_info",
         "procedure_pseudo_code",
         "procedure_references",
+        "read_function_instructions",
         "resolve_containing_procedure",
         "search_procedures",
         "search_strings",
@@ -227,6 +229,7 @@
         "procedure_info",
         "procedure_pseudo_code",
         "procedure_references",
+        "read_function_instructions",
         "resolve_containing_procedure",
         "search_procedures",
         "search_strings",
@@ -517,7 +520,7 @@
     }
   ],
   "cli": {
-    "primary_count": 58,
+    "primary_count": 59,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -553,6 +556,7 @@
       "inspect-plist",
       "inspect-signature",
       "inspect-web-page",
+      "instructions",
       "inventory-artifact",
       "investigate-versions",
       "list-architectures",
@@ -587,17 +591,17 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 58,
-      "mcp_tools": 98,
+      "cli_commands": 59,
+      "mcp_tools": 99,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 9
     },
     "digests": {
-      "tools_sha256": "15544cf838c730784a082d0ff9e0feccbe35acd1675d7dfbe99d63296b72b3e3",
+      "tools_sha256": "9159861cda3cc76f876dde306efae886dd310419d4e972f89ab7b85ff5789485",
       "prompts_sha256": "f6da3ad38a1000c11364d1710f122ac4990551f04efd8c53ffb2e819b5cf5707",
       "resources_sha256": "94bebbab1a1b3cf47644c38d3de6469de568caa7bd7b842f529ead8ad320a912",
-      "combined_sha256": "aa413204625f3aeb62732d0f732b9b8b24832eea4520214b1e6bd204e599bcd6"
+      "combined_sha256": "e787c57af8337f17b9da72745fcb328634af3b39be1d9ca8bfe1836274351f92"
     }
   }
 }
