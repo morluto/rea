@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.1](https://github.com/morluto/rea/compare/rea-agents-2.4.0...rea-agents-2.4.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **hopper:** add bounded analysis recovery ([e0bc7fd](https://github.com/morluto/rea/commit/e0bc7fd973b26448fb2192a2059ab1229bec0817))
+
+
+### Tests
+
+* **package:** stabilize fake Hopper ownership ([0b70131](https://github.com/morluto/rea/commit/0b7013134c58085b72177f2954e55534be053ebe))
+
 ## [2.4.0](https://github.com/morluto/rea/compare/rea-agents-2.3.0...rea-agents-2.4.0) (2026-07-23)
 
 
