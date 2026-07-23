@@ -2,7 +2,7 @@
   "catalog_schema_version": 1,
   "package": {
     "name": "rea-agents",
-    "version": "2.4.0",
+    "version": "0.4.0",
     "sdk": {
       "server": "2.0.0-beta.4",
       "client": "2.0.0-beta.4",
@@ -86,7 +86,10 @@
         "id": "artifact",
         "surface": "artifact-provider",
         "count": 2,
-        "tools": ["extract_artifact", "inventory_artifact"]
+        "tools": [
+          "extract_artifact",
+          "inventory_artifact"
+        ]
       },
       {
         "id": "managed",
@@ -256,7 +259,10 @@
       "id": "rea-artifact-graph",
       "name": "REA safe artifact graph provider",
       "version": "1",
-      "capabilities": ["extract_artifact", "inventory_artifact"]
+      "capabilities": [
+        "extract_artifact",
+        "inventory_artifact"
+      ]
     },
     {
       "id": "rea-cdp-browser",
@@ -277,7 +283,10 @@
       "id": "rea-cdp-electron",
       "name": "REA Electron file-page CDP observation provider",
       "version": "1",
-      "capabilities": ["inspect_electron_page", "list_electron_targets"]
+      "capabilities": [
+        "inspect_electron_page",
+        "list_electron_targets"
+      ]
     },
     {
       "id": "rea-dotnet-static",
@@ -305,7 +314,9 @@
       "id": "rea-javascript-application",
       "name": "REA JavaScript application analyzer",
       "version": "1",
-      "capabilities": ["analyze_javascript_application"]
+      "capabilities": [
+        "analyze_javascript_application"
+      ]
     },
     {
       "id": "rea-javascript-application-workflows",
@@ -327,7 +338,9 @@
       "id": "rea-javascript-runtime-reconciliation",
       "name": "REA JavaScript runtime reconciliation",
       "version": "1",
-      "capabilities": ["reconcile_javascript_runtime"]
+      "capabilities": [
+        "reconcile_javascript_runtime"
+      ]
     }
   ],
   "setup_clients": [
