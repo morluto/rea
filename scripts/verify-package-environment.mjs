@@ -72,10 +72,7 @@ export async function verifyPackageEnvironment({
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     REA_ANALYSIS_PROVIDER: "auto",
-    HOPPER_LAUNCHER_PATH: process.execPath,
-    HOPPER_LOADER_ARGS_JSON: JSON.stringify([
-      join(root, "tests/fixtures/fakeLauncher.mjs"),
-    ]),
+    ...packageHopperEnvironment(root),
     REA_NPX_LOG: npxLog,
     REA_EVIDENCE_ROOTS_JSON: JSON.stringify([evidenceRoot]),
     REA_INVESTIGATION_INPUT_ROOTS_JSON: JSON.stringify([workspace]),
@@ -94,3 +91,22 @@ export async function verifyPackageEnvironment({
     environment,
   };
 }
+
+const packageHopperEnvironment = (root) => {
+  const fakeLauncher = join(root, "tests/fixtures/fakeLauncher.mjs");
+  if (process.platform === "win32")
+    return {
+      HOPPER_LAUNCHER_PATH: process.execPath,
+      HOPPER_LOADER_ARGS_JSON: JSON.stringify([fakeLauncher]),
+    };
+  return {
+    HOPPER_LAUNCHER_PATH: "/bin/sh",
+    HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+      "-c",
+      'node_path=$1; shift; "$node_path" "$@"',
+      "rea-package-hopper",
+      process.execPath,
+      fakeLauncher,
+    ]),
+  };
+};
