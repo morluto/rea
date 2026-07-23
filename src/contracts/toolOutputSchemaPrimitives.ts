@@ -45,6 +45,8 @@ export const targetFormatSchema = z.enum([
   "zip",
   "ipa",
   "apk",
+  "msix",
+  "appx",
   "asar",
   "dmg",
   "pkg",

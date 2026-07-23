@@ -269,7 +269,13 @@ const createReader = async (
   if ((await lstat(path)).isDirectory())
     return new DirectoryArtifactReader(path);
   if (format === "asar") return new AsarArtifactReader(path);
-  if (format === "ipa" || format === "apk" || format === "zip")
+  if (
+    format === "ipa" ||
+    format === "apk" ||
+    format === "msix" ||
+    format === "appx" ||
+    format === "zip"
+  )
     return new ZipArtifactReader(path, format);
   if (format === "mach-o") return new MachOSliceArtifactReader(path);
   throw new ArtifactReaderFailure(

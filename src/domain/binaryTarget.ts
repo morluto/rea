@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 
 import { BinaryTargetError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
+import { zipPackageFormatForPath } from "./zipPackageFormat.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,8 @@ export interface BinaryTarget {
     | "zip"
     | "ipa"
     | "apk"
+    | "msix"
+    | "appx"
     | "asar"
     | "dmg"
     | "pkg"
@@ -131,11 +134,7 @@ const detectArtifactFormat = async (
     [0x03, 0x05, 0x07].includes(magic[2] ?? -1) &&
     [0x04, 0x06, 0x08].includes(magic[3] ?? -1)
   ) {
-    return lower.endsWith(".ipa")
-      ? "ipa"
-      : lower.endsWith(".apk")
-        ? "apk"
-        : "zip";
+    return zipPackageFormatForPath(lower) ?? "zip";
   }
   const named = namedArtifactFormat(lower);
   if (named !== undefined) return named;
@@ -167,7 +166,7 @@ const namedArtifactFormat = (
 };
 
 const isArchiveFormat = (format: BinaryTarget["format"]): boolean =>
-  ["zip", "ipa", "apk", "asar", "dmg", "pkg"].includes(format);
+  ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(format);
 
 const sha256Handle = async (handle: FileHandle): Promise<string> => {
   const hash = createHash("sha256");

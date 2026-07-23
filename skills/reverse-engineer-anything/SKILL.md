@@ -22,7 +22,8 @@ Choose the first tool from the target the user supplied. Do not call
 
 - ASAR or extracted JavaScript/Electron tree:
   `analyze_javascript_application`.
-- Archive, application package, ZIP/APK/IPA, or DMG: `inventory_artifact`.
+- Archive, application package, ZIP/APK/IPA/MSIX/AppX, or DMG:
+  `inventory_artifact`.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
 - User-owned browser page already open: `list_browser_targets`.
 - User-owned Electron runtime already open: `list_electron_targets`.
