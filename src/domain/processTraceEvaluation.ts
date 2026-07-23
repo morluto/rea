@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "./jsonValue.js";
 import type { ProcessCapture } from "./processCapture.js";
+import {
+  processObservationLocationSchema,
+  projectProcessObservation,
+  type ProcessObservationLocation,
+} from "./processObservation.js";
 import {
   canonicalTraceJson,
   comparableTracePayload,
@@ -12,36 +17,9 @@ import {
 
 const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/u);
 
-export type ProcessTraceLocation = {
-  readonly collection:
-    | "frames"
-    | "rendered_frames"
-    | "interaction_events"
-    | "lifecycle"
-    | "process_samples"
-    | "filesystem_checkpoints"
-    | "shim_events"
-    | "protocol_events"
-    | "replay_transitions";
-  readonly index: number;
-  readonly capture_order: number;
-};
+export type ProcessTraceLocation = ProcessObservationLocation;
 
-const locationSchema = z.strictObject({
-  collection: z.enum([
-    "frames",
-    "rendered_frames",
-    "interaction_events",
-    "lifecycle",
-    "process_samples",
-    "filesystem_checkpoints",
-    "shim_events",
-    "protocol_events",
-    "replay_transitions",
-  ]),
-  index: z.number().int().nonnegative(),
-  capture_order: z.number().int().nonnegative(),
-});
+const locationSchema = processObservationLocationSchema;
 
 const matchedEventSchema = z.strictObject({
   event_id: identifierSchema,
@@ -86,71 +64,6 @@ type TraceRecord = {
   readonly source: ProcessTraceSource;
   readonly payload: JsonValue;
   readonly location: ProcessTraceLocation;
-};
-
-const recordAt = (
-  capture: ProcessCapture,
-  location: ProcessTraceLocation,
-): Omit<TraceRecord, "location"> | null => {
-  const value = (() => {
-    switch (location.collection) {
-      case "frames":
-        return {
-          source: "terminal_raw" as const,
-          value: capture.frames[location.index],
-        };
-      case "rendered_frames":
-        return {
-          source: "terminal_rendered" as const,
-          value: capture.rendered_frames[location.index],
-        };
-      case "interaction_events":
-        return {
-          source: "interaction" as const,
-          value: capture.interaction_events[location.index],
-        };
-      case "lifecycle":
-        return location.index === 0
-          ? {
-              source: "lifecycle" as const,
-              value: { event: "exit", ...capture.exit },
-            }
-          : location.index === 1
-            ? {
-                source: "lifecycle" as const,
-                value: { event: "settlement", ...capture.settlement },
-              }
-            : null;
-      case "process_samples":
-        return {
-          source: "process" as const,
-          value: capture.process_samples[location.index],
-        };
-      case "filesystem_checkpoints":
-        return {
-          source: "filesystem" as const,
-          value: capture.filesystem_checkpoints[location.index],
-        };
-      case "shim_events":
-        return {
-          source: "shim" as const,
-          value: capture.shim_events[location.index],
-        };
-      case "protocol_events": {
-        const event = capture.protocol_events[location.index];
-        return event === undefined
-          ? null
-          : { source: event.protocol, value: event };
-      }
-      case "replay_transitions":
-        return {
-          source: "replay_transition" as const,
-          value: capture.replay_transitions[location.index],
-        };
-    }
-  })();
-  if (value === null || value.value === undefined) return null;
-  return { source: value.source, payload: jsonValueSchema.parse(value.value) };
 };
 
 const scopesFor = (
@@ -244,9 +157,13 @@ const collectRecords = (
 ): readonly TraceRecord[] => {
   const records: TraceRecord[] = [];
   for (const location of capture.event_journal ?? []) {
-    const record = recordAt(capture, location);
+    const record = projectProcessObservation(capture, location);
     if (record !== null && sources.has(record.source))
-      records.push({ ...record, location });
+      records.push({
+        source: record.source,
+        payload: record.payload,
+        location,
+      });
   }
   return records;
 };
