@@ -2,23 +2,17 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { jsonValueSchema } from "./jsonValue.js";
+import {
+  comparableProcessObservationPayload,
+  processObservationSourceSchema,
+  type ProcessObservationSource,
+} from "./processObservation.js";
 
 const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,63}$/u);
 
 /** Process observation families admitted by a declared trace specification. */
-export const processTraceSourceSchema = z.enum([
-  "terminal_raw",
-  "terminal_rendered",
-  "interaction",
-  "lifecycle",
-  "process",
-  "filesystem",
-  "http",
-  "websocket",
-  "shim",
-  "replay_transition",
-]);
-export type ProcessTraceSource = z.infer<typeof processTraceSourceSchema>;
+export const processTraceSourceSchema = processObservationSourceSchema;
+export type ProcessTraceSource = ProcessObservationSource;
 
 const cardinalitySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("required") }),
@@ -134,18 +128,7 @@ export const canonicalTraceJson = (value: unknown): string => {
 export const comparableTracePayload = (
   value: unknown,
   ignoredFields: readonly string[] = [],
-): unknown => {
-  if (
-    ignoredFields.length === 0 ||
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value)
-  )
-    return value;
-  return Object.fromEntries(
-    Object.entries(value).filter(([name]) => !ignoredFields.includes(name)),
-  );
-};
+): unknown => comparableProcessObservationPayload(value, ignoredFields);
 
 export const processTraceCardinalityBounds = (
   cardinality: ProcessTraceSpecification["events"][number]["cardinality"],
