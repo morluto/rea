@@ -122,6 +122,10 @@ describe("process observation vocabulary", () => {
       captured_at_ms: 4,
       subject_id: "process:2",
     });
+    expect(observations[7]).toMatchObject({
+      event_id: "obs.shim_events.0",
+      subject_id: "shim:helper:route:0",
+    });
     expect(observations[3]?.captured_at_ms).toBeNull();
     expect(observations[4]?.captured_at_ms).toBeNull();
   });

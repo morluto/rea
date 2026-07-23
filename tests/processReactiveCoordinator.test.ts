@@ -9,7 +9,7 @@ import {
   unsupportedProcessReactiveFeatures,
 } from "../src/application/ProcessReactiveEffects.js";
 import { createProcessCaptureJournal } from "../src/application/ProcessCaptureJournal.js";
-import { subscribeProcessReactiveTerminalObservations } from "../src/application/ProcessReactiveObservations.js";
+import { subscribeProcessReactiveObservations } from "../src/application/ProcessReactiveObservations.js";
 import type {
   FilesystemCheckpoint,
   InteractionEvent,
@@ -149,9 +149,14 @@ const createHarness = (scenario: ProcessReactiveScenario) => {
     },
     timerHost: timers.host,
   });
-  const unsubscribe = subscribeProcessReactiveTerminalObservations({
+  const unsubscribe = subscribeProcessReactiveObservations({
     journal,
     frames,
+    interactions,
+    checkpointAt: (index) => checkpoints[index],
+    processSampleAt: () => undefined,
+    protocolEventAt: () => undefined,
+    shimEventAt: () => undefined,
     sink: coordinator,
   });
   return {

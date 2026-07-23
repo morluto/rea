@@ -51,7 +51,7 @@ export class ProcessReactiveCoordinator {
   readonly #now: () => number;
   readonly #scenarioDeadlineAt: number;
   readonly #onDecision:
-    | ((decision: ProcessReactiveDecision) => void)
+    | ((decision: ProcessReactiveDecision, input: ProcessReactiveInput) => void)
     | undefined;
   #snapshot: ProcessReactiveSnapshot;
   readonly #pendingInputs: ProcessReactiveInput[] = [];
@@ -70,7 +70,10 @@ export class ProcessReactiveCoordinator {
     readonly executor: ProcessReactiveExecutor;
     readonly timerHost?: ProcessReactiveTimerHost;
     readonly now?: () => number;
-    readonly onDecision?: (decision: ProcessReactiveDecision) => void;
+    readonly onDecision?: (
+      decision: ProcessReactiveDecision,
+      input: ProcessReactiveInput,
+    ) => void;
   }) {
     this.#scenario = options.scenario;
     this.#executor = options.executor;
@@ -206,7 +209,7 @@ export class ProcessReactiveCoordinator {
       );
     }
     this.#snapshot = decision.snapshot;
-    this.#onDecision?.(decision);
+    this.#onDecision?.(decision, input);
     if (this.#snapshot.status === "finished") this.#clearTimers();
     else if (
       this.#accepting &&
@@ -216,18 +219,35 @@ export class ProcessReactiveCoordinator {
     )
       this.#scheduleStateDeadline();
     for (const result of effectResults)
-      if (result.status === "succeeded")
+      if (
+        result.status === "succeeded" &&
+        !this.#hasObservation(result.observation.event_id)
+      )
         this.#enqueueOwned({
           kind: "observation",
           observation: result.observation,
         });
   }
 
+  #hasObservation(eventId: string): boolean {
+    return (
+      this.#snapshot.observations.some(
+        (observation) => observation.event_id === eventId,
+      ) ||
+      this.#pendingInputs.some(
+        (input) =>
+          input.kind === "observation" &&
+          input.observation.event_id === eventId,
+      )
+    );
+  }
+
   #interruptsEffects(input: ProcessReactiveInput): boolean {
     if (
       input.kind === "cancelled" ||
       input.kind === "cleanup_failed" ||
-      input.kind === "scenario_deadline"
+      input.kind === "scenario_deadline" ||
+      input.kind === "target_lost"
     )
       return true;
     return (

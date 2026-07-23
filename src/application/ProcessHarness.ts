@@ -15,7 +15,6 @@ import {
   ProcessCaptureError,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
-
 export { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { startLoopbackReplay, type LoopbackReplay } from "./LoopbackReplay.js";
 import { startProcessSampler } from "./ProcessSampling.js";
@@ -26,7 +25,10 @@ import {
   startCommandShimReplay,
   type CommandShimReplay,
 } from "./CommandShimReplay.js";
-import { normalizeProcessText } from "./ProcessNormalization.js";
+import {
+  normalizeProcessShimEvent,
+  normalizeProcessText,
+} from "./ProcessNormalization.js";
 import { selectCapturedProcessGroupIds } from "../process/ProcessOwnership.js";
 import {
   awaitTerminalExit,
@@ -42,44 +44,16 @@ import { assertNotCancelled } from "./ProcessCaptureAuthority.js";
 import {
   createProcessCaptureJournal,
   scheduleScenarioInteractions,
+  type ProcessCaptureJournal,
 } from "./ProcessCaptureJournal.js";
-
+import {
+  assertSupportedReactiveScenario,
+  projectProcessReactiveRun,
+  startProcessReactiveHarness,
+  type ProcessReactiveHarness,
+} from "./ProcessReactiveHarness.js";
+import { makeProcessCaptureEnvironment } from "./ProcessCaptureEnvironment.js";
 export { probeProcessCaptureCapability } from "./ProcessCaptureCapability.js";
-
-interface EnvironmentOptions {
-  readonly scenario: ProcessScenario;
-  readonly home: string;
-  readonly replay: LoopbackReplay;
-  readonly shimReplay: CommandShimReplay;
-  readonly runId: string;
-}
-
-const makeEnvironment = (
-  options: EnvironmentOptions,
-): Record<string, string> => {
-  const { scenario, home, replay, shimReplay, runId } = options;
-  const environment: Record<string, string> = {
-    ...scenario.environment,
-    HOME: home,
-    TERM: "xterm-256color",
-    REA_PROCESS_RUN_ID: runId,
-  };
-  for (const name of scenario.inherit_environment) {
-    const value = process.env[name];
-    if (value !== undefined) environment[name] = value;
-  }
-  environment.REA_REPLAY_HTTP_URL = replay.httpUrl;
-  environment.REA_REPLAY_WEBSOCKET_URL = replay.websocketUrl;
-  environment.REA_SHIM_LEDGER_URL = shimReplay.url;
-  // PATH is evidence-producing input. Inheriting the host PATH here would let
-  // the authority and reconstruction probe different tools without recording
-  // that difference. Scenarios must opt in through environment or
-  // inherit_environment; deterministic shims always take precedence.
-  environment.PATH = [shimReplay.binPath, environment.PATH ?? ""]
-    .filter((part) => part.length > 0)
-    .join(":");
-  return environment;
-};
 
 interface StartedCaptureRuntime {
   readonly replay: LoopbackReplay;
@@ -92,6 +66,7 @@ interface StartedCaptureRuntime {
   readonly lastOutput: () => number;
   readonly framesTruncated: () => boolean;
   readonly stopSampler: () => Promise<{ readonly partial: boolean }>;
+  readonly reactive: ProcessReactiveHarness | undefined;
 }
 
 const cleanupFailedStartup = async (options: {
@@ -136,7 +111,7 @@ const createTerminalRenderer = (
     recordEvent,
   });
 
-const startCaptureRuntime = async (options: {
+interface StartCaptureRuntimeOptions {
   readonly scenario: ProcessScenario;
   readonly home: string;
   readonly temporaryRoot: string;
@@ -148,14 +123,29 @@ const startCaptureRuntime = async (options: {
   readonly timers: Set<NodeJS.Timeout>;
   readonly dispatchedEventIndexes: Set<number>;
   readonly recordEvent: RecordProcessCaptureEvent;
+  readonly journal: ProcessCaptureJournal;
   readonly signal?: AbortSignal;
-}): Promise<StartedCaptureRuntime> => {
+}
+
+const reactiveCapture = (
+  options: StartCaptureRuntimeOptions,
+  protocolEvents: () => LoopbackReplay["events"],
+): Parameters<typeof startProcessReactiveHarness>[0]["capture"] => ({
+  ...options,
+  processSamples: options.samples,
+  protocolEvents,
+});
+
+const startCaptureRuntime = async (
+  options: StartCaptureRuntimeOptions,
+): Promise<StartedCaptureRuntime> => {
   const { scenario } = options;
   let replay: LoopbackReplay | undefined;
   let renderer: TerminalRenderer | undefined;
   let checkpoints: ProcessCheckpoints | undefined;
   let shimReplay: CommandShimReplay | undefined;
   let terminal: IPty | undefined;
+  let reactive: ProcessReactiveHarness | undefined;
   try {
     const { spawn } = await import("@lydell/node-pty");
     replay = await startLoopbackReplay(scenario, options.recordEvent);
@@ -180,7 +170,7 @@ const startCaptureRuntime = async (options: {
     );
     terminal = spawn(scenario.executable, [...scenario.arguments], {
       cwd: scenario.working_directory,
-      env: makeEnvironment({ ...options, replay, shimReplay }),
+      env: makeProcessCaptureEnvironment({ ...options, replay, shimReplay }),
       cols: scenario.terminal.columns,
       rows: scenario.terminal.rows,
       name: "xterm-256color",
@@ -192,6 +182,15 @@ const startCaptureRuntime = async (options: {
       onOutput: () => (lastOutput = Date.now()),
       renderer,
       checkpoints,
+    });
+    reactive = startProcessReactiveHarness({
+      capture: reactiveCapture(options, () => replay?.events ?? []),
+      scenario,
+      terminal: () => terminal,
+      renderer,
+      checkpoints,
+      shimReplay,
+      started,
     });
     scheduleScenarioInteractions({
       ...options,
@@ -218,8 +217,11 @@ const startCaptureRuntime = async (options: {
       lastOutput: () => lastOutput,
       framesTruncated,
       stopSampler,
+      reactive,
     };
   } catch (cause: unknown) {
+    reactive?.unsubscribe();
+    await reactive?.coordinator.close();
     return cleanupFailedStartup({
       cause,
       timers: options.timers,
@@ -239,23 +241,14 @@ const normalizedShimEvents = (
   scenario: ProcessScenario,
   temporaryRoot: string,
 ): ProcessCapture["shim_events"] =>
-  runtime.shimReplay.events.map((event) => ({
-    ...event,
-    arguments: event.arguments.map((argument) =>
-      normalizeProcessText(
-        argument,
-        scenario,
-        temporaryRoot,
-        runtime.terminal.pid,
-      ),
-    ),
-    working_directory: normalizeProcessText(
-      event.working_directory,
+  runtime.shimReplay.events.map((event) =>
+    normalizeProcessShimEvent(
+      event,
       scenario,
       temporaryRoot,
       runtime.terminal.pid,
     ),
-  }));
+  );
 
 const finishProcessRun = async (options: {
   readonly runtime: StartedCaptureRuntime | undefined;
@@ -267,6 +260,7 @@ const finishProcessRun = async (options: {
   readonly capture: ProcessCapture | undefined;
   readonly executionFailure: unknown;
 }): Promise<ProcessCapture> => {
+  options.runtime?.reactive?.unsubscribe();
   await options.stopSampler();
   const cleanupFailure = await releaseProcessResources({
     timers: options.timers,
@@ -285,10 +279,16 @@ const finishProcessRun = async (options: {
             options.samples,
           ),
   });
+  if (cleanupFailure !== undefined)
+    await options.runtime?.reactive?.coordinator.submit({
+      kind: "cleanup_failed",
+    });
+  await options.runtime?.reactive?.coordinator.close();
   let { capture, executionFailure } = options;
   if (capture !== undefined) {
     capture = {
       ...capture,
+      reactive_run: projectProcessReactiveRun(options.runtime?.reactive),
       settlement: {
         ...capture.settlement,
         cleanup_outcome:
@@ -326,7 +326,17 @@ const completeCapture = async (options: {
   const { runtime, scenario } = options;
   runtime.checkpoints.trigger("root_exit");
   const { reason } = options.exit;
-  if (reason === "cancelled") throw processCaptureCancelled();
+  if (reason === "cancelled") {
+    if (runtime.reactive !== undefined) {
+      await runtime.reactive.coordinator.submit({ kind: "cancelled" });
+      runtime.reactive.unsubscribe();
+    }
+    throw processCaptureCancelled();
+  }
+  if (runtime.reactive !== undefined) {
+    await runtime.reactive.coordinator.submit({ kind: "target_lost" });
+    runtime.reactive.unsubscribe();
+  }
   const settlement = await observeSettlement(
     options.runId,
     selectCapturedProcessGroupIds(runtime.terminal.pid, options.samples),
@@ -359,6 +369,7 @@ const completeCapture = async (options: {
     exit: { ...options.exit, reason },
     samples: options.samples,
     replay: runtime.replay,
+    reactiveRun: projectProcessReactiveRun(runtime.reactive),
     before: options.before,
     after,
     truncated,
@@ -381,6 +392,7 @@ const runProcessScenario = async (
   policy: ProcessExecutionPolicy,
   signal?: AbortSignal,
 ): Promise<ProcessCapture> => {
+  assertSupportedReactiveScenario(scenario);
   const { temporaryRoot, runId, home, before } = await prepareProcessCapture(
     scenario,
     policy,
@@ -388,7 +400,8 @@ const runProcessScenario = async (
   );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
-  const { entries: eventJournal, recordEvent } = createProcessCaptureJournal();
+  const journal = createProcessCaptureJournal();
+  const { entries: eventJournal, recordEvent } = journal;
   let runtime: StartedCaptureRuntime | undefined;
   const timers = new Set<NodeJS.Timeout>();
   let capture: ProcessCapture | undefined;
@@ -410,6 +423,7 @@ const runProcessScenario = async (
       timers,
       dispatchedEventIndexes,
       recordEvent,
+      journal,
       ...(signal === undefined ? {} : { signal }),
     });
     stopSampler = runtime.stopSampler;

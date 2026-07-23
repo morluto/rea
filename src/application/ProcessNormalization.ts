@@ -2,6 +2,7 @@ import type {
   ProcessCapture,
   ProcessSample,
   ProcessScenario,
+  ShimEvent,
 } from "../domain/processCapture.js";
 
 /** Bucket one elapsed process-capture timestamp under scenario normalization. */
@@ -90,6 +91,25 @@ export const normalizeProcessSamples = (
     command: normalizeCommand(sample.command),
   }));
 };
+
+/** Normalize one shim observation identically for live matching and capture. */
+export const normalizeProcessShimEvent = (
+  event: ShimEvent,
+  scenario: ProcessScenario,
+  temporaryRoot: string,
+  rootPid: number,
+): ShimEvent => ({
+  ...event,
+  arguments: event.arguments.map((argument) =>
+    normalizeProcessText(argument, scenario, temporaryRoot, rootPid),
+  ),
+  working_directory: normalizeProcessText(
+    event.working_directory,
+    scenario,
+    temporaryRoot,
+    rootPid,
+  ),
+});
 
 const normalizePidTokens = (
   value: string,

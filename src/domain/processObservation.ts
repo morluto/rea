@@ -109,16 +109,29 @@ const atMilliseconds = (value: unknown): number | null => {
   return null;
 };
 
-const subjectFor = (
+/** Derive the stable capture-local identity for one normalized observation. */
+export const processObservationSubject = (
   source: ProcessObservationSource,
-  value: JsonValue,
+  value: unknown,
 ): string | null => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return null;
-  if (source === "process" && typeof value["pid"] === "number")
-    return `process:${String(value["pid"])}`;
-  if (source === "filesystem" && typeof value["name"] === "string")
-    return `checkpoint:${value["name"]}`;
+  if (source === "process" && "pid" in value && typeof value.pid === "number")
+    return `process:${String(value.pid)}`;
+  if (
+    source === "filesystem" &&
+    "name" in value &&
+    typeof value.name === "string"
+  )
+    return `checkpoint:${value.name}`;
+  if (
+    source === "shim" &&
+    "command" in value &&
+    typeof value.command === "string"
+  )
+    return "route_index" in value && typeof value.route_index === "number"
+      ? `shim:${value.command}:route:${String(value.route_index)}`
+      : `shim:${value.command}:unmatched`;
   return null;
 };
 
@@ -188,7 +201,7 @@ const projectedRecord = (
   return {
     source: projected.source,
     captured_at_ms: atMilliseconds(payload),
-    subject_id: subjectFor(projected.source, payload),
+    subject_id: processObservationSubject(projected.source, payload),
     payload,
   };
 };

@@ -103,6 +103,7 @@ const emptyCapture = (): ProcessCapture => {
     shim_events: [],
     protocol_events: [],
     replay_transitions: [],
+    reactive_run: null,
     event_journal: [],
     files_before: [],
     files_after: [],
@@ -187,6 +188,7 @@ describe("process capture domain", () => {
     ];
     const result = buildCaptureResult({
       frames: [],
+      reactiveRun: null,
       exit: { exitCode: 0, reason: "exited" },
       samples: [],
       replay: {
@@ -452,6 +454,7 @@ describe("process capture domain", () => {
       shim_events: [],
       protocol_events: [],
       replay_transitions: [],
+      reactive_run: null,
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -696,6 +699,7 @@ describe("process capture domain", () => {
       shim_events: [],
       protocol_events: [],
       replay_transitions: [],
+      reactive_run: null,
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -756,6 +760,7 @@ describe("process capture domain", () => {
       shim_events: [],
       protocol_events: [],
       replay_transitions: [],
+      reactive_run: null,
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -800,6 +805,7 @@ describe("process capture domain", () => {
       shim_events: [],
       protocol_events: [],
       replay_transitions: [],
+      reactive_run: null,
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -873,6 +879,7 @@ describe("process capture domain", () => {
       shim_events: [],
       protocol_events: [],
       replay_transitions: [],
+      reactive_run: null,
       files_before: [],
       files_after: [],
       filesystem_effects: [],
@@ -1507,6 +1514,407 @@ describe("process capture adapter", () => {
     }
   });
 
+  it("drives a process from terminal observations and retains the reactive transition journal", async () => {
+    const root = await createTestTempDirectory("rea-reactive-harness-test-");
+    const script = join(root, "reactive.mjs");
+    await writeFile(
+      script,
+      [
+        'import { createInterface } from "node:readline";',
+        "const input = createInterface({ input: process.stdin, terminal: false });",
+        'process.stdout.write("Ready\\n");',
+        'input.once("line", () => { process.stdout.write("Done\\n"); input.close(); });',
+      ].join("\n"),
+    );
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: process.execPath,
+      arguments: [script],
+      working_directory: root,
+      reactive: {
+        version: 1,
+        initial_state: "waiting",
+        deadline_ms: 5_000,
+        states: [
+          {
+            id: "waiting",
+            max_visits: 1,
+            deadline_ms: 2_000,
+            on: [
+              {
+                id: "answer",
+                priority: 0,
+                max_uses: 1,
+                when: {
+                  kind: "terminal_text",
+                  view: "decoded",
+                  encoding: "utf8",
+                  literal: "Ready",
+                  case_sensitive: true,
+                  control_sequences: "include",
+                  occurrence: 1,
+                  since: { kind: "scenario_start" },
+                  consume: true,
+                },
+                actions: [
+                  { type: "send_input", data: "accepted\n", sensitive: true },
+                ],
+                target: { kind: "goto", state: "finishing" },
+              },
+            ],
+          },
+          {
+            id: "finishing",
+            max_visits: 1,
+            deadline_ms: 2_000,
+            on: [
+              {
+                id: "complete",
+                priority: 0,
+                max_uses: 1,
+                when: {
+                  kind: "terminal_text",
+                  view: "decoded",
+                  encoding: "utf8",
+                  literal: "Done",
+                  case_sensitive: true,
+                  control_sequences: "include",
+                  occurrence: 1,
+                  since: { kind: "state_entry" },
+                  consume: true,
+                },
+                actions: [],
+                target: { kind: "finish", outcome: "passed" },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const result = await captureProcessScenario(scenario, {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [root],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      });
+      if (!result.ok) throw result.error;
+      expect(result.ok).toBe(true);
+      expect(result.value.reactive_run).toMatchObject({
+        status: "finished",
+        outcome: "passed",
+        active_state: "finishing",
+      });
+      expect(
+        result.value.reactive_run?.transitions.map(
+          ({ transition_id }) => transition_id,
+        ),
+      ).toEqual(["answer", "complete"]);
+      expect(result.value.interaction_events).toContainEqual(
+        expect.objectContaining({
+          type: "input",
+          data: "<redacted-input:9-bytes>",
+          outcome: "dispatched",
+        }),
+      );
+      expect(result.value.frames.map(({ data }) => data).join("")).toContain(
+        "Done",
+      );
+      expect(result.value.manifest.comparison_contract).toHaveProperty(
+        "reactive",
+      );
+      expect(
+        JSON.stringify(result.value.manifest.comparison_contract),
+      ).not.toContain("accepted");
+      expect(JSON.stringify(result.value.manifest.scenario)).not.toContain(
+        "accepted",
+      );
+      const reactiveRun = result.value.reactive_run;
+      if (reactiveRun === null) throw new Error("reactive result missing");
+      const lastReactiveOrder = result.value.event_journal
+        ?.filter(({ collection }) =>
+          [
+            "frames",
+            "interaction_events",
+            "filesystem_checkpoints",
+            "shim_events",
+          ].includes(collection),
+        )
+        .at(-1)?.capture_order;
+      if (lastReactiveOrder === undefined)
+        throw new Error("reactive observation order missing");
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            ...reactiveRun,
+            controls: [
+              ...reactiveRun.controls,
+              {
+                sequence: reactiveRun.controls.length,
+                kind: "target_lost",
+                after_capture_order: lastReactiveOrder,
+              },
+            ],
+          },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          path: `reactive_run.controls[${String(reactiveRun.controls.length)}]`,
+          message: "reactive control cannot follow a finished run",
+        }),
+      );
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            ...reactiveRun,
+            transitions: reactiveRun.transitions.map((transition, index) =>
+              index === 0
+                ? { ...transition, transition_id: "fabricated" }
+                : transition,
+            ),
+          },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          path: "reactive_run.transitions[0]",
+          message:
+            "reactive transition is not declared by its recorded source state",
+        }),
+      );
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            status: "finished",
+            outcome: "passed",
+            active_state: "waiting",
+            transitions: [],
+            controls: [],
+          },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          path: "reactive_run.outcome",
+          message: "reactive outcome differs from deterministic journal replay",
+        }),
+      );
+      const suffix = reactiveRun.transitions
+        .slice(1)
+        .map((transition, index) => ({
+          ...transition,
+          sequence: index,
+        }));
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: { ...reactiveRun, transitions: suffix },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          path: "reactive_run.transitions[0].state_before",
+          message:
+            "reactive transition journal must start at the declared initial state",
+        }),
+      );
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            ...reactiveRun,
+            transitions: reactiveRun.transitions.map((transition, index) =>
+              index === 0
+                ? {
+                    ...transition,
+                    trigger_event_ids: [],
+                    action_event_ids: [],
+                  }
+                : transition,
+            ),
+          },
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "reactive_run.transitions",
+            message: expect.stringContaining(
+              "reactive transition journal is not reproduced",
+            ),
+          }),
+          expect.objectContaining({
+            path: "reactive_run.transitions[0].action_event_ids",
+            message: expect.stringContaining(
+              "recorded action observations do not match proposed effects",
+            ),
+          }),
+        ]),
+      );
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            ...reactiveRun,
+            status: "running",
+            outcome: null,
+          },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          message: "completed capture requires a finished reactive outcome",
+        }),
+      );
+      expect(
+        validateProcessCapture({
+          ...result.value,
+          reactive_run: {
+            ...reactiveRun,
+            transitions: [
+              reactiveRun.transitions[0]!,
+              { ...reactiveRun.transitions[0]!, sequence: 1 },
+            ],
+          },
+        }),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: "reactive transition states must be contiguous",
+          }),
+          expect.objectContaining({
+            message:
+              "reactive transition differs from deterministic journal replay",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records target loss before post-exit settlement can win the deadline race", async () => {
+    const root = await createTestTempDirectory(
+      "rea-reactive-target-loss-test-",
+    );
+    const script = join(root, "exit.mjs");
+    await writeFile(script, 'process.stdout.write("exiting\\n");\n');
+    const scenario = parseProcessScenario({
+      approved: true,
+      executable: process.execPath,
+      arguments: [script],
+      working_directory: root,
+      settle_ms: 500,
+      reactive: {
+        version: 1,
+        initial_state: "waiting",
+        deadline_ms: 2_000,
+        states: [
+          {
+            id: "waiting",
+            max_visits: 1,
+            deadline_ms: 300,
+            on: [
+              {
+                id: "unreachable",
+                priority: 0,
+                max_uses: 1,
+                when: {
+                  kind: "terminal_text",
+                  view: "decoded",
+                  encoding: "utf8",
+                  literal: "never-produced",
+                  case_sensitive: true,
+                  control_sequences: "include",
+                  occurrence: 1,
+                  since: { kind: "scenario_start" },
+                  consume: true,
+                },
+                actions: [],
+                target: { kind: "finish", outcome: "passed" },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const result = await captureProcessScenario(scenario, {
+        enabled: true,
+        executableRoots: [dirname(process.execPath)],
+        workingRoots: [root],
+        allowedEnvironment: [],
+        allowExternalNetwork: true,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      expect(result.value.reactive_run).toMatchObject({
+        status: "finished",
+        outcome: "target_lost",
+        active_state: "waiting",
+        transitions: [],
+        controls: [
+          expect.objectContaining({
+            kind: "target_lost",
+          }),
+        ],
+      });
+      const frame = result.value.frames.at(-1);
+      const journal = result.value.event_journal;
+      const reactiveRun = result.value.reactive_run;
+      if (frame === undefined || journal === undefined || reactiveRun === null)
+        throw new Error("ordered reactive evidence missing");
+      const laterCaptureOrder = journal.length;
+      const withLaterMatch = {
+        ...result.value,
+        frames: [
+          ...result.value.frames,
+          {
+            ...frame,
+            sequence: result.value.frames.length,
+            at_ms: frame.at_ms + 1,
+            data: "never-produced",
+          },
+        ],
+        event_journal: [
+          ...journal,
+          {
+            capture_order: laterCaptureOrder,
+            collection: "frames" as const,
+            index: result.value.frames.length,
+          },
+        ],
+      };
+      expect(
+        validateProcessCapture(withLaterMatch).filter(({ path }) =>
+          path.startsWith("reactive_run"),
+        ),
+      ).toEqual([]);
+      expect(
+        validateProcessCapture({
+          ...withLaterMatch,
+          reactive_run: {
+            ...reactiveRun,
+            controls: reactiveRun.controls.map((control) => ({
+              ...control,
+              after_capture_order: laterCaptureOrder,
+            })),
+          },
+        }),
+      ).toContainEqual(
+        expect.objectContaining({
+          path: "reactive_run.outcome",
+          message: "reactive outcome differs from deterministic journal replay",
+        }),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("renders terminal state, records shim invocations, and captures literal checkpoints", async () => {
     const root = await createTestTempDirectory("rea-v3-test-");
     const script = join(root, "scenario.mjs");
@@ -1529,7 +1937,6 @@ describe("process capture adapter", () => {
           executable: process.execPath,
           arguments: [script],
           working_directory: root,
-          filesystem_roots: [root],
           checkpoints: [
             {
               name: "probe_seen",
@@ -1562,6 +1969,75 @@ describe("process capture adapter", () => {
               ],
             },
           ],
+          reactive: {
+            version: 1,
+            initial_state: "waiting_for_shim",
+            deadline_ms: 5_000,
+            states: [
+              {
+                id: "waiting_for_shim",
+                max_visits: 1,
+                deadline_ms: 2_000,
+                on: [
+                  {
+                    id: "record_shim",
+                    priority: 0,
+                    max_uses: 1,
+                    when: {
+                      kind: "event",
+                      source: "shim",
+                      exact: {
+                        command: "codex",
+                        route_index: 0,
+                        arguments: ["--version"],
+                        working_directory: "<working-directory>",
+                        outcome: "matched",
+                      },
+                      ignore_fields: ["sequence", "at_ms"],
+                      since: { kind: "scenario_start" },
+                      consume: true,
+                      cardinality: { min: 1, max: 1 },
+                    },
+                    actions: [
+                      { type: "checkpoint", name: "reactive_shim_seen" },
+                    ],
+                    target: {
+                      kind: "goto",
+                      state: "waiting_for_checkpoint",
+                    },
+                  },
+                ],
+              },
+              {
+                id: "waiting_for_checkpoint",
+                max_visits: 1,
+                deadline_ms: 2_000,
+                on: [
+                  {
+                    id: "finish_checkpoint",
+                    priority: 0,
+                    max_uses: 1,
+                    when: {
+                      kind: "event",
+                      source: "filesystem",
+                      exact: {
+                        name: "reactive_shim_seen",
+                        files: [],
+                        effects: [],
+                        truncated: false,
+                      },
+                      ignore_fields: ["at_ms"],
+                      since: { kind: "scenario_start" },
+                      consume: true,
+                      cardinality: { min: 1, max: 1 },
+                    },
+                    actions: [],
+                    target: { kind: "finish", outcome: "passed" },
+                  },
+                ],
+              },
+            ],
+          },
         }),
         {
           enabled: true,
@@ -1591,11 +2067,299 @@ describe("process capture adapter", () => {
       ]);
       expect(
         result.value.filesystem_checkpoints.map(({ name }) => name),
-      ).toEqual(["before", "probe_seen", "after_settlement"]);
+      ).toEqual(
+        expect.arrayContaining([
+          "before",
+          "reactive_shim_seen",
+          "probe_seen",
+          "after_settlement",
+        ]),
+      );
+      expect(result.value.reactive_run).toMatchObject({
+        status: "finished",
+        outcome: "passed",
+        transitions: [
+          expect.objectContaining({
+            transition_id: "record_shim",
+            trigger_event_ids: ["obs.shim_events.0"],
+            action_event_ids: [
+              expect.stringMatching(/^obs\.filesystem_checkpoints\./u),
+            ],
+          }),
+          expect.objectContaining({
+            transition_id: "finish_checkpoint",
+            trigger_event_ids: [
+              expect.stringMatching(/^obs\.filesystem_checkpoints\./u),
+            ],
+          }),
+        ],
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("runs the committed multi-source reactive fixture deterministically", async () => {
+    const root = await createTestTempDirectory("rea-reactive-e2e-");
+    const script = fileURLToPath(
+      new URL("./fixtures/processReactiveScenario.mjs", import.meta.url),
+    );
+    const event = (
+      source: "process" | "filesystem" | "http" | "websocket" | "shim",
+      exact: Record<string, unknown>,
+      ignoreFields: readonly string[],
+    ) => ({
+      kind: "event" as const,
+      source,
+      exact,
+      ignore_fields: ignoreFields,
+      since: { kind: "scenario_start" as const },
+      consume: true,
+      cardinality: { min: 1, max: 1 },
+    });
+    const run = () =>
+      captureProcessScenario(
+        parseProcessScenario({
+          approved: true,
+          executable: process.execPath,
+          arguments: [script, "codex"],
+          working_directory: root,
+          replay: {
+            http: [
+              {
+                method: "GET",
+                path: "/reactive",
+                status: 200,
+                body: "ok",
+              },
+            ],
+            websocket_messages: ["reactive-server"],
+          },
+          command_shims: [
+            {
+              name: "codex",
+              routes: [
+                {
+                  arguments: ["probe"],
+                  outputs: [],
+                  termination: { type: "exit", code: 0 },
+                },
+              ],
+            },
+          ],
+          reactive: {
+            version: 1,
+            initial_state: "ready",
+            deadline_ms: 8_000,
+            states: [
+              {
+                id: "ready",
+                max_visits: 1,
+                deadline_ms: 3_000,
+                on: [
+                  {
+                    id: "checkpoint_ready",
+                    priority: 0,
+                    max_uses: 1,
+                    when: {
+                      kind: "terminal_text",
+                      view: "decoded",
+                      encoding: "utf8",
+                      literal: "Ready",
+                      case_sensitive: true,
+                      control_sequences: "include",
+                      occurrence: 1,
+                      since: { kind: "scenario_start" },
+                      consume: true,
+                    },
+                    actions: [{ type: "checkpoint", name: "ready_snapshot" }],
+                    target: { kind: "goto", state: "collecting" },
+                  },
+                ],
+              },
+              {
+                id: "collecting",
+                max_visits: 1,
+                deadline_ms: 5_000,
+                on: [
+                  {
+                    id: "finish_all_sources",
+                    priority: 0,
+                    max_uses: 1,
+                    when: {
+                      kind: "all",
+                      triggers: [
+                        {
+                          kind: "any",
+                          triggers: [
+                            {
+                              kind: "terminal_text",
+                              view: "decoded",
+                              encoding: "utf8",
+                              literal: "Collecting",
+                              case_sensitive: true,
+                              control_sequences: "include",
+                              occurrence: 1,
+                              since: { kind: "scenario_start" },
+                              consume: false,
+                            },
+                            {
+                              kind: "terminal_text",
+                              view: "decoded",
+                              encoding: "utf8",
+                              literal: "unreachable-alternative",
+                              case_sensitive: true,
+                              control_sequences: "include",
+                              occurrence: 1,
+                              since: { kind: "scenario_start" },
+                              consume: false,
+                            },
+                          ],
+                        },
+                        event(
+                          "process",
+                          {
+                            pid: 3,
+                            parent_pid: 1,
+                            command: "rea-reactive-worker",
+                            process_group_id: 1,
+                            session_id: 1,
+                          },
+                          ["at_ms"],
+                        ),
+                        event(
+                          "filesystem",
+                          {
+                            name: "ready_snapshot",
+                            files: [],
+                            effects: [],
+                            truncated: false,
+                          },
+                          ["at_ms"],
+                        ),
+                        event(
+                          "shim",
+                          {
+                            command: "codex",
+                            route_index: 0,
+                            arguments: ["probe"],
+                            working_directory: "<working-directory>",
+                            outcome: "matched",
+                          },
+                          ["sequence", "at_ms"],
+                        ),
+                        {
+                          kind: "sequence",
+                          triggers: [
+                            event(
+                              "http",
+                              {
+                                protocol: "http",
+                                direction: "request",
+                                method: "GET",
+                                path: "/reactive",
+                                data: "",
+                                outcome: "matched",
+                              },
+                              ["sequence", "at_ms"],
+                            ),
+                            event(
+                              "websocket",
+                              {
+                                protocol: "websocket",
+                                direction: "received",
+                                method: null,
+                                path: "/ws",
+                                data: "reactive-client",
+                                outcome: "matched",
+                              },
+                              ["sequence", "at_ms"],
+                            ),
+                          ],
+                        },
+                      ],
+                    },
+                    actions: [],
+                    target: { kind: "finish", outcome: "passed" },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        {
+          enabled: true,
+          executableRoots: [dirname(process.execPath)],
+          workingRoots: [root],
+          allowedEnvironment: [],
+          allowExternalNetwork: true,
+        },
+      );
+    try {
+      const capability = await probeProcessCaptureCapability();
+      if (!capability.available) return;
+      const first = await run();
+      const second = await run();
+      if (!first.ok) throw first.error;
+      if (!second.ok) throw second.error;
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      const trace = (capture: ProcessCapture) =>
+        capture.reactive_run?.transitions.map((transition) => ({
+          transition_id: transition.transition_id,
+          from: transition.state_before,
+          to: transition.state_after,
+          outcome: transition.outcome,
+          trigger_collections: transition.trigger_event_ids.map(
+            (id) => id.split(".")[1],
+          ),
+        }));
+      expect(
+        first.value.reactive_run?.outcome,
+        JSON.stringify({
+          run: first.value.reactive_run,
+          processes: first.value.process_samples,
+          checkpoints: first.value.filesystem_checkpoints,
+          shims: first.value.shim_events,
+          protocols: first.value.protocol_events,
+        }),
+      ).toBe("passed");
+      expect(trace(first.value)).toEqual(trace(second.value));
+      expect(trace(first.value)).toEqual([
+        expect.objectContaining({ transition_id: "checkpoint_ready" }),
+        expect.objectContaining({
+          transition_id: "finish_all_sources",
+          trigger_collections: expect.arrayContaining([
+            "frames",
+            "process_samples",
+            "filesystem_checkpoints",
+            "shim_events",
+            "protocol_events",
+          ]),
+        }),
+      ]);
+      for (const outcome of ["action_rejected", "target_lost"] as const) {
+        const failedActionCapture = {
+          ...first.value,
+          reactive_run: {
+            status: "finished" as const,
+            outcome,
+            active_state: "ready",
+            transitions: [],
+            controls: [],
+          },
+        };
+        expect(
+          validateProcessCapture(failedActionCapture).filter(({ path }) =>
+            path.startsWith("reactive_run"),
+          ),
+        ).toEqual([]);
+      }
+      expect(first.value.truncated).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("does not follow or disclose symlink targets outside declared roots", async () => {
     const root = await createTestTempDirectory("rea-symlink-test-");
