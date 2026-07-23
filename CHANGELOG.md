@@ -1,5 +1,75 @@
 # Changelog
 
+## [2.3.0](https://github.com/morluto/rea/compare/rea-agents-2.2.0...rea-agents-2.3.0) (2026-07-23)
+
+
+### Features
+
+* complete REA remediation program ([d25e98c](https://github.com/morluto/rea/commit/d25e98c3f9f16e1758ee2a7b5ea44ed6d9534351))
+* **evidence:** generate verifier completion ledgers ([c02d33f](https://github.com/morluto/rea/commit/c02d33f381b42028186dcf76e3fb1976a42488bf))
+* **evidence:** generate verifier completion ledgers ([f5b3e22](https://github.com/morluto/rea/commit/f5b3e22e720011fa346ee17acaaa927e3379499f))
+* **javascript:** add bounded semantic relation graph ([b3939ea](https://github.com/morluto/rea/commit/b3939ea9ffc79a6f0998af76b0f6c9f166d2963b))
+* **javascript:** add bounded semantic tracing ([56c1a66](https://github.com/morluto/rea/commit/56c1a669d7edb295ecfce1d348ef7c043ee48390))
+* **javascript:** add local semantic call flow ([a26a1c7](https://github.com/morluto/rea/commit/a26a1c73df019e060a5ca50208e71dad1eb55f1e))
+* **javascript:** expose bounded semantic tracing ([508a9cc](https://github.com/morluto/rea/commit/508a9ccde9c4beef2fa4dbd39093a1030287e967))
+* **process:** add bounded reactive scenario domain ([42f3b9c](https://github.com/morluto/rea/commit/42f3b9c2ec46f48fa680489259fce4841d3ddc0b))
+* **process:** add bounded reactive scenario domain ([d34463c](https://github.com/morluto/rea/commit/d34463c27c9b5d71c9e2e3b33cdaef2eab5b99de))
+* **process:** add direct replay machine runner ([3df9a07](https://github.com/morluto/rea/commit/3df9a074136faf9c279c9ea936de33f25b6dd447))
+* **process:** compare declared concurrent traces ([d81745c](https://github.com/morluto/rea/commit/d81745cb95b1564b94bf260d4f737d03b4625849))
+* **process:** coordinate reactive capture effects ([b874efd](https://github.com/morluto/rea/commit/b874efd96824e98ac2120b93368e30a921dcf872))
+* **process:** coordinate reactive capture effects ([db9a831](https://github.com/morluto/rea/commit/db9a83190b841c8195da0b3036644831770ba369))
+* **process:** record global capture event order ([8bcdb98](https://github.com/morluto/rea/commit/8bcdb986893becd151c4dbb825f69bb6ced8b52e))
+* **process:** record provider and verifier run lineage ([02b01d4](https://github.com/morluto/rea/commit/02b01d4193a78a1180e5dd467a4e85838546fcde))
+* **process:** record provider and verifier run lineage ([513fa29](https://github.com/morluto/rea/commit/513fa294a49cd5059d4039e1d267e003b0234fad))
+* **process:** run finite-state replay during capture ([820af60](https://github.com/morluto/rea/commit/820af60c25cb342d74a06d733b8eac8be814ef6b))
+* **process:** run finite-state replay during capture ([34c583a](https://github.com/morluto/rea/commit/34c583a170782b4b28d16a2ec33223922608008d))
+
+
+### Bug Fixes
+
+* **browser:** redact transitional target titles ([f6095cb](https://github.com/morluto/rea/commit/f6095cb6ba9db4e69e7bcd64643c59c8ac129a4c))
+* **cli:** retain bundled skill and bias setup wizard toward apply ([5692b3f](https://github.com/morluto/rea/commit/5692b3f809a6868c7c1e4b6f17ca03ad84557427))
+* **cli:** retain bundled skill and bias setup wizard toward apply ([fec5c3c](https://github.com/morluto/rea/commit/fec5c3ce7fc8899bf312a67da2c39e8615781748))
+* **cli:** route JavaScript applications from analyze ([737940c](https://github.com/morluto/rea/commit/737940c90c7507a1b0ede3e839598c922ca7a81e))
+* **cli:** route JavaScript applications from analyze ([74965d9](https://github.com/morluto/rea/commit/74965d9088cca6e048a62352567b95c63c6621d2))
+* **javascript:** preserve candidate trace ambiguity ([8678b57](https://github.com/morluto/rea/commit/8678b57b5e03b0fb103803eb0a9e9ebda3124647))
+* **knip:** ignore ps binary and in-file schema exports ([9960982](https://github.com/morluto/rea/commit/99609823ef496245c18c9630dc9ef82fc748ef1a))
+* **mcp:** preserve investigation input policy ([5a908a0](https://github.com/morluto/rea/commit/5a908a03a673fe499421283a9309c52164d14a9d))
+* **mcp:** preserve investigation input policy ([f4156d9](https://github.com/morluto/rea/commit/f4156d9663a1847d5b3bbe29f98036b9c76606b4))
+* **process:** bound trace comparison semantics ([b4df565](https://github.com/morluto/rea/commit/b4df565b779c4f38ebf1c784dad73bf7f3de68eb))
+* **process:** normalize resize frame timestamps ([74d1c7b](https://github.com/morluto/rea/commit/74d1c7b2748a88341b98bd463be3ad227501c4f4))
+* **process:** normalize resize frame timestamps ([77696df](https://github.com/morluto/rea/commit/77696dff9144fd6c110247711bbff144ec63b19b))
+* **process:** preserve nonconforming differences ([f1cc485](https://github.com/morluto/rea/commit/f1cc48558122a922365a1b71dbf4fb196b037825))
+* **process:** preserve replay event causality ([d895e49](https://github.com/morluto/rea/commit/d895e49145222eb02eb34cd7de93c5212884f5cc))
+* **process:** protect unrelated Hopper during cleanup ([81539c4](https://github.com/morluto/rea/commit/81539c47fb5dbebec83e83526685b0f6b85095aa))
+* **process:** protect unrelated Hopper during cleanup ([e4ee4c9](https://github.com/morluto/rea/commit/e4ee4c963547f026defe3f5e5e2978c1ab2e6f21))
+
+
+### Code Refactoring
+
+* **process:** extract capture journal recorder ([a32b988](https://github.com/morluto/rea/commit/a32b988a35a31d0fbabaa861eddb6e3bbb363943))
+* **process:** split trace comparison domain logic ([75d5a87](https://github.com/morluto/rea/commit/75d5a8705498bf567a9860eef9eecdf4521c9cc6))
+* **process:** split trace comparison helpers ([6d8ecd2](https://github.com/morluto/rea/commit/6d8ecd2b88ddd4868ee55bef84bf88a542d4616b))
+
+
+### Documentation
+
+* **cli:** clarify setup consent comment ([e869137](https://github.com/morluto/rea/commit/e8691378a07b083277e3b963c5f6d179e12d7626))
+* refresh Node 24 TypeDoc output ([846193c](https://github.com/morluto/rea/commit/846193c60305242b27f39c69715f332627ba1725))
+
+
+### Tests
+
+* **browser:** stabilize real shape capture ([bb2e243](https://github.com/morluto/rea/commit/bb2e2432a5ff4634b4f54eff7834b6da826f725f))
+
+
+### Continuous Integration
+
+* remove redundant typecheck, lint, and format compatibility jobs ([eb27f01](https://github.com/morluto/rea/commit/eb27f01aeef0f531eebeb0342eba6cc507dfa6f4))
+* remove redundant typecheck, lint, and format compatibility jobs ([aeb5cb3](https://github.com/morluto/rea/commit/aeb5cb3adb0e43c45017cf61d2a95bac200024ae))
+* shard coverage tests and skip docs-only suites ([c736317](https://github.com/morluto/rea/commit/c7363178e7c8c1f8db1e69085bcd0826293e3814))
+* shard coverage tests and skip docs-only suites ([fa58082](https://github.com/morluto/rea/commit/fa58082bf0268b9f9f6c7aac2d6871576e7d5fae))
+
 ## [2.2.0](https://github.com/morluto/rea/compare/rea-agents-2.1.0...rea-agents-2.2.0) (2026-07-20)
 
 
