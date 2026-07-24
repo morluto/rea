@@ -1809,12 +1809,14 @@ describe("process capture adapter", () => {
       reactive: {
         version: 1,
         initial_state: "waiting",
-        deadline_ms: 2_000,
+        deadline_ms: 5_000,
         states: [
           {
             id: "waiting",
             max_visits: 1,
-            deadline_ms: 300,
+            // Leave process startup scheduling headroom; this test targets
+            // post-exit settlement ordering, not a 300ms startup deadline.
+            deadline_ms: 2_000,
             on: [
               {
                 id: "unreachable",
@@ -1913,7 +1915,7 @@ describe("process capture adapter", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it("renders terminal state, records shim invocations, and captures literal checkpoints", async () => {
     const root = await createTestTempDirectory("rea-v3-test-");

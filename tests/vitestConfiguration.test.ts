@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import vitestConfiguration, {
   SERIAL_INTEGRATION_TESTS,
+  SUBPROCESS_TESTS,
 } from "../vitest.config.js";
 
 const execute = promisify(execFile);
@@ -24,7 +25,7 @@ describe("Vitest project configuration", () => {
     );
   });
 
-  it("collects exact disjoint parallel and serial test sets", async () => {
+  it("collects exact disjoint unit, subprocess, and serial test sets", async () => {
     const { stdout } = await execute(
       process.execPath,
       [
@@ -37,14 +38,18 @@ describe("Vitest project configuration", () => {
     );
     const projects = parseProjects(stdout);
     const parallel = projects.get("parallel") ?? [];
+    const subprocess = projects.get("subprocess") ?? [];
     const serial = projects.get("serial-integration") ?? [];
     const repositoryTests = await testFiles("tests");
 
     expect(serial).toEqual([...SERIAL_INTEGRATION_TESTS].sort());
     expect(parallel.filter((path) => serial.includes(path))).toEqual([]);
-    expect([...new Set([...parallel, ...serial])].sort()).toEqual(
-      repositoryTests,
-    );
+    expect(subprocess).toEqual([...SUBPROCESS_TESTS].sort());
+    expect(subprocess.filter((path) => serial.includes(path))).toEqual([]);
+    expect(parallel.filter((path) => subprocess.includes(path))).toEqual([]);
+    expect(
+      [...new Set([...parallel, ...subprocess, ...serial])].sort(),
+    ).toEqual(repositoryTests);
   }, 20_000);
 });
 

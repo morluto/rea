@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { packageHopperEnvironment } from "../scripts/verify-package-environment.mjs";
 
 describe("package installation workflows", () => {
   it("runs package E2E without the retired native rebuild script", async () => {
@@ -21,6 +22,10 @@ describe("package installation workflows", () => {
     expect(continuousIntegration).toContain("name: Static checks");
     expect(continuousIntegration).toContain("npm run check:ci");
     expect(continuousIntegration).toContain("shard: [1/2, 2/2]");
+    expect(continuousIntegration).toContain("name: Build package");
+    expect(continuousIntegration).toContain("npm run build:cached");
+    expect(continuousIntegration).toContain("name: rea-dist");
+    expect(continuousIntegration).toContain("npm run test:ci:shard:run");
     expect(continuousIntegration).toContain("needs: [changes, test-shard]");
     expect(continuousIntegration).toContain("if-no-files-found: error");
     expect(continuousIntegration).toContain("overwrite: true");
@@ -72,5 +77,28 @@ describe("package installation workflows", () => {
     expect(release).not.toContain('npm run verify:published -- "${version}"');
     expect(canary).toContain('mkdtemp(join(tmpdir(), "rea-published-canary-")');
     expect(canary).toContain("cwd: canaryRoot");
+  });
+
+  it("uses direct Node ownership on macOS and Windows", () => {
+    const root = "/tmp/rea-package";
+    const expected = {
+      HOPPER_LAUNCHER_PATH: process.execPath,
+      HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+        `${root}/tests/fixtures/fakeLauncher.mjs`,
+      ]),
+    };
+
+    expect(packageHopperEnvironment(root, "darwin")).toEqual(expected);
+    expect(packageHopperEnvironment(root, "win32")).toEqual(expected);
+    expect(packageHopperEnvironment(root, "linux")).toEqual({
+      HOPPER_LAUNCHER_PATH: "/bin/sh",
+      HOPPER_LOADER_ARGS_JSON: JSON.stringify([
+        "-c",
+        'node_path=$1; shift; "$node_path" "$@"',
+        "rea-package-hopper",
+        process.execPath,
+        `${root}/tests/fixtures/fakeLauncher.mjs`,
+      ]),
+    });
   });
 });

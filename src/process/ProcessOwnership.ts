@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { matchesOwnedProcessCommand } from "./ProcessCommandIdentity.js";
+
 const execFileAsync = promisify(execFile);
 
 /** Identity proof required before REA may signal an owned process group. */
@@ -318,9 +320,9 @@ const launcherIdentityFailure = (
     return "owned launcher parent identity did not match";
   if (
     ownership.expectedCommand !== undefined &&
-    !commandMatches(launcher.command, ownership.expectedCommand)
+    !matchesOwnedProcessCommand(launcher.command, ownership.expectedCommand)
   )
-    return "owned launcher command identity did not match";
+    return `owned launcher command identity did not match (observed=${launcher.command}; expected=${ownership.expectedCommand})`;
   return null;
 };
 
@@ -471,11 +473,11 @@ export const observeOwnedProcessLineage = async (
     );
   if (
     ownership.expectedCommand !== undefined &&
-    !commandMatches(launcher.command, ownership.expectedCommand)
+    !matchesOwnedProcessCommand(launcher.command, ownership.expectedCommand)
   )
     return unavailableLineage(
       ownership,
-      "owned launcher command identity did not match",
+      `owned launcher command identity did not match (observed=${launcher.command}; expected=${ownership.expectedCommand})`,
     );
   const descendants = descendantsOf(launcher.pid, processes);
   for (const member of [launcher, ...descendants]) {
@@ -553,10 +555,3 @@ const liveProcesses = (
   members: readonly ProcessTableEntry[],
 ): readonly ProcessTableEntry[] =>
   members.filter(({ state }) => !state.startsWith("Z"));
-
-const commandMatches = (actual: string, expected: string): boolean => {
-  return (
-    actual.trim() === expected.trim() ||
-    actual.trim().startsWith(`${expected.trim()} `)
-  );
-};

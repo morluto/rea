@@ -8,6 +8,7 @@ export const TEST_FILES = ["tests/**/*.test.ts"];
 const IS_CONTINUOUS_INTEGRATION = process.env.CI === "true";
 // Subprocess-heavy parallel tests exceed their existing deadlines above two workers.
 const MAX_TEST_WORKERS = 2;
+const MAX_UNIT_TEST_WORKERS = 4;
 const PROCESS_CAPTURE_TEST = "tests/processCapture.test.ts";
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
 export const SERIAL_INTEGRATION_TESTS = [
@@ -19,6 +20,33 @@ export const SERIAL_INTEGRATION_TESTS = [
   PROCESS_CAPTURE_TEST,
   "tests/runtime.test.ts",
 ];
+// Keep tests that launch child processes or production runtimes in the forks pool.
+// In-memory MCP and filesystem-seam tests remain safe in the faster threads pool.
+export const SUBPROCESS_TESTS = [
+  "tests/applicationWorkflowVerifier.test.ts",
+  "tests/bridgeLauncher.test.ts",
+  "tests/bridgeRegex.test.ts",
+  "tests/browserProcessStartup.test.ts",
+  "tests/cliPolicyCommands.test.ts",
+  "tests/cliSetup.test.ts",
+  "tests/dependencyInstall.test.ts",
+  "tests/dispatcher.test.ts",
+  "tests/ghidraClient.test.ts",
+  "tests/ghidraWindowsFixture.test.ts",
+  "tests/hopperClient.test.ts",
+  "tests/installScript.test.ts",
+  "tests/javascriptReplayWorker.test.ts",
+  "tests/javascriptRuntimeReconciliation.test.ts",
+  "tests/linuxPrivateDisplay.test.ts",
+  "tests/mcpDoctor.test.ts",
+  "tests/processCli.test.ts",
+  "tests/providerProcess.test.ts",
+  "tests/runtimeExecutableDiagnostics.test.ts",
+  "tests/scanTodos.test.ts",
+  "tests/sessionMcp.test.ts",
+  "tests/verifierRun.test.ts",
+  "tests/vitestConfiguration.test.ts",
+];
 const isolatedProjects = {
   maxWorkers: Math.min(MAX_TEST_WORKERS, availableParallelism()),
   projects: [
@@ -27,8 +55,20 @@ const isolatedProjects = {
       test: {
         name: "parallel",
         include: TEST_FILES,
-        exclude: SERIAL_INTEGRATION_TESTS,
+        exclude: [...SERIAL_INTEGRATION_TESTS, ...SUBPROCESS_TESTS],
+        pool: "threads",
+        maxWorkers: Math.min(MAX_UNIT_TEST_WORKERS, availableParallelism()),
         sequence: { groupOrder: 0 },
+      },
+    },
+    {
+      extends: true as const,
+      test: {
+        name: "subprocess",
+        include: SUBPROCESS_TESTS,
+        pool: "forks",
+        maxWorkers: Math.min(MAX_TEST_WORKERS, availableParallelism()),
+        sequence: { groupOrder: 1 },
       },
     },
     {
@@ -37,7 +77,8 @@ const isolatedProjects = {
         name: "serial-integration",
         include: SERIAL_INTEGRATION_TESTS,
         fileParallelism: false,
-        sequence: { groupOrder: 1 },
+        pool: "forks",
+        sequence: { groupOrder: 2 },
       },
     },
   ],

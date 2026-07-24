@@ -15,6 +15,8 @@
     "rootDir": ".",
     "skipLibCheck": true,
     "strict": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".cache/tsconfig.typecheck.tsbuildinfo",
     "target": "ES2023",
     "types": ["node"],
     "verbatimModuleSyntax": true

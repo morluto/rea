@@ -1361,7 +1361,9 @@ describe("CdpBrowserProvider", () => {
       }),
       { signal: controller.signal },
     );
-    await waitForCommand(browser, "Target.attachToTarget");
+    // Wait until the attach response has been consumed and capture has begun.
+    // Seeing the attach request alone races its response under worker load.
+    await waitForCommand(browser, "Page.getFrameTree");
     controller.abort();
     const result = await pending;
     expect(result).toMatchObject({

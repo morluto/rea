@@ -185,7 +185,7 @@ describe("process-capture MCP elicitation", () => {
           );
         const echoedState =
           failure === "tampered"
-            ? `${requestState.slice(0, -1)}${requestState.endsWith("A") ? "B" : "A"}`
+            ? `${requestState.startsWith("A") ? "B" : "A"}${requestState.slice(1)}`
             : requestState;
         const retryMethod: string = "tools/call";
         await expect(

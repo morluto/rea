@@ -92,9 +92,9 @@ export async function verifyPackageEnvironment({
   };
 }
 
-const packageHopperEnvironment = (root) => {
+export const packageHopperEnvironment = (root, platform = process.platform) => {
   const fakeLauncher = join(root, "tests/fixtures/fakeLauncher.mjs");
-  if (process.platform === "win32")
+  if (platform !== "linux")
     return {
       HOPPER_LAUNCHER_PATH: process.execPath,
       HOPPER_LOADER_ARGS_JSON: JSON.stringify([fakeLauncher]),
