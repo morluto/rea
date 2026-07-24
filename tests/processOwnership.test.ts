@@ -9,6 +9,7 @@ import {
   type ProcessOwnershipHost,
   type WindowsProcessTreeHost,
 } from "../src/process/ProcessOwnership.js";
+import { matchesOwnedProcessCommand } from "../src/process/ProcessCommandIdentity.js";
 
 const ownership = {
   runId: "run-token",
@@ -59,6 +60,30 @@ describe("owned process-group cleanup", () => {
     expect(
       parseProcessEnvironment("=ignored\0REA_PROCESS_RUN_ID=owned\0EMPTY=\0"),
     ).toEqual({ REA_PROCESS_RUN_ID: "owned", EMPTY: "" });
+  });
+
+  it("matches macOS executable names after process-table normalization", () => {
+    expect(
+      matchesOwnedProcessCommand(
+        "node /tmp/fake-launcher.mjs",
+        "/opt/node/bin/node",
+        "darwin",
+      ),
+    ).toBe(true);
+    expect(
+      matchesOwnedProcessCommand(
+        "node /tmp/fake-launcher.mjs",
+        "/opt/python/bin/python3",
+        "darwin",
+      ),
+    ).toBe(false);
+    expect(
+      matchesOwnedProcessCommand(
+        "node /tmp/fake-launcher.mjs",
+        "/opt/node/bin/node",
+        "linux",
+      ),
+    ).toBe(false);
   });
 
   it("signals only a group whose every member carries the run token", async () => {
