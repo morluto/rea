@@ -522,7 +522,8 @@ describe("owned process-group cleanup", () => {
       ),
     ).toEqual({
       cleaned: false,
-      reason: "owned launcher command identity did not match",
+      reason:
+        "owned launcher command identity did not match (observed=fixture; expected=/owned/hopper)",
     });
     expect(signalGroup).not.toHaveBeenCalled();
   });

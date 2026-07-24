@@ -322,7 +322,7 @@ const launcherIdentityFailure = (
     ownership.expectedCommand !== undefined &&
     !matchesOwnedProcessCommand(launcher.command, ownership.expectedCommand)
   )
-    return "owned launcher command identity did not match";
+    return `owned launcher command identity did not match (observed=${launcher.command}; expected=${ownership.expectedCommand})`;
   return null;
 };
 
@@ -477,7 +477,7 @@ export const observeOwnedProcessLineage = async (
   )
     return unavailableLineage(
       ownership,
-      "owned launcher command identity did not match",
+      `owned launcher command identity did not match (observed=${launcher.command}; expected=${ownership.expectedCommand})`,
     );
   const descendants = descendantsOf(launcher.pid, processes);
   for (const member of [launcher, ...descendants]) {
