@@ -14,7 +14,7 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", ".cache/tsconfig.build.tsbuildinfo"]
     },
     "typecheck": {
       "inputs": [
@@ -26,7 +26,8 @@
         "tsconfig.json",
         "tsconfig.build.json",
         "vitest.config.ts"
-      ]
+      ],
+      "outputs": [".cache/tsconfig.typecheck.tsbuildinfo"]
     },
     "metadata:check": {
       "inputs": [
@@ -38,9 +39,33 @@
         "src/generatedPackageMetadata.ts"
       ]
     },
-    "lint": {},
+    "lint": {
+      "inputs": [
+        ".nvmrc",
+        ".oxlintrc.json",
+        "eslint.config.js",
+        "package.json",
+        "package-lock.json",
+        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "vitest.config.ts"
+      ]
+    },
     "format:check": {},
-    "knip": {},
+    "knip": {
+      "inputs": [
+        ".nvmrc",
+        "knip.json",
+        "package.json",
+        "package-lock.json",
+        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "tsconfig.json",
+        "tsconfig.build.json"
+      ]
+    },
     "jscpd": {
       "inputs": [
         ".gitignore",

@@ -21,6 +21,10 @@ describe("package installation workflows", () => {
     expect(continuousIntegration).toContain("name: Static checks");
     expect(continuousIntegration).toContain("npm run check:ci");
     expect(continuousIntegration).toContain("shard: [1/2, 2/2]");
+    expect(continuousIntegration).toContain("name: Build package");
+    expect(continuousIntegration).toContain("npm run build:cached");
+    expect(continuousIntegration).toContain("name: rea-dist");
+    expect(continuousIntegration).toContain("npm run test:ci:shard:run");
     expect(continuousIntegration).toContain("needs: [changes, test-shard]");
     expect(continuousIntegration).toContain("if-no-files-found: error");
     expect(continuousIntegration).toContain("overwrite: true");
