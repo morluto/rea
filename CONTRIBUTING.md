@@ -39,9 +39,11 @@ prerequisite uses Turbo. CI uploads the rendered TypeDoc site as an `api-docs`
 artifact; the generated HTML is not committed.
 
 Local `npm test` runs without coverage, retries, or verbose output. Use `npm run
-test:fast` for the parallel group, `npm run test:integration` for serial
-filesystem/process/CLI cases, and `npm run test:watch` to watch tests affected by
-working-tree changes. CI splits the complete suite across two native Vitest
+test:fast` for pure and subprocess groups, `npm run test:integration` for serial
+filesystem/process/CLI cases. `npm run test:changed` runs changed and related
+non-serial tests once; `npm run test:watch` keeps that selection live. Pure tests
+use Vitest threads, while subprocess tests stay in isolated forks. CI splits the
+complete suite across two native Vitest
 shards, then merges their coverage and JUnit reports. `npm run test:ci` runs the
 equivalent unsharded gate locally. Coverage thresholds remain in
 `vitest.config.ts`.

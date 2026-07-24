@@ -37,6 +37,7 @@ coverage/
 .vitest-reports/
 test-results.xml
 .turbo/
+.cache/
 
 # OS
 .DS_Store
