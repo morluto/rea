@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.4.1](https://github.com/morluto/rea/compare/rea-agents-2.4.0...rea-agents-2.4.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **hopper:** add bounded analysis recovery ([e0bc7fd](https://github.com/morluto/rea/commit/e0bc7fd973b26448fb2192a2059ab1229bec0817))
+* **process:** expose launcher identity mismatch ([62ac73c](https://github.com/morluto/rea/commit/62ac73cdd79bee708d50b17a2dde8c23e0b66f1e))
+* **process:** normalize macOS launcher identity ([9c3aec8](https://github.com/morluto/rea/commit/9c3aec81317cd6caf627f13ebb0c6dc0f6735516))
+* **test:** use direct Node launcher on macOS ([13f3372](https://github.com/morluto/rea/commit/13f3372a8beaa165473bd7ecaccaa2997dcbf2ab))
+
+
+### Performance Improvements
+
+* **test:** speed up local and CI validation ([1546a8d](https://github.com/morluto/rea/commit/1546a8db029a56ed705e5246a6bf7020227234ce))
+* **test:** speed up local and CI validation ([42fbbb2](https://github.com/morluto/rea/commit/42fbbb297b8f40bcfbbfa219a1de098f3d0780ad))
+
+
+### Tests
+
+* **package:** stabilize fake Hopper ownership ([0b70131](https://github.com/morluto/rea/commit/0b7013134c58085b72177f2954e55534be053ebe))
+
 ## [2.4.0](https://github.com/morluto/rea/compare/rea-agents-2.3.0...rea-agents-2.4.0) (2026-07-23)
 
 
