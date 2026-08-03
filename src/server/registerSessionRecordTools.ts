@@ -76,10 +76,19 @@ const registerReleaseEvidenceTool = ({
       });
       if (denied !== undefined)
         return toCallToolResult(denied, releaseContract);
+      const released = session.releaseEvidenceBundle(
+        parsed.value.bundle_digest,
+      );
+      if (released)
+        void server.server
+          .sendResourceUpdated({
+            uri: `rea://evidence-bundle/${parsed.value.bundle_digest}`,
+          })
+          .catch(() => undefined);
       return toCallToolResult(
         ok({
           bundle_digest: parsed.value.bundle_digest,
-          released: session.releaseEvidenceBundle(parsed.value.bundle_digest),
+          released,
         }),
         releaseContract,
       );
