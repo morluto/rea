@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_id": "ecm_b29ff099828ea6d5e1bbc15f5b702f0d2dcf696707919be615299cc217b3bccf",
+  "manifest_id": "ecm_bdccc0a41764d8c182b92a1c9b25e0f08a4b6e8224b35cb83904079a93547d4c",
   "verifier": {
     "id": "rea-managed-conformance",
     "version": "1"
@@ -9,7 +9,7 @@
     "platform": "linux",
     "architecture": "x64",
     "runtime": "node",
-    "runtime_version": "22"
+    "runtime_version": "24"
   },
   "skill_digests": [
     {
