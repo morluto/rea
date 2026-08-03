@@ -1,20 +1,4 @@
 import { z } from "zod";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { processScenarioSchema } from "../domain/processCapture.js";
-import {
-  recordUnknownInputSchema,
-  updateUnknownInputSchema,
-} from "../domain/residualUnknown.js";
-import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
-import { functionComparisonInputSchema } from "../domain/functionComparison.js";
-import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
-import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
-import { callPathInputSchema } from "../domain/callPath.js";
-import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
-import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
-import { replayMachineRunInputSchema } from "../domain/replayMachineRun.js";
-import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
-
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import {
   enhancedOutputSchemas,
@@ -22,7 +6,6 @@ import {
   requireOutputSchema,
   sessionOutputSchemas,
 } from "./toolOutputSchemas.js";
-import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
@@ -32,47 +15,57 @@ import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import {
+  addressContextInputSchema,
+  artifactComparisonInputSchema,
+  binarySessionInputSchema,
+  bundleComparisonInputSchema,
+  callPathInputSchema,
+  changedBehaviorInputSchema,
   closeBinaryInputSchema,
+  functionComparisonInputSchema,
+  importEvidenceBundleInputSchema,
+  listUnknownsInputSchema,
+  navigationContextInputSchema,
   openBinaryInputSchema,
-} from "./sessionLifecycleInputs.js";
-import type { ToolContract, ToolExample } from "./toolContractTypes.js";
+  processComparisonInputSchema,
+  processScenarioSchema,
+  reconstructionVerificationInputSchema,
+  recordUnknownInputSchema,
+  releaseEvidenceBundleInputSchema,
+  replayMachineRunInputSchema,
+  snapshotEvidenceBundleInputSchema,
+  staticRuntimeCorrelationInputSchema,
+  updateUnknownInputSchema,
+  verifyUnknownResolutionInputSchema,
+} from "./sessionToolSchemas.js";
+import {
+  address,
+  document,
+  examplesFor,
+  optionalAddress,
+  pagination,
+  procedure,
+} from "./toolContractHelpers.js";
+import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
 import { FUNCTION_WORKFLOW_TOOL_CONTRACTS } from "./functionWorkflowToolContracts.js";
 
-export { binarySessionInputSchema } from "./sessionStatusContract.js";
+export {
+  addressContextInputSchema,
+  binarySessionInputSchema,
+  importEvidenceBundleInputSchema,
+  listUnknownsInputSchema,
+  navigationContextInputSchema,
+  processComparisonInputSchema,
+  releaseEvidenceBundleInputSchema,
+  snapshotEvidenceBundleInputSchema,
+  verifyUnknownResolutionInputSchema,
+} from "./sessionToolSchemas.js";
 
 export type { ToolContract, ToolExample } from "./toolContractTypes.js";
-
-const document = z.string().optional().describe("The document name");
-const address = z
-  .string()
-  .describe(
-    "A provider-normalized address; default memory uses 0x-prefixed hexadecimal",
-  );
-const optionalAddress = address.optional();
-const procedure = z.string().describe("The procedure name or address");
-const pagination = {
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(500).default(100),
-};
-
-const exampleInputSchema = z.record(z.string(), jsonValueSchema);
-const examplesFor = (
-  name: string,
-  inputSchema: z.ZodObject,
-): readonly ToolExample[] => {
-  const parsed = inputSchema.parse(TOOL_EXAMPLE_OVERRIDES[name] ?? {});
-  return [
-    {
-      title: `Example ${name.replaceAll("_", " ")} request`,
-      input: exampleInputSchema.parse(parsed),
-    },
-  ];
-};
 
 const official = <Name extends string>(
   name: Name,
@@ -377,58 +370,6 @@ export const ENHANCED_TOOL_CONTRACTS = [
 export const exportEvidenceBundleInputSchema = z.strictObject({
   path: z.string().min(1),
   overwrite: z.boolean().default(false),
-});
-
-/** Retain the current canonical Evidence bundle as a session resource. */
-export const snapshotEvidenceBundleInputSchema = z.strictObject({});
-
-/** Release one session-retained immutable Evidence bundle. */
-export const releaseEvidenceBundleInputSchema = z.strictObject({
-  bundle_digest: z.string().regex(/^[a-f0-9]{64}$/u),
-});
-
-/** Optional document selection for volatile navigation context. */
-export const navigationContextInputSchema = z.strictObject({
-  document: z.string().min(1).optional(),
-});
-
-/** Explicit reproducible address context query. */
-export const addressContextInputSchema = z.strictObject({
-  address: z.string().min(1),
-  document: z.string().min(1).optional(),
-});
-
-/** Session-owned Evidence bundle import options. */
-export const importEvidenceBundleInputSchema = z.strictObject({
-  path: z.string().min(1),
-});
-
-/** Evidence references for deterministic process comparison. */
-export const processComparisonInputSchema = z.strictObject({
-  left_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
-  right_evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
-  trace_spec: processTraceSpecificationSchema.optional(),
-  max_capture_age_ms: z.number().int().nonnegative().optional(),
-  unknown_registry_approved: z
-    .literal(true)
-    .optional()
-    .describe("Explicit approval to record capture disagreement durably"),
-});
-
-/** Residual-unknown list filters. */
-export const listUnknownsInputSchema = z.strictObject({
-  status: z
-    .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
-    .optional(),
-  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-  domain: z.string().trim().min(1).max(100).optional(),
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(500).default(100),
-});
-
-/** Exact residual-unknown identity to revalidate. */
-export const verifyUnknownResolutionInputSchema = z.strictObject({
-  unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u),
 });
 
 /** Target lifecycle tools available only on the long-lived MCP adapter. */

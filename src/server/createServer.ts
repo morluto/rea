@@ -96,84 +96,46 @@ const installSessionToolAvailability = (
   };
 };
 
-/**
- * Construct one MCP server without acquiring subprocess resources.
- * Supplying a session adds target lifecycle tools; omitting it retains the
- * fixed-target seam used by focused tests and embedders.
- */
-export const createServer = (
-  analysis: AnalysisOperationPort,
-  session?: BinarySessionPort,
-  options: CreateServerOptions = {},
-): McpServer => {
-  const startedAt = new Date().toISOString();
-  const logger = options.logger ?? silentLogger;
-  const permissionAuthority =
-    options.permissionAuthority?.createConnectionAuthority();
-  const processCaptureStateCodec =
-    createRequestStateCodec<ProcessCaptureElicitationState>({
-      key: randomBytes(32),
-      ttlSeconds: PROCESS_CAPTURE_ELICITATION_POLICY.stateTtlSeconds,
-    });
-  const server = new McpServer(
-    {
-      name: PRODUCT_IDENTITY.mcpServerKey,
-      version: PRODUCT_IDENTITY.packageVersion,
-    },
-    {
-      capabilities: {
-        tools: { listChanged: true },
-        resources: { listChanged: true, subscribe: true },
-      },
-      inputRequired: {
-        maxRounds: 3,
-        roundTimeoutMs: PROCESS_CAPTURE_ELICITATION_POLICY.roundTimeoutMs,
-      },
-      requestState: { verify: processCaptureStateCodec.verify },
-      instructions:
-        session === undefined
-          ? ACTIVE_TARGET_INSTRUCTIONS
-          : TARGET_FREE_INSTRUCTIONS,
-    },
-  );
-  const dynamicTools = installSessionToolAvailability(server, session, options);
-  server.server.onclose = () => {
-    permissionAuthority?.clearSessionGrants();
-  };
-  if (dynamicTools !== undefined)
-    server.server.oninitialized = () => server.sendToolListChanged();
-  session?.onAvailabilityChanged?.(() => server.sendToolListChanged());
-  registerServerIdentityResource(server, startedAt);
-  const toolLogger = logger.child({ layer: "server" });
-  const { activeTarget, recordEvidence, recordEvidenceWithUnknown } =
-    createSessionRecorders(server, session);
-  const processCaptureElicitation = {
-    stateCodec: processCaptureStateCodec,
-    supported: (context: {
-      readonly mcpReq: {
-        readonly envelope?: Readonly<Record<string, unknown>>;
-      };
-    }) => {
-      const envelope = context.mcpReq.envelope;
-      const version = envelope?.[PROTOCOL_VERSION_META_KEY];
-      const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
-      return (
-        typeof version === "string" &&
-        PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions.some(
-          (supported) => supported === version,
-        ) &&
-        isRecord(capabilities) &&
-        isRecord(capabilities.elicitation) &&
-        capabilities.elicitation.form !== undefined
-      );
-    },
-    now: Date.now,
-    consumedNonces: new Map<string, number>(),
-  };
+type ProcessCaptureElicitation = {
+  readonly stateCodec: ReturnType<
+    typeof createRequestStateCodec<ProcessCaptureElicitationState>
+  >;
+  readonly supported: (context: {
+    readonly mcpReq: {
+      readonly envelope?: Readonly<Record<string, unknown>>;
+    };
+  }) => boolean;
+  readonly now: typeof Date.now;
+  readonly consumedNonces: Map<string, number>;
+};
+
+const createProcessCaptureElicitation = (
+  stateCodec: ProcessCaptureElicitation["stateCodec"],
+): ProcessCaptureElicitation => ({
+  stateCodec,
+  supported: (context) => {
+    const envelope = context.mcpReq.envelope;
+    const version = envelope?.[PROTOCOL_VERSION_META_KEY];
+    const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+    return (
+      typeof version === "string" &&
+      PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions.some(
+        (supported) => supported === version,
+      ) &&
+      isRecord(capabilities) &&
+      isRecord(capabilities.elicitation) &&
+      capabilities.elicitation.form !== undefined
+    );
+  },
+  now: Date.now,
+  consumedNonces: new Map<string, number>(),
+});
+
+const createOptionalProviderLoader = (options: CreateServerOptions) => {
   let optionalProviders:
     | ReturnType<NonNullable<CreateServerOptions["loadOptionalProviders"]>>
     | undefined;
-  const loadOptionalProviders = () => {
+  return () => {
     optionalProviders ??= options
       .loadOptionalProviders?.()
       .catch((cause: unknown) => {
@@ -182,7 +144,43 @@ export const createServer = (
       });
     return optionalProviders;
   };
-  const lazyTools = new LazyToolCatalog(
+};
+
+const createLazyToolCatalog = ({
+  server,
+  analysis,
+  session,
+  options,
+  toolLogger,
+  permissionAuthority,
+  activeTarget,
+  recordEvidence,
+  recordEvidenceWithUnknown,
+  availabilityPolicy,
+  startedAt,
+  processCaptureElicitation,
+}: {
+  readonly server: McpServer;
+  readonly analysis: AnalysisOperationPort;
+  readonly session: BinarySessionPort | undefined;
+  readonly options: CreateServerOptions;
+  readonly toolLogger: Logger;
+  readonly permissionAuthority: PermissionAuthority | undefined;
+  readonly activeTarget: ReturnType<
+    typeof createSessionRecorders
+  >["activeTarget"];
+  readonly recordEvidence: ReturnType<
+    typeof createSessionRecorders
+  >["recordEvidence"];
+  readonly recordEvidenceWithUnknown: ReturnType<
+    typeof createSessionRecorders
+  >["recordEvidenceWithUnknown"];
+  readonly availabilityPolicy: CreateServerOptions["availabilityPolicy"];
+  readonly startedAt: string;
+  readonly processCaptureElicitation: ProcessCaptureElicitation;
+}): LazyToolCatalog => {
+  const loadOptionalProviders = createOptionalProviderLoader(options);
+  return new LazyToolCatalog(
     server,
     async (kind) => {
       const needsObservationProviders =
@@ -210,7 +208,7 @@ export const createServer = (
           activeTarget,
           recordEvidence,
           recordEvidenceWithUnknown,
-          availabilityPolicy: dynamicTools?.policy,
+          availabilityPolicy,
           startedAt,
           processCaptureElicitation,
         },
@@ -218,6 +216,82 @@ export const createServer = (
     },
     session !== undefined,
   );
+};
+
+const createMcpServer = (
+  processCaptureStateCodec: ProcessCaptureElicitation["stateCodec"],
+  session: BinarySessionPort | undefined,
+): McpServer =>
+  new McpServer(
+    {
+      name: PRODUCT_IDENTITY.mcpServerKey,
+      version: PRODUCT_IDENTITY.packageVersion,
+    },
+    {
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { listChanged: true, subscribe: true },
+      },
+      inputRequired: {
+        maxRounds: 3,
+        roundTimeoutMs: PROCESS_CAPTURE_ELICITATION_POLICY.roundTimeoutMs,
+      },
+      requestState: { verify: processCaptureStateCodec.verify },
+      instructions:
+        session === undefined
+          ? ACTIVE_TARGET_INSTRUCTIONS
+          : TARGET_FREE_INSTRUCTIONS,
+    },
+  );
+
+/**
+ * Construct one MCP server without acquiring subprocess resources.
+ * Supplying a session adds target lifecycle tools; omitting it retains the
+ * fixed-target seam used by focused tests and embedders.
+ */
+export const createServer = (
+  analysis: AnalysisOperationPort,
+  session?: BinarySessionPort,
+  options: CreateServerOptions = {},
+): McpServer => {
+  const startedAt = new Date().toISOString();
+  const logger = options.logger ?? silentLogger;
+  const permissionAuthority =
+    options.permissionAuthority?.createConnectionAuthority();
+  const processCaptureStateCodec =
+    createRequestStateCodec<ProcessCaptureElicitationState>({
+      key: randomBytes(32),
+      ttlSeconds: PROCESS_CAPTURE_ELICITATION_POLICY.stateTtlSeconds,
+    });
+  const server = createMcpServer(processCaptureStateCodec, session);
+  const dynamicTools = installSessionToolAvailability(server, session, options);
+  server.server.onclose = () => {
+    permissionAuthority?.clearSessionGrants();
+  };
+  if (dynamicTools !== undefined)
+    server.server.oninitialized = () => server.sendToolListChanged();
+  session?.onAvailabilityChanged?.(() => server.sendToolListChanged());
+  registerServerIdentityResource(server, startedAt);
+  const toolLogger = logger.child({ layer: "server" });
+  const { activeTarget, recordEvidence, recordEvidenceWithUnknown } =
+    createSessionRecorders(server, session);
+  const processCaptureElicitation = createProcessCaptureElicitation(
+    processCaptureStateCodec,
+  );
+  const lazyTools = createLazyToolCatalog({
+    server,
+    analysis,
+    session,
+    options,
+    toolLogger,
+    permissionAuthority,
+    activeTarget,
+    recordEvidence,
+    recordEvidenceWithUnknown,
+    availabilityPolicy: dynamicTools?.policy,
+    startedAt,
+    processCaptureElicitation,
+  });
   lazyTools.register();
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

@@ -120,59 +120,55 @@ export function detectArtifactFormat(
   return null;
 }
 
+const STANDARD_LIBRARY_PATH_MARKERS = [
+  "/stdlib/",
+  "/site-packages/",
+  "java/",
+  "javax/",
+  "sun/",
+];
+const STANDARD_LIBRARY_SYMBOL_MARKERS = ["java.", "javax.", "sun.", "__"];
+const GENERATED_PATH_MARKERS = [
+  "/generated/",
+  "_generated",
+  "/build/",
+  "/target/",
+  "/dist-packages/",
+  "/__pycache__/",
+];
+const GENERATED_SYMBOL_MARKERS = ["Generated", "_generated"];
+const VENDORED_PATH_MARKERS = [
+  "/vendor/",
+  "/vendored/",
+  "/third_party/",
+  "/3rdparty/",
+  "/node_modules/",
+];
+const BUNDLED_PATH_MARKERS = ["/bundle/", "/bundled/", ".jar!", ".war!"];
+
+const includesAny = (value: string, markers: readonly string[]): boolean =>
+  markers.some((marker) => value.includes(marker));
+const startsWithAny = (value: string, markers: readonly string[]): boolean =>
+  markers.some((marker) => value.startsWith(marker));
+
 /** Classify bytecode symbol provenance. */
 export function classifyProvenance(
   path: string,
   symbolName: string,
 ): BytecodeProvenance {
   const lower = path.toLowerCase();
-  // Standard library paths
   if (
-    lower.includes("/stdlib/") ||
-    lower.includes("/site-packages/") ||
-    lower.includes("java/") ||
-    lower.includes("javax/") ||
-    lower.includes("sun/") ||
-    symbolName.startsWith("java.") ||
-    symbolName.startsWith("javax.") ||
-    symbolName.startsWith("sun.") ||
-    symbolName.startsWith("__")
-  ) {
+    includesAny(lower, STANDARD_LIBRARY_PATH_MARKERS) ||
+    startsWithAny(symbolName, STANDARD_LIBRARY_SYMBOL_MARKERS)
+  )
     return "standard_library";
-  }
-  // Generated code
   if (
-    lower.includes("/generated/") ||
-    lower.includes("_generated") ||
-    lower.includes("/build/") ||
-    lower.includes("/target/") ||
-    lower.includes("/dist-packages/") ||
-    lower.includes("/__pycache__/") ||
-    symbolName.includes("Generated") ||
-    symbolName.includes("_generated")
-  ) {
+    includesAny(lower, GENERATED_PATH_MARKERS) ||
+    includesAny(symbolName, GENERATED_SYMBOL_MARKERS)
+  )
     return "generated";
-  }
-  // Vendored code
-  if (
-    lower.includes("/vendor/") ||
-    lower.includes("/vendored/") ||
-    lower.includes("/third_party/") ||
-    lower.includes("/3rdparty/") ||
-    lower.includes("/node_modules/") ||
-    lower.includes("/vendor/")
-  ) {
-    return "vendored";
-  }
-  // Bundled code
-  if (
-    lower.includes("/bundle/") ||
-    lower.includes("/bundled/") ||
-    lower.includes(".jar!") ||
-    lower.includes(".war!")
-  ) {
-    return "bundled";
-  }
+  if (includesAny(lower, VENDORED_PATH_MARKERS)) return "vendored";
+  if (includesAny(lower, BUNDLED_PATH_MARKERS)) return "bundled";
   return "application";
 }
 

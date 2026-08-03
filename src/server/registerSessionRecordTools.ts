@@ -287,15 +287,12 @@ interface UnknownToolRegistration {
 }
 
 /** Register residual-unknown query and mutation tools. */
-export const registerUnknownTools = ({
+const registerListUnknownsTool = ({
   server,
   session,
   contracts,
 }: UnknownToolRegistration): void => {
   const listContract = contracts[14];
-  const recordContract = contracts[15];
-  const updateContract = contracts[16];
-  const verifyContract = contracts[17];
   server.registerTool(
     listContract.name,
     toolRegistrationOptions(listContract),
@@ -344,6 +341,14 @@ export const registerUnknownTools = ({
       );
     },
   );
+};
+
+const registerRecordUnknownTool = ({
+  server,
+  session,
+  contracts,
+}: UnknownToolRegistration): void => {
+  const recordContract = contracts[15];
   server.registerTool(
     recordContract.name,
     toolRegistrationOptions(recordContract),
@@ -368,6 +373,14 @@ export const registerUnknownTools = ({
         : toCallToolResult(result, recordContract);
     },
   );
+};
+
+const registerUpdateUnknownTool = ({
+  server,
+  session,
+  contracts,
+}: UnknownToolRegistration): void => {
+  const updateContract = contracts[16];
   server.registerTool(
     updateContract.name,
     toolRegistrationOptions(updateContract),
@@ -398,6 +411,14 @@ export const registerUnknownTools = ({
         : toCallToolResult(result, updateContract);
     },
   );
+};
+
+const registerVerifyUnknownTool = ({
+  server,
+  session,
+  contracts,
+}: UnknownToolRegistration): void => {
+  const verifyContract = contracts[17];
   server.registerTool(
     verifyContract.name,
     toolRegistrationOptions(verifyContract),
@@ -415,6 +436,15 @@ export const registerUnknownTools = ({
         : toCallToolResult(parsed, verifyContract);
     },
   );
+};
+
+export const registerUnknownTools = (
+  registration: UnknownToolRegistration,
+): void => {
+  registerListUnknownsTool(registration);
+  registerRecordUnknownTool(registration);
+  registerUpdateUnknownTool(registration);
+  registerVerifyUnknownTool(registration);
 };
 
 const permissionFailure = (

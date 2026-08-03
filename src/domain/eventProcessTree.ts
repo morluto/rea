@@ -82,6 +82,82 @@ export type ProcessTreeReconstruction = z.infer<
   typeof processTreeReconstructionSchema
 >;
 
+type ProcessTreeAccumulator = {
+  readonly nodes: Map<number, ProcessNode>;
+  readonly children: Map<number, number[]>;
+  eventsUnmatched: number;
+  hasReExec: boolean;
+  hasReparenting: boolean;
+  shortLivedDescendants: number;
+};
+
+const applyProcessTreeEvent = (
+  event: ProcessTreeEvent,
+  state: ProcessTreeAccumulator,
+): void => {
+  let node = state.nodes.get(event.pid);
+  switch (event.type) {
+    case "spawn": {
+      if (!node) {
+        node = {
+          pid: event.pid,
+          ppid: event.ppid,
+          process_name: event.process_name,
+          executable: event.executable,
+          arguments: event.arguments,
+          children: [],
+          spawn_time_ms: event.at_ms,
+          exit_time_ms: null,
+          exit_code: null,
+          is_re_exec: false,
+          is_reparented: false,
+          previous_ppid: null,
+        };
+        state.nodes.set(event.pid, node);
+      }
+      if (event.ppid !== null) {
+        const parentChildren = state.children.get(event.ppid) ?? [];
+        parentChildren.push(event.pid);
+        state.children.set(event.ppid, parentChildren);
+      }
+      break;
+    }
+    case "exit":
+      if (node) {
+        node.exit_time_ms = event.at_ms;
+        node.exit_code = event.exit_code;
+        if (
+          node.spawn_time_ms !== null &&
+          event.at_ms - node.spawn_time_ms < 100
+        )
+          state.shortLivedDescendants++;
+      } else state.eventsUnmatched++;
+      break;
+    case "re_exec":
+      if (node) {
+        node.is_re_exec = true;
+        node.executable = event.executable ?? node.executable;
+        node.arguments = event.arguments;
+        state.hasReExec = true;
+      } else state.eventsUnmatched++;
+      break;
+    case "reparent":
+      if (node) {
+        node.previous_ppid = node.ppid;
+        node.ppid = event.ppid;
+        node.is_reparented = true;
+        state.hasReparenting = true;
+      } else state.eventsUnmatched++;
+      break;
+    case "signal":
+    case "name_change":
+    case "thread_create":
+    case "thread_exit":
+      // These events are recorded but don't modify the tree structure.
+      break;
+  }
+};
+
 /** Reconstruct a process tree from event-backed capture. */
 export function reconstructProcessTree(
   events: readonly ProcessTreeEvent[],
@@ -90,86 +166,20 @@ export function reconstructProcessTree(
   const nodes = new Map<number, ProcessNode>();
   const children = new Map<number, number[]>();
   let eventsConsumed = 0;
-  let eventsUnmatched = 0;
-  let hasReExec = false;
-  let hasReparenting = false;
-  let shortLivedDescendants = 0;
+  const state: ProcessTreeAccumulator = {
+    nodes,
+    children,
+    eventsUnmatched: 0,
+    hasReExec: false,
+    hasReparenting: false,
+    shortLivedDescendants: 0,
+  };
 
   const sorted = [...events].sort((a, b) => a.at_ms - b.at_ms);
 
   for (const event of sorted) {
     eventsConsumed++;
-    let node = nodes.get(event.pid);
-
-    switch (event.type) {
-      case "spawn": {
-        if (!node) {
-          node = {
-            pid: event.pid,
-            ppid: event.ppid,
-            process_name: event.process_name,
-            executable: event.executable,
-            arguments: event.arguments,
-            children: [],
-            spawn_time_ms: event.at_ms,
-            exit_time_ms: null,
-            exit_code: null,
-            is_re_exec: false,
-            is_reparented: false,
-            previous_ppid: null,
-          };
-          nodes.set(event.pid, node);
-        }
-        if (event.ppid !== null) {
-          const parentChildren = children.get(event.ppid) ?? [];
-          parentChildren.push(event.pid);
-          children.set(event.ppid, parentChildren);
-        }
-        break;
-      }
-      case "exit": {
-        if (node) {
-          node.exit_time_ms = event.at_ms;
-          node.exit_code = event.exit_code;
-          if (
-            node.spawn_time_ms !== null &&
-            event.at_ms - node.spawn_time_ms < 100
-          )
-            shortLivedDescendants++;
-        } else {
-          eventsUnmatched++;
-        }
-        break;
-      }
-      case "re_exec": {
-        if (node) {
-          node.is_re_exec = true;
-          node.executable = event.executable ?? node.executable;
-          node.arguments = event.arguments;
-          hasReExec = true;
-        } else {
-          eventsUnmatched++;
-        }
-        break;
-      }
-      case "reparent": {
-        if (node) {
-          node.previous_ppid = node.ppid;
-          node.ppid = event.ppid;
-          node.is_reparented = true;
-          hasReparenting = true;
-        } else {
-          eventsUnmatched++;
-        }
-        break;
-      }
-      case "signal":
-      case "name_change":
-      case "thread_create":
-      case "thread_exit":
-        // These events are recorded but don't modify the tree structure
-        break;
-    }
+    applyProcessTreeEvent(event, state);
   }
 
   // Attach children to nodes
@@ -182,10 +192,10 @@ export function reconstructProcessTree(
     root_pid: rootPid,
     processes: [...nodes.values()],
     events_consumed: eventsConsumed,
-    events_unmatched: eventsUnmatched,
-    short_lived_descendants: shortLivedDescendants,
-    has_re_exec: hasReExec,
-    has_reparenting: hasReparenting,
+    events_unmatched: state.eventsUnmatched,
+    short_lived_descendants: state.shortLivedDescendants,
+    has_re_exec: state.hasReExec,
+    has_reparenting: state.hasReparenting,
   };
 }
 
