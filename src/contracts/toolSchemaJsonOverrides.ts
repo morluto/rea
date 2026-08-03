@@ -7,6 +7,26 @@ const exactlyOne = (left: string, right: string): JsonSchema => ({
   oneOf: [{ required: [left] }, { required: [right] }],
 });
 
+const exclusivePairs = (
+  left: [string, string],
+  right: [string, string],
+): JsonSchema => ({
+  oneOf: [
+    {
+      required: left,
+      not: {
+        anyOf: right.map((field) => ({ required: [field] })),
+      },
+    },
+    {
+      required: right,
+      not: {
+        anyOf: left.map((field) => ({ required: [field] })),
+      },
+    },
+  ],
+});
+
 const twoEvidenceSources = (
   left: [string, string],
   right: [string, string],
@@ -36,21 +56,29 @@ const approvalDependency = (flag: string, approval: string): JsonSchema => ({
 });
 
 const exactReadinessStages: JsonSchema = {
-  allOf: READINESS_STAGE_IDS.map((stageId) => ({
-    contains: {
-      type: "object",
+  allOf: [
+    {
       properties: {
-        stage_id: {
-          const: stageId,
-          description: "Readiness stage identifier",
+        stages: {
+          allOf: READINESS_STAGE_IDS.map((stageId) => ({
+            contains: {
+              type: "object",
+              properties: {
+                stage_id: {
+                  const: stageId,
+                  description: "Readiness stage identifier",
+                },
+              },
+              required: ["stage_id"],
+              description: "One reconstruction-readiness stage",
+            },
+            minContains: 1,
+            maxContains: 1,
+          })),
         },
       },
-      required: ["stage_id"],
-      description: "One reconstruction-readiness stage",
     },
-    minContains: 1,
-    maxContains: 1,
-  })),
+  ],
 };
 
 /** Public JSON-Schema constraints that Standard Schema cannot derive from refinements. */
@@ -58,10 +86,10 @@ export const TOOL_INPUT_JSON_SCHEMA_OVERRIDES: Readonly<
   Record<string, JsonSchema>
 > = {
   compare_web_captures: {
-    oneOf: [
-      { required: ["before", "after"] },
-      { required: ["before_scenario", "after_scenario"] },
-    ],
+    ...exclusivePairs(
+      ["before", "after"],
+      ["before_scenario", "after_scenario"],
+    ),
   },
   inspect_web_page: {
     allOf: [
@@ -78,6 +106,15 @@ export const TOOL_INPUT_JSON_SCHEMA_OVERRIDES: Readonly<
   },
   analyze_web_bundle: {
     allOf: [
+      approvalDependency("include_console_text", "console_text_approved"),
+      approvalDependency(
+        "include_json_body_shapes",
+        "json_body_schema_approved",
+      ),
+      approvalDependency(
+        "include_websocket_shapes",
+        "websocket_shape_approved",
+      ),
       approvalDependency("fetch_source_maps", "source_map_fetch_approved"),
     ],
   },
@@ -99,6 +136,10 @@ export const TOOL_INPUT_JSON_SCHEMA_OVERRIDES: Readonly<
   compare_javascript_export_shapes: twoEvidenceSources(
     ["left", "left_evidence_id"],
     ["right", "right_evidence_id"],
+  ),
+  compare_source_to_bundle: exactlyOne(
+    "application",
+    "application_evidence_id",
   ),
   evaluate_reconstruction_readiness: exactReadinessStages,
 };

@@ -20,8 +20,21 @@ describe("public tool schema refinements", () => {
   it("requires complete web capture pairs and Evidence sources", () => {
     expect(publicInputSchema("compare_web_captures")).toMatchObject({
       oneOf: [
-        { required: ["before", "after"] },
-        { required: ["before_scenario", "after_scenario"] },
+        {
+          required: ["before", "after"],
+          not: {
+            anyOf: [
+              { required: ["before_scenario"] },
+              { required: ["after_scenario"] },
+            ],
+          },
+        },
+        {
+          required: ["before_scenario", "after_scenario"],
+          not: {
+            anyOf: [{ required: ["before"] }, { required: ["after"] }],
+          },
+        },
       ],
     });
     expect(publicInputSchema("trace_application_feature")).toMatchObject({
@@ -36,9 +49,31 @@ describe("public tool schema refinements", () => {
     expect(
       JSON.stringify(publicInputSchema("inspect_electron_page")),
     ).toContain('"source_capture_approved"');
-    expect(
-      JSON.stringify(publicInputSchema("evaluate_reconstruction_readiness")),
-    ).toContain('"minContains":1');
+    const readiness = publicInputSchema("evaluate_reconstruction_readiness");
+    expect(readiness).toMatchObject({
+      allOf: [
+        {
+          properties: {
+            stages: {
+              allOf: expect.arrayContaining([
+                expect.objectContaining({ minContains: 1, maxContains: 1 }),
+              ]),
+            },
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(readiness)).toContain('"minContains":1');
+
+    const bundleSchema = JSON.stringify(
+      publicInputSchema("analyze_web_bundle"),
+    );
+    expect(bundleSchema).toContain('"include_console_text"');
+    expect(bundleSchema).toContain('"console_text_approved"');
+    expect(bundleSchema).toContain('"include_json_body_shapes"');
+    expect(bundleSchema).toContain('"json_body_schema_approved"');
+    expect(bundleSchema).toContain('"include_websocket_shapes"');
+    expect(bundleSchema).toContain('"websocket_shape_approved"');
   });
 
   it("requires exactly two export-shape Evidence links", () => {
@@ -55,5 +90,14 @@ describe("public tool schema refinements", () => {
         }),
       ),
     ).toContain('"minItems":2');
+  });
+
+  it("requires exactly one source for source-to-bundle comparison", () => {
+    expect(publicInputSchema("compare_source_to_bundle")).toMatchObject({
+      oneOf: [
+        { required: ["application"] },
+        { required: ["application_evidence_id"] },
+      ],
+    });
   });
 });

@@ -81,6 +81,9 @@ type CapabilityMode = {
   readonly missing_operations: readonly string[];
   readonly remediation: string | null;
 };
+type NavigationModeResult = CapabilityMode & {
+  readonly reason: ToolAvailabilityReason;
+};
 type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
@@ -428,31 +431,68 @@ const composedAvailabilityFor = (
 const navigationContextAvailability = (
   descriptors: ReadonlyMap<string, ProviderDescriptor>,
 ): Availability => {
-  const modes = NAVIGATION_CONTEXT_MODES.map((mode) => {
-    const availability = composedAvailabilityFor(
-      mode.requirements,
-      descriptors,
-    );
-    return {
-      name: mode.name,
-      available: availability.reason === "available",
-      missing_operations: mode.requirements.filter((operation) => {
-        const descriptor = descriptors.get(operation);
-        return descriptor === undefined || descriptor.available === false;
-      }),
-      remediation: availability.remediation,
-    };
-  });
-  const availableMode = modes.find((mode) => mode.available);
+  const modeResults: NavigationModeResult[] = NAVIGATION_CONTEXT_MODES.map(
+    (mode) => {
+      const availability = composedAvailabilityFor(
+        mode.requirements,
+        descriptors,
+      );
+      return {
+        name: mode.name,
+        available: availability.reason === "available",
+        reason: availability.reason,
+        missing_operations: mode.requirements.filter((operation) => {
+          const descriptor = descriptors.get(operation);
+          return descriptor === undefined || descriptor.available === false;
+        }),
+        remediation: availability.remediation,
+      };
+    },
+  );
+  const modes = modeResults.map(
+    ({ name, available, missing_operations, remediation }) => ({
+      name,
+      available,
+      missing_operations,
+      remediation,
+    }),
+  );
+  const availableMode = modeResults.find((mode) => mode.available);
+  const failure = modeResults
+    .filter((mode) => !mode.available)
+    .sort(
+      (left, right) =>
+        navigationFailurePriority(left.reason) -
+        navigationFailurePriority(right.reason),
+    )[0];
+  const specificFailureRemediation =
+    failure?.reason === "provider_missing" ? undefined : failure?.remediation;
   return {
-    reason: availableMode === undefined ? "provider_missing" : "available",
+    reason:
+      availableMode === undefined
+        ? (failure?.reason ?? "provider_missing")
+        : "available",
     remediation:
       availableMode === undefined
-        ? `Configure a provider for one of: ${modes
+        ? (specificFailureRemediation ??
+          `Configure a provider for one of: ${modes
             .flatMap((mode) => mode.missing_operations)
-            .join(", ")}.`
+            .join(", ")}.`)
         : null,
     defaultModeAvailable: modes[0]?.available ?? false,
     modes,
   };
+};
+
+const navigationFailurePriority = (reason: ToolAvailabilityReason): number => {
+  switch (reason) {
+    case "unsupported_host":
+      return 0;
+    case "provider_unavailable":
+      return 1;
+    case "provider_missing":
+      return 2;
+    default:
+      return 3;
+  }
 };

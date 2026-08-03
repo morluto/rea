@@ -254,4 +254,33 @@ describe("capability inventory: caller guidance", () => {
       remediation: expect.stringContaining("resolve_containing_procedure"),
     });
   });
+
+  it("preserves the most specific navigation mode failure", () => {
+    expect(
+      entry(
+        "get_navigation_context",
+        status({
+          open: true,
+          kind: "executable",
+          capabilities: [
+            {
+              operation: "current_address",
+              available: false,
+              availability_code: "unsupported_host",
+              reason: "Navigation requires macOS.",
+            },
+            {
+              operation: "resolve_containing_procedure",
+              available: true,
+              reason: null,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      available: false,
+      reason: "unsupported_host",
+      remediation: "Navigation requires macOS.",
+    });
+  });
 });
