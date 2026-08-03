@@ -47,7 +47,14 @@ export const TEST_PROJECTS = [
   {
     name: "boundary",
     include: ["tests/boundary/**/*.test.ts"],
+    exclude: ["tests/boundary/mcp/**/*.test.ts"],
     pool: "forks" as const,
+    maxWorkers: MAX_TEST_WORKERS,
+  },
+  {
+    name: "mcp-boundary",
+    include: ["tests/boundary/mcp/**/*.test.ts"],
+    pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
   },
   {

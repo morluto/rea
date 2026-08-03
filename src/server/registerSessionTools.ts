@@ -329,8 +329,8 @@ const registerContextTools = (
   server: McpServer,
   session: BinarySessionPort,
 ): void => {
-  const navigationContract = SESSION_TOOL_CONTRACTS[20];
-  const addressContract = SESSION_TOOL_CONTRACTS[21];
+  const navigationContract = SESSION_TOOL_CONTRACTS[21];
+  const addressContract = SESSION_TOOL_CONTRACTS[22];
   server.registerTool(
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
@@ -401,6 +401,7 @@ export const registerSessionTools = (
     reconstructionContract,
   ] = SESSION_TOOL_CONTRACTS;
   const snapshotContract = SESSION_TOOL_CONTRACTS[19];
+  const releaseContract = SESSION_TOOL_CONTRACTS[20];
   registerLifecycleTools({
     server,
     session,
@@ -423,6 +424,7 @@ export const registerSessionTools = (
     exportContract,
     importContract,
     snapshotContract,
+    releaseContract,
     filePolicy: evidenceFilePolicy,
     ...(options.permissionAuthority === undefined
       ? {}

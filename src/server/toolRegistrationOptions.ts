@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolContract } from "../contracts/toolContracts.js";
+import { applyToolInputJsonSchemaOverride } from "../contracts/toolSchemaJsonOverrides.js";
 
 const ADVERTISED_INPUT_SCHEMAS = new WeakMap<
   z.ZodObject,
@@ -60,7 +61,10 @@ const advertisedInputJsonSchema = (
 ): Readonly<Record<string, unknown>> =>
   cachedJsonSchema(ADVERTISED_INPUT_SCHEMAS, contract.inputSchema, () => ({
     ...describeProperties(
-      closeObjectSchemas(inputJsonSchema(contract.inputSchema)),
+      applyToolInputJsonSchemaOverride(
+        contract.name,
+        closeObjectSchemas(inputJsonSchema(contract.inputSchema)),
+      ),
     ),
     examples: contract.examples.map(({ input }) => input),
   }));

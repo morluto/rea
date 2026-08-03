@@ -130,8 +130,8 @@ describe("analysis context queries: address facets", () => {
               ok(
                 createAnalysisExecution(
                   [
-                    { address: "0x401000", value: "review" },
-                    { address: "0x402000", value: "other" },
+                    { address: "0x401000", name: "review" },
+                    { address: "0x402000", name: "other" },
                   ],
                   provider,
                 ),
@@ -159,7 +159,7 @@ describe("analysis context queries: address facets", () => {
         },
         bookmarks: {
           state: "available",
-          value: [{ address: "0x401000", value: "review" }],
+          value: [{ address: "0x401000", name: "review" }],
         },
       },
     });
@@ -183,5 +183,31 @@ describe("analysis context queries: address facets", () => {
         document: "fixture",
       }),
     ).resolves.toEqual(err(cancelled));
+  });
+
+  it("reports malformed bookmark output as unavailable instead of empty", async () => {
+    const analysis: AnalysisOperationPort = {
+      execute: (operation) =>
+        Promise.resolve(
+          operation === "list_bookmarks"
+            ? ok(createAnalysisExecution({ malformed: true }, provider))
+            : ok(createAnalysisExecution(null, provider)),
+        ),
+    };
+
+    await expect(
+      inspectAddressContext(analysis, {
+        address: "0x401000",
+        document: "fixture",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        bookmarks: {
+          state: "unavailable",
+          reason: expect.stringContaining("malformed"),
+        },
+      },
+    });
   });
 });

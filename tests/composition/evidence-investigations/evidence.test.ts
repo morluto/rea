@@ -198,7 +198,7 @@ describe("evidence ledger recording", () => {
     });
     expect(ledger.import(createEvidenceBundle([evidence]))).toEqual({
       ok: true,
-      value: 0,
+      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
     });
     expect(ledger.export().records).toEqual([evidence]);
     ledger.clear();

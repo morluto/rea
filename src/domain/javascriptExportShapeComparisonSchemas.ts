@@ -240,7 +240,7 @@ const comparisonChangeSchema = z.strictObject({
   right: valueAvailabilitySchema,
   left_source_range: sourceRangeSchema.nullable(),
   right_source_range: sourceRangeSchema.nullable(),
-  evidence_links: z.tuple([evidenceIdSchema, evidenceIdSchema]),
+  evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(boundedTextSchema).max(20),
 });
 
@@ -285,7 +285,7 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
     omitted_candidates: z.number().int().min(0),
     omitted_changes: z.number().int().min(0),
   }),
-  evidence_links: z.tuple([evidenceIdSchema, evidenceIdSchema]),
+  evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(boundedTextSchema).max(1_000),
   runtime_validation: z.strictObject({
     recommended_tool: z.literal("run_controlled_replay"),

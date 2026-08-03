@@ -122,7 +122,7 @@ export const snapshotAndRecordUnknown = async (
         arguments: { path: evidencePath },
       }),
     ).result,
-  ).toEqual({ imported: 0, total: 1 });
+  ).toEqual({ imported: 0, unknowns_added: 0, total: 1 });
   const externalEvidencePath = join(root, "external-evidence.json");
   await writeFile(
     externalEvidencePath,
@@ -143,7 +143,7 @@ export const snapshotAndRecordUnknown = async (
         arguments: { path: externalEvidencePath },
       }),
     ).result,
-  ).toEqual({ imported: 1, total: 2 });
+  ).toEqual({ imported: 1, unknowns_added: 0, total: 2 });
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(harness.resourceListChanges()).toBe(0);
   const changesBeforeMutation = harness.resourceListChanges();

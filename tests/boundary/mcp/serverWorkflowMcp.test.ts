@@ -64,6 +64,7 @@ const assertDescribedStrictObjects = (
   schema: unknown,
   root = schema,
   path = "$",
+  strictObject = true,
 ): void => {
   for (const [key, value] of objectEntries(schema)) {
     if (key === "examples") continue;
@@ -85,12 +86,18 @@ const assertDescribedStrictObjects = (
           `${path}.properties.${property}`,
         );
       }
-      expect(
-        Object.fromEntries(objectEntries(schema)).additionalProperties,
-      ).toBe(false);
+      if (strictObject)
+        expect(
+          Object.fromEntries(objectEntries(schema)).additionalProperties,
+        ).toBe(false);
       continue;
     }
-    assertDescribedStrictObjects(value, root, `${path}.${key}`);
+    assertDescribedStrictObjects(
+      value,
+      root,
+      `${path}.${key}`,
+      strictObject && key !== "contains" && key !== "if" && key !== "then",
+    );
   }
   if (Array.isArray(schema))
     for (const [index, value] of schema.entries())

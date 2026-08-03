@@ -129,6 +129,8 @@ export abstract class BinarySessionRecords {
       bytes: Buffer.byteLength(existing ?? encoded),
       records: bundle.records.length,
       unknowns: bundle.unknowns.length,
+      scope: "session",
+      survivesSession: false,
       uri: `rea://evidence-bundle/${digest}`,
     });
   }
@@ -137,12 +139,23 @@ export abstract class BinarySessionRecords {
     return this.#retainedBundles.get(digest);
   }
 
+  /** Release one immutable bundle so bounded retention has an explicit recovery path. */
+  releaseEvidenceBundle(bundleDigest: string): boolean {
+    const encoded = this.#retainedBundles.get(bundleDigest);
+    if (encoded === undefined) return false;
+    this.#retainedBundles.delete(bundleDigest);
+    this.#retainedBundleBytes -= Buffer.byteLength(encoded);
+    this.#emitSnapshotChanged();
+    return true;
+  }
+
   importEvidenceBundle(
     bundle: unknown,
   ): Result<number, EvidenceIntegrityError | EvidenceLimitError> {
     const imported = this.#evidence.import(bundle);
-    if (imported.ok && imported.value > 0) this.#emitSnapshotChanged();
-    return imported;
+    if (!imported.ok) return imported;
+    if (imported.value.changed) this.#emitSnapshotChanged();
+    return ok(imported.value.recordsAdded);
   }
 
   protected abstract activeAnalysisBinding(): ActiveAnalysisBinding | undefined;
@@ -187,7 +200,10 @@ export abstract class BinarySessionRecords {
       active === undefined
         ? undefined
         : { target: active.target, profile: active.profile },
-      (bundle) => this.#evidence.import(bundle),
+      (bundle) => {
+        const imported = this.#evidence.import(bundle);
+        return imported.ok ? ok(imported.value.recordsAdded) : imported;
+      },
     );
     if (imported.ok) this.#emitSnapshotChanged();
     return imported;
@@ -253,7 +269,16 @@ export abstract class BinarySessionRecords {
   }
 
   #emitSnapshotChanged(): void {
-    for (const listener of this.#snapshotListeners) void listener();
+    for (const listener of this.#snapshotListeners) {
+      try {
+        const notification = listener();
+        if (notification !== undefined)
+          void notification.catch(() => undefined);
+      } catch {
+        // External resource observers are best-effort; one callback must not
+        // make a committed evidence mutation appear to fail.
+      }
+    }
   }
 
   retainInvestigationWorkspace(

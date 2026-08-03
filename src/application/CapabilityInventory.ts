@@ -72,6 +72,14 @@ const CLIENT_FEATURE_REQUIREMENTS: Readonly<
 type Availability = {
   readonly reason: ToolAvailabilityReason;
   readonly remediation: string | null;
+  readonly defaultModeAvailable?: boolean;
+  readonly modes?: readonly CapabilityMode[];
+};
+type CapabilityMode = {
+  readonly name: string;
+  readonly available: boolean;
+  readonly missing_operations: readonly string[];
+  readonly remediation: string | null;
 };
 type AvailabilityContext = {
   readonly name: string;
@@ -111,15 +119,20 @@ const ENHANCED_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
-const SESSION_COMPOSITION_REQUIREMENTS: Readonly<
-  Record<string, readonly string[]>
-> = {
-  get_navigation_context: [
-    "current_document",
-    "current_address",
-    "resolve_containing_procedure",
-  ],
-};
+const NAVIGATION_CONTEXT_MODES = [
+  {
+    name: "current_selection",
+    requirements: [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ],
+  },
+  {
+    name: "explicit_document",
+    requirements: ["current_address", "resolve_containing_procedure"],
+  },
+] as const;
 
 /** Build stable per-operation availability for discovery and tool visibility. */
 export const buildCapabilityInventory = (
@@ -162,6 +175,12 @@ export const buildCapabilityInventory = (
       remediation: clientBlocked
         ? `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`
         : availability.remediation,
+      ...(availability.defaultModeAvailable === undefined
+        ? {}
+        : { default_mode_available: availability.defaultModeAvailable }),
+      ...(availability.modes === undefined
+        ? {}
+        : { modes: availability.modes }),
       client_requirements: clientRequirements,
       effects: { ...contract.effects },
       annotations: {
@@ -195,9 +214,8 @@ const clientRequirementsFor = (
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
-  const sessionComposition = SESSION_COMPOSITION_REQUIREMENTS[context.name];
-  if (sessionComposition !== undefined)
-    return composedAvailabilityFor(sessionComposition, context.descriptors);
+  if (context.name === "get_navigation_context")
+    return navigationContextAvailability(context.descriptors);
   const javascriptApplication = javascriptApplicationAvailability(context);
   if (javascriptApplication !== null) return javascriptApplication;
   const policyDecision = policyAvailability(context);
@@ -405,4 +423,36 @@ const composedAvailabilityFor = (
         unavailable.reason ?? "Choose another target or configured provider.",
     };
   return { reason: "available", remediation: null };
+};
+
+const navigationContextAvailability = (
+  descriptors: ReadonlyMap<string, ProviderDescriptor>,
+): Availability => {
+  const modes = NAVIGATION_CONTEXT_MODES.map((mode) => {
+    const availability = composedAvailabilityFor(
+      mode.requirements,
+      descriptors,
+    );
+    return {
+      name: mode.name,
+      available: availability.reason === "available",
+      missing_operations: mode.requirements.filter((operation) => {
+        const descriptor = descriptors.get(operation);
+        return descriptor === undefined || descriptor.available === false;
+      }),
+      remediation: availability.remediation,
+    };
+  });
+  const availableMode = modes.find((mode) => mode.available);
+  return {
+    reason: availableMode === undefined ? "provider_missing" : "available",
+    remediation:
+      availableMode === undefined
+        ? `Configure a provider for one of: ${modes
+            .flatMap((mode) => mode.missing_operations)
+            .join(", ")}.`
+        : null,
+    defaultModeAvailable: modes[0]?.available ?? false,
+    modes,
+  };
 };

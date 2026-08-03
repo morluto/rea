@@ -240,6 +240,17 @@ export const toolAvailability = z.object({
     "policy_disabled",
   ]),
   remediation: z.string().nullable(),
+  default_mode_available: z.boolean().optional(),
+  modes: z
+    .array(
+      z.object({
+        name: z.string(),
+        available: z.boolean(),
+        missing_operations: z.array(z.string()),
+        remediation: z.string().nullable(),
+      }),
+    )
+    .optional(),
   client_requirements: z.object({
     required: z.array(clientFeatureNameSchema),
     optional: z.array(clientFeatureNameSchema),

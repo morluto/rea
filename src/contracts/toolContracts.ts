@@ -382,6 +382,11 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 /** Retain the current canonical Evidence bundle as a session resource. */
 export const snapshotEvidenceBundleInputSchema = z.strictObject({});
 
+/** Release one session-retained immutable Evidence bundle. */
+export const releaseEvidenceBundleInputSchema = z.strictObject({
+  bundle_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
 /** Optional document selection for volatile navigation context. */
 export const navigationContextInputSchema = z.strictObject({
   document: z.string().min(1).optional(),
@@ -529,8 +534,13 @@ export const SESSION_TOOL_CONTRACTS = [
     snapshotEvidenceBundleInputSchema,
   ),
   session(
+    "release_evidence_bundle",
+    "Release one immutable session-retained Evidence v2 bundle by exact digest. This is the recovery operation when bounded bundle retention is exhausted; releasing an unknown digest is idempotent and reports released: false.",
+    releaseEvidenceBundleInputSchema,
+  ),
+  session(
     "get_navigation_context",
-    "Return the selected document, current address, and containing/current procedure in one coherent provider-neutral request. A cursor outside any procedure returns procedure: null. Scalar navigation getters remain available for evaluation and compatibility.",
+    "Compose the selected document, current address, and containing/current procedure into one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null. Scalar navigation getters remain available for evaluation and compatibility.",
     navigationContextInputSchema,
   ),
   session(

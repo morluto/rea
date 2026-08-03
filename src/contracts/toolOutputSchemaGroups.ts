@@ -44,8 +44,8 @@ import { replayMachineRunOutputSchema } from "../domain/replayMachineRun.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import {
   addressList,
-  analysisActivity,
   addressedEntry,
+  analysisActivity,
   bounded,
   containingProcedureResolution,
   clientFeatureAvailabilitySchema,
@@ -69,6 +69,14 @@ import {
 
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
+  z.object({
+    state: z.literal("unavailable"),
+    reason: z.string(),
+    remediation: z.string(),
+  }),
+]);
+const bookmarkFacetSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("available"), value: z.array(addressedEntry) }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
@@ -426,7 +434,15 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       bytes: z.number().int().min(0),
       records: z.number().int().min(0),
       unknowns: z.number().int().min(0),
+      scope: z.literal("session"),
+      survives_session: z.literal(false),
       bundle_uri: z.string().regex(/^rea:\/\/evidence-bundle\/[a-f0-9]{64}$/u),
+    }),
+  ),
+  release_evidence_bundle: lifecycleResultOf(
+    z.object({
+      bundle_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+      released: z.boolean(),
     }),
   ),
   get_navigation_context: lifecycleResultOf(
@@ -444,12 +460,13 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       procedure: contextFacetSchema,
       comment: contextFacetSchema,
       inline_comment: contextFacetSchema,
-      bookmarks: contextFacetSchema,
+      bookmarks: bookmarkFacetSchema,
     }),
   ),
   import_evidence_bundle: lifecycleResultOf(
     z.object({
       imported: z.number().int().min(0),
+      unknowns_added: z.number().int().min(0),
       total: z.number().int().min(0),
     }),
   ),

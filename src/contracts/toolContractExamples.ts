@@ -43,6 +43,7 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   export_evidence_bundle: { path: "/tmp/evidence.json" },
   inspect_address_context: { address: "0x1000" },
   import_evidence_bundle: { path: "evidence.json" },
+  release_evidence_bundle: { bundle_digest: "a".repeat(64) },
   capture_process_scenario: {
     approved: true,
     executable: "/usr/bin/true",

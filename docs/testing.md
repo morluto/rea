@@ -6,14 +6,15 @@ allowed dependencies, and runtime cost are visible from their paths.
 
 ## Behavioral depths
 
-| Depth       | Location               | What it proves                                                                                        |
-| ----------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| Module      | `src/**/*.test.ts`     | One domain, service, or adapter through its narrow public surface                                     |
-| Composition | `tests/composition/**` | Provider-neutral session and registry wiring; filesystem access is limited to fixture materialization |
-| Boundary    | `tests/boundary/**`    | Exactly one production filesystem, process, network, browser, CLI, MCP, or provider boundary          |
-| Acceptance  | `tests/acceptance/**`  | A complete compiled CLI or MCP workflow                                                               |
-| Conformance | `tests/conformance/**` | Shared provider contracts, parameterized by declared capabilities and explicit opt-outs               |
-| Evaluation  | `tests/evaluation/**`  | Deterministic evaluator parsing, scoring, and report generation                                       |
+| Depth        | Location                | What it proves                                                                                        |
+| ------------ | ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Module       | `src/**/*.test.ts`      | One domain, service, or adapter through its narrow public surface                                     |
+| Composition  | `tests/composition/**`  | Provider-neutral session and registry wiring; filesystem access is limited to fixture materialization |
+| Boundary     | `tests/boundary/**`     | Exactly one production filesystem, process, network, browser, CLI, or provider boundary               |
+| MCP boundary | `tests/boundary/mcp/**` | MCP transport and tool-contract boundaries with isolated sessions and explicit cleanup                |
+| Acceptance   | `tests/acceptance/**`   | A complete compiled CLI or MCP workflow                                                               |
+| Conformance  | `tests/conformance/**`  | Shared provider contracts, parameterized by declared capabilities and explicit opt-outs               |
+| Evaluation   | `tests/evaluation/**`   | Deterministic evaluator parsing, scoring, and report generation                                       |
 
 Colocated domain tests may import only their owning domain and inward
 dependencies. They do not construct sessions or servers and do not start
@@ -42,16 +43,17 @@ manual; Vitest covers only deterministic evaluator logic.
 `npm test` runs every deterministic project once. The narrower feedback loops
 are:
 
-| Command                   | Scope                                                                                                    |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `npm run test:fast`       | Domain, service, adapter, composition, boundary, and conformance projects                                |
-| `npm run test:boundary`   | Boundary and process-global projects                                                                     |
-| `npm run test:acceptance` | Complete CLI and MCP acceptance workflows                                                                |
-| `npm run test:changed`    | Changed tests in non-serial projects via Vitest's import graph                                           |
-| `npm run test:watch`      | Changed domain, service, adapter, composition, boundary, conformance, and evaluation tests in watch mode |
-| `npm run test:watch:all`  | Changed tests from every deterministic project in watch mode                                             |
-| `npm run check:changed`   | Cached static checks followed by changed tests                                                           |
-| `npm run check:pr`        | Static, generated-document, and complete deterministic PR gate                                           |
+| Command                   | Scope                                                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:fast`       | Domain, service, adapter, composition, boundary, MCP boundary, and conformance projects                                |
+| `npm run test:boundary`   | Boundary, MCP boundary, and process-global projects                                                                    |
+| `npm run test:mcp`        | MCP boundary project only                                                                                              |
+| `npm run test:acceptance` | Complete CLI and MCP acceptance workflows                                                                              |
+| `npm run test:changed`    | Changed tests in non-serial projects via Vitest's import graph                                                         |
+| `npm run test:watch`      | Changed domain, service, adapter, composition, boundary, MCP boundary, conformance, and evaluation tests in watch mode |
+| `npm run test:watch:all`  | Changed tests from every deterministic project in watch mode                                                           |
+| `npm run check:changed`   | Cached static checks followed by changed tests                                                                         |
+| `npm run check:pr`        | Static, generated-document, and complete deterministic PR gate                                                         |
 
 Changed-test selection is a fast feedback aid, not release evidence. It can
 miss behavior connected through runtime registration, generated data, shell

@@ -26,7 +26,11 @@ export const importEvidenceBundleCommand = async (
   const ledger = createLedger();
   const imported = ledger.import(loaded.value);
   return imported.ok
-    ? ok({ imported: imported.value, total: ledger.export().records.length })
+    ? ok({
+        imported: imported.value.recordsAdded,
+        unknowns_added: imported.value.unknownsAdded,
+        total: ledger.export().records.length,
+      })
     : imported;
 };
 

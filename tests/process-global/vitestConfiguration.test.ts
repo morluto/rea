@@ -20,6 +20,7 @@ const EXPECTED_PROJECTS = [
   "conformance",
   "domain",
   "evaluation",
+  "mcp-boundary",
   "process-global",
   "services",
 ];

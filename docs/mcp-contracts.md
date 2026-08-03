@@ -87,6 +87,12 @@ workspace `resource_link` blocks. Workspace resources preserve revision and
 `previous_revision_digest` commitments; persistent workspace files remain
 subject to configured read/write roots.
 
+Retained bundle URIs are session-scoped and are invalidated by
+`release_evidence_bundle` or session close. When retention reaches its bounded
+capacity, release an unneeded digest and retry; for cross-session recovery use
+`export_evidence_bundle` followed by `import_evidence_bundle` and
+`snapshot_evidence_bundle` in the new session.
+
 `export_evidence_bundle` is file-only and requires `path`; existing files
 require `overwrite: true`. Use `snapshot_evidence_bundle` and then
 `resources/read` when the complete bundle is needed within the current session.
@@ -98,8 +104,11 @@ explicitly retains them.
 
 ## Aggregate native context
 
-`get_navigation_context` combines the selected document, current address, and
-current/containing procedure. A cursor outside a procedure is represented as
+`get_navigation_context` composes the selected document, current address, and
+current/containing procedure. Its capability inventory exposes a
+`current_selection` mode and an `explicit_document` mode; the latter works when
+the caller supplies `document` and the provider lacks `current_document`. A
+cursor outside a procedure is represented as
 `procedure: null`. `inspect_address_context` requires an explicit address and
 returns bounded name, procedure, comment, inline-comment, and bookmark facets;
 unsupported facets are local `unavailable` outcomes. The scalar getters remain

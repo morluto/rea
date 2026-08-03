@@ -11,7 +11,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 114,
+    "total": 115,
     "families": [
       {
         "id": "direct",
@@ -167,7 +167,7 @@
       {
         "id": "session",
         "surface": "session",
-        "count": 22,
+        "count": 23,
         "tools": [
           "binary_session",
           "build_call_path",
@@ -186,6 +186,7 @@
           "list_unknowns",
           "open_binary",
           "record_unknown",
+          "release_evidence_bundle",
           "run_replay_machine",
           "snapshot_evidence_bundle",
           "update_unknown",
@@ -665,16 +666,16 @@
   "runtime_catalog": {
     "counts": {
       "cli_commands": 67,
-      "mcp_tools": 114,
+      "mcp_tools": 115,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 11
     },
     "digests": {
-      "tools_sha256": "58bc4f72c5f8de4328728ead9f3a28ec5548484b7b9cf2ed85cf0edcc689a63c",
+      "tools_sha256": "4623a3b42560c4aaea746e16a4c1feab7714b479f43401b2e8e1ad0bbb1b4746",
       "prompts_sha256": "3886a3bf55a448def79e3eb429e6a56eb2ba075423c5cb1e5747642b389ef8fe",
       "resources_sha256": "e0e872276ebf6f88e916ef24930a99eed27ce4c93e494e60820e9bd8cc8497c3",
-      "combined_sha256": "e83a177f5eca63bbad17886a61f5a1a376d44afe862c51c56e5d38339f7d41f8",
+      "combined_sha256": "6b2470559f830c70f2b1a1453fd8cf1264f690b6f6718342deb04406aefa9fe1",
       "providers_sha256": "918ccd6b8ae442cd5844dcfde55086f458176241c8d166c1e9dd0f242ccd2bb0"
     }
   }

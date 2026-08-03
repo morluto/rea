@@ -9,6 +9,7 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createInvestigationWorkspace } from "../../../src/domain/investigationWorkspace.js";
+import { createResidualUnknown } from "../../../src/domain/residualUnknown.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
@@ -179,6 +180,28 @@ describe("evidence MCP resources", () => {
       ok: true,
       value: "duplicate",
     });
+    const importedUnknown = createResidualUnknown(
+      {
+        approved: true,
+        question: "Does an imported unknown publish a snapshot update?",
+        severity: "low",
+        domain: "notifications",
+        supporting_evidence_ids: [first.evidence_id],
+        contradicting_evidence_ids: [],
+        required_authority: "controlled-replay",
+        required_confidence: "observed",
+        required_environment: null,
+        recommended_probes: [],
+        relationships: [],
+      },
+      first.evidence_id,
+      first.subject?.digest.sha256 ?? null,
+    );
+    expect(
+      session.importEvidenceBundle(
+        createEvidenceBundle([first], [importedUnknown]),
+      ),
+    ).toEqual({ ok: true, value: 0 });
     const imported = createEvidence(undefined, provider, {
       operation: "import_notification_probe",
       parameters: {},
@@ -202,9 +225,31 @@ describe("evidence MCP resources", () => {
         relationships: [],
       }).ok,
     ).toBe(true);
-    expect(updates).toBe(3);
+    expect(updates).toBe(4);
   });
 
+  it("contains observer failures after committing a mutation", () => {
+    const session = composeBinarySessionFromFactory(() => ({
+      health: () => Promise.resolve(),
+      execute: () => Promise.resolve(observed(null)),
+      close: () => Promise.resolve(),
+    }));
+    session.onAnalysisSnapshotChanged(() => {
+      throw new Error("fixture observer failure");
+    });
+    expect(() =>
+      session.recordEvidence(
+        createEvidence(undefined, provider, {
+          operation: "observer_failure_probe",
+          parameters: {},
+          result: true,
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe("evidence bundle resources", () => {
   it("retains bundles without eviction and rejects a seventeenth digest", () => {
     const session = composeBinarySessionFromFactory(() => ({
       health: () => Promise.resolve(),
@@ -234,10 +279,18 @@ describe("evidence MCP resources", () => {
       ok: false,
       error: { _tag: "EvidenceLimitError", limit: "records", maximum: 16 },
     });
-    if (first.ok)
+    if (first.ok) {
       expect(session.retainedEvidenceBundle(first.value.bundleDigest)).toEqual(
         expect.any(String),
       );
+      expect(session.releaseEvidenceBundle(first.value.bundleDigest)).toBe(
+        true,
+      );
+      expect(session.releaseEvidenceBundle(first.value.bundleDigest)).toBe(
+        false,
+      );
+      expect(session.snapshotEvidenceBundle().ok).toBe(true);
+    }
   });
 
   it("lists and reads only evidence owned by the current session", async () => {

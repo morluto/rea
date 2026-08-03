@@ -8,6 +8,7 @@ import { ArtifactProvider } from "../dist/artifacts/ArtifactProvider.js";
 import { ManagedStaticProvider } from "../dist/dotnet/ManagedStaticProvider.js";
 import { NativeMacOSProvider } from "../dist/native/NativeMacOSProvider.js";
 import { toolRegistrationOptions } from "../dist/server/toolRegistrationOptions.js";
+import { applyToolInputJsonSchemaOverride } from "../dist/contracts/toolSchemaJsonOverrides.js";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
 const arguments_ = new Set(process.argv.slice(2));
@@ -39,9 +40,12 @@ const catalog = TOOL_CONTRACTS.map((contract) => {
     description: options.description,
     kind: contract.kind,
     requiresSession: sessionToolNames.has(contract.name),
-    inputSchema: options.inputSchema["~standard"].jsonSchema.input({
-      target: "draft-2020-12",
-    }),
+    inputSchema: applyToolInputJsonSchemaOverride(
+      contract.name,
+      options.inputSchema["~standard"].jsonSchema.input({
+        target: "draft-2020-12",
+      }),
+    ),
     outputSchema: options.outputSchema["~standard"].jsonSchema.output({
       target: "draft-2020-12",
     }),

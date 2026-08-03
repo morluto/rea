@@ -34,6 +34,8 @@ export interface EvidenceBundleSnapshot {
   readonly bytes: number;
   readonly records: number;
   readonly unknowns: number;
+  readonly scope: "session";
+  readonly survivesSession: false;
   readonly uri: string;
 }
 
@@ -60,6 +62,7 @@ export interface BinarySessionPort extends AnalysisOperationPort {
   evidenceById(evidenceId: string): Evidence | undefined;
   exportEvidenceBundle(): EvidenceBundle;
   snapshotEvidenceBundle(): Result<EvidenceBundleSnapshot, EvidenceLimitError>;
+  releaseEvidenceBundle(bundleDigest: string): boolean;
   retainedEvidenceBundle(digest: string): string | undefined;
   importEvidenceBundle(
     bundle: unknown,

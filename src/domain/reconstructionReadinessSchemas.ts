@@ -218,7 +218,21 @@ export const reconstructionReadinessInputSchema = z.strictObject({
   closure_history: z.array(closureObservationSchema).min(2).max(1_000),
   delegation_checks: z.array(delegationCheckSchema).min(1).max(1_000),
   replay: replaySchema,
-  stages: z.array(stageSchema).max(20),
+  stages: z
+    .array(stageSchema)
+    .length(9)
+    .superRefine((stages, context) => {
+      const seen = new Set<string>();
+      stages.forEach((stage, index) => {
+        if (seen.has(stage.stage_id))
+          context.addIssue({
+            code: "custom",
+            path: [index, "stage_id"],
+            message: "Readiness stage IDs must be unique",
+          });
+        seen.add(stage.stage_id);
+      });
+    }),
 });
 
 const findingSchema = z.strictObject({
@@ -256,7 +270,21 @@ export const reconstructionReadinessReportSchema = z.strictObject({
     cleanup_leak_count: z.number().int().min(0),
     nondeterministic_replay_count: z.number().int().min(0),
   }),
-  stages: z.array(stageSchema).max(20),
+  stages: z
+    .array(stageSchema)
+    .length(9)
+    .superRefine((stages, context) => {
+      const seen = new Set<string>();
+      stages.forEach((stage, index) => {
+        if (seen.has(stage.stage_id))
+          context.addIssue({
+            code: "custom",
+            path: [index, "stage_id"],
+            message: "Readiness stage IDs must be unique",
+          });
+        seen.add(stage.stage_id);
+      });
+    }),
   findings: z.array(findingSchema).max(10_000),
   evidence_links: z.array(evidenceIdSchema).max(100_000),
   snapshot: reconstructionReadinessInputSchema,

@@ -87,6 +87,7 @@ describe("tool contract inventory", () => {
       "verify_unknown_resolution",
       "run_replay_machine",
       "snapshot_evidence_bundle",
+      "release_evidence_bundle",
       "get_navigation_context",
       "inspect_address_context",
     ]);

@@ -119,13 +119,10 @@ export const inspectAddressContext = async (
     inline_comment: inlineComment,
     bookmarks:
       bookmarks.state === "available"
-        ? {
-            state: "available",
-            value: matchingBookmarks(
-              bookmarks.value,
-              resolvedAddress(results[1], input.address),
-            ),
-          }
+        ? matchingBookmarks(
+            bookmarks.value,
+            resolvedAddress(results[1], input.address),
+          )
         : bookmarks,
   });
 };
@@ -200,13 +197,33 @@ const resolvedAddress = (
     : fallback;
 };
 
-const matchingBookmarks = (value: JsonValue, address: string): JsonValue => {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (bookmark) =>
-      typeof bookmark === "object" &&
-      bookmark !== null &&
-      !Array.isArray(bookmark) &&
-      bookmark.address === address,
-  );
+const matchingBookmarks = (value: JsonValue, address: string): Facet => {
+  if (!Array.isArray(value))
+    return {
+      state: "unavailable",
+      reason: "list_bookmarks returned malformed output; expected an array.",
+      remediation:
+        "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
+    };
+  if (!value.every(isBookmark))
+    return {
+      state: "unavailable",
+      reason:
+        "list_bookmarks returned malformed entries; expected address and name strings.",
+      remediation:
+        "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
+    };
+  return {
+    state: "available",
+    value: value.filter((bookmark) => bookmark.address === address),
+  };
 };
+
+const isBookmark = (
+  value: JsonValue,
+): value is { readonly address: string; readonly name: string } =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  typeof value.address === "string" &&
+  typeof value.name === "string";

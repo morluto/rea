@@ -29,7 +29,15 @@ export interface EvidenceLedgerLimits {
 
 type EvidenceLedgerFailure = EvidenceIntegrityError | EvidenceLimitError;
 type RecordResult = Result<"added" | "duplicate", EvidenceLedgerFailure>;
-type ImportResult = Result<number, EvidenceLedgerFailure>;
+
+/** Describes the state changes made by one atomic bundle import. */
+export interface EvidenceImportDelta {
+  readonly recordsAdded: number;
+  readonly unknownsAdded: number;
+  readonly changed: boolean;
+}
+
+type ImportResult = Result<EvidenceImportDelta, EvidenceLedgerFailure>;
 
 /** Bounded, session-owned set of immutable evidence records. */
 export class EvidenceLedger {
@@ -98,6 +106,7 @@ export class EvidenceLedger {
       pending.set(evidence.evidence_id, evidence);
     }
     const pendingUnknowns = new Map(this.#unknownRevisions);
+    let unknownsAdded = 0;
     for (const unknown of bundle.unknowns) {
       const key = unknownRevisionKey(unknown);
       const existing = pendingUnknowns.get(key);
@@ -107,6 +116,7 @@ export class EvidenceLedger {
       )
         return err(new EvidenceIntegrityError("Conflicting unknown revision"));
       pendingUnknowns.set(key, unknown);
+      if (existing === undefined) unknownsAdded += 1;
     }
     const checked = this.#validateCandidate(pending, pendingUnknowns);
     if (!checked.ok) {
@@ -123,7 +133,11 @@ export class EvidenceLedger {
     }
     const added = pending.size - this.#records.size;
     this.#commit(pending, pendingUnknowns, checked.value);
-    return ok(added);
+    return ok({
+      recordsAdded: added,
+      unknownsAdded,
+      changed: added > 0 || unknownsAdded > 0,
+    });
   }
 
   /** Export records in deterministic, semantically irrelevant ID order. */

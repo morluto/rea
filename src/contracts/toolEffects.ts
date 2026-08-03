@@ -173,6 +173,10 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mayDiscardData: true,
   }),
   snapshot_evidence_bundle: effects({ mutatesSession: true }),
+  release_evidence_bundle: effects({
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
   get_navigation_context: effects({ mutatesSession: true }),
   inspect_address_context: effects({ mutatesSession: true }),
   import_evidence_bundle: effects({ mutatesSession: true }),
