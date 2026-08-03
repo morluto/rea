@@ -96,12 +96,21 @@ const assertDescribedStrictObjects = (
       value,
       root,
       `${path}.${key}`,
-      strictObject && key !== "contains" && key !== "if" && key !== "then",
+      strictObject &&
+        key !== "allOf" &&
+        key !== "contains" &&
+        key !== "if" &&
+        key !== "then",
     );
   }
   if (Array.isArray(schema))
     for (const [index, value] of schema.entries())
-      assertDescribedStrictObjects(value, root, `${path}[${String(index)}]`);
+      assertDescribedStrictObjects(
+        value,
+        root,
+        `${path}[${String(index)}]`,
+        strictObject,
+      );
 };
 
 const assertDescribedRootObject = (schema: unknown, path: string): void => {
