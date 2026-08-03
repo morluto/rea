@@ -60,6 +60,8 @@ const exactReadinessStages: JsonSchema = {
     {
       properties: {
         stages: {
+          description: "Complete reconstruction-readiness stage set",
+          additionalProperties: false,
           allOf: READINESS_STAGE_IDS.map((stageId) => ({
             contains: {
               type: "object",
@@ -70,6 +72,7 @@ const exactReadinessStages: JsonSchema = {
                 },
               },
               required: ["stage_id"],
+              additionalProperties: false,
               description: "One reconstruction-readiness stage",
             },
             minContains: 1,
@@ -77,6 +80,7 @@ const exactReadinessStages: JsonSchema = {
           })),
         },
       },
+      additionalProperties: false,
     },
   ],
 };
