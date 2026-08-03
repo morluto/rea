@@ -54,8 +54,20 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          RELEASE_PR_JSON: ${{ steps.release.outputs.pr }}
         run: |
+          release_pr_branch="$(node --input-type=module -e '
+            const value = JSON.parse(process.env.RELEASE_PR_JSON ?? "");
+            if (
+              typeof value !== "object" ||
+              value === null ||
+              typeof value.headBranchName !== "string" ||
+              value.headBranchName.length === 0
+            ) {
+              process.exit(1);
+            }
+            process.stdout.write(value.headBranchName);
+          ')"
           changed_paths="$(git diff --name-only)"
           if [[ -z "${changed_paths}" ]]; then
             echo "Release documentation is already canonical."
@@ -72,7 +84,7 @@ jobs:
           git add -- docs/product-catalog.json
           git commit -m "chore: normalize release product catalog"
           gh auth setup-git
-          git push origin "HEAD:${RELEASE_PR_BRANCH}"
+          git push origin "HEAD:${release_pr_branch}"
 
   publish:
     name: Publish to npm

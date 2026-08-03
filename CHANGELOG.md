@@ -1,5 +1,63 @@
 # Changelog
 
+## [3.0.0](https://github.com/morluto/rea/compare/rea-agents-2.7.0...rea-agents-3.0.0) (2026-08-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* export_evidence_bundle now requires a filesystem path and no longer returns an inline bundle.
+
+### Features
+
+* make evidence bundles canonical MCP resources ([1712e6d](https://github.com/morluto/rea/commit/1712e6d821965ce5edc3880fe4ebab2e3cc02fd4))
+
+
+### Bug Fixes
+
+* address MCP resource review feedback ([f3b3fb0](https://github.com/morluto/rea/commit/f3b3fb07ded3d1ad72c0a4f24ca3147ef9722c5d))
+* align aggregate tools with session capabilities ([ede91ff](https://github.com/morluto/rea/commit/ede91ff1f04563001f695ec3869daeb3c826154a))
+* **ci:** align Vitest project worker budgets ([f47ee1a](https://github.com/morluto/rea/commit/f47ee1abb4fc8dbd5da3fa13c5870d6580b28bfa))
+* **ci:** allow documented public type aliases ([97f6a0f](https://github.com/morluto/rea/commit/97f6a0f3fd2ebf8fa884d7f7ba6e1c66ecfe80e0))
+* **ci:** make coverage report merging composable ([788f405](https://github.com/morluto/rea/commit/788f4057aee65dfae441249d2c9789bb996912a7))
+* **ci:** stabilize Vitest project routing and shards ([f07acde](https://github.com/morluto/rea/commit/f07acde513d4c74d027b66e143cf5072246b412b))
+* **errors:** preserve actionable analysis diagnostics ([0f96bf3](https://github.com/morluto/rea/commit/0f96bf365c330a7eb121a173bfa140cc2b652764))
+* **mcp:** clarify routing and advertise input examples ([969519c](https://github.com/morluto/rea/commit/969519c00f31b5bc0f23dcffe8867e091461fda6))
+* **mcp:** clarify target routing and caller diagnostics ([3e1e8cd](https://github.com/morluto/rea/commit/3e1e8cd3f829e6d3ac8b3c63d979f9db84dec826))
+* **test:** bound boundary worker pressure ([935721d](https://github.com/morluto/rea/commit/935721df10d25d23621dbc2be90d334644e0858c))
+* **test:** honor boundary ownership and public aliases ([92a1c33](https://github.com/morluto/rea/commit/92a1c33625ff88d81581554687e7708dd3c91e2d))
+* **test:** retain subprocess coverage and cleanup ([7f46bb1](https://github.com/morluto/rea/commit/7f46bb18241bf3815e5e01816277d0cafe8f923b))
+* **test:** retain subprocess coverage and cleanup ([dae2b9c](https://github.com/morluto/rea/commit/dae2b9cc4e8753827702ada6e51f2ee01811cfed))
+* **test:** stabilize boundary timing ([f0d8cda](https://github.com/morluto/rea/commit/f0d8cdafa86bafdc6ad5d8c2d23a97ef583b53d5))
+* **verify:** follow dynamic Hopper tool availability ([281e41f](https://github.com/morluto/rea/commit/281e41f7660066addcc7a204128fb1f49bf7a674))
+
+
+### Code Refactoring
+
+* preserve provider-neutral runtime seams ([a8161f0](https://github.com/morluto/rea/commit/a8161f0e5540f3261a08015dfe56a4254980c064))
+
+
+### Documentation
+
+* document resource snapshot workflow ([2a45d8d](https://github.com/morluto/rea/commit/2a45d8de7d52d0a234672d03c7dae794859f8ced))
+* refresh generated SDK metadata ([c824db1](https://github.com/morluto/rea/commit/c824db1ab7aed2886e9050c1b7fe2136b77e3698))
+* refresh managed completion manifest ([59d4659](https://github.com/morluto/rea/commit/59d465971ea86f933e9037fa32ac2787d935d076))
+
+
+### Tests
+
+* **contracts:** cover validation branches ([8ccdb33](https://github.com/morluto/rea/commit/8ccdb33dd25922e039140bcd1e3cbf3d5acee837))
+* derive MCP SDK identity expectations ([ab4193c](https://github.com/morluto/rea/commit/ab4193c1f48020ff6baa42cb75e033110ee72b36))
+* **eval:** cover navigation and address tool routing ([ba098f2](https://github.com/morluto/rea/commit/ba098f24e59efbd567ae8438f65e31af0f0b8050))
+* overhaul deterministic suite architecture ([48053d1](https://github.com/morluto/rea/commit/48053d1032324cce6e2fe782ecba43d1b91a1bba))
+* overhaul deterministic suite architecture ([513d9b1](https://github.com/morluto/rea/commit/513d9b15558f9174a8e2c0ab00e31cbc05dbaba7))
+* **package:** verify npx upgrade on published releases ([7b6f7be](https://github.com/morluto/rea/commit/7b6f7becd257170cebf80f4f9f9c385b0000f074))
+* **package:** verify npx upgrade on published releases ([1f8ad7b](https://github.com/morluto/rea/commit/1f8ad7bc68f50d396715116467f19524da7e05e6))
+
+
+### Continuous Integration
+
+* document deterministic suite ownership ([3c42403](https://github.com/morluto/rea/commit/3c42403b78b53e7b5358c2bca9bc156ef2c32efd))
+
 ## [2.7.0](https://github.com/morluto/rea/compare/rea-agents-2.6.0...rea-agents-2.7.0) (2026-07-28)
 
 
