@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -190,6 +190,9 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
   temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
+  const aliasedRoot = join(root, "..", `${root.split("/").at(-1)}-alias`);
+  await symlink(root, aliasedRoot, "dir");
+  temporary.push(aliasedRoot);
   const capturedInputs: unknown[] = [];
   const activeResult = electronActiveObservationResultSchema.parse({
     schema_version: 1,
@@ -280,8 +283,8 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
     arguments: {
       schema_version: 1,
       executable_path: process.execPath,
-      application_path: applicationPath,
-      application_root: root,
+      application_path: join(aliasedRoot, "main.js"),
+      application_root: aliasedRoot,
       args: ["--token", "super-secret"],
       actions: [
         { step_id: "submit", kind: "click", selector: "#submit-secret" },
@@ -297,6 +300,10 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
     },
   });
   expect(capturedInputs).toHaveLength(1);
+  expect(capturedInputs[0]).toMatchObject({
+    application_path: applicationPath,
+    application_root: root,
+  });
   expect(JSON.stringify(captured.structuredContent)).not.toContain(
     "submit-secret",
   );

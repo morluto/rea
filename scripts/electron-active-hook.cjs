@@ -1,10 +1,20 @@
 "use strict";
 
+const {
+  createElectronActiveBoundaryPatches,
+} = require("./electron-active-hook-boundaries.cjs");
+
 const boundedEnvironmentNumber = (name, fallback) => {
   const value = Number(process.env[name]);
-  return Number.isInteger(value) ? Math.max(1, value) : fallback;
+  return Number.isInteger(value)
+    ? Math.min(20_000, Math.max(1, value))
+    : fallback;
 };
 
+const MAX_EVENT_NAME_LENGTH = 128;
+const MAX_CHANNEL_LENGTH = 1_024;
+const MAX_IDENTIFIER_LENGTH = 256;
+const MAX_ARGUMENT_SHAPES = 32;
 const maxEvents = boundedEnvironmentNumber(
   "REA_ELECTRON_ACTIVE_MAX_RUNTIME_EVENTS",
   5_000,
@@ -16,6 +26,9 @@ const ipcEventKinds = new Set([
   "utility-process-message",
   "ipc-main-to-renderer",
   "ipc-utility-to-main",
+  "ipc-renderer-send",
+  "ipc-renderer-invoke",
+  "ipc-renderer-post-message",
 ]);
 const events = [];
 let observed = 0;
@@ -23,6 +36,9 @@ let observedIpc = 0;
 let observedRuntime = 0;
 let truncated = false;
 let sequence = 0;
+
+const boundedString = (value, maximum) =>
+  typeof value === "string" ? value.slice(0, maximum) : null;
 
 const shape = (value, depth = 0) => {
   if (depth > 2 || value === null) return value === null ? "null" : "nested";
@@ -45,16 +61,41 @@ const shape = (value, depth = 0) => {
   }
 };
 
+const isAllowedNavigation = (value) => {
+  if (typeof value !== "string") return true;
+  try {
+    const parsed = new URL(value);
+    if (["file:", "data:", "about:"].includes(parsed.protocol)) return true;
+    return (
+      ["http:", "https:"].includes(parsed.protocol) &&
+      ["127.0.0.1", "localhost", "[::1]", "::1"].includes(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+};
+
 const processType = () =>
   typeof process.type === "string" && process.type.length > 0
-    ? process.type
+    ? process.type.slice(0, MAX_IDENTIFIER_LENGTH)
     : "main";
 
 const identity = (value, prefix) => {
   if (value === null || value === undefined) return null;
   const id = value.id;
+  const processId = value.pid;
   return typeof id === "string" || typeof id === "number"
-    ? `${prefix}:${String(id)}`
+    ? `${prefix}:${String(id)}`.slice(0, MAX_IDENTIFIER_LENGTH)
+    : typeof processId === "number"
+      ? `${prefix}:pid:${String(processId)}`.slice(0, MAX_IDENTIFIER_LENGTH)
+      : null;
+};
+
+const frameIdentity = (event) => {
+  const frame = event?.senderFrame ?? event?.frame;
+  const id = frame?.frameTreeNodeId ?? frame?.routingId ?? frame?.id;
+  return typeof id === "string" || typeof id === "number"
+    ? `frame:${String(id)}`.slice(0, MAX_IDENTIFIER_LENGTH)
     : null;
 };
 
@@ -66,35 +107,73 @@ const record = (event) => {
     truncated = true;
     return null;
   }
-  const recorded = {
+  const raw = {
     sequence: ++sequence,
     event: null,
     phase: "observed",
     channel: null,
+    channel_truncated: false,
     direction: null,
     sender: null,
     receiver: null,
+    frame: null,
     target: null,
     argument_shapes: [],
+    argument_shapes_truncated: false,
     result_shape: null,
     process_type: processType(),
+    source: "electron-active-hook",
+    capture_method: "api-wrapper",
+    artifact_path: null,
+    artifact_sha256: null,
     error: false,
     ...event,
   };
-  events.push(recorded);
-  return recorded;
+  const argumentShapes = Array.isArray(raw.argument_shapes)
+    ? raw.argument_shapes
+    : [];
+  events.push({
+    ...raw,
+    event: boundedString(raw.event, MAX_EVENT_NAME_LENGTH),
+    channel: boundedString(raw.channel, MAX_CHANNEL_LENGTH),
+    channel_truncated:
+      raw.channel_truncated === true ||
+      (typeof raw.channel === "string" &&
+        raw.channel.length > MAX_CHANNEL_LENGTH),
+    sender: boundedString(raw.sender, MAX_IDENTIFIER_LENGTH),
+    receiver: boundedString(raw.receiver, MAX_IDENTIFIER_LENGTH),
+    frame: boundedString(raw.frame, MAX_IDENTIFIER_LENGTH),
+    target: boundedString(raw.target, MAX_IDENTIFIER_LENGTH),
+    argument_shapes: argumentShapes
+      .slice(0, MAX_ARGUMENT_SHAPES)
+      .map((value) => boundedString(value, 64) ?? "unknown"),
+    argument_shapes_truncated:
+      raw.argument_shapes_truncated === true ||
+      argumentShapes.length > MAX_ARGUMENT_SHAPES,
+    result_shape: boundedString(raw.result_shape, 64),
+    process_type: boundedString(raw.process_type, MAX_IDENTIFIER_LENGTH),
+    artifact_path: boundedString(raw.artifact_path, 16_384),
+    artifact_sha256: boundedString(raw.artifact_sha256, 64),
+  });
+  return events.at(-1);
 };
 
 const recordRuntime = (kind, event, phase, details = {}) =>
   record({ kind, event, phase, ...details });
 
 const recordIpc = (kind, channel, args, details = {}) =>
-  record({
-    kind,
-    channel: typeof channel === "string" ? channel : null,
-    argument_shapes: args.map((value) => shape(value)),
-    ...details,
-  });
+  (() => {
+    const values = Array.isArray(args) ? args : [];
+    return record({
+      kind,
+      channel: typeof channel === "string" ? channel : null,
+      argument_shapes: values
+        .slice(0, MAX_ARGUMENT_SHAPES)
+        .map((value) => shape(value)),
+      argument_shapes_truncated: values.length > MAX_ARGUMENT_SHAPES,
+      ...details,
+    });
+  })();
 
 const patchEmitter = (emitter, observeEvent) => {
   if (emitter === null || emitter === undefined) return;
@@ -112,14 +191,26 @@ const patchEmitter = (emitter, observeEvent) => {
   }
 };
 
+const recordInvocation = (kind, channel, event, args) =>
+  recordIpc(kind, channel, args, {
+    direction: "renderer-to-main",
+    sender: identity(event?.sender, "webContents"),
+    receiver: "main",
+    frame: frameIdentity(event),
+    process_type: "main",
+    error: false,
+  });
+
 const patchIpcMain = (ipcMain) => {
+  if (ipcMain === null || ipcMain === undefined) return;
   for (const [method, kind] of [
     ["handle", "main-handler-invocation"],
     ["on", "main-event-invocation"],
+    ["once", "main-event-invocation"],
   ]) {
     const original = ipcMain[method];
     if (typeof original !== "function") continue;
-    ipcMain[method] = function patched(channel, listener) {
+    ipcMain[method] = function patchedIpcMain(channel, listener) {
       if (typeof listener !== "function")
         return original.call(this, channel, listener);
       const wrapped =
@@ -149,58 +240,7 @@ const patchIpcMain = (ipcMain) => {
   }
 };
 
-const recordInvocation = (kind, channel, event, args) =>
-  recordIpc(kind, channel, args, {
-    direction: "renderer-to-main",
-    sender: identity(event?.sender, "webContents"),
-    receiver: "main",
-    process_type: "main",
-    error: false,
-  });
-
-const patchBrowserWindow = (electron) => {
-  const original = electron.BrowserWindow;
-  if (typeof original !== "function") return;
-  electron.BrowserWindow = new Proxy(original, {
-    construct(target, args, newTarget) {
-      const window = Reflect.construct(target, args, newTarget);
-      const targetId = identity(window, "window");
-      recordRuntime("window-lifecycle", "created", "completed", {
-        target: targetId,
-        argument_shapes: args.map((value) => shape(value)),
-      });
-      patchEmitter(window, (event) =>
-        recordRuntime("window-lifecycle", event, "observed", {
-          target: targetId,
-        }),
-      );
-      patchWebContents(window.webContents, targetId);
-      return window;
-    },
-  });
-};
-
-const patchWebContents = (webContents, windowId) => {
-  if (webContents === null || webContents === undefined) return;
-  const contentsId = identity(webContents, "webContents");
-  patchEmitter(webContents, (event, args) => {
-    recordRuntime(
-      event === "did-start-loading" ||
-        event === "did-stop-loading" ||
-        event === "did-finish-load" ||
-        event === "did-fail-load" ||
-        event === "did-frame-finish-load"
-        ? "navigation"
-        : "web-contents-lifecycle",
-      event,
-      "observed",
-      {
-        target: contentsId,
-        sender: windowId,
-        argument_shapes: args.map((value) => shape(value)),
-      },
-    );
-  });
+const patchNavigationMethods = (webContents, contentsId) => {
   for (const method of ["loadURL", "loadFile", "loadDataURL"]) {
     const original = webContents[method];
     if (typeof original !== "function") continue;
@@ -209,6 +249,13 @@ const patchWebContents = (webContents, windowId) => {
         target: contentsId,
         argument_shapes: args.map((value) => shape(value)),
       });
+      if (method === "loadURL" && !isAllowedNavigation(args[0])) {
+        recordRuntime("navigation", method, "blocked", {
+          target: contentsId,
+          error: true,
+        });
+        return Promise.reject(new Error("External navigation is blocked"));
+      }
       try {
         const result = original.apply(this, args);
         if (result !== null && typeof result?.then === "function")
@@ -240,6 +287,9 @@ const patchWebContents = (webContents, windowId) => {
       }
     };
   }
+};
+
+const patchWebContentsIpc = (webContents, contentsId) => {
   const originalSend = webContents.send;
   if (typeof originalSend === "function")
     webContents.send = function patchedSend(channel, ...args) {
@@ -260,130 +310,171 @@ const patchWebContents = (webContents, windowId) => {
         throw cause;
       }
     };
-};
-
-const patchUtilityProcess = (utilityProcess) => {
-  const original = utilityProcess.fork;
-  if (typeof original !== "function") return;
-  utilityProcess.fork = function patchedFork(...args) {
-    recordRuntime("process-lifecycle", "utility-process-fork", "attempted", {
-      argument_shapes: args.map((value) => shape(value)),
-      process_type: "main",
-    });
-    const child = original.apply(this, args);
-    const childId = identity(child, "utility");
-    recordRuntime("process-lifecycle", "utility-process-fork", "completed", {
-      target: childId,
-      process_type: "main",
-    });
-    patchEmitter(child, (event, eventArgs) => {
-      if (event === "message") {
-        recordIpc("ipc-utility-to-main", null, eventArgs, {
-          direction: "utility-to-main",
-          sender: childId,
-          receiver: "main",
-          target: childId,
+  const originalPostMessage = webContents.postMessage;
+  if (typeof originalPostMessage === "function")
+    webContents.postMessage = function patchedPostMessage(
+      channel,
+      message,
+      transfer,
+    ) {
+      const recorded = recordIpc(
+        "ipc-main-to-renderer",
+        channel,
+        [message, transfer],
+        {
+          direction: "main-to-renderer",
+          sender: "main",
+          receiver: contentsId,
+          target: contentsId,
           process_type: "main",
           error: false,
+        },
+      );
+      try {
+        const result = originalPostMessage.call(
+          this,
+          channel,
+          message,
+          transfer,
+        );
+        if (recorded !== null) recorded.result_shape = shape(result);
+        return result;
+      } catch (cause) {
+        if (recorded !== null) recorded.error = true;
+        throw cause;
+      }
+    };
+};
+
+const patchWebContents = (webContents, windowId) => {
+  if (webContents === null || webContents === undefined) return;
+  const contentsId = identity(webContents, "webContents");
+  patchEmitter(webContents, (event, args) => {
+    const navigation = [
+      "did-start-loading",
+      "did-stop-loading",
+      "did-finish-load",
+      "did-fail-load",
+      "did-frame-finish-load",
+      "will-navigate",
+      "will-redirect",
+    ].includes(event);
+    const kind = navigation
+      ? "navigation"
+      : [
+            "console-message",
+            "render-process-gone",
+            "crashed",
+            "unresponsive",
+            "responsive",
+          ].includes(event)
+        ? "error"
+        : event === "did-create-window"
+          ? "popup-attempt"
+          : "web-contents-lifecycle";
+    if (event === "will-navigate" || event === "will-redirect") {
+      if (!isAllowedNavigation(args[1])) {
+        const preventDefault = args[0]?.preventDefault;
+        if (typeof preventDefault === "function") preventDefault.call(args[0]);
+        recordRuntime("navigation", event, "blocked", {
+          target: contentsId,
+          sender: windowId,
+          argument_shapes: args.map((value) => shape(value)),
+          error: true,
         });
         return;
       }
-      recordRuntime("process-lifecycle", `utility.${event}`, "observed", {
-        target: childId,
-        process_type: "utility",
-        argument_shapes: eventArgs.map((value) => shape(value)),
-      });
-    });
-    if (child && typeof child.postMessage === "function") {
-      const postMessage = child.postMessage.bind(child);
-      child.postMessage = (...messageArgs) => {
-        const recorded = recordIpc(
-          "utility-process-message",
-          null,
-          messageArgs,
-          {
-            direction: "main-to-utility",
-            sender: "main",
-            receiver: childId,
-            target: childId,
-            process_type: "main",
-            error: false,
-          },
-        );
-        try {
-          const result = postMessage(...messageArgs);
-          if (recorded !== null) recorded.result_shape = shape(result);
-          return result;
-        } catch (cause) {
-          if (recorded !== null) recorded.error = true;
-          throw cause;
-        }
-      };
     }
-    return child;
-  };
+    recordRuntime(kind, event, "observed", {
+      target: contentsId,
+      sender: windowId,
+      argument_shapes: args.map((value) => shape(value)),
+      error: kind === "error",
+    });
+    if (event === "did-create-window") {
+      const childWindow = args[0];
+      patchWebContents(
+        childWindow?.webContents,
+        identity(childWindow, "window"),
+      );
+    }
+  });
+  patchNavigationMethods(webContents, contentsId);
+  patchWebContentsIpc(webContents, contentsId);
 };
 
-const patchShell = (shell) => {
-  for (const method of ["openExternal", "openPath"]) {
-    const original = shell[method];
-    if (typeof original !== "function") continue;
-    shell[method] = function blockedShellCall(...args) {
-      recordRuntime("shell-attempt", method, "blocked", {
-        argument_shapes: args.map((value) => shape(value)),
-        error: true,
-      });
-      return Promise.reject(new Error("External shell effects are blocked"));
-    };
-  }
-};
-
-const patchChildProcess = () => {
-  const childProcess = require("node:child_process");
-  for (const method of ["spawn", "fork", "exec", "execFile"]) {
-    const original = childProcess[method];
-    if (typeof original !== "function") continue;
-    childProcess[method] = function patchedChildProcess(...args) {
-      recordRuntime("process-lifecycle", `child.${method}`, "attempted", {
+const patchBrowserWindow = (electron) => {
+  const original = electron.BrowserWindow;
+  if (typeof original !== "function") return;
+  electron.BrowserWindow = new Proxy(original, {
+    construct(target, args, newTarget) {
+      const window = Reflect.construct(target, args, newTarget);
+      const targetId = identity(window, "window");
+      recordRuntime("window-lifecycle", "created", "completed", {
+        target: targetId,
         argument_shapes: args.map((value) => shape(value)),
       });
-      const child = original.apply(this, args);
-      const childId = identity(child, "child");
-      recordRuntime("process-lifecycle", `child.${method}`, "completed", {
-        target: childId,
-      });
-      patchEmitter(child, (event, eventArgs) =>
-        recordRuntime("process-lifecycle", `child.${event}`, "observed", {
-          target: childId,
-          argument_shapes: eventArgs.map((value) => shape(value)),
+      const preload = args[0]?.webPreferences?.preload;
+      if (typeof preload === "string")
+        recordRuntime("preload", "configured", "completed", {
+          target: targetId,
+          artifact_path: preload,
+        });
+      patchEmitter(window, (event) =>
+        recordRuntime("window-lifecycle", event, "observed", {
+          target: targetId,
         }),
       );
-      return child;
-    };
-  }
+      patchWebContents(window.webContents, targetId);
+      return window;
+    },
+  });
 };
+
+const boundaries = createElectronActiveBoundaryPatches({
+  identity,
+  patchEmitter,
+  processType,
+  recordIpc,
+  recordRuntime,
+  shape,
+});
 
 try {
   const electron = require("electron");
   patchEmitter(electron.app, (event, args) =>
-    recordRuntime("app-lifecycle", event, "observed", {
-      target: "app",
-      argument_shapes: args.map((value) => shape(value)),
-      process_type: "main",
-    }),
+    recordRuntime(
+      event === "open-url" || event === "second-instance"
+        ? "protocol"
+        : "app-lifecycle",
+      event,
+      "observed",
+      {
+        target: "app",
+        argument_shapes: args.map((value) => shape(value)),
+        process_type: "main",
+      },
+    ),
   );
   patchIpcMain(electron.ipcMain);
+  boundaries.patchIpcRenderer(electron.ipcRenderer);
+  boundaries.patchContextBridge(electron.contextBridge);
   patchBrowserWindow(electron);
-  patchUtilityProcess(electron.utilityProcess);
-  patchShell(electron.shell);
-  patchChildProcess();
-  process.on("uncaughtException", () =>
+  boundaries.patchUtilityProcess(electron.utilityProcess);
+  boundaries.patchShell(electron.shell);
+  boundaries.patchSession(electron.session?.defaultSession);
+  boundaries.patchApplicationEffects(electron.app);
+  boundaries.patchNativeAddonLoading();
+  boundaries.patchChildProcess();
+  process.on("uncaughtException", (...args) =>
     recordRuntime("process-lifecycle", "uncaught-exception", "observed", {
+      argument_shapes: args.map((value) => shape(value)),
       error: true,
     }),
   );
-  process.on("unhandledRejection", () =>
+  process.on("unhandledRejection", (...args) =>
     recordRuntime("process-lifecycle", "unhandled-rejection", "observed", {
+      argument_shapes: args.map((value) => shape(value)),
       error: true,
     }),
   );

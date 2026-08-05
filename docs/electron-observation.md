@@ -90,5 +90,11 @@ The CLI and MCP surfaces accept the same schema. For a JSON request file:
 rea capture-electron-scenario scenario.json --json
 ```
 
-The result records bounded action status, windows, process metrics, and IPC
-channel/value shapes only. It never retains IPC argument or return values.
+The result records bounded action status, correlated app/window/WebContents,
+preload, session, navigation, shell, permission, popup, download, protocol,
+native-addon, process, and IPC timeline events. IPC channels are capped at
+1,024 characters and argument-shape metadata at 32 entries; values are never
+retained. The active hook blocks and records external shell/navigation,
+permission, download, popup, updater, and OS-integration effects. The timeline
+is explicitly partial when attachment starts after application activity or when
+the event budget is exhausted.

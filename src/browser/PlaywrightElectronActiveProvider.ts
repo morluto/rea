@@ -1,5 +1,4 @@
 import { realpath } from "node:fs/promises";
-import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { _electron as electron } from "playwright-core";
@@ -20,6 +19,7 @@ import {
   BrowserObservationError,
   ProviderAdapterError,
 } from "../domain/errors.js";
+import { isPathContained } from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const OPERATION = "capture_electron_scenario" as const;
@@ -45,16 +45,28 @@ const hookEventSchema = z.strictObject({
     "utility-process-message",
     "ipc-main-to-renderer",
     "ipc-utility-to-main",
+    "ipc-renderer-send",
+    "ipc-renderer-invoke",
+    "ipc-renderer-post-message",
     "app-lifecycle",
     "window-lifecycle",
     "web-contents-lifecycle",
     "navigation",
     "shell-attempt",
     "process-lifecycle",
+    "permission",
+    "popup-attempt",
+    "download",
+    "protocol",
+    "preload",
+    "native-addon",
+    "updater",
+    "error",
   ]),
   event: z.string().max(128).nullable(),
   phase: z.enum(["attempted", "completed", "blocked", "failed", "observed"]),
   channel: z.string().max(1_024).nullable(),
+  channel_truncated: z.boolean().default(false),
   direction: z
     .enum([
       "renderer-to-main",
@@ -65,14 +77,23 @@ const hookEventSchema = z.strictObject({
     .nullable(),
   sender: z.string().max(256).nullable(),
   receiver: z.string().max(256).nullable(),
+  frame: z.string().max(256).nullable(),
   target: z.string().max(256).nullable(),
   argument_shapes: z.array(z.string().max(64)).max(32),
+  argument_shapes_truncated: z.boolean().default(false),
   result_shape: z.string().max(64).nullable(),
   process_type: z.string().max(128).nullable(),
+  source: z.string().max(64),
+  capture_method: z.enum(["api-wrapper", "event-emitter", "process-hook"]),
+  artifact_path: z.string().max(16_384).nullable(),
+  artifact_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .nullable(),
   error: z.boolean(),
 });
 const hookSnapshotSchema = z.strictObject({
-  events: z.array(hookEventSchema).max(10_000),
+  events: z.array(hookEventSchema).max(20_000),
   observed: z.number().int().min(0),
   observed_ipc: z.number().int().min(0),
   observed_runtime: z.number().int().min(0),
@@ -103,6 +124,9 @@ const ipcEventKinds = new Set<ElectronHookEvent["kind"]>([
   "utility-process-message",
   "ipc-main-to-renderer",
   "ipc-utility-to-main",
+  "ipc-renderer-send",
+  "ipc-renderer-invoke",
+  "ipc-renderer-post-message",
 ]);
 
 /** Launch an owned Electron application through the official Playwright API. */
@@ -321,11 +345,12 @@ const createResult = (
         hookSnapshot.events.length > input.limits.max_runtime_events,
     },
     limitations: [
-      "IPC payloads are represented only by bounded value shapes; values are never retained.",
+      "IPC payloads are represented only by bounded value shapes; values are never retained, channels are capped at 1,024 characters, and argument-shape arrays at 32 entries.",
       "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",
-      "The runtime timeline records bounded lifecycle, navigation, shell, process, and IPC events; activity before hook installation is unavailable.",
+      "The runtime timeline records bounded lifecycle, navigation, shell, permission, popup, download, protocol, preload, native-addon, process, and IPC events; activity before hook installation is unavailable.",
+      "Preload and contextBridge observations identify configured exposures and API shapes; they do not prove every renderer-side call when the preload is sandboxed or the hook attaches late.",
       "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
-      "External shell opens are blocked by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",
+      "External shell opens, external navigation, permission grants, downloads, popup windows, updater relaunches, and OS integration are blocked and recorded by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",
       ...(state.windowsTruncated
         ? ["Windows beyond max_windows were not retained."]
         : []),
@@ -344,12 +369,7 @@ const canonicalPaths = async (
     realpath(input.application_path),
     realpath(input.application_root),
   ]);
-  const outside = relative(root, application);
-  if (
-    outside === ".." ||
-    outside.startsWith(`..${"/"}`) ||
-    outside.startsWith("/")
-  )
+  if (!isPathContained(root, application))
     throw new BrowserObservationError(OPERATION, "target_not_allowed");
   return { executable, application, root };
 };

@@ -37,12 +37,33 @@ const output = {
   actions: result.value.actions,
   processes: result.value.processes,
   ipc: result.value.ipc,
+  timeline: result.value.timeline,
   windows: result.value.windows,
   verified:
     result.value.actions.every(({ status }) => status === "completed") &&
     result.value.ipc.events.some(
       ({ kind, channel }) =>
         kind === "main-handler-invocation" && channel === "readiness:echo",
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event, phase }) =>
+        kind === "window-lifecycle" &&
+        event === "created" &&
+        phase === "completed",
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event }) =>
+        kind === "process-lifecycle" && event === "utility-process-fork",
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event, phase }) =>
+        kind === "shell-attempt" &&
+        event === "openExternal" &&
+        phase === "blocked",
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event, phase }) =>
+        kind === "preload" && event === "configured" && phase === "completed",
     ),
 };
 if (!output.verified)
