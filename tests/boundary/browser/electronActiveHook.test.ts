@@ -108,6 +108,7 @@ utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
 electron.session.defaultSession.emit("will-download", window.webContents, { cancel() {} });
 electron.session.fromPartition("persist:custom").emit("will-download", window.webContents, { cancel() {} });
+const defaultPopupDecision = window.webContents.windowOpenHandler({ url: "https://default-popup.invalid" });
 window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
 const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
 electron.shell.openExternal("https://example.invalid").catch(() => undefined);
@@ -115,13 +116,14 @@ electron.app.relaunch();
 electron.contextBridge.exposeInMainWorld("api", { value: true });
 window.webContents.loadURL("https://example.invalid").catch(() => undefined);
 try { process.dlopen({}, "/missing/native.node"); } catch {}
-process.stdout.write(JSON.stringify({ snapshot: globalThis.__reaElectronActiveSnapshot(), popup_decision: popupDecision }) + "\\n");
+process.stdout.write(JSON.stringify({ snapshot: globalThis.__reaElectronActiveSnapshot(), default_popup_decision: defaultPopupDecision, popup_decision: popupDecision }) + "\\n");
 })();
 `,
   );
   const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
   const output = await runNode(hook, script, root, root);
   const result = JSON.parse(output.trim().split("\n").at(-1) ?? "null") as {
+    readonly default_popup_decision: { readonly action: string };
     readonly popup_decision: { readonly action: string };
     readonly snapshot: {
       readonly hook_error: boolean;
@@ -141,6 +143,7 @@ process.stdout.write(JSON.stringify({ snapshot: globalThis.__reaElectronActiveSn
       expect.objectContaining({ kind: "popup-attempt", phase: "blocked" }),
     ]),
   );
+  expect(result.default_popup_decision).toEqual({ action: "deny" });
   expect(result.popup_decision).toEqual({ action: "deny" });
   expect(
     snapshot.events.filter(

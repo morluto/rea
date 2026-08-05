@@ -26,6 +26,7 @@ import {
   cleanupWindowsProcessTree,
   observeOwnedProcessLineage,
   selectCapturedProcessGroupIds,
+  verifyNoTokenOwnedProcesses,
   type OwnedProcessGroup,
   type ProcessCleanupResult,
   type ProcessLineageObservation,
@@ -196,6 +197,7 @@ export class PlaywrightElectronActiveProvider
         processGroupId: leaderPid,
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
+        sweepTokenOwnedProcesses: true,
       };
       const actions = await runElectronActions(
         application,
@@ -296,6 +298,8 @@ const cleanupElectronProcesses = async (
     if (!result.cleaned) return result;
     signaled ||= result.signaled;
   }
+  const remaining = await verifyNoTokenOwnedProcesses(ownership.runId);
+  if (!remaining.cleaned) return remaining;
   return { cleaned: true, signaled };
 };
 

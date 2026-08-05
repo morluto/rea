@@ -160,10 +160,9 @@ const createElectronActiveBoundaryPatches = ({
     if (webContents === null || webContents === undefined) return;
     const original = webContents.setWindowOpenHandler;
     if (typeof original !== "function") return;
-    webContents.setWindowOpenHandler = function blockedWindowOpenHandler(
-      handler,
-    ) {
-      const guarded = (...args) => {
+    const createGuardedHandler =
+      (handler) =>
+      (...args) => {
         try {
           if (typeof handler === "function") handler(...args);
         } catch {
@@ -181,7 +180,18 @@ const createElectronActiveBoundaryPatches = ({
         });
         return { action: "deny" };
       };
-      return original.call(this, guarded);
+    try {
+      original.call(webContents, createGuardedHandler(undefined));
+    } catch {
+      recordRuntime("popup-attempt", "window-open-handler-install", "failed", {
+        target: contentsId,
+        error: true,
+      });
+    }
+    webContents.setWindowOpenHandler = function blockedWindowOpenHandler(
+      handler,
+    ) {
+      return original.call(this, createGuardedHandler(handler));
     };
   };
 

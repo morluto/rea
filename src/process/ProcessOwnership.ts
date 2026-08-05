@@ -15,6 +15,8 @@ export interface OwnedProcessGroup {
   readonly expectedCommand?: string;
   /** Expected launcher parent, checked only while the leader exists. */
   readonly expectedParentPid?: number;
+  /** Scan all live processes for this run token during cleanup. */
+  readonly sweepTokenOwnedProcesses?: boolean;
 }
 
 /** One entry from an operating-system process-table snapshot. */
@@ -251,6 +253,24 @@ export const cleanupOwnedProcessGroup = async (
   return { cleaned: true, signaled };
 };
 
+/** Verify that no live process still carries an owned capture run token. */
+export const verifyNoTokenOwnedProcesses = async (
+  runId: string,
+  host: ProcessOwnershipHost = systemHost,
+): Promise<ProcessCleanupResult> => {
+  let processes: readonly ProcessTableEntry[];
+  try {
+    processes = liveProcesses(await host.listProcesses());
+  } catch {
+    return { cleaned: false, reason: "process table could not be inspected" };
+  }
+  const scan = await scanTokenOwnedProcesses(processes, runId, host);
+  if (scan.failures.length > 0) return cleanupValidationFailure(scan.failures);
+  return scan.owned.length === 0
+    ? { cleaned: true, signaled: false }
+    : { cleaned: false, reason: "token-owned process remained after cleanup" };
+};
+
 interface OwnedCleanupPlan {
   readonly signalOrder: readonly number[];
 }
@@ -260,11 +280,24 @@ const createOwnedCleanupPlan = async (
   processes: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
 ): Promise<OwnedCleanupPlan | ProcessCleanupResult> => {
+  const tokenOwned =
+    ownership.sweepTokenOwnedProcesses === true
+      ? await scanTokenOwnedProcesses(processes, ownership.runId, host)
+      : { owned: [], failures: [] };
+  if (tokenOwned.failures.length > 0)
+    return cleanupValidationFailure(tokenOwned.failures);
+  const tokenOwnedGroupIds = new Set(
+    tokenOwned.owned.map(({ processGroupId }) => processGroupId),
+  );
   const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
   const rootMembers = processes.filter(
     ({ processGroupId }) => processGroupId === ownership.processGroupId,
   );
-  if (launcher === undefined && rootMembers.length === 0)
+  if (
+    launcher === undefined &&
+    rootMembers.length === 0 &&
+    tokenOwned.owned.length === 0
+  )
     return { cleaned: true, signaled: false };
   let descendants: readonly ProcessTableEntry[] = [];
   if (launcher !== undefined) {
@@ -277,13 +310,18 @@ const createOwnedCleanupPlan = async (
   const processGroupIds = new Set<number>([ownership.processGroupId]);
   for (const descendant of descendants)
     processGroupIds.add(descendant.processGroupId);
+  for (const process of tokenOwned.owned)
+    processGroupIds.add(process.processGroupId);
   for (const processGroupId of processGroupIds) {
     if (processGroupId === ownership.processGroupId) continue;
     const groupLeader = processes.find(
       ({ pid, processGroupId: observedGroupId }) =>
         pid === processGroupId && observedGroupId === processGroupId,
     );
-    if (groupLeader === undefined || !descendantPids.has(groupLeader.pid))
+    if (
+      (groupLeader === undefined || !descendantPids.has(groupLeader.pid)) &&
+      !tokenOwnedGroupIds.has(processGroupId)
+    )
       return {
         cleaned: false,
         reason:
@@ -361,7 +399,8 @@ const revalidateOwnedProcessGroup = async (
   if (
     processGroupId !== ownership.processGroupId &&
     members.length > 0 &&
-    !members.some(({ pid }) => pid === processGroupId)
+    !members.some(({ pid }) => pid === processGroupId) &&
+    ownership.sweepTokenOwnedProcesses !== true
   )
     return {
       cleaned: false,
@@ -400,6 +439,33 @@ const processOwnershipFailures = async (
     }
   }
   return failures;
+};
+
+interface TokenOwnedProcessScan {
+  readonly owned: readonly ProcessTableEntry[];
+  readonly failures: readonly ProcessOwnershipValidationFailure[];
+}
+
+const scanTokenOwnedProcesses = async (
+  processes: readonly ProcessTableEntry[],
+  runId: string,
+  host: ProcessOwnershipHost,
+): Promise<TokenOwnedProcessScan> => {
+  const owned: ProcessTableEntry[] = [];
+  const failures: ProcessOwnershipValidationFailure[] = [];
+  for (const process of processes) {
+    try {
+      if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId)
+        owned.push(process);
+    } catch {
+      try {
+        const live = liveProcesses(await host.listProcesses());
+        if (!live.some(({ pid }) => pid === process.pid)) continue;
+      } catch {}
+      failures.push({ pid: process.pid, reason: "environment-unreadable" });
+    }
+  }
+  return { owned, failures };
 };
 
 /** Observe one group without signaling it, failing closed on identity doubt. */

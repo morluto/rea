@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
   observeOwnedProcessLineage,
+  verifyNoTokenOwnedProcesses,
   type ProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnership.js";
 const ownership = {
@@ -34,6 +35,74 @@ const host = (
     signalGroup,
   };
 };
+describe("owned process-group cleanup discovery", () => {
+  it("signals token-owned groups that were reparented outside the launcher tree", async () => {
+    const signalGroup = vi.fn();
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: () =>
+        Promise.resolve([
+          {
+            pid: 100,
+            parentPid: 1,
+            processGroupId: 100,
+            state: "S",
+            command: "fixture",
+          },
+          {
+            pid: 900,
+            parentPid: 1,
+            processGroupId: 900,
+            state: "S",
+            command: "detached-helper",
+          },
+          {
+            pid: 901,
+            parentPid: 900,
+            processGroupId: 900,
+            state: "S",
+            command: "detached-worker",
+          },
+        ]),
+      environment: () => Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+      signalGroup,
+    };
+
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, sweepTokenOwnedProcesses: true },
+        adapter,
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(signalGroup.mock.calls.map(([groupId]) => groupId)).toEqual([
+      100, 900,
+    ]);
+  });
+
+  it("fails closed when a token-owned process remains after cleanup", async () => {
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: () =>
+        Promise.resolve([
+          {
+            pid: 900,
+            parentPid: 1,
+            processGroupId: 900,
+            state: "S",
+            command: "detached-helper",
+          },
+        ]),
+      environment: () => Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+      signalGroup: vi.fn(),
+    };
+
+    await expect(
+      verifyNoTokenOwnedProcesses("run-token", adapter),
+    ).resolves.toEqual({
+      cleaned: false,
+      reason: "token-owned process remained after cleanup",
+    });
+  });
+});
+
 describe("owned process-group cleanup discovery", () => {
   it("fails before signaling when any descendant-group member is unowned", async () => {
     const signalGroup = vi.fn();
