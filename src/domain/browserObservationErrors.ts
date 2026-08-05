@@ -27,6 +27,8 @@ export type BrowserObservationFailureReason =
   | "payload_limit"
   | "window_not_found"
   | "window_metadata_missing"
+  | "process_ownership_unavailable"
+  | "cleanup_failed"
   | "cancelled"
   | "timeout"
   | "secret_unavailable";

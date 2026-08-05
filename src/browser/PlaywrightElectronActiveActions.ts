@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { BrowserObservationError } from "../domain/errors.js";
+import { redactSensitiveText } from "./SensitiveTextCapture.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
@@ -168,7 +169,7 @@ export const runElectronActions = async (
           selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
         status: options.signal?.aborted ? "cancelled" : "failed",
         elapsed_ms: Date.now() - actionStartedAt,
-        error: safeErrorMessage(cause),
+        error: safeActionErrorMessage(cause, action),
       });
       break;
     }
@@ -384,7 +385,7 @@ export const readApplicationState = async (
     )
     .then((value) => z.array(metricSchema).parse(value));
   const electronVersionPromise: Promise<string> = application
-    .evaluate(({ app }) => app.getVersion())
+    .evaluate(() => process.versions.electron)
     .then((value) => z.string().parse(value));
   const hookSnapshotPromise: Promise<ElectronHookSnapshot> = application
     .evaluate(() => {
@@ -471,8 +472,18 @@ export const runWithExecutionLimits = async <Value>(
   }
 };
 
-const safeErrorMessage = (cause: unknown): string =>
-  (cause instanceof Error ? cause.message : "Electron action failed").slice(
-    0,
-    1_024,
-  );
+const safeActionErrorMessage = (
+  cause: unknown,
+  action: ElectronAction,
+): string => {
+  let message =
+    cause instanceof Error ? cause.message : "Electron action failed";
+  const inputValues = Object.values(action)
+    .filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    )
+    .sort((left, right) => right.length - left.length);
+  for (const value of inputValues)
+    message = message.split(value).join("<redacted-input>");
+  return redactSensitiveText(message).slice(0, 1_024);
+};

@@ -188,6 +188,44 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
   );
 });
 
+it("hashes the retained Electron scenario projection, not raw selectors or secrets", async () => {
+  const fixture = await applicationFixture();
+  temporary.push(fixture);
+  const applicationPath = join(fixture, "main.js");
+  const makeInput = (secret: string, selector: string) =>
+    electronActiveObservationInputSchema.parse({
+      schema_version: 1,
+      executable_path: process.execPath,
+      application_path: applicationPath,
+      application_root: fixture,
+      args: ["--token", secret],
+      actions: [{ step_id: "click", kind: "click", selector }],
+      approved: true,
+    });
+  const provider = {
+    id: "rea-playwright-electron-active",
+    name: "REA Playwright active Electron observation provider",
+    version: "1",
+  };
+  const first = createElectronActiveEvidence(
+    makeInput("first-secret", "#first-secret"),
+    createElectronActiveObservationFixtureResult(applicationPath),
+    provider,
+  );
+  const second = createElectronActiveEvidence(
+    makeInput("second-secret", "#second-secret"),
+    createElectronActiveObservationFixtureResult(applicationPath),
+    provider,
+  );
+
+  expect(first.parameters.scenario_sha256).toBe(
+    second.parameters.scenario_sha256,
+  );
+  expect(JSON.stringify(first)).not.toContain("first-secret");
+  expect(JSON.stringify(first)).not.toContain("#first-secret");
+  expect(first.parameters.args).toEqual(["--token", "<redacted>"]);
+});
+
 it("imports an operator-provided cache layer through an explicit file mapping", async () => {
   const application = await applicationFixture();
   const cache = await createTestTempDirectory("rea-runtime-cache-static-");

@@ -9,6 +9,7 @@ const createElectronActiveBoundaryPatches = ({
   recordRuntime,
   shape,
 }) => {
+  const patchedSessions = new WeakSet();
   const patchIpcRenderer = (ipcRenderer) => {
     if (ipcRenderer === null || ipcRenderer === undefined) return;
     for (const [method, kind] of [
@@ -84,6 +85,12 @@ const createElectronActiveBoundaryPatches = ({
 
   const patchSession = (session) => {
     if (session === null || session === undefined) return;
+    if (
+      (typeof session !== "object" && typeof session !== "function") ||
+      patchedSessions.has(session)
+    )
+      return;
+    patchedSessions.add(session);
     patchEmitter(session, (event, args) => {
       const kind =
         event === "will-download"
@@ -147,6 +154,49 @@ const createElectronActiveBoundaryPatches = ({
           if (typeof callback === "function") callback(-2);
         });
       };
+  };
+
+  const patchWindowOpenHandler = (webContents, contentsId) => {
+    if (webContents === null || webContents === undefined) return;
+    const original = webContents.setWindowOpenHandler;
+    if (typeof original !== "function") return;
+    webContents.setWindowOpenHandler = function blockedWindowOpenHandler(
+      handler,
+    ) {
+      const guarded = (...args) => {
+        try {
+          if (typeof handler === "function") handler(...args);
+        } catch {
+          recordRuntime("popup-attempt", "window-open-handler", "failed", {
+            target: contentsId,
+            argument_shapes: args.map((value) => shape(value)),
+            error: true,
+          });
+          return { action: "deny" };
+        }
+        recordRuntime("popup-attempt", "window-open-handler", "blocked", {
+          target: contentsId,
+          argument_shapes: args.map((value) => shape(value)),
+          error: true,
+        });
+        return { action: "deny" };
+      };
+      return original.call(this, guarded);
+    };
+  };
+
+  const patchSessionManager = (sessionModule) => {
+    if (sessionModule === null || sessionModule === undefined) return;
+    patchSession(sessionModule.defaultSession);
+    for (const method of ["fromPartition", "fromPath"]) {
+      const original = sessionModule[method];
+      if (typeof original !== "function") continue;
+      sessionModule[method] = function patchedSessionFactory(...args) {
+        const session = original.apply(this, args);
+        patchSession(session);
+        return session;
+      };
+    }
   };
 
   const patchApplicationEffects = (app) => {
@@ -324,7 +374,9 @@ const createElectronActiveBoundaryPatches = ({
     patchIpcRenderer,
     patchNativeAddonLoading,
     patchSession,
+    patchSessionManager,
     patchShell,
+    patchWindowOpenHandler,
     patchUtilityProcess,
   };
 };

@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { _electron as electron } from "playwright-core";
@@ -20,6 +21,15 @@ import {
 } from "../domain/errors.js";
 import { isPathContained } from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  cleanupOwnedProcessGroup,
+  cleanupWindowsProcessTree,
+  observeOwnedProcessLineage,
+  selectCapturedProcessGroupIds,
+  type OwnedProcessGroup,
+  type ProcessCleanupResult,
+  type ProcessLineageObservation,
+} from "../process/ProcessOwnership.js";
 import {
   runElectronActions,
   readApplicationState,
@@ -62,6 +72,8 @@ const observableEventFamilies = [
   "download",
   "protocol",
   "preload",
+  "preload-configuration",
+  "renderer-ipc",
   "native-addon",
   "updater",
   "error",
@@ -81,15 +93,21 @@ const ipcEventKinds = new Set<ElectronHookEvent["kind"]>([
 ]);
 
 const createCoverage = (hookSnapshot: ElectronHookSnapshot) => {
-  const observedEventFamilies = [
+  const observedEventFamilies: string[] = [
     ...new Set(
-      hookSnapshot.events.map(({ kind }) =>
-        ipcEventKinds.has(kind) ? "ipc" : kind,
-      ),
+      hookSnapshot.events.map(({ kind, process_type }) => {
+        if (kind === "preload" && process_type === "main")
+          return "preload-configuration";
+        if (kind.startsWith("ipc-renderer") && process_type !== "renderer")
+          return "ipc";
+        return ipcEventKinds.has(kind) ? "ipc" : kind;
+      }),
     ),
   ].sort();
-  const unavailableEventFamilies = observableEventFamilies.filter(
-    (family) => !observedEventFamilies.includes(family),
+  const unavailableEventFamilies = new Set(
+    observableEventFamilies.filter(
+      (family) => !observedEventFamilies.includes(family),
+    ),
   );
   const observedRoles = [
     ...new Set(
@@ -99,11 +117,23 @@ const createCoverage = (hookSnapshot: ElectronHookSnapshot) => {
         ...(kind === "web-contents-lifecycle" || kind === "navigation"
           ? ["web_contents"]
           : []),
-        ...(kind === "preload" ? ["preload"] : []),
-        ...(kind.startsWith("ipc-renderer") ? ["renderer"] : []),
+        ...(kind === "preload" && process_type === "preload"
+          ? ["preload"]
+          : []),
+        ...(kind.startsWith("ipc-renderer") && process_type === "renderer"
+          ? ["renderer"]
+          : []),
       ]),
     ),
   ].sort();
+  const rendererContextObserved = hookSnapshot.events.some(
+    ({ process_type }) =>
+      process_type === "renderer" || process_type === "preload",
+  );
+  if (!rendererContextObserved) {
+    unavailableEventFamilies.add("preload");
+    unavailableEventFamilies.add("renderer-ipc");
+  }
   return {
     status: hookSnapshot.hook_error
       ? "hook_conflict"
@@ -111,7 +141,7 @@ const createCoverage = (hookSnapshot: ElectronHookSnapshot) => {
         ? "capture_truncated"
         : "partial_attach",
     observed_event_families: observedEventFamilies,
-    unavailable_event_families: unavailableEventFamilies,
+    unavailable_event_families: [...unavailableEventFamilies].sort(),
     observed_roles: observedRoles,
     pre_capture_activity: "unavailable",
   } as const;
@@ -130,7 +160,10 @@ export class PlaywrightElectronActiveProvider
     options: ExecutionOptions = {},
   ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
     let application: ElectronApplication | undefined;
+    let ownership: OwnedProcessGroup | undefined;
+    let lineage: ProcessLineageObservation | undefined;
     let outcome: Result<ElectronActiveObservationResult, AnalysisError>;
+    const runId = randomUUID();
     try {
       if (options.signal?.aborted === true)
         throw new BrowserObservationError(OPERATION, "cancelled");
@@ -142,10 +175,28 @@ export class PlaywrightElectronActiveProvider
         env: safeElectronEnvironment(
           input.limits.max_ipc_events,
           input.limits.max_runtime_events,
+          runId,
         ),
         args: ["-r", hookPath, paths.application, ...input.args],
         timeout: Math.max(1, deadline - Date.now()),
       });
+      const leaderPid = application.process().pid;
+      if (
+        typeof leaderPid !== "number" ||
+        !Number.isSafeInteger(leaderPid) ||
+        leaderPid <= 0
+      )
+        throw new BrowserObservationError(
+          OPERATION,
+          "process_ownership_unavailable",
+        );
+      ownership = {
+        runId,
+        leaderPid,
+        processGroupId: leaderPid,
+        expectedParentPid: process.pid,
+        expectedCommand: paths.executable,
+      };
       await application.firstWindow({
         timeout: Math.min(
           input.limits.action_timeout_ms,
@@ -168,6 +219,9 @@ export class PlaywrightElectronActiveProvider
       outcome = err(providerError(cause));
     }
     if (application !== undefined) {
+      if (ownership !== undefined)
+        lineage = await observeOwnedProcessLineage(ownership);
+      let closeError: unknown;
       try {
         await runWithExecutionLimits(
           application.close(),
@@ -175,12 +229,81 @@ export class PlaywrightElectronActiveProvider
           Date.now() + 5_000,
         );
       } catch (cause: unknown) {
-        return err(providerError(cause));
+        closeError = cause;
       }
+      const cleanup =
+        ownership === undefined
+          ? ({
+              cleaned: false,
+              reason: "owned Electron process identity was unavailable",
+            } satisfies ProcessCleanupResult)
+          : await cleanupElectronProcesses(ownership, lineage);
+      if (!cleanup.cleaned)
+        return err(
+          providerError(
+            new BrowserObservationError(OPERATION, "cleanup_failed", {
+              cause: new Error(cleanup.reason),
+            }),
+          ),
+        );
+      if (closeError !== undefined) return err(providerError(closeError));
     }
     return outcome;
   }
 }
+
+const cleanupElectronProcesses = async (
+  ownership: OwnedProcessGroup,
+  lineage: ProcessLineageObservation | undefined,
+): Promise<ProcessCleanupResult> => {
+  if (process.platform === "win32") {
+    const root = await cleanupWindowsProcessTree(ownership.leaderPid);
+    if (!root.cleaned) return root;
+    if (lineage?.status !== "verified")
+      return {
+        cleaned: false,
+        reason:
+          "owned Electron lineage was unavailable; helper cleanup was not proven",
+      };
+    for (const descendant of lineage.lineage.descendants) {
+      const result = await cleanupWindowsProcessTree(descendant.pid);
+      if (!result.cleaned) return result;
+    }
+    return root;
+  }
+  if (lineage?.status !== "verified") {
+    const root = await cleanupOwnedProcessGroup(ownership);
+    return root.cleaned
+      ? {
+          cleaned: false,
+          reason:
+            "owned Electron lineage was unavailable; helper cleanup was not proven",
+        }
+      : root;
+  }
+  const groupIds = selectCapturedProcessGroupIds(
+    ownership.leaderPid,
+    lineage.lineage.descendants.map(({ pid, processGroupId }) => ({
+      pid,
+      process_group_id: processGroupId,
+    })),
+  );
+  let signaled = false;
+  for (const processGroupId of groupIds) {
+    const cleanupOwnership: OwnedProcessGroup =
+      processGroupId === ownership.processGroupId
+        ? { ...ownership, leaderPid: processGroupId, processGroupId }
+        : {
+            runId: ownership.runId,
+            leaderPid: processGroupId,
+            processGroupId,
+          };
+    const result = await cleanupOwnedProcessGroup(cleanupOwnership);
+    if (!result.cleaned) return result;
+    signaled ||= result.signaled;
+  }
+  return { cleaned: true, signaled };
+};
 
 const createResult = (
   paths: ElectronPaths,
@@ -245,7 +368,7 @@ const createResult = (
       "IPC payloads are represented only by bounded value shapes; values are never retained, channels are capped at 1,024 characters, and argument-shape arrays at 32 entries.",
       "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",
       "The runtime timeline records bounded lifecycle, navigation, shell, permission, popup, download, protocol, preload, native-addon, process, and IPC events; activity before hook installation is unavailable.",
-      "Preload and contextBridge observations identify configured exposures and API shapes; they do not prove every renderer-side call when the preload is sandboxed or the hook attaches late.",
+      "The preload and renderer process contexts are not instrumented by the main-process -r hook; preload configuration and contextBridge API-shape events are main-boundary observations, not proof of renderer-side execution.",
       "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
       "External shell opens, external navigation, permission grants, downloads, popup windows, updater relaunches, and OS integration are blocked and recorded by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",
       ...(state.windowsTruncated
@@ -274,6 +397,7 @@ const canonicalPaths = async (
 const safeElectronEnvironment = (
   maxIpcEvents: number,
   maxRuntimeEvents: number,
+  runId: string,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[
@@ -295,6 +419,7 @@ const safeElectronEnvironment = (
       "REA_ELECTRON_ACTIVE_MAX_RUNTIME_EVENTS",
       String(maxRuntimeEvents),
     ] as const,
+    ["REA_PROCESS_RUN_ID", runId] as const,
   ]);
 
 const providerError = (cause: unknown): AnalysisError =>

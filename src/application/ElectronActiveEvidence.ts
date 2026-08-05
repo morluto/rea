@@ -30,7 +30,7 @@ export const createElectronActiveEvidence = (
     limitations: result.limitations,
   });
 
-const parameters = (
+const scenarioProjection = (
   input: ElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
   approved: input.approved,
@@ -41,7 +41,13 @@ const parameters = (
   args: redactArguments(input.args),
   actions: input.actions.map(({ step_id, kind }) => ({ step_id, kind })),
   limits: input.limits,
-  scenario_sha256: digestJson(input),
+});
+
+const parameters = (
+  input: ElectronActiveObservationInput,
+): EvidenceObservation["parameters"] => ({
+  ...scenarioProjection(input),
+  scenario_sha256: digestJson(scenarioProjection(input)),
 });
 
 const redactArguments = (arguments_: readonly string[]): string[] => {

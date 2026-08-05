@@ -407,6 +407,7 @@ const patchWebContents = (webContents, windowId) => {
   });
   patchNavigationMethods(webContents, contentsId);
   patchWebContentsIpc(webContents, contentsId);
+  boundaries.patchWindowOpenHandler(webContents, contentsId);
 };
 
 const patchBrowserWindow = (electron) => {
@@ -468,22 +469,24 @@ try {
   patchBrowserWindow(electron);
   boundaries.patchUtilityProcess(electron.utilityProcess);
   boundaries.patchShell(electron.shell);
-  boundaries.patchSession(electron.session?.defaultSession);
+  boundaries.patchSessionManager(electron.session);
   boundaries.patchApplicationEffects(electron.app);
   boundaries.patchNativeAddonLoading();
   boundaries.patchChildProcess();
-  process.on("uncaughtException", (...args) =>
+  process.once("uncaughtException", (cause, origin) => {
     recordRuntime("process-lifecycle", "uncaught-exception", "observed", {
-      argument_shapes: args.map((value) => shape(value)),
+      argument_shapes: [shape(cause), shape(origin)],
       error: true,
-    }),
-  );
-  process.on("unhandledRejection", (...args) =>
+    });
+    throw cause;
+  });
+  process.once("unhandledRejection", (reason, promise) => {
     recordRuntime("process-lifecycle", "unhandled-rejection", "observed", {
-      argument_shapes: args.map((value) => shape(value)),
+      argument_shapes: [shape(reason), shape(promise)],
       error: true,
-    }),
-  );
+    });
+    throw reason;
+  });
 } catch {
   globalThis.__reaElectronActiveHookError = true;
 }

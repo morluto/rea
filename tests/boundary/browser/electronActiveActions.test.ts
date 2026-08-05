@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { electronActiveObservationInputSchema } from "../../../src/domain/electronActiveObservation.js";
+import { runElectronActions } from "../../../src/browser/PlaywrightElectronActiveActions.js";
 
 it("parses bounded window, renderer, and deep-link actions for agents", () => {
   const input = electronActiveObservationInputSchema.parse({
@@ -58,4 +59,40 @@ it("rejects non-absolute deep-link values", () => {
   });
 
   expect(result.success).toBe(false);
+});
+
+it("redacts action inputs from Playwright failures", async () => {
+  const selector = "#secret-selector";
+  const input = electronActiveObservationInputSchema.parse({
+    schema_version: 1,
+    executable_path: "/opt/electron",
+    application_path: "/opt/app/main.js",
+    application_root: "/opt/app",
+    actions: [{ step_id: "click-step", kind: "click", selector }],
+    approved: true,
+  });
+  const page = {
+    locator: () => ({
+      click: async () => {
+        throw new Error(`locator ${selector} failed with token=raw-secret`);
+      },
+    }),
+  };
+  const application = {
+    windows: () => [page],
+  };
+
+  const result = await runElectronActions(
+    application as never,
+    input,
+    {},
+    Date.now() + 1_000,
+  );
+
+  expect(result[0]).toMatchObject({
+    status: "failed",
+    error: "locator <redacted-input> failed with token=[REDACTED]",
+  });
+  expect(result[0]?.error).not.toContain(selector);
+  expect(result[0]?.error).not.toContain("raw-secret");
 });

@@ -45,6 +45,7 @@ class WebContents extends EventEmitter {
   loadDataURL() { return Promise.resolve(); }
   send() { return undefined; }
   postMessage() { return undefined; }
+  setWindowOpenHandler(handler) { this.windowOpenHandler = handler; return undefined; }
 }
 class BrowserWindow extends EventEmitter {
   constructor(options) {
@@ -63,11 +64,15 @@ const utilityProcess = {
   },
 };
 const shell = { openExternal: () => Promise.resolve(), openPath: () => Promise.resolve() };
-const session = new EventEmitter();
-session.setPermissionRequestHandler = () => undefined;
-session.setPermissionCheckHandler = () => undefined;
-session.setCertificateVerifyProc = () => undefined;
-session.setWindowOpenHandler = () => undefined;
+const createSession = () => {
+  const value = new EventEmitter();
+  value.setPermissionRequestHandler = () => undefined;
+  value.setPermissionCheckHandler = () => undefined;
+  value.setCertificateVerifyProc = () => undefined;
+  return value;
+};
+const session = createSession();
+const customSession = createSession();
 const contextBridge = {
   exposeInMainWorld: () => undefined,
   exposeInIsolatedWorld: () => undefined,
@@ -78,7 +83,10 @@ module.exports = {
   contextBridge,
   ipcMain,
   ipcRenderer,
-  session: { defaultSession: session },
+  session: {
+    defaultSession: session,
+    fromPartition: () => customSession,
+  },
   shell,
   utilityProcess,
 };
@@ -99,21 +107,28 @@ const utility = electron.utilityProcess.fork("utility.js");
 utility.emit("message", { data: { value: true } });
 utility.postMessage({ value: true });
 electron.session.defaultSession.emit("will-download", window.webContents, { cancel() {} });
+electron.session.fromPartition("persist:custom").emit("will-download", window.webContents, { cancel() {} });
+window.webContents.setWindowOpenHandler(() => ({ action: "allow" }));
+const popupDecision = window.webContents.windowOpenHandler({ url: "https://popup.invalid" });
 electron.shell.openExternal("https://example.invalid").catch(() => undefined);
 electron.app.relaunch();
 electron.contextBridge.exposeInMainWorld("api", { value: true });
 window.webContents.loadURL("https://example.invalid").catch(() => undefined);
 try { process.dlopen({}, "/missing/native.node"); } catch {}
-process.stdout.write(JSON.stringify(globalThis.__reaElectronActiveSnapshot()) + "\\n");
+process.stdout.write(JSON.stringify({ snapshot: globalThis.__reaElectronActiveSnapshot(), popup_decision: popupDecision }) + "\\n");
 })();
 `,
   );
   const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
   const output = await runNode(hook, script, root, root);
-  const snapshot = JSON.parse(output.trim().split("\n").at(-1) ?? "null") as {
-    readonly hook_error: boolean;
-    readonly events: readonly Record<string, unknown>[];
+  const result = JSON.parse(output.trim().split("\n").at(-1) ?? "null") as {
+    readonly popup_decision: { readonly action: string };
+    readonly snapshot: {
+      readonly hook_error: boolean;
+      readonly events: readonly Record<string, unknown>[];
+    };
   };
+  const { snapshot } = result;
 
   expect(snapshot.hook_error).toBe(false);
   expect(snapshot.events).toEqual(
@@ -123,8 +138,15 @@ process.stdout.write(JSON.stringify(globalThis.__reaElectronActiveSnapshot()) + 
       expect.objectContaining({ kind: "shell-attempt", phase: "blocked" }),
       expect.objectContaining({ kind: "updater", phase: "blocked" }),
       expect.objectContaining({ kind: "native-addon" }),
+      expect.objectContaining({ kind: "popup-attempt", phase: "blocked" }),
     ]),
   );
+  expect(result.popup_decision).toEqual({ action: "deny" });
+  expect(
+    snapshot.events.filter(
+      (event) => event.kind === "download" && event.phase === "blocked",
+    ),
+  ).toHaveLength(2);
   const ipc = snapshot.events.find(
     (event) => event.kind === "main-handler-invocation",
   );
@@ -138,6 +160,18 @@ process.stdout.write(JSON.stringify(globalThis.__reaElectronActiveSnapshot()) + 
   });
   expect(ipc?.channel).toHaveLength(1_024);
   expect(ipc?.argument_shapes).toHaveLength(32);
+});
+
+it("preserves fatal process termination after recording uncaught exceptions", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-fatal-");
+  temporary.push(root);
+  const script = join(root, "fatal.cjs");
+  await writeFile(script, 'throw new Error("fatal-hook-secret");\n');
+  const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
+  const result = await runNodeStatus(hook, script, root, root);
+
+  expect(result.code).not.toBe(0);
+  expect(result.stderr).toContain("fatal-hook-secret");
 });
 
 const runNode = (
@@ -178,4 +212,28 @@ const runNode = (
           ),
         );
     });
+  });
+
+const runNodeStatus = (
+  hook: string,
+  script: string,
+  moduleRoot: string,
+  cwd: string,
+): Promise<{ readonly code: number | null; readonly stderr: string }> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["-r", hook, script], {
+      cwd,
+      env: {
+        ...process.env,
+        NODE_PATH: moduleRoot,
+        REA_ELECTRON_ACTIVE_MAX_RUNTIME_EVENTS: "200",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stderr: Buffer[] = [];
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code) =>
+      resolve({ code, stderr: Buffer.concat(stderr).toString("utf8") }),
+    );
   });
