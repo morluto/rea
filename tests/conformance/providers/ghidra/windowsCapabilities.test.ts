@@ -5,6 +5,7 @@ import {
   systemNoFollowOpenCapability,
   type WindowsCapabilityDependencies,
 } from "../../../../src/application/WindowsCapabilities.js";
+import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../../src/process/WindowsAuthority.js";
 
 const dependencies = (
   overrides: Partial<WindowsCapabilityDependencies> = {},
@@ -67,6 +68,23 @@ describe("Windows host capability report", () => {
         },
         pty: { available: false, reason: "probe unavailable" },
       },
+      security: {
+        job_object_process_ownership: {
+          available: false,
+          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          proof: "not-proven",
+        },
+        private_runtime_dacl: {
+          available: false,
+          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          proof: "not-proven",
+        },
+        reparse_safe_path_admission: {
+          available: false,
+          reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+          proof: "not-proven",
+        },
+      },
     });
   });
 
@@ -89,5 +107,26 @@ describe("Windows host capability report", () => {
       reason: null,
     });
     expect(result.capabilities.private_acl.available).toBe(false);
+    expect(result.security.private_runtime_dacl).toMatchObject({
+      available: false,
+      proof: "not-proven",
+    });
+  });
+
+  it("does not promote an ordinary ACL probe into native authority", async () => {
+    const result = await probeWindowsCapabilities(
+      dependencies({
+        probePrivateAcl: () => ({ available: true, reason: null }),
+      }),
+    );
+
+    expect(result.capabilities.private_acl).toEqual({
+      available: true,
+      reason: null,
+    });
+    expect(result.security.private_runtime_dacl).toMatchObject({
+      available: false,
+      proof: "not-proven",
+    });
   });
 });

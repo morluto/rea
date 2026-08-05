@@ -259,3 +259,30 @@ target/snapshot/import digest identity, and requires complete runtime cleanup.
 ## Diagnose, update, and remove
 
 `rea doctor --json` is strictly read-only. `rea upgrade` updates only the npm installation that owns the running CLI. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
+
+## MCP Registry
+
+REA is published in the official MCP Registry as `io.github.morluto/rea`. Registry
+clients can discover the server and install the existing public `rea-agents` npm
+package; the Registry entry does not introduce a second distribution artifact.
+
+For a client that supports Registry discovery, search for `io.github.morluto/rea`
+and select the npm package. The published metadata launches the existing stdio
+server through `npx` with the `mcp` command.
+
+For a client that requires manual configuration, use:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@latest", "mcp"]
+    }
+  }
+}
+```
+
+Use an exact `rea-agents@VERSION` in the arguments when a reproducible client
+configuration is required. `rea setup` writes the same package-runner shape and
+pins it to the exact version that performed setup.

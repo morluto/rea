@@ -2,6 +2,7 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
 import {
   GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,
@@ -67,7 +68,7 @@ export const healthLimitations = Object.freeze([
 export const windowsP0Limitations = Object.freeze([
   "Windows Ghidra P0 accepts approved native x86-64 PE applications only; DLL, managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
-  "Windows P0 process-tree cleanup uses bounded taskkill termination and does not claim Job Object ownership, private DACL enforcement, or reparse-point-safe path authority.",
+  "Windows P0 is not admitted until a native authority proves Job Object ownership, private DACL enforcement, and reparse-safe path admission; bounded taskkill cleanup and chmod(0700) do not prove those controls.",
 ]);
 
 /** Limitation text for one admitted operation, including the common base. */
@@ -207,6 +208,9 @@ export const WINDOWS_P0_CAPABILITIES: readonly CapabilityDescriptor[] =
     CAPABILITIES.map((capability) =>
       Object.freeze({
         ...capability,
+        available: false,
+        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        availabilityCode: "unsupported_host" as const,
         limitations: Object.freeze([
           ...capability.limitations,
           ...windowsP0Limitations,

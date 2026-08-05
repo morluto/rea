@@ -12,9 +12,9 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
 const verifierRun = createVerifierRun();
-const manifestPath = await realpath(
-  resolve(process.argv[2] ?? "build/conformance/manifest.json"),
-);
+const manifestArgument = process.argv[2] ?? "build/conformance/manifest.json";
+const manifestPath = await realpath(resolve(manifestArgument));
+const sourceRoot = await resolveSourceRoot(manifestPath, process.argv[3]);
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 if (
   manifest.schemaVersion !== 1 ||
@@ -39,8 +39,29 @@ if (v1 === undefined || v2 === undefined)
 if (v1.artifactSha256 === v2.artifactSha256)
   throw new Error("Version-pair artifacts unexpectedly have equal hashes");
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), verified: manifest.fixtures.length, manifestPath, platform: manifest.platform })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), verified: manifest.fixtures.length, manifestPath, sourceRoot, platform: manifest.platform })}\n`,
 );
+
+async function resolveSourceRoot(manifestPath, declaredSourceRoot) {
+  const candidates = [
+    declaredSourceRoot === undefined
+      ? null
+      : resolve(process.cwd(), declaredSourceRoot),
+    resolve(process.cwd(), "tests/conformance"),
+    resolve(dirname(dirname(dirname(manifestPath))), "tests/conformance"),
+    resolve(dirname(manifestPath), "../../tests/conformance"),
+  ].filter((candidate) => candidate !== null);
+  for (const candidate of candidates) {
+    try {
+      return await realpath(candidate);
+    } catch {
+      // Try the next clean-checkout candidate.
+    }
+  }
+  throw new Error(
+    "Could not locate tests/conformance; pass its path as the second argument",
+  );
+}
 
 async function verifyFixture(fixture) {
   const artifactPath = await confinedPath(root, fixture.artifact);
@@ -51,12 +72,7 @@ async function verifyFixture(fixture) {
     const content =
       source.path === "generated/large.c"
         ? generateLargeFixture()
-        : await readFile(
-            await confinedPath(
-              resolve(process.cwd(), "tests/conformance"),
-              source.path,
-            ),
-          );
+        : await readFile(await confinedPath(sourceRoot, source.path));
     if (sha256(content) !== source.sha256)
       throw new Error(
         `${fixture.name}: source hash mismatch for ${source.path}`,

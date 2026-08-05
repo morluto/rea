@@ -11,7 +11,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 115,
+    "total": 116,
     "families": [
       {
         "id": "direct",
@@ -128,9 +128,10 @@
       {
         "id": "electron",
         "surface": "electron-provider",
-        "count": 4,
+        "count": 5,
         "tools": [
           "analyze_javascript_application",
+          "capture_electron_scenario",
           "inspect_electron_page",
           "list_electron_targets",
           "reconcile_javascript_runtime"
@@ -370,6 +371,12 @@
       "capabilities": ["capture_browser_scenario"]
     },
     {
+      "id": "rea-playwright-electron-active",
+      "name": "REA Playwright active Electron observation provider",
+      "version": "1",
+      "capabilities": ["capture_electron_scenario"]
+    },
+    {
       "id": "rea-v8-inspector",
       "name": "REA passive Node/Electron V8 Inspector provider",
       "version": "1",
@@ -586,7 +593,7 @@
     }
   ],
   "cli": {
-    "primary_count": 67,
+    "primary_count": 68,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -594,6 +601,7 @@
       "build-reconstruction-obligation-ledger",
       "capabilities",
       "capture-browser-scenario",
+      "capture-electron-scenario",
       "capture-process",
       "capture-web-screenshot",
       "commit-reconstruction-coverage",
@@ -665,18 +673,18 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 67,
-      "mcp_tools": 115,
+      "cli_commands": 68,
+      "mcp_tools": 116,
       "mcp_prompts": 6,
       "mcp_resources": 2,
       "mcp_resource_templates": 11
     },
     "digests": {
-      "tools_sha256": "4623a3b42560c4aaea746e16a4c1feab7714b479f43401b2e8e1ad0bbb1b4746",
+      "tools_sha256": "89b31a61b1c54ff294e7702704485a1529a212b11d0806fa74db56819ff2f2bf",
       "prompts_sha256": "3886a3bf55a448def79e3eb429e6a56eb2ba075423c5cb1e5747642b389ef8fe",
       "resources_sha256": "e0e872276ebf6f88e916ef24930a99eed27ce4c93e494e60820e9bd8cc8497c3",
-      "combined_sha256": "6b2470559f830c70f2b1a1453fd8cf1264f690b6f6718342deb04406aefa9fe1",
-      "providers_sha256": "918ccd6b8ae442cd5844dcfde55086f458176241c8d166c1e9dd0f242ccd2bb0"
+      "combined_sha256": "48d801d1465bda09e2cebcf3cf41ab2d85c7feaae594eb6e4ea9a0ddab8c0c1a",
+      "providers_sha256": "7446b51788734ebf6f4f702e3a5a8c9f0b61967490c245f30bd37b2060827e6b"
     }
   }
 }

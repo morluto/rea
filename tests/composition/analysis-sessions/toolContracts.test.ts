@@ -51,6 +51,7 @@ describe("tool contract inventory", () => {
       "inspect_electron_page",
       "analyze_javascript_application",
       "reconcile_javascript_runtime",
+      "capture_electron_scenario",
     ]);
     expect(APPLICATION_TOOL_CONTRACTS.map(({ name }) => name)).toEqual([
       "trace_application_feature",

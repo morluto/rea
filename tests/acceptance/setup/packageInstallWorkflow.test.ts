@@ -80,6 +80,18 @@ describe("package installation workflows", () => {
     expect(release).not.toContain('npm run verify:published -- "${version}"');
     expect(canary).toContain('mkdtemp(join(tmpdir(), "rea-published-canary-")');
     expect(canary).toContain("cwd: canaryRoot");
+    expect(release).toContain("publish-mcp:");
+    expect(release).toContain("needs: [release-please, publish]");
+    expect(release).toContain("MCP_PUBLISHER_VERSION: v1.8.0");
+    expect(release).toContain("mcp-publisher validate");
+    expect(release).toContain("mcp-publisher login github-oidc");
+    expect(release).toContain("mcp-publisher publish");
+    expect(release).toContain("id-token: write");
+    expect(release).toContain("contents: read");
+    expect(release).not.toContain("MCP_GITHUB_TOKEN");
+    expect(release.indexOf("publish-mcp:")).toBeGreaterThan(
+      release.indexOf("npm publish --access public"),
+    );
   });
 
   it("uses direct Node ownership on macOS and Windows", () => {

@@ -27,7 +27,7 @@ import {
 } from "./CdpCaptureValues.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
 import {
-  authorizeRuntimeLocation,
+  authorizeRuntimeTargetLocation,
   canonicalRuntimeRoots,
 } from "./JavaScriptRuntimeScope.js";
 import {
@@ -95,8 +95,9 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
       const allowed: AuthorizedV8InspectorTarget[] = [];
       const excluded = createInspectorExclusionCounts();
       for (const target of discovery.targets) {
-        const decision = await authorizeRuntimeLocation(
+        const decision = await authorizeRuntimeTargetLocation(
           target.url,
+          target.type,
           roots,
           input.allowed_origins,
         );
@@ -202,8 +203,9 @@ const authorizedTarget = async (
       "observe_javascript_runtime",
       "target_not_found",
     );
-  const decision = await authorizeRuntimeLocation(
+  const decision = await authorizeRuntimeTargetLocation(
     target.url,
+    target.type,
     roots,
     input.allowed_origins,
   );

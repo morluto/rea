@@ -58,3 +58,41 @@ export const authorizeRuntimeLocation = async (
     },
   };
 };
+
+/** Authorize a target whose Node Inspector URL omits its main entry path. */
+export const authorizeRuntimeTargetLocation = async (
+  value: string,
+  targetType: string,
+  roots: readonly string[],
+  origins: readonly string[],
+): Promise<RuntimeLocationDecision> => {
+  const decision = await authorizeRuntimeLocation(value, roots, origins);
+  if (decision.allowed || targetType !== "node" || roots.length === 0)
+    return decision;
+  if (!isBareFileTarget(value)) return decision;
+  const scopeRoot = roots[0];
+  if (scopeRoot === undefined) return decision;
+  return {
+    allowed: true,
+    location: {
+      kind: "file",
+      file_path: scopeRoot,
+      authority: "scope-fallback",
+    },
+  };
+};
+
+const isBareFileTarget = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "file:" &&
+      url.hostname === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+};

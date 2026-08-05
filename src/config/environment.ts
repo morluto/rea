@@ -63,6 +63,12 @@ const environmentSchema = z
     REA_ELECTRON_OBSERVE_ENABLED: z.enum(["true", "false"]).default("false"),
     REA_ELECTRON_CDP_ENDPOINTS_JSON: z.string().default("[]"),
     REA_ELECTRON_FILE_ROOTS_JSON: z.string().default("[]"),
+    REA_ELECTRON_AUTOMATE_ENABLED: z.enum(["true", "false"]).default("false"),
+    REA_ELECTRON_AUTOMATE_AUTO_GRANT: z
+      .enum(["true", "false"])
+      .default("false"),
+    REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: z.string().default("[]"),
+    REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: z.string().default("[]"),
     REA_V8_INSPECTOR_OBSERVE_ENABLED: z
       .enum(["true", "false"])
       .default("false"),

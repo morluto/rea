@@ -4,15 +4,18 @@ import {
   inspectElectronPage,
   listElectronTargets,
 } from "./application/ElectronObservationService.js";
+import { captureElectronScenario } from "./application/ElectronActiveObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./application/JavaScriptRuntimeReconciliationService.js";
 import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
+import { PlaywrightElectronActiveProvider } from "./browser/PlaywrightElectronActiveProvider.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "./domain/electronObservation.js";
+import { electronActiveObservationInputSchema } from "./domain/electronActiveObservation.js";
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
@@ -38,8 +41,45 @@ export const registerElectronCommands = (
   logger: Logger,
 ): void => {
   registerElectronObservationCommands(cli, logger);
+  registerElectronActiveCommand(cli, logger);
   registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
+};
+
+const registerElectronActiveCommand = (
+  cli: ReturnType<typeof Cli.create>,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.captureElectronScenario, {
+    description: "Run one approved, bounded owned Electron scenario",
+    args: z.object({
+      inputJson: z
+        .string()
+        .describe(
+          "Inline JSON or a JSON file matching capture_electron_scenario",
+        ),
+    }),
+    run: ({ args }) =>
+      logCliCommand(logger, CLI_COMMANDS.captureElectronScenario, async () => {
+        const input = await parseCliJsonInput(
+          args.inputJson,
+          "capture_electron_scenario",
+        );
+        if (!input.ok) return input.error;
+        const parsed = electronActiveObservationInputSchema.safeParse(
+          input.value,
+        );
+        if (!parsed.success) return inputError("capture_electron_scenario");
+        const context = await electronContext();
+        if (!context.ok) return context.error;
+        const result = await captureElectronScenario(
+          context.activeProvider,
+          context.authority,
+          parsed.data,
+        );
+        return result.ok ? result.value : cliError(result.error);
+      }),
+  });
 };
 
 const registerJavaScriptRuntimeReconciliationCommand = (
@@ -227,6 +267,7 @@ const electronContext = async () => {
     ok: true as const,
     authority: authority.value,
     provider: new CdpElectronProvider(),
+    activeProvider: new PlaywrightElectronActiveProvider(),
     allowedFileRoots: config.value.electronFileRoots,
   };
 };

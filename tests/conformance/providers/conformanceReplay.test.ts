@@ -5,6 +5,7 @@ import {
   createConformancePackage,
   type ConformancePackage,
 } from "../../../src/domain/conformancePackage.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   replayConformancePackage,
   type ScenarioReplayResult,
@@ -113,6 +114,41 @@ describe("conformance CI replay", () => {
       passingRunner,
     );
     expect(result.drift_detected).toBe(false);
+  });
+
+  it("retains the observed Evidence ID on the first drift", async () => {
+    const expected = createEvidence(
+      undefined,
+      { id: "fixture-provider", name: "Fixture provider", version: "1" },
+      { operation: "run", parameters: {}, result: { exit_code: 0 } },
+    );
+    const pkg = createConformancePackage({
+      ...validPackage,
+      expected_evidence: [
+        {
+          scenario_id: "s1",
+          envelopes: [expected],
+          bundle: null,
+          required_dimensions: ["exit_code"],
+        },
+      ],
+    });
+    const actualEvidenceId = `ev_${"3".repeat(64)}`;
+    const result = await replayConformancePackage(
+      pkg,
+      {
+        s1: {
+          evidence_id: actualEvidenceId,
+          normalized_result: { exit_code: 1 },
+        },
+      },
+      passingRunner,
+    );
+    expect(result.drift_detected).toBe(true);
+    expect(result.first_drift).toMatchObject({
+      dimension: "exit_code",
+      evidence_id: actualEvidenceId,
+    });
   });
 
   it("throws on invalid package", async () => {

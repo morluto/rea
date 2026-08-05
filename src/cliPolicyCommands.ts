@@ -21,6 +21,7 @@ const capabilitySchema = z.enum([
   "browser_observe",
   "browser_automate",
   "electron_observe",
+  "electron_automate",
   "evidence_read",
   "evidence_write",
   "investigation_input",

@@ -85,17 +85,20 @@ export const run = async (
         { CdpBrowserProvider },
         { PlaywrightBrowserScenarioProvider },
         { CdpElectronProvider },
+        { PlaywrightElectronActiveProvider },
         { V8InspectorProvider },
       ] = await Promise.all([
         import("./browser/CdpBrowserProvider.js"),
         import("./browser/PlaywrightBrowserScenarioProvider.js"),
         import("./browser/CdpElectronProvider.js"),
+        import("./browser/PlaywrightElectronActiveProvider.js"),
         import("./browser/V8InspectorProvider.js"),
       ]);
       return {
         browserObservation: new CdpBrowserProvider(),
         browserScenarioCapture: new PlaywrightBrowserScenarioProvider(),
         electronObservation: new CdpElectronProvider(),
+        electronActiveObservation: new PlaywrightElectronActiveProvider(),
         javascriptRuntimeObservation: new V8InspectorProvider(),
       };
     },

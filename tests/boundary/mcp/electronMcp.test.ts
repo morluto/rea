@@ -1,5 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -10,9 +10,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { ElectronActiveObservationPort } from "../../../src/application/ElectronActiveObservationPort.js";
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { parseConfig } from "../../../src/config.js";
+import { electronActiveObservationResultSchema } from "../../../src/domain/electronActiveObservation.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
@@ -181,6 +183,137 @@ it("exposes root-confined Electron discovery and inspection as Evidence v2", asy
     },
   });
   expect(browser.commands).toHaveLength(commandsBeforeDenial);
+}, 20_000);
+
+it("exposes active Electron scenarios through the separately granted MCP boundary", async () => {
+  const root = await createTestTempDirectory("rea-electron-active-mcp-");
+  temporary.push(root);
+  const applicationPath = join(root, "main.js");
+  await writeFile(applicationPath, "module.exports = {};\n");
+  const capturedInputs: unknown[] = [];
+  const activeResult = electronActiveObservationResultSchema.parse({
+    schema_version: 1,
+    application: {
+      executable_path: process.execPath,
+      application_path: applicationPath,
+      electron_version: "test-electron",
+      process_ownership: "provider-owned",
+      cleanup: "terminated-owned-process",
+    },
+    actions: [
+      {
+        step_id: "submit",
+        kind: "click",
+        status: "completed",
+        elapsed_ms: 3,
+        error: null,
+      },
+    ],
+    windows: [{ url: "file:///tmp/app.html", title: "Fixture" }],
+    windows_truncated: false,
+    processes: { items: [{ pid: 1234, type: "Browser" }], truncated: false },
+    ipc: {
+      events: [
+        {
+          sequence: 1,
+          kind: "main-handler-invocation",
+          channel: "readiness:echo",
+          argument_shapes: ["string"],
+          result_shape: "object",
+          process_type: "main",
+          error: false,
+        },
+      ],
+      observed: 1,
+      retained: 1,
+      truncated: false,
+    },
+    limitations: [
+      "IPC payloads are represented only by bounded value shapes; values are never retained.",
+    ],
+  });
+  const provider: ElectronActiveObservationPort = {
+    identity: () => ({
+      id: "test-electron-active",
+      name: "Test Electron active provider",
+      version: "1",
+    }),
+    capture: async (input) => {
+      capturedInputs.push(input);
+      return { ok: true, value: activeResult };
+    },
+  };
+  const config = parseConfig({
+    REA_ELECTRON_AUTOMATE_ENABLED: "true",
+    REA_ELECTRON_AUTOMATE_AUTO_GRANT: "true",
+    REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: JSON.stringify([
+      dirname(process.execPath),
+    ]),
+    REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: JSON.stringify([root]),
+  });
+  if (!config.ok) throw config.error;
+  const authority = await loadConfiguredPermissionAuthority(config.value);
+  if (!authority.ok) throw authority.error;
+  const session = composeBinarySessionFromFactory(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(),
+  }));
+  const server = createServer(session, session, {
+    electronActiveObservation: provider,
+    permissionAuthority: authority.value,
+    availabilityPolicy: () => ({
+      processCaptureEnabled: false,
+      evidenceFileRoots: 0,
+      investigationInputRoots: 0,
+      electronAutomationEnabled: true,
+    }),
+  });
+  const client = new Client({ name: "electron-active-mcp-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, session);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const captured = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      schema_version: 1,
+      executable_path: process.execPath,
+      application_path: applicationPath,
+      application_root: root,
+      args: ["--token", "super-secret"],
+      actions: [
+        { step_id: "submit", kind: "click", selector: "#submit-secret" },
+      ],
+      approved: true,
+    },
+  });
+  expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
+  expect(captured.structuredContent).toMatchObject({
+    result: {
+      application: { process_ownership: "provider-owned" },
+      ipc: { events: [{ channel: "readiness:echo" }] },
+    },
+  });
+  expect(capturedInputs).toHaveLength(1);
+  expect(JSON.stringify(captured.structuredContent)).not.toContain(
+    "submit-secret",
+  );
+  expect(JSON.stringify(captured.structuredContent)).not.toContain(
+    "super-secret",
+  );
+  const evidenceId = Reflect.get(
+    captured.structuredContent ?? {},
+    "evidence_id",
+  );
+  expect(session.evidenceById(String(evidenceId))).toMatchObject({
+    predicate_type: "rea.electron-active-scenario/v1",
+    parameters: {
+      args: ["--token", "<redacted>"],
+      actions: [{ step_id: "submit", kind: "click" }],
+    },
+  });
 }, 20_000);
 
 it("exposes the target-free static JavaScript application workflow", async () => {

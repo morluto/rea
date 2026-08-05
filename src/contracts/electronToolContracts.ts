@@ -10,6 +10,10 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
 import {
+  electronActiveObservationInputSchema,
+  electronActiveObservationResultSchema,
+} from "../domain/electronActiveObservation.js";
+import {
   analyzeJavaScriptApplicationInputSchema,
   javaScriptApplicationAnalysisResultV1Schema,
   javascriptApplicationAnalysisResultSchema,
@@ -113,6 +117,23 @@ const reconciliationOutputSchema = evidenceResultOf(
 
 const endpoint = "http://127.0.0.1:9223";
 const root = "/Applications/Example.app/Contents/Resources";
+const activeExample = {
+  schema_version: 1,
+  executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
+  application_path: "/Applications/Example.app/Contents/Resources/main.js",
+  application_root: "/Applications/Example.app/Contents/Resources",
+  args: [],
+  actions: [{ step_id: "exercise-ipc", kind: "click", selector: "#run" }],
+  limits: {
+    max_duration_ms: 60_000,
+    action_timeout_ms: 5_000,
+    max_actions: 20,
+    max_ipc_events: 2_000,
+    max_processes: 32,
+    max_windows: 32,
+  },
+  approved: true,
+};
 
 /** Root-confined Electron file-page discovery and inspection contracts. */
 export const ELECTRON_TOOL_CONTRACTS = [
@@ -203,6 +224,18 @@ export const ELECTRON_TOOL_CONTRACTS = [
         title: "Reconcile one passive Electron capture",
         input: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
       },
+    ],
+  },
+  {
+    name: "capture_electron_scenario",
+    ...toolContractMetadata("capture_electron_scenario"),
+    description:
+      "Run one explicitly approved, bounded Electron application through the official Playwright Electron launcher. REA owns startup and teardown, accepts only click and wait actions, records bounded process/window metrics, and captures IPC channel and value-shape metadata without retaining payload values. This is active authority and is separate from passive CDP observation.",
+    kind: "electron-provider",
+    inputSchema: electronActiveObservationInputSchema,
+    outputSchema: evidenceResultOf(electronActiveObservationResultSchema),
+    examples: [
+      { title: "Exercise an owned Electron application", input: activeExample },
     ],
   },
 ] as const satisfies readonly ToolContract[];

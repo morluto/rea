@@ -81,26 +81,12 @@ export const toolFamilyCatalog = (sources) => {
 
 /** Build provider identities with their sorted capability names. */
 export const providerCatalog = (sources) => {
-  const applicationContracts =
-    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
-      ({ name }) => name === "analyze_javascript_application",
-    );
-  const reconciliationContracts =
-    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
-      ({ name }) => name === "reconcile_javascript_runtime",
-    );
-  const observationContracts =
-    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
-      ({ name }) =>
-        name !== "analyze_javascript_application" &&
-        name !== "reconcile_javascript_runtime",
-    );
-  if (
-    applicationContracts.length !== 1 ||
-    reconciliationContracts.length !== 1 ||
-    observationContracts.length !== 2
-  )
-    throw new Error("Electron provider capability ownership drifted");
+  const {
+    applicationContracts,
+    reconciliationContracts,
+    observationContracts,
+    activeContracts,
+  } = electronContractSlices(sources);
   return [
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
@@ -143,6 +129,12 @@ export const providerCatalog = (sources) => {
       contracts: observationContracts,
     },
     {
+      identity:
+        sources.electronActiveProvider
+          .PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
+      contracts: activeContracts,
+    },
+    {
       identity: sources.v8InspectorProvider.V8_INSPECTOR_PROVIDER_IDENTITY,
       contracts:
         sources.javascriptRuntimeObservationContracts
@@ -170,4 +162,39 @@ export const providerCatalog = (sources) => {
       capabilities: names(contracts),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
+};
+
+const electronContractSlices = (sources) => {
+  const applicationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "analyze_javascript_application",
+    );
+  const reconciliationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "reconcile_javascript_runtime",
+    );
+  const observationContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) =>
+        name !== "analyze_javascript_application" &&
+        name !== "reconcile_javascript_runtime" &&
+        name !== "capture_electron_scenario",
+    );
+  const activeContracts =
+    sources.electronContracts.ELECTRON_TOOL_CONTRACTS.filter(
+      ({ name }) => name === "capture_electron_scenario",
+    );
+  if (
+    applicationContracts.length !== 1 ||
+    reconciliationContracts.length !== 1 ||
+    observationContracts.length !== 2 ||
+    activeContracts.length !== 1
+  )
+    throw new Error("Electron provider capability ownership drifted");
+  return {
+    applicationContracts,
+    reconciliationContracts,
+    observationContracts,
+    activeContracts,
+  };
 };

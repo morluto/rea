@@ -142,7 +142,7 @@ describe("Ghidra provider", () => {
 });
 
 describe("Ghidra platform support", () => {
-  it("admits only native x86-64 PE applications on Windows P0", () => {
+  it("keeps Windows P0 unavailable until native isolation authority exists", () => {
     const ghidra = provider({ ...installationHost(), platform: "win32" });
     const nativeApplication: BinaryTarget = {
       ...executableTarget("pe", "x86_64"),
@@ -158,12 +158,35 @@ describe("Ghidra platform support", () => {
         managed: false,
       },
     });
+    expect(ghidra.inspectAvailability()).toMatchObject({
+      status: "unavailable",
+      code: "unsupported_host",
+      reason: expect.stringContaining("native authority is unavailable"),
+      diagnostics: {
+        windows_security: {
+          job_object_process_ownership: expect.objectContaining({
+            available: false,
+            proof: "not-proven",
+          }),
+          private_runtime_dacl: expect.objectContaining({
+            available: false,
+            proof: "not-proven",
+          }),
+          reparse_safe_path_admission: expect.objectContaining({
+            available: false,
+            proof: "not-proven",
+          }),
+        },
+      },
+    });
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           operation: "list_procedures",
+          available: false,
+          availabilityCode: "unsupported_host",
           limitations: expect.arrayContaining([
-            expect.stringContaining("bounded taskkill termination"),
+            expect.stringContaining("bounded taskkill cleanup"),
             expect.stringContaining("private DACL enforcement"),
           ]),
         }),

@@ -42,6 +42,11 @@ describe("runtime configuration", () => {
       expect(result.value.electronObservationEnabled).toBe(false);
       expect(result.value.electronCdpEndpoints).toEqual([]);
       expect(result.value.electronFileRoots).toEqual([]);
+      expect(result.value.electronAutomationPolicy).toEqual({
+        enabled: false,
+        executableRoots: [],
+        applicationRoots: [],
+      });
       expect(result.value.v8InspectorObservationEnabled).toBe(false);
       expect(result.value.v8InspectorEndpoints).toEqual([]);
       expect(result.value.v8InspectorFileRoots).toEqual([]);
@@ -144,7 +149,64 @@ describe("runtime permission configuration", () => {
       mount: false,
     });
   });
+});
 
+describe("active Electron permission configuration", () => {
+  it("builds a separately granted, no-network Electron automation ceiling", () => {
+    const result = parseConfig({
+      REA_ELECTRON_AUTOMATE_ENABLED: "true",
+      REA_ELECTRON_AUTOMATE_AUTO_GRANT: "false",
+      REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
+      REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.electronAutomationPolicy).toEqual({
+      enabled: true,
+      executableRoots: ["/opt/electron"],
+      applicationRoots: ["/tmp/apps"],
+    });
+    expect(result.value.permissionCeilings).toContainEqual({
+      capability: "electron_automate",
+      roots: ["/tmp/apps"],
+      executables: ["/opt/electron"],
+      environment_names: [],
+      network: "external",
+      mount: false,
+    });
+    expect(result.value.administratorPermissionGrants).not.toContainEqual(
+      expect.objectContaining({ capability: "electron_automate" }),
+    );
+
+    const granted = parseConfig({
+      REA_ELECTRON_AUTOMATE_ENABLED: "true",
+      REA_ELECTRON_AUTOMATE_AUTO_GRANT: "true",
+      REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
+      REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
+    });
+    if (!granted.ok) throw granted.error;
+    expect(granted.value.administratorPermissionGrants).toContainEqual(
+      expect.objectContaining({
+        capability: "electron_automate",
+        lifetime: "administrator",
+      }),
+    );
+  });
+
+  it("rejects relative active Electron roots", () => {
+    expect(
+      parseConfig({
+        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["relative/apps"]',
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseConfig({
+        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["relative/bin"]',
+      }).ok,
+    ).toBe(false);
+  });
+});
+
+describe("runtime permission configuration", () => {
   it("can configure a process-capture ceiling without an implicit grant", () => {
     const result = parseConfig({
       REA_PROCESS_CAPTURE_ENABLED: "true",

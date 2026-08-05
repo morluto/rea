@@ -62,7 +62,78 @@ describe("conformance trust gates", () => {
 
   it("handles missing actual", () => {
     const result = compareDimension("exit_code", 0, undefined);
-    expect(result.status).toBe("mismatch");
+    expect(result.status).toBe("unknown");
+  });
+
+  it("keeps semantic unknown and truncated values out of equivalence", () => {
+    expect(
+      compareDimension(
+        "process_tree",
+        { processes: [] },
+        { status: "unknown" },
+      ),
+    ).toMatchObject({ status: "unknown" });
+    expect(
+      compareDimension("process_tree", { processes: [] }, { truncated: true }),
+    ).toMatchObject({ status: "truncated" });
+    expect(
+      compareDimension(
+        "process_tree",
+        { status: "unknown" },
+        { status: "unknown" },
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it("projects Evidence envelopes and links a divergence to the observed ID", () => {
+    const expectedEvidenceId = `ev_${"1".repeat(64)}`;
+    const actualEvidenceId = `ev_${"2".repeat(64)}`;
+    const result = evaluateTrustGate(
+      contract,
+      {
+        evidence_id: expectedEvidenceId,
+        normalized_result: { exit_code: 0, stdout: "hello" },
+      },
+      {
+        evidence_id: actualEvidenceId,
+        normalized_result: { exit_code: 1, stdout: "hello" },
+      },
+    );
+    expect(result.verdict).toBe("fail");
+    expect(result.dimension_results[0]?.evidence_ids).toEqual([
+      actualEvidenceId,
+      expectedEvidenceId,
+    ]);
+    expect(result.first_divergence).toMatchObject({
+      dimension: "exit_code",
+      evidence_id: actualEvidenceId,
+    });
+  });
+
+  it("scopes process residual unknowns without hiding complete dimensions", () => {
+    const processContract: VerifierContract = {
+      ...contract,
+      dimensions: [
+        { name: "exit_code", required: true, comparison: "exact" },
+        { name: "process_tree", required: true, comparison: "semantic" },
+      ],
+    };
+    const result = evaluateTrustGate(
+      processContract,
+      { exit_code: 0, process_tree: { processes: [] } },
+      {
+        exit_code: 0,
+        process_tree: { processes: [] },
+        residual_unknowns: [{ scope: "process", reason: "event gap" }],
+      },
+    );
+    expect(result.verdict).toBe("unknown");
+    expect(result.dimension_results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "exit_code", status: "match" }),
+        expect.objectContaining({ name: "process_tree", status: "unknown" }),
+      ]),
+    );
   });
 
   it("passes when all dimensions match", () => {

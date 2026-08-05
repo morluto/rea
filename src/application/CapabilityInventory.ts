@@ -41,6 +41,7 @@ export type AvailabilityPolicy = {
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
+  readonly electronAutomationEnabled?: boolean;
   readonly v8InspectorObservationEnabled?: boolean;
   readonly javascriptReplayEnabled?: boolean;
   readonly managedRuntimeEnabled?: boolean;
@@ -283,14 +284,8 @@ const policyAvailability = ({
       reason: "policy_disabled",
       remediation: "Configure or grant an evidence_read root.",
     };
-  if (kind === "electron-provider")
-    return policy.electronObservationEnabled === true
-      ? { reason: "available", remediation: null }
-      : {
-          reason: "policy_disabled",
-          remediation:
-            "Enable Electron observation and configure a loopback CDP endpoint and canonical file roots.",
-        };
+  const electron = electronPolicyAvailability(name, kind, policy);
+  if (electron !== null) return electron;
   if (kind === "runtime-provider")
     return policy.v8InspectorObservationEnabled === true
       ? { reason: "available", remediation: null }
@@ -301,6 +296,29 @@ const policyAvailability = ({
         };
   if (kind === "session") return { reason: "available", remediation: null };
   return null;
+};
+
+const electronPolicyAvailability = (
+  name: string,
+  kind: ToolKind,
+  policy: AvailabilityPolicy,
+): Availability | null => {
+  if (kind !== "electron-provider") return null;
+  if (name === "capture_electron_scenario")
+    return policy.electronAutomationEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "policy_disabled",
+          remediation:
+            "Enable active Electron automation and configure exact executable and application roots.",
+        };
+  return policy.electronObservationEnabled === true
+    ? { reason: "available", remediation: null }
+    : {
+        reason: "policy_disabled",
+        remediation:
+          "Enable Electron observation and configure a loopback CDP endpoint and canonical file roots.",
+      };
 };
 
 const browserPolicyAvailability = (

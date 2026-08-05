@@ -50,6 +50,7 @@ export const CLI_COMMANDS = Object.freeze({
   captureBrowserScenario: "capture-browser-scenario",
   listElectronTargets: "list-electron-targets",
   inspectElectronPage: "inspect-electron-page",
+  captureElectronScenario: "capture-electron-scenario",
   listJavaScriptRuntimeTargets: "list-javascript-runtime-targets",
   observeJavaScriptRuntime: "observe-javascript-runtime",
   analyzeJavaScriptApplication: "analyze-javascript-application",

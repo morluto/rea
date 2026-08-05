@@ -71,9 +71,10 @@ export const normalizeProcessSamples = (
       "<no-temporary-root>",
       rootPid,
     );
-    return scenario.normalization.pids
+    const withNormalizedPids = scenario.normalization.pids
       ? normalizePidTokens(normalized, identifiers)
       : normalized;
+    return withNormalizedPids.trim();
   };
   return samples.map((sample) => ({
     at_ms: normalizeProcessElapsedTime(

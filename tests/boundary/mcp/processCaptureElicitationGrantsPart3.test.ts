@@ -1,5 +1,6 @@
 import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import { mkdir, rm } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
@@ -10,7 +11,7 @@ import {
 } from "../../../src/server/ProcessCaptureElicitation.js";
 const request = {
   capability: "process_capture" as const,
-  roots: ["/tmp"],
+  roots: [realpathSync("/tmp")],
   executables: [process.execPath],
   environment_names: ["PATH"],
   network: "external" as const,

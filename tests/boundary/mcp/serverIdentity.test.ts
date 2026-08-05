@@ -77,10 +77,10 @@ describe("server and catalog identity", () => {
     expect(SDK_IDENTITY.server).toBe(
       packageJson.dependencies["@modelcontextprotocol/server"],
     );
-    expect(CLI_COMMAND_NAMES).toHaveLength(67);
-    expect(new Set(CLI_COMMAND_NAMES).size).toBe(67);
+    expect(CLI_COMMAND_NAMES).toHaveLength(68);
+    expect(new Set(CLI_COMMAND_NAMES).size).toBe(68);
     expect(CATALOG_IDENTITY.counts).toEqual({
-      cli_commands: 67,
+      cli_commands: 68,
       mcp_tools: TOOL_CONTRACTS.length,
       mcp_prompts: 6,
       mcp_resources: 2,

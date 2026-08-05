@@ -19,6 +19,7 @@ import type { PermissionAuthority } from "../application/PermissionAuthority.js"
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
 import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
@@ -29,7 +30,7 @@ import {
 import { installDynamicToolAvailability } from "./DynamicToolAvailability.js";
 
 const TARGET_FREE_INSTRUCTIONS =
-  "ASAR/JavaScript -> analyze_javascript_application; archive/package -> open_binary(path), then inspect_artifact/inventory_artifact (active target); managed PE/CLI -> inspect_managed_artifact; passive browser/Electron -> list_browser_targets/list_electron_targets; approved browser interaction -> capture_browser_scenario; Node/Electron Inspector -> list_javascript_runtime_targets; native binary/database -> open_binary, then binary_overview. Start with binary_session; call only tools in tools/list. Hidden routes: binary_session detail=capabilities. Use summaries, cite Evidence IDs. Never repeat identical analysis or read full Evidence.";
+  "ASAR/JavaScript -> analyze_javascript_application; archive/package -> open_binary(path), then inspect_artifact/inventory_artifact (active target); managed PE/CLI -> inspect_managed_artifact; browser/Electron -> list_browser_targets/list_electron_targets; approved -> capture_browser_scenario/capture_electron_scenario; Node/Electron Inspector -> list_javascript_runtime_targets; native binary/database -> open_binary, then binary_overview. Start with binary_session; use tools/list; capabilities via binary_session. Use summaries, cite Evidence IDs; Never repeat identical analysis or read full Evidence.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Start native analysis with binary_overview, then narrow with analyze_function, literal search, callers, callees, and xrefs. Prefer summary views, never repeat an identical call, and read full Evidence only when the task requires it.";
@@ -55,6 +56,7 @@ export interface CreateServerOptions {
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
+  readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly artifactIntegrityContinueEnabled?: () => boolean;
   readonly javascriptReplayPolicy?: JavaScriptReplayPolicy;
@@ -66,6 +68,7 @@ export interface CreateServerOptions {
     readonly browserObservation: BrowserObservationPort;
     readonly browserScenarioCapture: BrowserScenarioCapturePort;
     readonly electronObservation: ElectronObservationPort;
+    readonly electronActiveObservation: ElectronActiveObservationPort;
     readonly javascriptRuntimeObservation: JavaScriptRuntimeObservationPort;
   }>;
 }
@@ -84,6 +87,9 @@ const installSessionToolAvailability = (
       browserObservationEnabled: options.browserObservation !== undefined,
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
+      electronAutomationEnabled:
+        options.electronActiveObservation !== undefined &&
+        options.permissionAuthority !== undefined,
       v8InspectorObservationEnabled:
         options.javascriptRuntimeObservation !== undefined,
       javascriptReplayEnabled: options.javascriptReplayPolicy?.enabled ?? false,

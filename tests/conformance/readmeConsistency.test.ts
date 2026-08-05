@@ -107,4 +107,12 @@ describe("localized README product facts", () => {
       "pin persistent MCP registrations to the exact version",
     );
   });
+
+  it("documents the published MCP Registry installation path", async () => {
+    const content = await readFile(resolve("docs/installation.md"), "utf8");
+    expect(content).toContain("MCP Registry");
+    expect(content).toContain("io.github.morluto/rea");
+    expect(content).toContain('"command": "npx"');
+    expect(content).toContain('"args": ["-y", "rea-agents@latest", "mcp"]');
+  });
 });

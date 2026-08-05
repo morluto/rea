@@ -4,15 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  windowsNativeCapabilities,
+  type WindowsNativeCapabilitySet,
+} from "../process/WindowsAuthority.js";
+import {
   probeProcessCaptureCapability,
   type ProcessCaptureCapability,
 } from "./ProcessCaptureCapability.js";
 
 /** One named Windows host observation without inferred authority. */
-interface WindowsCapabilityOutcome {
-  readonly available: boolean;
-  readonly reason: string | null;
-}
+export type WindowsCapabilityOutcome =
+  | { readonly available: true; readonly reason: null }
+  | { readonly available: false; readonly reason: string };
 
 /** Injectable host probes used by CI and deterministic unit tests. */
 export interface WindowsCapabilityDependencies {
@@ -36,6 +39,8 @@ export interface WindowsCapabilityReport {
     unix_domain_socket: WindowsCapabilityOutcome;
     pty: WindowsCapabilityOutcome;
   }>;
+  /** Security controls that are unavailable until native authority exists. */
+  readonly security: WindowsNativeCapabilitySet;
 }
 
 /** Probe named prerequisites without converting missing controls into support. */
@@ -54,11 +59,11 @@ export const probeWindowsCapabilities = async (
       no_follow_open: dependencies.probeNoFollowOpen(),
       private_acl: dependencies.probePrivateAcl(),
       unix_domain_socket: dependencies.probeUnixDomainSocket(),
-      pty: {
-        available: pty.available,
-        reason: pty.available ? null : pty.reason,
-      },
+      pty: pty.available
+        ? { available: true, reason: null }
+        : { available: false, reason: pty.reason },
     },
+    security: windowsNativeCapabilities(dependencies.platform),
   };
 };
 

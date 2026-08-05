@@ -333,10 +333,6 @@ const completeCapture = async (options: {
     }
     throw processCaptureCancelled();
   }
-  if (runtime.reactive !== undefined) {
-    await runtime.reactive.coordinator.submit({ kind: "target_lost" });
-    runtime.reactive.unsubscribe();
-  }
   const settlement = await observeSettlement(
     options.runId,
     selectCapturedProcessGroupIds(runtime.terminal.pid, options.samples),
@@ -345,6 +341,15 @@ const completeCapture = async (options: {
   );
   runtime.checkpoints.trigger("settled");
   const samplingPartial = (await runtime.stopSampler()).partial;
+  if (runtime.reactive !== undefined) {
+    // Process, filesystem, shim, and protocol observations can be recorded
+    // during settlement after the PTY exits. Make target loss terminal only
+    // after that journal has drained, otherwise the coordinator's control
+    // priority discards a valid multi-source completion predicate.
+    await runtime.reactive.coordinator.drain();
+    await runtime.reactive.coordinator.submit({ kind: "target_lost" });
+    runtime.reactive.unsubscribe();
+  }
   assertNotCancelled(options.signal);
   const after = await snapshotRoots(scenario, options.signal);
   const renderedFrames = await runtime.renderer.frames();

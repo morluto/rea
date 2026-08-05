@@ -13,6 +13,7 @@ export interface SessionAvailabilityDefaults {
     | "browserObservationEnabled"
     | "browserScenarioEnabled"
     | "electronObservationEnabled"
+    | "electronAutomationEnabled"
     | "v8InspectorObservationEnabled"
     | "javascriptReplayEnabled"
     | "managedRuntimeEnabled"
@@ -35,6 +36,8 @@ export const sessionAvailabilityPolicy = (
       defaults.optionalFeatures?.browserScenarioEnabled ?? false,
     electronObservationEnabled:
       defaults.optionalFeatures?.electronObservationEnabled ?? false,
+    electronAutomationEnabled:
+      defaults.optionalFeatures?.electronAutomationEnabled ?? false,
     v8InspectorObservationEnabled:
       defaults.optionalFeatures?.v8InspectorObservationEnabled ?? false,
     javascriptReplayEnabled:

@@ -104,6 +104,10 @@ const runtimeAvailability = (state: RuntimeState) => ({
     state.currentConfig.electronObservationEnabled &&
     state.currentConfig.electronCdpEndpoints.length > 0 &&
     state.currentConfig.electronFileRoots.length > 0,
+  electronAutomationEnabled:
+    state.currentConfig.electronAutomationPolicy.enabled &&
+    state.currentConfig.electronAutomationPolicy.executableRoots.length > 0 &&
+    state.currentConfig.electronAutomationPolicy.applicationRoots.length > 0,
   v8InspectorObservationEnabled:
     state.currentConfig.v8InspectorObservationEnabled &&
     state.currentConfig.v8InspectorEndpoints.length > 0 &&

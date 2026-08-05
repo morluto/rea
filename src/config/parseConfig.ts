@@ -21,6 +21,11 @@ import {
   browserEndpointSchema,
   browserOriginSchema,
 } from "../domain/browserObservation.js";
+import {
+  appendElectronAutomationCeiling,
+  parseElectronAutomationArrays,
+  type ElectronAutomationArrays,
+} from "./electronAutomation.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -29,7 +34,7 @@ const defaultHopperLauncherPath = (): string =>
     ? "/opt/hopper/bin/Hopper"
     : DEFAULT_HOPPER_LAUNCHER_PATH;
 
-interface ParsedArrays {
+interface ParsedArrays extends ElectronAutomationArrays {
   readonly loaderArgs: readonly string[];
   readonly executableRoots: readonly string[];
   readonly workingRoots: readonly string[];
@@ -116,6 +121,8 @@ const parseAllArrays = (
   if (!secretPatterns.ok) return secretPatterns;
   const observations = parseObservationArrays(env);
   if (!observations.ok) return observations;
+  const electronAutomation = parseElectronAutomationArrays(env);
+  if (!electronAutomation.ok) return electronAutomation;
   const javascriptReplayRoots = parseAbsoluteRoots(
     env.REA_JAVASCRIPT_REPLAY_ROOTS_JSON,
     "REA_JAVASCRIPT_REPLAY_ROOTS_JSON",
@@ -137,6 +144,7 @@ const parseAllArrays = (
     referenceRoots: referenceRoots.value,
     secretPatterns: secretPatterns.value,
     ...observations.value,
+    ...electronAutomation.value,
     javascriptReplayRoots: javascriptReplayRoots.value,
     managedRuntimeRoots: managedRuntimeRoots.value,
   });
@@ -378,6 +386,7 @@ const buildPermissionCeilings = (
   appendBrowserObservationCeiling(ceilings, env, arrays);
   appendBrowserScenarioCeiling(ceilings, env, arrays);
   appendElectronObservationCeiling(ceilings, env, arrays);
+  appendElectronAutomationCeiling(ceilings, env, arrays);
   appendV8InspectorObservationCeiling(ceilings, env, arrays);
   appendNativeMountCeiling(ceilings, env);
   appendJavaScriptReplayCeiling(ceilings, env, arrays);
@@ -433,6 +442,11 @@ const buildAppConfig = (
   electronObservationEnabled: env.REA_ELECTRON_OBSERVE_ENABLED === "true",
   electronCdpEndpoints: arrays.electronEndpoints,
   electronFileRoots: arrays.electronFileRoots,
+  electronAutomationPolicy: {
+    enabled: env.REA_ELECTRON_AUTOMATE_ENABLED === "true",
+    executableRoots: arrays.electronAutomationExecutableRoots,
+    applicationRoots: arrays.electronAutomationApplicationRoots,
+  },
   v8InspectorObservationEnabled:
     env.REA_V8_INSPECTOR_OBSERVE_ENABLED === "true",
   v8InspectorEndpoints: arrays.v8InspectorEndpoints,
@@ -459,7 +473,9 @@ const buildAppConfig = (
         (capability !== "process_capture" ||
           env.REA_PROCESS_CAPTURE_AUTO_GRANT === "true") &&
         (capability !== "browser_automate" ||
-          env.REA_BROWSER_SCENARIO_AUTO_GRANT === "true"),
+          env.REA_BROWSER_SCENARIO_AUTO_GRANT === "true") &&
+        (capability !== "electron_automate" ||
+          env.REA_ELECTRON_AUTOMATE_AUTO_GRANT === "true"),
     ),
   ),
   permissionProjectRoot: env.REA_PERMISSION_PROJECT_ROOT,

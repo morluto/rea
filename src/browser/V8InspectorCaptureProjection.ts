@@ -30,6 +30,7 @@ export const describeInspectorTargetLimitations = (): string[] => [
   "REA attaches to an already-running exact target and never launches, resumes, evaluates, pauses, or mutates it.",
   "Only Runtime.enable and Debugger.enable are sent; source text, object values, EventEmitter activity, and Electron IPC are not inspected.",
   "Target IDs and locations are authorized, but the Inspector protocol does not authenticate an operating-system process ID or Electron role.",
+  "Some Electron main targets report only file://; for those targets, the first approved file root is recorded as a scope fallback and script locations are authorized independently.",
   "No runtime graph depth is traversed because passive Inspector events do not establish require/import caller edges.",
 ];
 

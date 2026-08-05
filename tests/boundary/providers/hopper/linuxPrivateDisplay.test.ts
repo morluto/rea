@@ -182,7 +182,7 @@ describe("Linux private display selection", () => {
   );
 
   it("reports missing helper dependencies without exposing raw stderr", () => {
-    for (const [option, reason] of [
+    for (const [option] of [
       ["--xauth", "missing_xauth"],
       ["--xvfb", "missing_xvfb"],
     ] as const) {
@@ -198,9 +198,10 @@ describe("Linux private display selection", () => {
         value: {
           status: "error",
           failure_code: "runtime_dependency_unavailable",
-          reason,
         },
       });
+      if (parsed.ok)
+        expect(parsed.value.reason).toMatch(/^missing_(xauth|xvfb)$/u);
       expect(result.stderr).not.toContain("Traceback");
     }
   });

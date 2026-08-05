@@ -59,7 +59,7 @@ function collectionTriggers() {
         parent_pid: 1,
         command: "rea-reactive-worker",
         process_group_id: 1,
-        session_id: 1,
+        session_id: process.platform === "darwin" ? null : 1,
       },
       ["at_ms"],
     ),

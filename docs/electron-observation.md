@@ -57,3 +57,38 @@ work completed.
 
 Inspection does not retain DOM values, execute renderer code, navigate, click,
 invoke Electron IPC, close a target, or terminate the application.
+
+## Active Electron scenarios
+
+Active Electron authority is separate and disabled by default. When enabled,
+REA launches an operator-approved Electron executable through the official
+Playwright Electron API, owns its lifetime, accepts bounded click/wait actions,
+and records process/window metrics plus IPC channel and value-shape metadata.
+Payload values are not retained.
+
+Configure exact roots and run the real fixture verifier with an operator-owned
+Electron runtime:
+
+```bash
+export REA_ELECTRON_AUTOMATE_ENABLED=true
+export REA_ELECTRON_AUTOMATE_AUTO_GRANT=false
+export REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON='["/absolute/path/to/runtime"]'
+export REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON='["/absolute/path/to/app"]'
+REA_ELECTRON_EXECUTABLE=/absolute/path/to/electron npm run verify:electron
+```
+
+This capability actively launches and interacts with the target. It is not a
+passive CDP observation and must be granted separately as `electron_automate`.
+The default is fail-closed (`AUTO_GRANT=false`); an operator can instead issue
+a project/session/one-shot grant through the normal permission workflow. The
+owned process keeps normal host filesystem and network privileges, so this is
+an authority boundary and lifecycle boundary, not a sandbox.
+
+The CLI and MCP surfaces accept the same schema. For a JSON request file:
+
+```bash
+rea capture-electron-scenario scenario.json --json
+```
+
+The result records bounded action status, windows, process metrics, and IPC
+channel/value shapes only. It never retains IPC argument or return values.

@@ -18,6 +18,7 @@ import {
 } from "../../../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../../src/browser/CdpBrowserProvider.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../../../src/browser/CdpElectronProvider.js";
+import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
@@ -81,6 +82,7 @@ describe("canonical product catalog", () => {
         CDP_BROWSER_PROVIDER_IDENTITY,
         PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
         CDP_ELECTRON_PROVIDER_IDENTITY,
+        PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
         V8_INSPECTOR_PROVIDER_IDENTITY,
         JAVASCRIPT_APPLICATION_PROVIDER,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
@@ -102,6 +104,11 @@ describe("canonical product catalog", () => {
         ({ id }) => id === CDP_ELECTRON_PROVIDER_IDENTITY.id,
       )?.capabilities,
     ).toEqual(["inspect_electron_page", "list_electron_targets"]);
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY.id,
+      )?.capabilities,
+    ).toEqual(["capture_electron_scenario"]);
     expect(
       catalog.providers.find(
         ({ id }) => id === JAVASCRIPT_APPLICATION_PROVIDER.id,

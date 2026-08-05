@@ -115,6 +115,7 @@ export const javascriptRuntimeLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("file"),
     file_path: z.string().min(1).max(16_384),
+    authority: z.literal("scope-fallback").optional(),
   }),
   z.strictObject({
     kind: z.literal("url"),

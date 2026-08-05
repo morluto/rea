@@ -4,7 +4,10 @@ import {
   conformancePackageSchema,
   type ConformancePackage,
 } from "./conformancePackage.js";
-import { trustGateResultSchema } from "./conformanceTrustGate.js";
+import {
+  evaluatePackageTrustGates,
+  trustGateResultSchema,
+} from "./conformanceTrustGate.js";
 
 /** Result of a single scenario replay. */
 export const scenarioReplayResultSchema = z.strictObject({
@@ -31,6 +34,7 @@ export const packageReplayResultSchema = z.strictObject({
     .strictObject({
       scenario_id: z.string().min(1),
       dimension: z.string().min(1),
+      evidence_id: z.string().min(1),
       message: z.string(),
     })
     .nullable(),
@@ -116,6 +120,7 @@ export async function replayConformancePackage(
     ? {
         scenario_id: first_drift_gate.scenario_id,
         dimension: first_drift_gate.first_divergence.dimension,
+        evidence_id: first_drift_gate.first_divergence.evidence_id,
         message: first_drift_gate.first_divergence.message,
       }
     : null;
@@ -133,6 +138,3 @@ export async function replayConformancePackage(
     first_drift,
   };
 }
-
-/** Import trust gate evaluator for replay. */
-import { evaluatePackageTrustGates } from "./conformanceTrustGate.js";

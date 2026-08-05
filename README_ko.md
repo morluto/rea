@@ -157,7 +157,7 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 | 아티팩트 그래프     |   3 | 디렉터리, ZIP/APK/IPA, ASAR 결정적 인벤토리와 명시적으로 선택한 트랜잭션 추출                                                                                                                                  |
 | Managed PE/CLI      |   8 | PE/CLI ID, 메타데이터 멤버, CIL 해시, P/Invoke/네이티브 경계 선언 및 검증, 애플리케이션 그래프 투영, 디컴파일 재구성 가져오기, 구조적 token 재매핑, 런타임 상관 계획, 버전 비교                                |
 | 브라우저 관찰       |   9 | origin 제한 CDP 캡처, bundle/source map 분석, WebMCP 검색, 세션 타임라인, capture diff 및 시각 증거                                                                                                            |
-| Electron 분석       |   4 | canonical 파일 루트 내 수동 관찰, 제한된 정적 앱 매핑, Evidence 기반 정적/런타임 조정                                                                                                                          |
+| Electron 분석       |   5 | canonical 파일 루트 내 수동 관찰, 제한된 정적 앱 매핑, Evidence 기반 정적/런타임 조정                                                                                                                          |
 | JavaScript 런타임   |   2 | 승인된 연결 전용 Node/Electron Inspector 대상 탐색과 평가·계측 없는 제한된 스크립트 및 실행 컨텍스트 관찰                                                                                                      |
 | 애플리케이션        |  12 | 제한된 교차 계층 추적, 고유 일치 버전 비교, 정적 export 반환 형태 비교, 승인된 Linux 격리 extracted-module replay, 관리형 런타임 특성화, 재구성 커버리지 폐쇄, 결정론적 의무 원장, 엔드투엔드 준비 적합성 검증 |
 | 바이너리 세션       |  23 | `open_binary`, `binary_session`, 증거 번들, 보존 번들 해제, 유한 replay 상태 머신, 프로세스·아티팩트·함수 비교, 잔여 미지수 레지스트리                                                                         |

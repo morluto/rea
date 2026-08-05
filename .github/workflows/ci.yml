@@ -204,6 +204,17 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  conformance-fixtures:
+    name: Source-built conformance fixtures
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify fixtures from a clean checkout
+        run: npm run verify:fixtures
+
   package-e2e:
     name: Package E2E (${{ matrix.os }})
     needs: changes

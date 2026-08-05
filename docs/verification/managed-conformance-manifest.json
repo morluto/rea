@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "manifest_id": "ecm_bdccc0a41764d8c182b92a1c9b25e0f08a4b6e8224b35cb83904079a93547d4c",
+  "manifest_id": "ecm_861dc07889c0241b8589de3f4a3664544337f49b758f28c752eb9be55140b86e",
   "verifier": {
     "id": "rea-managed-conformance",
     "version": "1"
   },
   "environment": {
-    "platform": "linux",
-    "architecture": "x64",
+    "platform": "darwin",
+    "architecture": "arm64",
     "runtime": "node",
-    "runtime_version": "24"
+    "runtime_version": "25"
   },
   "skill_digests": [
     {
       "skill_id": "reverse-engineer-anything",
-      "sha256": "94132dd32216783a2e6ed65a5e78e6a0ad645c22ee7ebaf1f1f4ddf6fd110daf"
+      "sha256": "d019d3d3d3eff55f5fa81c897011010a2058bddaf829345f8fef7578fddc1d5f"
     }
   ],
   "claims": [

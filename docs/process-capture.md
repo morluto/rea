@@ -47,9 +47,11 @@ REA offers the once-or-session grant form only after the connection negotiates
 an MCP revision with multi-round tool results and advertises form elicitation.
 Older connections keep returning the structured
 permission-required result and never wait for an unsupported elicitation
-response. The MCP SDK runtime currently pinned by REA negotiates the older
-protocol path, so the interactive flow remains fail-closed until its runtime
-protocol support is available.
+response. On the pinned `@modelcontextprotocol/server` 2.0.0 runtime, this is
+the official `2026-07-28` `inputRequired` continuation: the SDK seals the
+request state and validates the continuation envelope, while REA validates the
+untrusted input response before creating a connection-owned grant. The older
+push-style `elicitation/create` path is not used for this protocol revision.
 
 Every scenario must also contain `"approved": true`. Executables, working
 directories, filesystem roots, and requested environment variables are checked

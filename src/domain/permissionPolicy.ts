@@ -8,6 +8,7 @@ export type PermissionCapability =
   | "browser_observe"
   | "browser_automate"
   | "electron_observe"
+  | "electron_automate"
   | "v8_inspector_observe"
   | "evidence_read"
   | "evidence_write"

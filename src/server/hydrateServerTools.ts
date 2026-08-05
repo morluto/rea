@@ -158,6 +158,7 @@ const hydrateObservationFamily = async (
     registerElectronTools(context.server, {
       ...common,
       electron: context.options.electronObservation,
+      electronActive: context.options.electronActiveObservation,
     });
     return;
   }

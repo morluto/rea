@@ -25,6 +25,7 @@ const grantSchema = z.object({
     "browser_observe",
     "browser_automate",
     "electron_observe",
+    "electron_automate",
     "evidence_read",
     "evidence_write",
     "investigation_input",

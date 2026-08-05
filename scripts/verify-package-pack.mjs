@@ -26,6 +26,8 @@ export async function verifyPackagePack({ root, workspace }) {
     packedManifest.bin?.["rea-agents"] !== "scripts/rea.mjs"
   )
     throw new Error("package did not expose both rea command entry points");
+  if (packedManifest.mcpName !== "io.github.morluto/rea")
+    throw new Error("package did not retain its MCP Registry ownership marker");
   if (
     packedFiles.some(
       (path) => path.includes("__pycache__") || path.endsWith(".pyc"),

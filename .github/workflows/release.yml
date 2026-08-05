@@ -132,3 +132,41 @@ jobs:
           done
           echo "Published rea-agents@${version} failed registry and CLI verification" >&2
           exit 1
+
+  publish-mcp:
+    name: Publish to MCP Registry
+    needs: [release-please, publish]
+    if: needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+
+      - name: Verify package and registry metadata versions
+        run: npm run mcp-registry:check
+
+      - name: Install MCP Registry publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.0
+          MCP_PUBLISHER_SHA256_LINUX_AMD64: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
+        run: |
+          archive="mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSLo "${archive}" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256_LINUX_AMD64}  ${archive}" | sha256sum --check --strict
+          tar xzf "${archive}" mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Validate MCP Registry metadata
+        run: ./mcp-publisher validate
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP Registry metadata
+        run: ./mcp-publisher publish

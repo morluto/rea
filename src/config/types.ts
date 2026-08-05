@@ -38,6 +38,11 @@ export interface AppConfig {
   readonly electronObservationEnabled: boolean;
   readonly electronCdpEndpoints: readonly string[];
   readonly electronFileRoots: readonly string[];
+  readonly electronAutomationPolicy: {
+    readonly enabled: boolean;
+    readonly executableRoots: readonly string[];
+    readonly applicationRoots: readonly string[];
+  };
   readonly v8InspectorObservationEnabled: boolean;
   readonly v8InspectorEndpoints: readonly string[];
   readonly v8InspectorFileRoots: readonly string[];

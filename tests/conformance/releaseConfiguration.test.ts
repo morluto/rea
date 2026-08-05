@@ -28,6 +28,16 @@ describe("release configuration", () => {
             },
             {
               type: "json",
+              path: "server.json",
+              jsonpath: "$.version",
+            },
+            {
+              type: "json",
+              path: "server.json",
+              jsonpath: "$.packages[0].version",
+            },
+            {
+              type: "json",
               path: "docs/product-catalog.json",
               jsonpath: "$.package.version",
             },
@@ -59,6 +69,47 @@ describe("release configuration", () => {
 
     expect(generator).toContain("x-release-please-version");
     expect(generated).toContain("x-release-please-version");
+  });
+
+  it("keeps the npm package and MCP Registry metadata aligned", async () => {
+    const packageJson = (await readJson("package.json")) as {
+      name: string;
+      version: string;
+      mcpName: string;
+    };
+    const serverJson = (await readJson("server.json")) as {
+      name: string;
+      version: string;
+      packages: Array<{
+        registryType: string;
+        registryBaseUrl: string;
+        identifier: string;
+        version: string;
+        runtimeHint: string;
+        transport: { type: string };
+        packageArguments: Array<{ type: string; value: string }>;
+      }>;
+    };
+
+    expect(packageJson).toMatchObject({
+      name: "rea-agents",
+      mcpName: "io.github.morluto/rea",
+    });
+    expect(serverJson).toMatchObject({
+      name: packageJson.mcpName,
+      version: packageJson.version,
+      packages: [
+        {
+          registryType: "npm",
+          registryBaseUrl: "https://registry.npmjs.org",
+          identifier: packageJson.name,
+          version: packageJson.version,
+          runtimeHint: "npx",
+          transport: { type: "stdio" },
+          packageArguments: [{ type: "positional", value: "mcp" }],
+        },
+      ],
+    });
   });
 
   it("keeps TypeDoc unversioned and outside the tracked documentation tree", async () => {

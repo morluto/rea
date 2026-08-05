@@ -386,7 +386,7 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 | Artifact graph            |     3 | bounded provider-neutral inspection, deterministic directory/ZIP/APK/IPA/MSIX/AppX/ASAR inventory, and explicitly selected extraction into an absent owned tree                                                                                                                                                                  |
 | Managed PE/CLI            |     8 | PE/CLI identity, metadata members, CIL hashes, P/Invoke/native-boundary declarations and verification, application-graph projection, decompiler reconstruction import, token remapping, runtime-correlation plans, and version comparison                                                                                        |
 | Browser observation       |     9 | exact-origin passive CDP capture, bundle and source-map analysis, WebMCP discovery, session timelines, capture diff, visual evidence, and bounded Playwright scenarios                                                                                                                                                           |
-| Electron analysis         |     4 | passive root-confined observation, bounded static application mapping, and evidence-backed static/runtime reconciliation                                                                                                                                                                                                         |
+| Electron analysis         |     5 | passive root-confined observation, bounded static application mapping, evidence-backed static/runtime reconciliation, and separately approved provider-owned click/wait scenarios                                                                                                                                                |
 | JavaScript runtime        |     2 | approved attach-only Node/Electron Inspector target discovery plus bounded script and execution-context observation without evaluation or instrumentation                                                                                                                                                                        |
 | Application workflows     |    12 | bounded cross-layer traces, unique-only version matching, historical-source to bundle mapping, static export return-shape comparison, approved Linux-isolated extracted-module replay, managed-runtime characterization, reconstruction coverage closure, deterministic obligation ledgers, and end-to-end readiness conformance |
 | Workspace and observation |    23 | target lifecycle, Evidence v2 bundle snapshots, retained-bundle release, aggregate navigation/address context, direct finite replay-machine evaluation, process/artifact/function comparison, evidence-linked residual-unknown lifecycle                                                                                         |
@@ -509,14 +509,14 @@ REA is growing into a toolkit for understanding software across static artifacts
 
 ### Next
 
-1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser or Electron interaction remains a different future authority.
+1. **Controlled replay conformance growth** — extend the shipped Linux extracted-module sandbox with more source-owned hostile fixtures and cross-kernel conformance; browser and Electron scenarios remain separately permissioned authorities.
 2. **Broader application graph evidence** — extend authenticated cross-layer traces with additional static extractors and separately approved runtime authorities.
 3. **Professional managed-code analysis** — extend shipped PE/CLI triage, CIL evidence, managed/native declaration inventory, source-owned conformance, and obfuscation-resistant comparisons toward verified native-provider composition under the accepted [managed-code boundary](docs/managed-code-analysis.md).
 4. **Deterministic behavior harnesses** — extend process ownership, protocol fixtures, filesystem observation, reconnects, and cross-version behavioral comparison.
 
 ### Later
 
-1. **Controlled application interaction** — evaluate separately authorized full-application driving without widening passive browser, Electron, or extracted-module replay authority.
+1. **Broader controlled application interaction** — extend the separately authorized browser and Electron scenario surfaces beyond the current bounded click/wait actions without widening passive observation or extracted-module replay authority.
 2. **Native runtime observation** — approval-gated LLDB, Frida, system logs, process/filesystem observers, and native API tracing.
 3. **Additional providers and targets** — evaluate IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, Windows-native providers, mobile artifacts, firmware, document formats, and other software-defined systems.
 

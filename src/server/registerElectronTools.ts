@@ -3,6 +3,8 @@ import type { z } from "zod";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
+import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
 import {
@@ -18,6 +20,7 @@ import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
+import { electronActiveObservationInputSchema } from "../domain/electronActiveObservation.js";
 import { reconcileJavaScriptRuntimeInputSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -36,6 +39,7 @@ import { summarizeJavaScriptApplicationEvidence } from "./javascriptApplicationR
 interface ElectronToolRegistration {
   readonly logger: Logger;
   readonly electron: ElectronObservationPort | undefined;
+  readonly electronActive: ElectronActiveObservationPort | undefined;
   readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
@@ -66,8 +70,13 @@ export const registerElectronTools = (
   server: McpServer,
   options: ElectronToolRegistration,
 ): void => {
-  const [listContract, inspectContract, analyzeContract, reconcileContract] =
-    ELECTRON_TOOL_CONTRACTS;
+  const [
+    listContract,
+    inspectContract,
+    analyzeContract,
+    reconcileContract,
+    activeContract,
+  ] = ELECTRON_TOOL_CONTRACTS;
 
   registerElectronTool(server, options, {
     contract: listContract,
@@ -117,6 +126,17 @@ export const registerElectronTools = (
     schema: reconcileJavaScriptRuntimeInputSchema,
     execute: (parsed, _context) =>
       Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
+  });
+  registerElectronTool(server, options, {
+    contract: activeContract,
+    schema: electronActiveObservationInputSchema,
+    execute: (parsed, { signal, progress }) =>
+      captureElectronScenario(
+        options.electronActive,
+        options.permissionAuthority,
+        parsed,
+        { signal, progress },
+      ),
   });
 };
 

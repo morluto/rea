@@ -15,6 +15,7 @@ import {
 import type { AppConfig } from "../config.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -61,6 +62,11 @@ import {
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
+import {
+  WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+  hasWindowsNativeAuthority,
+  windowsNativeCapabilities,
+} from "../process/WindowsAuthority.js";
 
 export { GHIDRA_PROVIDER_IDENTITY, GHIDRA_PROVIDER_TOOL_CONTRACTS };
 
@@ -98,6 +104,22 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   inspectAvailability(): ProviderAvailability {
     const installation = this.#inspectInstallation();
     const diagnostics = ghidraInstallationDiagnostics(installation);
+    if (
+      installation.available &&
+      installation.platform === "win32" &&
+      !hasWindowsNativeAuthority(installation.platform)
+    )
+      return {
+        status: "unavailable",
+        code: "unsupported_host",
+        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        diagnostics: {
+          ...diagnostics,
+          windows_security: jsonObjectSchema.parse(
+            windowsNativeCapabilities(installation.platform),
+          ),
+        },
+      };
     return installation.available
       ? {
           status: "available",
@@ -361,6 +383,17 @@ const ghidraClientPrerequisites = (
       new ProviderAdapterError("ghidra", "health", {
         diagnostics: ghidraInstallationDiagnostics(installation),
       }),
+    );
+  if (
+    installation.platform === "win32" &&
+    !hasWindowsNativeAuthority(installation.platform)
+  )
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "ghidra",
+        "health",
+        WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      ),
     );
   if (profile === undefined || profile.provider.id !== "ghidra")
     return err(new ProviderAdapterError("ghidra", "health"));

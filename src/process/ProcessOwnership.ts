@@ -96,7 +96,8 @@ export type ProcessGroupObservation =
  * Terminate one Windows process tree through the platform utility.
  *
  * This is a bounded P0 cleanup mechanism, not Job Object ownership proof. The
- * caller-visible Windows limitations must preserve that distinction.
+ * caller-visible Windows capability report remains unavailable until a native
+ * authority verifies Job Object creation, membership, and cleanup semantics.
  */
 export const cleanupWindowsProcessTree = async (
   rootPid: number,
