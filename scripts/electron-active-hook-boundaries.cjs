@@ -1,5 +1,6 @@
 "use strict";
 
+// oxlint-disable-next-line max-lines-per-function -- all adapters must close over one bounded capture context.
 const createElectronActiveBoundaryPatches = ({
   identity,
   patchEmitter,

@@ -175,6 +175,21 @@ const processMetricSchema = z.strictObject({
   type: z.string().min(1).max(128),
 });
 
+const coverageSchema = z.strictObject({
+  status: z.enum([
+    "complete",
+    "partial_attach",
+    "capture_truncated",
+    "hook_conflict",
+    "target_exited",
+    "cleanup_failed",
+  ]),
+  observed_event_families: z.array(z.string().max(128)).max(32),
+  unavailable_event_families: z.array(z.string().max(128)).max(32),
+  observed_roles: z.array(z.string().max(128)).max(16),
+  pre_capture_activity: z.literal("unavailable"),
+});
+
 const actionResultSchema = z.strictObject({
   step_id: z.string().min(1).max(128),
   kind: z.enum(["click", "wait"]),
@@ -219,6 +234,13 @@ export const electronActiveObservationResultSchema = z.strictObject({
       truncated: z.boolean(),
     })
     .default({ events: [], observed: 0, retained: 0, truncated: false }),
+  coverage: coverageSchema.default({
+    status: "partial_attach",
+    observed_event_families: [],
+    unavailable_event_families: [],
+    observed_roles: [],
+    pre_capture_activity: "unavailable",
+  }),
   limitations: z.array(z.string().max(4_096)).max(100),
 });
 export type ElectronActiveObservationResult = z.infer<

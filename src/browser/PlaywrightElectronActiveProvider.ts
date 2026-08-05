@@ -117,6 +117,24 @@ type ElectronHookSnapshot = z.infer<typeof hookSnapshotSchema>;
 type ElectronHookEvent = z.infer<typeof hookEventSchema>;
 type ElectronMetrics = z.infer<typeof metricSchema>[];
 
+const observableEventFamilies = [
+  "app-lifecycle",
+  "window-lifecycle",
+  "web-contents-lifecycle",
+  "navigation",
+  "shell-attempt",
+  "process-lifecycle",
+  "permission",
+  "popup-attempt",
+  "download",
+  "protocol",
+  "preload",
+  "native-addon",
+  "updater",
+  "error",
+  "ipc",
+] as const;
+
 const ipcEventKinds = new Set<ElectronHookEvent["kind"]>([
   "main-handler-invocation",
   "main-event-invocation",
@@ -128,6 +146,43 @@ const ipcEventKinds = new Set<ElectronHookEvent["kind"]>([
   "ipc-renderer-invoke",
   "ipc-renderer-post-message",
 ]);
+
+const createCoverage = (hookSnapshot: ElectronHookSnapshot) => {
+  const observedEventFamilies = [
+    ...new Set(
+      hookSnapshot.events.map(({ kind }) =>
+        ipcEventKinds.has(kind) ? "ipc" : kind,
+      ),
+    ),
+  ].sort();
+  const unavailableEventFamilies = observableEventFamilies.filter(
+    (family) => !observedEventFamilies.includes(family),
+  );
+  const observedRoles = [
+    ...new Set(
+      hookSnapshot.events.flatMap(({ process_type, kind }) => [
+        ...(process_type === null ? [] : [process_type]),
+        ...(kind === "window-lifecycle" ? ["window"] : []),
+        ...(kind === "web-contents-lifecycle" || kind === "navigation"
+          ? ["web_contents"]
+          : []),
+        ...(kind === "preload" ? ["preload"] : []),
+        ...(kind.startsWith("ipc-renderer") ? ["renderer"] : []),
+      ]),
+    ),
+  ].sort();
+  return {
+    status: hookSnapshot.hook_error
+      ? "hook_conflict"
+      : hookSnapshot.truncated
+        ? "capture_truncated"
+        : "partial_attach",
+    observed_event_families: observedEventFamilies,
+    unavailable_event_families: unavailableEventFamilies,
+    observed_roles: observedRoles,
+    pre_capture_activity: "unavailable",
+  } as const;
+};
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider
@@ -344,6 +399,7 @@ const createResult = (
         hookSnapshot.truncated ||
         hookSnapshot.events.length > input.limits.max_runtime_events,
     },
+    coverage: createCoverage(hookSnapshot),
     limitations: [
       "IPC payloads are represented only by bounded value shapes; values are never retained, channels are capped at 1,024 characters, and argument-shape arrays at 32 entries.",
       "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",

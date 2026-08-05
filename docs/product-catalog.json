@@ -680,10 +680,10 @@
       "mcp_resource_templates": 11
     },
     "digests": {
-      "tools_sha256": "badc93b9aeced7881643ea795c97afbba84805aa4444036a908ad9d21ee7b0c0",
+      "tools_sha256": "a5f24d48484186271b71eed18c7dd79df08b75c9cf35a9fb99d3edef774ee6fb",
       "prompts_sha256": "3886a3bf55a448def79e3eb429e6a56eb2ba075423c5cb1e5747642b389ef8fe",
       "resources_sha256": "e0e872276ebf6f88e916ef24930a99eed27ce4c93e494e60820e9bd8cc8497c3",
-      "combined_sha256": "db19a7e4ec1f1461ef4c2d77f803d9026a6e9fb1aa0637e55de9f79cc4dc147b",
+      "combined_sha256": "858155bd665ce4abfb243008083bdd2fc0597042a8cb3f5b8110c8a7fcb979ff",
       "providers_sha256": "7446b51788734ebf6f4f702e3a5a8c9f0b61967490c245f30bd37b2060827e6b"
     }
   }

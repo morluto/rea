@@ -297,6 +297,10 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
     result: {
       application: { process_ownership: "provider-owned" },
       ipc: { events: [{ channel: "readiness:echo" }] },
+      coverage: {
+        status: "partial_attach",
+        pre_capture_activity: "unavailable",
+      },
     },
   });
   expect(capturedInputs).toHaveLength(1);

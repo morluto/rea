@@ -230,7 +230,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "capture_electron_scenario",
     ...toolContractMetadata("capture_electron_scenario"),
     description:
-      "Run one explicitly approved, bounded Electron application through the official Playwright Electron launcher. REA owns startup and teardown, accepts click and wait actions, records correlated app/window/WebContents/process/preload/session/navigation/shell evidence, and captures IPC channel/direction/identity/value-shape metadata without retaining payload values. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. This is active authority and is separate from passive CDP observation.",
+      "Run one explicitly approved, bounded Electron application through the official Playwright Electron launcher. REA owns startup and teardown, accepts click and wait actions, records correlated app/window/WebContents/process/preload/session/navigation/shell evidence, and captures IPC channel/direction/identity/value-shape metadata without retaining payload values. Results include explicit observed/unavailable event families and partial-capture status. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. This is active authority and is separate from passive CDP observation.",
     kind: "electron-provider",
     inputSchema: electronActiveObservationInputSchema,
     outputSchema: evidenceResultOf(electronActiveObservationResultSchema),
