@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.0](https://github.com/morluto/rea/compare/rea-agents-3.0.0...rea-agents-3.1.0) (2026-08-05)
+
+
+### Features
+
+* **electron:** add autonomous Electron runtime analysis ([#464](https://github.com/morluto/rea/issues/464)) ([8f229ed](https://github.com/morluto/rea/commit/8f229ede70c0a4e224c1cf71d61487e17b779d6a))
+
+
+### Bug Fixes
+
+* **ci:** guard Release Please PR branch parsing ([84cc819](https://github.com/morluto/rea/commit/84cc819284b9ce7ee648850c85d5daf3a33e5a24))
+* **ci:** guard release PR branch parsing ([6838b6b](https://github.com/morluto/rea/commit/6838b6bff9ab5c400432caefd8c8737b86c41f07))
+* harden evidence lifecycle and MCP contracts ([5155924](https://github.com/morluto/rea/commit/51559245d2e1c2d7550cfe489716950fe6154bd0))
+
 ## [3.0.0](https://github.com/morluto/rea/compare/rea-agents-2.7.0...rea-agents-3.0.0) (2026-08-01)
 
 
