@@ -93,7 +93,7 @@ describe("passive V8 Inspector provider", () => {
     }
   });
 
-  test("admits an Electron main target that reports only bare file://", async () => {
+  test("excludes an Electron main target that reports only bare file://", async () => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: "file://",
@@ -111,12 +111,8 @@ describe("passive V8 Inspector provider", () => {
       });
       expect(listed.ok).toBe(true);
       if (!listed.ok) return;
-      expect(listed.value.targets.total).toBe(1);
-      expect(listed.value.targets.items[0]?.location).toEqual({
-        kind: "file",
-        file_path: fixture.root,
-        authority: "scope-fallback",
-      });
+      expect(listed.value.targets.total).toBe(0);
+      expect(listed.value.targets.items).toEqual([]);
 
       const observed = await provider.observe(
         observeInput(
@@ -126,17 +122,9 @@ describe("passive V8 Inspector provider", () => {
           "electron-main",
         ),
       );
-      expect(observed.ok).toBe(true);
-      if (!observed.ok) return;
-      expect(observed.value.target.location).toEqual({
-        kind: "file",
-        file_path: fixture.root,
-        authority: "scope-fallback",
-      });
-      expect(observed.value.scripts.items[0]?.location).toEqual({
-        kind: "file",
-        file_path: fixture.entry,
-      });
+      expect(observed.ok).toBe(false);
+      if (observed.ok) return;
+      expect(observed.error.message).toMatch(/outside_file_roots|target/u);
     } finally {
       await fake.close();
     }

@@ -65,34 +65,7 @@ export const authorizeRuntimeTargetLocation = async (
   targetType: string,
   roots: readonly string[],
   origins: readonly string[],
-): Promise<RuntimeLocationDecision> => {
-  const decision = await authorizeRuntimeLocation(value, roots, origins);
-  if (decision.allowed || targetType !== "node" || roots.length === 0)
-    return decision;
-  if (!isBareFileTarget(value)) return decision;
-  const scopeRoot = roots[0];
-  if (scopeRoot === undefined) return decision;
-  return {
-    allowed: true,
-    location: {
-      kind: "file",
-      file_path: scopeRoot,
-      authority: "scope-fallback",
-    },
-  };
-};
-
-const isBareFileTarget = (value: string): boolean => {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "file:" &&
-      url.hostname === "" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === ""
-    );
-  } catch {
-    return false;
-  }
-};
+): Promise<RuntimeLocationDecision> =>
+  // A bare file:// URL contains no source identity. Do not attach to the
+  // first configured root merely because the target happens to be Node.
+  authorizeRuntimeLocation(value, roots, origins);
