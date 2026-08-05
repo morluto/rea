@@ -92,11 +92,7 @@
         "id": "artifact",
         "surface": "artifact-provider",
         "count": 3,
-        "tools": [
-          "extract_artifact",
-          "inspect_artifact",
-          "inventory_artifact"
-        ]
+        "tools": ["extract_artifact", "inspect_artifact", "inventory_artifact"]
       },
       {
         "id": "managed",
@@ -313,10 +309,7 @@
       "id": "rea-cdp-electron",
       "name": "REA Electron file-page CDP observation provider",
       "version": "1",
-      "capabilities": [
-        "inspect_electron_page",
-        "list_electron_targets"
-      ]
+      "capabilities": ["inspect_electron_page", "list_electron_targets"]
     },
     {
       "id": "rea-dotnet-static",
@@ -344,9 +337,7 @@
       "id": "rea-javascript-application",
       "name": "REA JavaScript application analyzer",
       "version": "1",
-      "capabilities": [
-        "analyze_javascript_application"
-      ]
+      "capabilities": ["analyze_javascript_application"]
     },
     {
       "id": "rea-javascript-application-workflows",
@@ -371,25 +362,19 @@
       "id": "rea-javascript-runtime-reconciliation",
       "name": "REA JavaScript runtime reconciliation",
       "version": "1",
-      "capabilities": [
-        "reconcile_javascript_runtime"
-      ]
+      "capabilities": ["reconcile_javascript_runtime"]
     },
     {
       "id": "rea-playwright-browser-scenario",
       "name": "REA Playwright browser scenario capture provider",
       "version": "1",
-      "capabilities": [
-        "capture_browser_scenario"
-      ]
+      "capabilities": ["capture_browser_scenario"]
     },
     {
       "id": "rea-playwright-electron-active",
       "name": "REA Playwright active Electron observation provider",
       "version": "1",
-      "capabilities": [
-        "capture_electron_scenario"
-      ]
+      "capabilities": ["capture_electron_scenario"]
     },
     {
       "id": "rea-v8-inspector",
