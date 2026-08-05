@@ -2,7 +2,7 @@
   "catalog_schema_version": 1,
   "package": {
     "name": "rea-agents",
-    "version": "3.0.0",
+    "version": "3.1.0",
     "sdk": {
       "server": "2.0.0",
       "client": "2.0.0",

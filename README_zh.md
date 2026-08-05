@@ -173,7 +173,7 @@ Setup 会检测 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Win
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@3.0.0", "mcp"]
+      "args": ["-y", "rea-agents@3.1.0", "mcp"]
     }
   }
 }
