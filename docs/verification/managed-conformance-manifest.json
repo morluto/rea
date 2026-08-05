@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "manifest_id": "ecm_31b3d8c2095dafafb6c95a74c5de5e642067a342694f135684c0d94d80ecd8af",
+  "manifest_id": "ecm_aba877529714e59795e8a7b51c5513b17081bd701cea1ffee31422a1d95dfa31",
   "verifier": {
     "id": "rea-managed-conformance",
     "version": "1"
   },
   "environment": {
-    "platform": "darwin",
-    "architecture": "arm64",
+    "platform": "portable",
+    "architecture": "portable",
     "runtime": "node",
-    "runtime_version": "25"
+    "runtime_version": "portable"
   },
   "skill_digests": [
     {

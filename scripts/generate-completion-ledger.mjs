@@ -30,16 +30,27 @@ const { stdout } = await exec(
   },
 );
 const verifierOutput = JSON.parse(stdout);
+// Managed conformance claims are host-independent. Keep the checked-in
+// commitment reproducible across macOS, Linux, and Windows rather than
+// embedding the machine that happened to generate it.
+const portableCompletionReport = {
+  ...verifierOutput.completionReport,
+  environment: {
+    platform: "portable",
+    architecture: "portable",
+    runtime: "node",
+    runtime_version: "portable",
+  },
+};
 const { createCompletionLedgerArtifacts } = await import(
   `../dist/domain/completionLedgerGeneration.js?${String(Date.now())}`
 );
 const skillDigest = await directoryDigest(
   join(root, "skills/reverse-engineer-anything"),
 );
-const generated = createCompletionLedgerArtifacts(
-  verifierOutput.completionReport,
-  [{ skill_id: "reverse-engineer-anything", sha256: skillDigest }],
-);
+const generated = createCompletionLedgerArtifacts(portableCompletionReport, [
+  { skill_id: "reverse-engineer-anything", sha256: skillDigest },
+]);
 
 if (!check) await mkdir(outputRoot, { recursive: true });
 await Promise.all([
