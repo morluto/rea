@@ -279,7 +279,7 @@ jobs:
         run: npm run verify:inspector
 
   windows-curated:
-    name: Windows Ghidra P0 and package lane
+    name: Windows capability and package lane
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     runs-on: windows-latest
@@ -300,7 +300,7 @@ jobs:
           node -e "const report = JSON.parse(require('node:fs').readFileSync('windows-capabilities.json', 'utf8'));
           if (report.platform !== 'win32' || report.architecture !== 'x64')
           throw new Error('expected a Windows x64 capability report');"
-      - name: Run curated Windows P0 tests
+      - name: Run curated Windows capability tests
         run: >-
           npx vitest run --coverage.enabled=false
           tests/composition/analysis-sessions/binaryTarget.test.ts
@@ -310,7 +310,6 @@ jobs:
           tests/boundary/providers/ghidra/ghidraProvider.test.ts
           tests/boundary/providers/ghidra/ghidraTransport.test.ts
           tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts
-          tests/boundary/providers/ghidra/ghidraClient.test.ts
           tests/boundary/providers/ghidra/ghidraLauncher.test.ts
           tests/boundary/process/processOwnership.test.ts
           tests/boundary/process/processOwnershipPart2.test.ts

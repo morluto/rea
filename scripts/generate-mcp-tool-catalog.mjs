@@ -17,6 +17,9 @@ for (const argument of arguments_)
     throw new Error(`Unknown MCP tool catalog option: ${argument}`);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The checked-in catalog is a portable package artifact. Keep its canonical
+// provider metadata independent of the machine running the generator.
+const CATALOG_PLATFORM = "darwin";
 const sessionToolNames = new Set([
   ...TOOL_CONTRACTS.filter(({ kind }) => kind === "session").map(
     ({ name }) => name,
@@ -55,7 +58,7 @@ const catalog = TOOL_CONTRACTS.map((contract) => {
 });
 const auxiliaryProviders = [
   new ArtifactProvider(false, false),
-  new NativeMacOSProvider(),
+  new NativeMacOSProvider(undefined, CATALOG_PLATFORM),
   new ManagedStaticProvider(),
 ].map((provider) => ({
   identity: provider.identity(),
