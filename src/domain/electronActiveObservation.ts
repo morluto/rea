@@ -8,16 +8,48 @@ const absolutePathSchema = z
   .max(16_384)
   .refine(isAbsolute, "path must be absolute");
 
+const windowIndexSchema = z.number().int().min(0).max(99);
+
+const deepLinkUrlSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine((value) => {
+    try {
+      return new URL(value).protocol.length > 0;
+    } catch {
+      return false;
+    }
+  }, "deep-link url must be an absolute URL");
+
 const actionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     step_id: z.string().min(1).max(128),
     kind: z.literal("click"),
     selector: z.string().min(1).max(512),
+    window_index: windowIndexSchema.default(0),
   }),
   z.strictObject({
     step_id: z.string().min(1).max(128),
     kind: z.literal("wait"),
     duration_ms: z.number().int().min(0).max(10_000),
+    window_index: windowIndexSchema.optional(),
+  }),
+  z.strictObject({
+    step_id: z.string().min(1).max(128),
+    kind: z.literal("renderer-reload"),
+    window_index: windowIndexSchema.default(0),
+  }),
+  z.strictObject({
+    step_id: z.string().min(1).max(128),
+    kind: z.literal("renderer-crash"),
+    window_index: windowIndexSchema.default(0),
+  }),
+  z.strictObject({
+    step_id: z.string().min(1).max(128),
+    kind: z.literal("deep-link"),
+    delivery: z.enum(["open-url", "second-instance"]),
+    url: deepLinkUrlSchema,
   }),
 ]);
 
@@ -65,6 +97,7 @@ export type ElectronActiveObservationInput = z.infer<
 
 const ipcEventSchema = z.strictObject({
   sequence: z.number().int().min(1),
+  correlation_id: z.string().max(256).nullable().default(null),
   kind: z.enum([
     "main-handler-invocation",
     "main-event-invocation",
@@ -115,6 +148,7 @@ const ipcEventSchema = z.strictObject({
 
 const timelineEventSchema = z.strictObject({
   sequence: z.number().int().min(1),
+  correlation_id: z.string().max(256).nullable().default(null),
   kind: z.enum([
     "main-handler-invocation",
     "main-event-invocation",
@@ -173,6 +207,17 @@ const timelineEventSchema = z.strictObject({
 const processMetricSchema = z.strictObject({
   pid: z.number().int().min(1),
   type: z.string().min(1).max(128),
+  name: z.string().max(256).nullable(),
+  service_name: z.string().max(256).nullable(),
+});
+
+const windowResultSchema = z.strictObject({
+  window_id: z.string().max(256),
+  web_contents_id: z.string().max(256),
+  url: z.string().max(65_536),
+  title: z.string().max(16_384),
+  visible: z.boolean().nullable(),
+  destroyed: z.boolean(),
 });
 
 const coverageSchema = z.strictObject({
@@ -192,7 +237,15 @@ const coverageSchema = z.strictObject({
 
 const actionResultSchema = z.strictObject({
   step_id: z.string().min(1).max(128),
-  kind: z.enum(["click", "wait"]),
+  kind: z.enum([
+    "click",
+    "wait",
+    "renderer-reload",
+    "renderer-crash",
+    "deep-link",
+  ]),
+  window_index: windowIndexSchema.nullable(),
+  target: z.string().max(256).nullable(),
   status: z.enum(["completed", "failed", "cancelled"]),
   elapsed_ms: z.number().int().min(0),
   error: z.string().nullable(),
@@ -209,12 +262,7 @@ export const electronActiveObservationResultSchema = z.strictObject({
     cleanup: z.literal("terminated-owned-process"),
   }),
   actions: z.array(actionResultSchema).max(100),
-  windows: z.array(
-    z.strictObject({
-      url: z.string().max(65_536),
-      title: z.string().max(16_384),
-    }),
-  ),
+  windows: z.array(windowResultSchema).max(100),
   windows_truncated: z.boolean(),
   processes: z.strictObject({
     items: z.array(processMetricSchema).max(100),

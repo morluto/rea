@@ -6,11 +6,14 @@ import { afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createElectronEvidence } from "../../../src/application/ElectronEvidence.js";
+import { createElectronActiveEvidence } from "../../../src/application/ElectronActiveEvidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
+import { electronActiveObservationInputSchema } from "../../../src/domain/electronActiveObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { permissionAuthorityForRoot } from "../../fixtures/permissionAuthority.js";
+import { createElectronActiveObservationFixtureResult } from "../../fixtures/electronActiveObservationResult.js";
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 
@@ -140,6 +143,49 @@ it("keeps source-map declarations outside primary matching authority", async () 
     static_layers_with_read_approval: 0,
     runtime_script_declarations: 0,
   });
+});
+
+it("reconciles active Electron as a partial target-only runtime capture", async () => {
+  const fixture = await applicationFixture();
+  temporary.push(fixture);
+  const staticEvidence = await analyzeFixture(fixture);
+  const applicationPath = join(fixture, "main.js");
+  const input = electronActiveObservationInputSchema.parse({
+    schema_version: 1,
+    executable_path: process.execPath,
+    application_path: applicationPath,
+    application_root: fixture,
+    actions: [],
+    approved: true,
+  });
+  const runtimeEvidence = createElectronActiveEvidence(
+    input,
+    createElectronActiveObservationFixtureResult(applicationPath),
+    {
+      id: "rea-playwright-electron-active",
+      name: "REA Playwright active Electron observation provider",
+      version: "1",
+    },
+  );
+
+  const result = reconcileJavaScriptRuntime({
+    static_layers: [{ role: "application", analysis: staticEvidence }],
+    runtime_observations: [runtimeEvidence],
+  });
+
+  expect(result.runtime_captures).toMatchObject([
+    {
+      kind: "electron-active",
+      scripts: 0,
+      frames: 0,
+      workers: 0,
+      scripts_complete_within_scope: false,
+    },
+  ]);
+  expect(result.coverage.status).toBe("partial");
+  expect(result.limitations.join(" ")).toMatch(
+    /incomplete|not reported as executed/u,
+  );
 });
 
 it("imports an operator-provided cache layer through an explicit file mapping", async () => {

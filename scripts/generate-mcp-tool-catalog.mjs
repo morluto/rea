@@ -61,7 +61,20 @@ const auxiliaryProviders = [
   identity: provider.identity(),
   capabilities: provider.capabilities(),
 }));
-const payloadJson = JSON.stringify({ catalog, auxiliaryProviders });
+
+const canonicalizeJson = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+  );
+};
+
+const payloadJson = JSON.stringify(
+  canonicalizeJson({ catalog, auxiliaryProviders }),
+);
 const source = await format(
   `import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import type {

@@ -36,6 +36,7 @@ let observedIpc = 0;
 let observedRuntime = 0;
 let truncated = false;
 let sequence = 0;
+let correlationSequence = 0;
 
 const boundedString = (value, maximum) =>
   typeof value === "string" ? value.slice(0, maximum) : null;
@@ -109,6 +110,10 @@ const record = (event) => {
   }
   const raw = {
     sequence: ++sequence,
+    correlation_id:
+      typeof event.correlation_id === "string"
+        ? event.correlation_id
+        : `capture:${process.pid}:${++correlationSequence}`,
     event: null,
     phase: "observed",
     channel: null,
@@ -134,6 +139,7 @@ const record = (event) => {
     : [];
   events.push({
     ...raw,
+    correlation_id: boundedString(raw.correlation_id, MAX_IDENTIFIER_LENGTH),
     event: boundedString(raw.event, MAX_EVENT_NAME_LENGTH),
     channel: boundedString(raw.channel, MAX_CHANNEL_LENGTH),
     channel_truncated:

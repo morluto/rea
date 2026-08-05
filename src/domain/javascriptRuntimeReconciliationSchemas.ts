@@ -170,7 +170,7 @@ const layerSummarySchema = z.strictObject({
 const captureSummarySchema = z.strictObject({
   evidence_id: evidenceIdSchema,
   capture_sha256: digestSchema,
-  kind: z.enum(["browser", "electron", "v8-inspector"]),
+  kind: z.enum(["browser", "electron", "v8-inspector", "electron-active"]),
   target_node_id: nodeIdSchema,
   target_key: boundedTextSchema,
   target_location: boundedTextSchema,

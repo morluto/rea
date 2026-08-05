@@ -25,6 +25,8 @@ export type BrowserObservationFailureReason =
   | "protocol_error"
   | "disconnected"
   | "payload_limit"
+  | "window_not_found"
+  | "window_metadata_missing"
   | "cancelled"
   | "timeout"
   | "secret_unavailable";

@@ -129,6 +129,7 @@ process.stdout.write(JSON.stringify(globalThis.__reaElectronActiveSnapshot()) + 
     (event) => event.kind === "main-handler-invocation",
   );
   expect(ipc).toMatchObject({
+    correlation_id: expect.stringMatching(/^capture:\d+:\d+$/u),
     channel_truncated: true,
     argument_shapes_truncated: true,
     direction: "renderer-to-main",

@@ -215,7 +215,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "reconcile_javascript_runtime",
     ...toolContractMetadata("reconcile_javascript_runtime"),
     description:
-      "Reconcile verified static JavaScript application graphs with existing passive web or Electron CDP Evidence. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
+      "Reconcile verified static JavaScript application graphs with existing passive web/Electron CDP, passive V8 Inspector, or provider-owned active Electron Evidence. Active Electron captures contribute an explicitly partial target-only runtime record; they never invent renderer scripts, frames, workers, or execution claims. Exact captured-source digests take priority over caller-declared file/URL mappings; target, frame, script, and worker ambiguity remains explicit, and source-map authority stays separate.",
     kind: "electron-provider",
     inputSchema: reconcileJavaScriptRuntimeInputSchema,
     outputSchema: reconciliationOutputSchema,
@@ -230,7 +230,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "capture_electron_scenario",
     ...toolContractMetadata("capture_electron_scenario"),
     description:
-      "Run one explicitly approved, bounded Electron application through the official Playwright Electron launcher. REA owns startup and teardown, accepts click and wait actions, records correlated app/window/WebContents/process/preload/session/navigation/shell evidence, and captures IPC channel/direction/identity/value-shape metadata without retaining payload values. Results include explicit observed/unavailable event families and partial-capture status. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. This is active authority and is separate from passive CDP observation.",
+      "Use this for an explicitly approved, provider-owned Electron run when passive CDP or Inspector observation cannot exercise application behavior. REA owns startup and teardown, accepts bounded click/wait actions plus window-targeted renderer reload/crash and synthetic open-url/second-instance delivery, and returns correlated window/WebContents/process/preload/session/navigation/shell/IPC evidence without retaining payload values. Results identify observed and unavailable event families, coverage status, action targets, and truncation. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. Use passive Electron tools for observation-only work.",
     kind: "electron-provider",
     inputSchema: electronActiveObservationInputSchema,
     outputSchema: evidenceResultOf(electronActiveObservationResultSchema),

@@ -34,6 +34,7 @@ import {
   compareCodePoints,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { parseActiveElectronCapture } from "./javascriptRuntimeReconciliationActive.js";
 import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
 
 type StaticLayerInput =
@@ -101,6 +102,22 @@ export type ParsedRuntimeCapture =
   | (RuntimeCaptureBase & {
       readonly kind: "v8-inspector";
       readonly inspection: NormalizedV8Inspection;
+    })
+  | (RuntimeCaptureBase & {
+      readonly kind: "electron-active";
+      readonly inspection: {
+        readonly target: {
+          readonly target_id: string;
+          readonly type: string;
+          readonly title: string;
+          readonly attached: boolean;
+          readonly file_path: string;
+        };
+        readonly frames: readonly [];
+        readonly scripts: { readonly items: readonly [] };
+        readonly workers: readonly [];
+        readonly completeness: BrowserCompleteness;
+      };
     });
 
 /** Parse and semantically bind every static analysis Evidence layer. */
@@ -255,8 +272,11 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       scriptsCompleteWithinScope: false,
     };
   }
+  if (evidence.operation === "capture_electron_scenario") {
+    return parseActiveElectronCapture(evidence);
+  }
   throw new TypeError(
-    "Runtime reconciliation requires inspect_web_page, inspect_electron_page, or observe_javascript_runtime Evidence",
+    "Runtime reconciliation requires inspect_web_page, inspect_electron_page, observe_javascript_runtime, or capture_electron_scenario Evidence",
   );
 };
 

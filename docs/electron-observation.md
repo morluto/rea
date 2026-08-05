@@ -63,7 +63,9 @@ invoke Electron IPC, close a target, or terminate the application.
 Active Electron authority is separate and disabled by default. When enabled,
 REA launches an operator-approved Electron executable through the official
 Playwright Electron API, owns its lifetime, accepts bounded click/wait actions,
-and records process/window metrics plus IPC channel and value-shape metadata.
+window-targeted renderer reload/crash actions, and synthetic `open-url` or
+`second-instance` deep-link delivery. It records capture-scoped window and
+WebContents identities, process metrics, and IPC channel and value-shape metadata.
 Payload values are not retained.
 
 Configure exact roots and run the real fixture verifier with an operator-owned
@@ -90,11 +92,20 @@ The CLI and MCP surfaces accept the same schema. For a JSON request file:
 rea capture-electron-scenario scenario.json --json
 ```
 
-The result records bounded action status, correlated app/window/WebContents,
+The result records bounded action status and targets, correlated app/window/WebContents,
 preload, session, navigation, shell, permission, popup, download, protocol,
 native-addon, process, and IPC timeline events. IPC channels are capped at
 1,024 characters and argument-shape metadata at 32 entries; values are never
-retained. The active hook blocks and records external shell/navigation,
+retained. Renderer crash/restart and deep-link actions are synthetic, bounded
+scenario controls; their attempted and observed outcomes remain in the
+timeline. The active hook blocks and records external shell/navigation,
 permission, download, popup, updater, and OS-integration effects. The timeline
 is explicitly partial when attachment starts after application activity or when
 the event budget is exhausted.
+
+Active Electron Evidence can also be supplied to
+[`reconcile_javascript_runtime`](javascript-runtime-reconciliation.md). That
+projection is intentionally target-only and partial: it binds the approved
+application path and capture outcome to the static graph, while frames, scripts,
+workers, and execution claims remain unavailable until a separate passive runtime
+capture provides them.

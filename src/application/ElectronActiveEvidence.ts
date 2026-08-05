@@ -33,6 +33,7 @@ export const createElectronActiveEvidence = (
 const parameters = (
   input: ElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
+  approved: input.approved,
   schema_version: input.schema_version,
   executable_path: input.executable_path,
   application_path: input.application_path,

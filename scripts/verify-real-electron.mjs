@@ -24,7 +24,29 @@ const input = electronActiveObservationInputSchema.parse({
   executable_path: executable,
   application_path: applicationPath,
   application_root: applicationRoot,
-  actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
+  actions: [
+    { step_id: "ipc", kind: "click", selector: "#run", window_index: 0 },
+    {
+      step_id: "open-url",
+      kind: "deep-link",
+      delivery: "open-url",
+      url: "rea-readiness://open-url",
+    },
+    {
+      step_id: "second-instance",
+      kind: "deep-link",
+      delivery: "second-instance",
+      url: "rea-readiness://second-instance",
+    },
+    { step_id: "renderer-reload", kind: "renderer-reload", window_index: 1 },
+    { step_id: "renderer-crash", kind: "renderer-crash", window_index: 1 },
+    {
+      step_id: "renderer-restart",
+      kind: "wait",
+      duration_ms: 250,
+      window_index: 1,
+    },
+  ],
   approved: true,
 });
 const verifierRun = createVerifierRun();
@@ -41,6 +63,15 @@ const output = {
   windows: result.value.windows,
   verified:
     result.value.actions.every(({ status }) => status === "completed") &&
+    result.value.actions.some(
+      ({ kind, window_index }) =>
+        kind === "renderer-reload" && window_index === 1,
+    ) &&
+    result.value.actions.some(
+      ({ kind, window_index }) =>
+        kind === "renderer-crash" && window_index === 1,
+    ) &&
+    result.value.windows.length >= 2 &&
     result.value.ipc.events.some(
       ({ kind, channel }) =>
         kind === "main-handler-invocation" && channel === "readiness:echo",
@@ -64,6 +95,15 @@ const output = {
     result.value.timeline.events.some(
       ({ kind, event, phase }) =>
         kind === "preload" && event === "configured" && phase === "completed",
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event }) =>
+        kind === "protocol" &&
+        (event === "open-url" || event === "second-instance"),
+    ) &&
+    result.value.timeline.events.some(
+      ({ kind, event }) =>
+        kind === "process-lifecycle" && event === "child.spawn",
     ),
 };
 if (!output.verified)

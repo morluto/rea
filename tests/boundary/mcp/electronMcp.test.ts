@@ -14,7 +14,6 @@ import type { ElectronActiveObservationPort } from "../../../src/application/Ele
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { parseConfig } from "../../../src/config.js";
-import { electronActiveObservationResultSchema } from "../../../src/domain/electronActiveObservation.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
@@ -22,6 +21,7 @@ import {
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
+import { createElectronActiveObservationFixtureResult } from "../../fixtures/electronActiveObservationResult.js";
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -194,47 +194,8 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
   await symlink(root, aliasedRoot, "dir");
   temporary.push(aliasedRoot);
   const capturedInputs: unknown[] = [];
-  const activeResult = electronActiveObservationResultSchema.parse({
-    schema_version: 1,
-    application: {
-      executable_path: process.execPath,
-      application_path: applicationPath,
-      electron_version: "test-electron",
-      process_ownership: "provider-owned",
-      cleanup: "terminated-owned-process",
-    },
-    actions: [
-      {
-        step_id: "submit",
-        kind: "click",
-        status: "completed",
-        elapsed_ms: 3,
-        error: null,
-      },
-    ],
-    windows: [{ url: "file:///tmp/app.html", title: "Fixture" }],
-    windows_truncated: false,
-    processes: { items: [{ pid: 1234, type: "Browser" }], truncated: false },
-    ipc: {
-      events: [
-        {
-          sequence: 1,
-          kind: "main-handler-invocation",
-          channel: "readiness:echo",
-          argument_shapes: ["string"],
-          result_shape: "object",
-          process_type: "main",
-          error: false,
-        },
-      ],
-      observed: 1,
-      retained: 1,
-      truncated: false,
-    },
-    limitations: [
-      "IPC payloads are represented only by bounded value shapes; values are never retained.",
-    ],
-  });
+  const activeResult =
+    createElectronActiveObservationFixtureResult(applicationPath);
   const provider: ElectronActiveObservationPort = {
     identity: () => ({
       id: "test-electron-active",
