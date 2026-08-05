@@ -26,6 +26,7 @@ const limitsSchema = z.strictObject({
   action_timeout_ms: z.number().int().min(1).max(30_000).default(5_000),
   max_actions: z.number().int().min(1).max(100).default(20),
   max_ipc_events: z.number().int().min(1).max(10_000).default(2_000),
+  max_runtime_events: z.number().int().min(1).max(20_000).default(5_000),
   max_processes: z.number().int().min(1).max(100).default(32),
   max_windows: z.number().int().min(1).max(100).default(32),
 });
@@ -44,6 +45,7 @@ export const electronActiveObservationInputSchema = z
       action_timeout_ms: 5_000,
       max_actions: 20,
       max_ipc_events: 2_000,
+      max_runtime_events: 5_000,
       max_processes: 32,
       max_windows: 32,
     }),
@@ -68,8 +70,63 @@ const ipcEventSchema = z.strictObject({
     "main-event-invocation",
     "utility-process-fork",
     "utility-process-message",
+    "ipc-main-to-renderer",
+    "ipc-utility-to-main",
   ]),
+  event: z.string().max(128).nullable().optional(),
+  phase: z
+    .enum(["attempted", "completed", "blocked", "failed", "observed"])
+    .nullable()
+    .optional(),
   channel: z.string().max(1_024).nullable(),
+  direction: z
+    .enum([
+      "renderer-to-main",
+      "main-to-renderer",
+      "main-to-utility",
+      "utility-to-main",
+    ])
+    .nullable()
+    .optional(),
+  sender: z.string().max(256).nullable().optional(),
+  receiver: z.string().max(256).nullable().optional(),
+  target: z.string().max(256).nullable().optional(),
+  argument_shapes: z.array(z.string().max(64)).max(32),
+  result_shape: z.string().max(64).nullable(),
+  process_type: z.string().max(128).nullable(),
+  error: z.boolean(),
+});
+
+const timelineEventSchema = z.strictObject({
+  sequence: z.number().int().min(1),
+  kind: z.enum([
+    "main-handler-invocation",
+    "main-event-invocation",
+    "utility-process-fork",
+    "utility-process-message",
+    "ipc-main-to-renderer",
+    "ipc-utility-to-main",
+    "app-lifecycle",
+    "window-lifecycle",
+    "web-contents-lifecycle",
+    "navigation",
+    "shell-attempt",
+    "process-lifecycle",
+  ]),
+  event: z.string().max(128).nullable(),
+  phase: z.enum(["attempted", "completed", "blocked", "failed", "observed"]),
+  channel: z.string().max(1_024).nullable(),
+  direction: z
+    .enum([
+      "renderer-to-main",
+      "main-to-renderer",
+      "main-to-utility",
+      "utility-to-main",
+    ])
+    .nullable(),
+  sender: z.string().max(256).nullable(),
+  receiver: z.string().max(256).nullable(),
+  target: z.string().max(256).nullable(),
   argument_shapes: z.array(z.string().max(64)).max(32),
   result_shape: z.string().max(64).nullable(),
   process_type: z.string().max(128).nullable(),
@@ -117,6 +174,14 @@ export const electronActiveObservationResultSchema = z.strictObject({
     retained: z.number().int().min(0),
     truncated: z.boolean(),
   }),
+  timeline: z
+    .strictObject({
+      events: z.array(timelineEventSchema).max(20_000),
+      observed: z.number().int().min(0),
+      retained: z.number().int().min(0),
+      truncated: z.boolean(),
+    })
+    .default({ events: [], observed: 0, retained: 0, truncated: false }),
   limitations: z.array(z.string().max(4_096)).max(100),
 });
 export type ElectronActiveObservationResult = z.infer<

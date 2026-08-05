@@ -43,8 +43,29 @@ const hookEventSchema = z.strictObject({
     "main-event-invocation",
     "utility-process-fork",
     "utility-process-message",
+    "ipc-main-to-renderer",
+    "ipc-utility-to-main",
+    "app-lifecycle",
+    "window-lifecycle",
+    "web-contents-lifecycle",
+    "navigation",
+    "shell-attempt",
+    "process-lifecycle",
   ]),
+  event: z.string().max(128).nullable(),
+  phase: z.enum(["attempted", "completed", "blocked", "failed", "observed"]),
   channel: z.string().max(1_024).nullable(),
+  direction: z
+    .enum([
+      "renderer-to-main",
+      "main-to-renderer",
+      "main-to-utility",
+      "utility-to-main",
+    ])
+    .nullable(),
+  sender: z.string().max(256).nullable(),
+  receiver: z.string().max(256).nullable(),
+  target: z.string().max(256).nullable(),
   argument_shapes: z.array(z.string().max(64)).max(32),
   result_shape: z.string().max(64).nullable(),
   process_type: z.string().max(128).nullable(),
@@ -53,6 +74,8 @@ const hookEventSchema = z.strictObject({
 const hookSnapshotSchema = z.strictObject({
   events: z.array(hookEventSchema).max(10_000),
   observed: z.number().int().min(0),
+  observed_ipc: z.number().int().min(0),
+  observed_runtime: z.number().int().min(0),
   truncated: z.boolean(),
   hook_error: z.boolean(),
 });
@@ -70,7 +93,17 @@ type ElectronPaths = {
 };
 type ElectronActions = ElectronActiveObservationResult["actions"];
 type ElectronHookSnapshot = z.infer<typeof hookSnapshotSchema>;
+type ElectronHookEvent = z.infer<typeof hookEventSchema>;
 type ElectronMetrics = z.infer<typeof metricSchema>[];
+
+const ipcEventKinds = new Set<ElectronHookEvent["kind"]>([
+  "main-handler-invocation",
+  "main-event-invocation",
+  "utility-process-fork",
+  "utility-process-message",
+  "ipc-main-to-renderer",
+  "ipc-utility-to-main",
+]);
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider
@@ -94,7 +127,10 @@ export class PlaywrightElectronActiveProvider
       application = await electron.launch({
         executablePath: paths.executable,
         cwd: paths.root,
-        env: safeElectronEnvironment(input.limits.max_ipc_events),
+        env: safeElectronEnvironment(
+          input.limits.max_ipc_events,
+          input.limits.max_runtime_events,
+        ),
         args: ["-r", hookPath, paths.application, ...input.args],
         timeout: Math.max(1, deadline - Date.now()),
       });
@@ -211,7 +247,14 @@ const readApplicationState = async (
         );
         return typeof candidate === "function"
           ? candidate()
-          : { events: [], observed: 0, truncated: false, hook_error: true };
+          : {
+              events: [],
+              observed: 0,
+              observed_ipc: 0,
+              observed_runtime: 0,
+              truncated: false,
+              hook_error: true,
+            };
       }),
     ]);
   return {
@@ -239,6 +282,9 @@ const createResult = (
   },
 ): ElectronActiveObservationResult => {
   const { hookSnapshot } = state;
+  const ipcEvents = hookSnapshot.events.filter(({ kind }) =>
+    ipcEventKinds.has(kind),
+  );
   return electronActiveObservationResultSchema.parse({
     schema_version: 1,
     application: {
@@ -256,20 +302,30 @@ const createResult = (
       truncated: state.metrics.length > input.limits.max_processes,
     },
     ipc: {
-      events: hookSnapshot.events.slice(0, input.limits.max_ipc_events),
+      events: ipcEvents.slice(0, input.limits.max_ipc_events),
+      observed: hookSnapshot.observed_ipc,
+      retained: Math.min(ipcEvents.length, input.limits.max_ipc_events),
+      truncated:
+        hookSnapshot.truncated ||
+        ipcEvents.length > input.limits.max_ipc_events,
+    },
+    timeline: {
+      events: hookSnapshot.events.slice(0, input.limits.max_runtime_events),
       observed: hookSnapshot.observed,
       retained: Math.min(
         hookSnapshot.events.length,
-        input.limits.max_ipc_events,
+        input.limits.max_runtime_events,
       ),
       truncated:
         hookSnapshot.truncated ||
-        hookSnapshot.events.length > input.limits.max_ipc_events,
+        hookSnapshot.events.length > input.limits.max_runtime_events,
     },
     limitations: [
       "IPC payloads are represented only by bounded value shapes; values are never retained.",
+      "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",
+      "The runtime timeline records bounded lifecycle, navigation, shell, process, and IPC events; activity before hook installation is unavailable.",
       "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
-      "The owned Electron process retains normal host filesystem and network privileges; the policy does not sandbox it.",
+      "External shell opens are blocked by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",
       ...(state.windowsTruncated
         ? ["Windows beyond max_windows were not retained."]
         : []),
@@ -300,6 +356,7 @@ const canonicalPaths = async (
 
 const safeElectronEnvironment = (
   maxIpcEvents: number,
+  maxRuntimeEvents: number,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[
@@ -317,6 +374,10 @@ const safeElectronEnvironment = (
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),
     ["REA_ELECTRON_ACTIVE_MAX_IPC_EVENTS", String(maxIpcEvents)] as const,
+    [
+      "REA_ELECTRON_ACTIVE_MAX_RUNTIME_EVENTS",
+      String(maxRuntimeEvents),
+    ] as const,
   ]);
 
 const runWithExecutionLimits = async <Value>(
