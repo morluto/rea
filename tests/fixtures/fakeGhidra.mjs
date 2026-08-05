@@ -1,7 +1,10 @@
 import { rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 
-const [
+const configuration = JSON.parse(
+  process.env.REA_GHIDRA_FIXTURE_CONFIG ?? "null",
+);
+const {
   endpointPath,
   token,
   runId,
@@ -10,7 +13,7 @@ const [
   targetSha256,
   transport,
   mode = "success",
-] = process.argv.slice(2);
+} = configuration ?? {};
 
 if (
   endpointPath === undefined ||

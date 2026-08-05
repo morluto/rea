@@ -61,21 +61,22 @@ class FixtureLauncher implements GhidraLauncher {
     this.tokens.push(session.token);
     const projectRoot = join(session.runtimeRoot, "project");
     await mkdir(projectRoot, { recursive: true });
-    const process_ = spawn(
-      process.execPath,
-      [
-        fixturePath,
-        session.endpointPath,
-        session.token,
-        session.runId,
-        session.providerVersion,
-        session.profileDigest,
-        session.targetSha256,
-        session.transport,
-        this.mode,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const process_ = spawn(process.execPath, [fixturePath], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
+          endpointPath: session.endpointPath,
+          token: session.token,
+          runId: session.runId,
+          providerVersion: session.providerVersion,
+          profileDigest: session.profileDigest,
+          targetSha256: session.targetSha256,
+          transport: session.transport,
+          mode: this.mode,
+        }),
+      },
+    });
     this.processes.push(process_);
     return ok({
       process: process_,
