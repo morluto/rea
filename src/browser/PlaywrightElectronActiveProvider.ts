@@ -197,12 +197,6 @@ export class PlaywrightElectronActiveProvider
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
       };
-      await application.firstWindow({
-        timeout: Math.min(
-          input.limits.action_timeout_ms,
-          Math.max(1, deadline - Date.now()),
-        ),
-      });
       const actions = await runElectronActions(
         application,
         input,

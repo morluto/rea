@@ -92,7 +92,7 @@ function runCommand() {
     child = spawn(command[0], command.slice(1), {
       cwd: process.cwd(),
       env: process.env,
-      shell: false,
+      shell: process.platform === "win32",
       stdio: "inherit",
     });
     child.once("error", reject);

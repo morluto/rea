@@ -96,3 +96,40 @@ it("redacts action inputs from Playwright failures", async () => {
   expect(result[0]?.error).not.toContain(selector);
   expect(result[0]?.error).not.toContain("raw-secret");
 });
+
+it("runs an untargeted deep-link without requiring a BrowserWindow", async () => {
+  const input = electronActiveObservationInputSchema.parse({
+    schema_version: 1,
+    executable_path: "/opt/electron",
+    application_path: "/opt/app/main.js",
+    application_root: "/opt/app",
+    actions: [
+      {
+        step_id: "open-deep-link",
+        kind: "deep-link",
+        delivery: "second-instance",
+        url: "rea-fixture://open/item",
+      },
+    ],
+    approved: true,
+  });
+  const application = {
+    windows: () => [],
+    evaluate: async () => true,
+  };
+
+  const result = await runElectronActions(
+    application as never,
+    input,
+    {},
+    Date.now() + 1_000,
+  );
+
+  expect(result).toMatchObject([
+    {
+      step_id: "open-deep-link",
+      status: "completed",
+      error: null,
+    },
+  ]);
+});
