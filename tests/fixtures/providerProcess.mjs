@@ -1,9 +1,17 @@
 import { spawn } from "node:child_process";
 
 const [mode, value = "0"] = process.argv.slice(2);
+let keepAliveTimer;
+let detachedChild;
 
 const keepAlive = () => {
-  setInterval(() => undefined, 1_000);
+  keepAliveTimer = setInterval(() => undefined, 1_000);
+};
+
+const stopDetachedFixture = (signal) => {
+  if (keepAliveTimer !== undefined) clearInterval(keepAliveTimer);
+  if (detachedChild?.exitCode === null) detachedChild.kill(signal);
+  process.exitCode = signal === "SIGINT" ? 130 : 143;
 };
 
 const write = (stream, data) =>
@@ -38,7 +46,7 @@ switch (mode) {
     keepAlive();
     break;
   case "detached-child": {
-    const child = spawn(
+    detachedChild = spawn(
       process.execPath,
       [
         "-e",
@@ -47,11 +55,13 @@ switch (mode) {
       { detached: true, stdio: "ignore" },
     );
     await new Promise((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
+      detachedChild.once("spawn", resolve);
+      detachedChild.once("error", reject);
     });
-    await write(process.stdout, `ready:${child.pid}\n`);
-    child.unref();
+    process.once("SIGINT", () => stopDetachedFixture("SIGINT"));
+    process.once("SIGTERM", () => stopDetachedFixture("SIGTERM"));
+    await write(process.stdout, `ready:${detachedChild.pid}\n`);
+    detachedChild.unref();
     keepAlive();
     break;
   }

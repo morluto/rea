@@ -46,6 +46,7 @@ are:
 | Command                   | Scope                                                                                                                  |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `npm run test:fast`       | Domain, service, adapter, composition, boundary, MCP boundary, and conformance projects                                |
+| `npm run test:local`      | Changed and related tests without the build step; lightweight local feedback loop                                      |
 | `npm run test:boundary`   | Boundary, MCP boundary, and process-global projects                                                                    |
 | `npm run test:mcp`        | MCP boundary project only                                                                                              |
 | `npm run test:acceptance` | Complete CLI and MCP acceptance workflows                                                                              |
@@ -59,6 +60,15 @@ Changed-test selection is a fast feedback aid, not release evidence. It can
 miss behavior connected through runtime registration, generated data, shell
 entrypoints, or other relationships that are absent from the import graph.
 Use `npm run check:pr` before handing off a contribution.
+
+Local full-suite Vitest runs are intentionally capped at one worker and one
+project at a time. Boundary fixtures own real subprocesses, and this local cap
+keeps aggregate memory predictable; CI retains the existing two-worker budget.
+`npm test`, `npm run docs:check`, and `npm run docs:generate` share
+repository-local locks and fail fast when the same class of command is already
+running. The `npm test` build is inside that lock. `check:pr` runs its test task
+before starting documentation validation, so TypeDoc does not compete with the
+full suite for memory.
 
 Vitest and Node persistent compile caches are deliberately not enabled by
 default. To evaluate repeated local runs, opt in for both cold and warm

@@ -54,6 +54,7 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run build`: compile `src/` into `dist/`.
 - `npm run build:cached`: compile through Turbo and reuse a valid local build cache entry.
 - `npm test`: restore or build `dist/`, then run the Vitest suite once without coverage or retries locally.
+- `npm run test:local`: run only changed and related tests without rebuilding `dist/`; use this for the lightweight local loop.
 - `npm run test:fast`: run pure and subprocess test projects without the serial integration group.
 - `npm run test:changed`: run changed and related non-serial tests once.
 - `npm run test:integration`: run the serial filesystem, process, and CLI integration group.
@@ -85,6 +86,14 @@ See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architec
 - `npm run docs:api:cached`: render API documentation through Turbo or restore a valid local result.
 - `npm run docs:generate`: refresh committed metadata and render the uncommitted API documentation.
 - `npm run docs:check`: verify generated package metadata, the canonical product catalog, caller-visible documentation facts, TypeDoc rendering, and the error JSON schema.
+
+Local full-suite Vitest runs use one worker and serial project groups because
+boundary tests own subprocess fixtures. CI retains the existing two-worker
+budget. The `test`, `docs:check`, and `docs:generate` commands use
+repository-local locks and refuse overlapping runs; interrupted commands can
+leave a stale lock that is removed automatically when its owner PID is no
+longer alive. The `npm test` build runs inside that lock.
+
 - `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
 - `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
 

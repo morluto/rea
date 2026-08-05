@@ -11,11 +11,13 @@ const COVERAGE_ENABLED = process.argv.some((argument) =>
 const COVERAGE_SHARD = process.argv.some((argument) =>
   argument.startsWith("--shard="),
 );
-// Keep every project on one worker budget. Vitest requires projects selected
-// by an explicit file list to agree on maxWorkers unless they are assigned
-// artificial sequence barriers; a shared cap avoids that trap and limits the
-// descriptor pressure from boundary subprocesses.
-export const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
+const LOCAL_ONLY = process.env.CI !== "true";
+
+// Keep local runs to one worker and one project at a time. CI shards have
+// dedicated capacity and retain the existing bounded worker budget.
+export const MAX_TEST_WORKERS = LOCAL_ONLY
+  ? 1
+  : Math.min(2, availableParallelism());
 
 export const TEST_PROJECTS = [
   {
@@ -83,7 +85,11 @@ export const TEST_PROJECTS = [
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
   },
-];
+].map((project, groupOrder) => ({
+  ...project,
+  maxWorkers: MAX_TEST_WORKERS,
+  ...(LOCAL_ONLY ? { fileParallelism: false, sequence: { groupOrder } } : {}),
+}));
 
 const ZERO_COVERAGE_THRESHOLDS = {
   statements: 0,

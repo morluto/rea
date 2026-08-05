@@ -344,6 +344,45 @@ describe("provider process spawning primitives", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "stops a detached fixture descendant when its launcher receives SIGTERM",
+    async () => {
+      const launcher = spawnProviderProcessFixture("detached-child");
+      let detachedChildPid: number | undefined;
+      const cleanup = async (): Promise<void> => {
+        await stopProviderProcessFixture(launcher);
+        if (detachedChildPid === undefined) return;
+        try {
+          process.kill(detachedChildPid, "SIGKILL");
+        } catch (cause: unknown) {
+          if (
+            !(
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "ESRCH"
+            )
+          )
+            throw cause;
+        }
+      };
+      try {
+        detachedChildPid = await waitForDetachedProviderChild(launcher);
+        const launcherPid = launcher.pid;
+        if (launcherPid === undefined)
+          throw new Error("Detached fixture launcher did not expose a PID");
+        launcher.kill("SIGTERM");
+        await Promise.all([
+          waitForPidExit(launcherPid),
+          waitForPidExit(detachedChildPid),
+        ]);
+      } catch (cause: unknown) {
+        await cleanup();
+        throw cause;
+      }
+      await cleanup();
+    },
+  );
+
   it("allows interpreter launchers to rely on parent and run-token identity", async () => {
     const spawned = await spawnOwnedProviderProcess({
       command: process.execPath,
