@@ -46,6 +46,7 @@
     "scripts/rea.mjs",
     "scripts/package-runner-bootstrap.mjs",
     "scripts/electron-active-hook.cjs",
+    "scripts/electron-active-hook-boundaries.cjs",
     "scripts/hopper-demo-x11.py",
     "scripts/prepack.mjs",
     "scripts/prepare.mjs",
