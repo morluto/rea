@@ -10,7 +10,7 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("package-runner setup bootstrap", () => {
-  it("reruns bare setup through the current release when npm selected a local package", () => {
+  it("reruns bare setup through the current release when npm selected a package", () => {
     expect(
       packageRunnerSetupPlan({
         args: ["setup", "--client", "codex"],
@@ -26,6 +26,7 @@ describe("package-runner setup bootstrap", () => {
       args: [
         "exec",
         "--yes",
+        "--prefer-online",
         "--package=rea-agents@latest",
         "--",
         "rea",
@@ -36,7 +37,7 @@ describe("package-runner setup bootstrap", () => {
     });
   });
 
-  it("leaves explicit rollback and non-local invocations untouched", () => {
+  it("leaves explicit rollback invocations untouched and refreshes cached packages", () => {
     const base = {
       args: ["setup"],
       packageRoot: "/work/project/node_modules/rea-agents",
@@ -76,7 +77,14 @@ describe("package-runner setup bootstrap", () => {
           npm_config_local_prefix: "/work/project",
         },
       }),
-    ).toBeUndefined();
+    ).toEqual(
+      expect.objectContaining({
+        args: expect.arrayContaining([
+          "--prefer-online",
+          "--package=rea-agents@latest",
+        ]),
+      }),
+    );
   });
 
   it("does not redirect recursively or affect commands other than setup", () => {
@@ -141,6 +149,7 @@ writeFileSync(process.env.REA_BOOTSTRAP_TEST_LOG, JSON.stringify({
       args: [
         "exec",
         "--yes",
+        "--prefer-online",
         "--package=rea-agents@latest",
         "--",
         "rea",
