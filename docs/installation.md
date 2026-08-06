@@ -15,13 +15,13 @@ current package-runner invocation. REA still prints its own setup plan and asks
 for separate approval before changing agent configuration or installing a
 product-owned component.
 
-When bare `npx` resolves `rea-agents` from the current project's
-`node_modules`, the selected dispatcher restarts setup through
-`rea-agents@latest` before REA plans or writes configuration. This protects
-current and future releases from silently persisting stale integration state.
-Code in an already-published older release cannot acquire that check
-retroactively; invoke `npx -y rea-agents@latest setup` once to repair any
-registration it created.
+When bare `npx` resolves an older `rea-agents` package from the current project
+or its local cache, the selected dispatcher restarts setup through
+`rea-agents@latest` with online metadata before REA plans or writes
+configuration. This protects current and future releases from silently
+persisting stale integration state. Code in an already-published older release
+cannot acquire that check retroactively; invoke `npx -y rea-agents@latest setup`
+once to repair any registration it created.
 
 For an intentional rollback, make the package request explicit:
 
