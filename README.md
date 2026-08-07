@@ -4,7 +4,7 @@
 
 # REA: Reverse Engineer Anything
 
-### One CLI and MCP server for agents to reverse engineer anything
+### Reverse engineer anything with agents, from app behavior down to native binaries.
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
