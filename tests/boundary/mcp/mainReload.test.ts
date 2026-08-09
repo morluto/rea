@@ -19,6 +19,7 @@ import {
 type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
 const directories: string[] = [];
+const RELOAD_ASSERTION_TIMEOUT_MS = 5_000;
 
 afterEach(async () => {
   await Promise.all(
@@ -64,7 +65,9 @@ describe("runtime permission reload", () => {
 
     releaseValidRead.resolve();
     await expect
-      .poll(() => canRead(runtime.authority, fixture.newRoot))
+      .poll(() => canRead(runtime.authority, fixture.newRoot), {
+        timeout: RELOAD_ASSERTION_TIMEOUT_MS,
+      })
       .toBe(true);
 
     expect(runtime.options.processPolicy?.().status).toBe("enabled");
@@ -109,7 +112,9 @@ describe("runtime permission reload", () => {
     releaseFirstRead.resolve();
     await secondReadStarted.promise;
     await expect
-      .poll(() => canRead(runtime.authority, fixture.latestRoot))
+      .poll(() => canRead(runtime.authority, fixture.latestRoot), {
+        timeout: RELOAD_ASSERTION_TIMEOUT_MS,
+      })
       .toBe(true);
 
     expect(runtime.options.processPolicy?.().status).toBe("disabled");
@@ -134,9 +139,13 @@ describe("runtime permission reload", () => {
     configure(fixture.env, fixture.newRoot, true);
     runtime.reload();
     runtime.reload();
-    await expect.poll(() => reads).toBe(2);
     await expect
-      .poll(() => canRead(runtime.authority, fixture.newRoot))
+      .poll(() => reads, { timeout: RELOAD_ASSERTION_TIMEOUT_MS })
+      .toBe(2);
+    await expect
+      .poll(() => canRead(runtime.authority, fixture.newRoot), {
+        timeout: RELOAD_ASSERTION_TIMEOUT_MS,
+      })
       .toBe(true);
 
     expect(reads).toBe(2);

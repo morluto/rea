@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
-import { verifyAvailableToolCatalog } from "./lib/verify-package-core.mjs";
+import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
@@ -84,7 +84,7 @@ try {
   let toolCount = 0;
   try {
     await client.connect(server);
-    toolCount = (await verifyAvailableToolCatalog(client)).length;
+    toolCount = (await verifyCompleteToolCatalog(client)).length;
   } finally {
     await client.close();
   }
