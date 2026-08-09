@@ -1,31 +1,48 @@
-import { isAbsolute } from "node:path";
-
 import { ConfigurationError } from "../domain/errors.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { ok, type Result } from "../domain/result.js";
 import { parseEnvironment, type Environment } from "./environment.js";
 import {
   parseStringArray,
-  parseBrowserArray,
-  parseElectronFileRoots,
+  parseAbsoluteRoots,
   parseLoaderArgs,
 } from "./parsers.js";
 import {
   filePolicy,
   permissionScope,
   administratorGrants,
-  browserNetworkScope,
 } from "./permissions.js";
 import type { AppConfig } from "./types.js";
 import type { PermissionCeiling } from "../domain/permissionPolicy.js";
 import {
-  browserEndpointSchema,
-  browserOriginSchema,
-} from "../domain/browserObservation.js";
-import {
   appendElectronAutomationCeiling,
-  parseElectronAutomationArrays,
-  type ElectronAutomationArrays,
+  parseElectronAutomationPolicy,
+  type ElectronAutomationPolicy,
 } from "./electronAutomation.js";
+import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
+import {
+  appendBrowserScenarioCeiling,
+  parseBrowserScenarioPolicy,
+  type BrowserScenarioPolicy,
+} from "./browserScenario.js";
+import {
+  appendManagedRuntimeCeiling,
+  parseManagedRuntimePolicy,
+} from "./managedRuntime.js";
+import {
+  appendJavaScriptReplayCeiling,
+  parseJavaScriptReplayPolicy,
+} from "./javascriptReplay.js";
+import type { JavaScriptReplayPolicy } from "../application/JavaScriptReplayPlanning.js";
+import {
+  appendProcessCaptureCeiling,
+  parseProcessExecutionPolicy,
+} from "./processCapture.js";
+import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
+import {
+  appendPassiveObservationCeilings,
+  parsePassiveObservationPolicies,
+  type PassiveObservationPolicies,
+} from "./passiveObservation.js";
 
 const DEFAULT_HOPPER_LAUNCHER_PATH =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -34,66 +51,30 @@ const defaultHopperLauncherPath = (): string =>
     ? "/opt/hopper/bin/Hopper"
     : DEFAULT_HOPPER_LAUNCHER_PATH;
 
-interface ParsedArrays extends ElectronAutomationArrays {
+interface ParsedArrays {
   readonly loaderArgs: readonly string[];
-  readonly executableRoots: readonly string[];
-  readonly workingRoots: readonly string[];
-  readonly allowedEnvironment: readonly string[];
   readonly evidenceRoots: readonly string[];
   readonly investigationInputRoots: readonly string[];
   readonly analysisSnapshotRoots: readonly string[];
   readonly referenceRoots: readonly string[];
   readonly secretPatterns: readonly string[];
-  readonly browserEndpoints: readonly string[];
-  readonly browserOrigins: readonly string[];
-  readonly browserScenarioExecutableRoots: readonly string[];
-  readonly browserScenarioEndpoints: readonly string[];
-  readonly browserScenarioOrigins: readonly string[];
-  readonly browserScenarioEnvironment: readonly string[];
-  readonly electronEndpoints: readonly string[];
-  readonly electronFileRoots: readonly string[];
-  readonly v8InspectorEndpoints: readonly string[];
-  readonly v8InspectorFileRoots: readonly string[];
-  readonly v8InspectorOrigins: readonly string[];
-  readonly javascriptReplayRoots: readonly string[];
   readonly managedRuntimeRoots: readonly string[];
 }
 
-type ParsedObservationArrays = Pick<
-  ParsedArrays,
-  | "browserEndpoints"
-  | "browserOrigins"
-  | "browserScenarioExecutableRoots"
-  | "browserScenarioEndpoints"
-  | "browserScenarioOrigins"
-  | "browserScenarioEnvironment"
-  | "electronEndpoints"
-  | "electronFileRoots"
-  | "v8InspectorEndpoints"
-  | "v8InspectorFileRoots"
-  | "v8InspectorOrigins"
->;
+interface ParsedPolicies {
+  readonly passiveObservation: PassiveObservationPolicies;
+  readonly processCapture: ProcessExecutionPolicy;
+  readonly browserScenario: BrowserScenarioPolicy;
+  readonly electronAutomation: ElectronAutomationPolicy;
+  readonly javascriptReplay: JavaScriptReplayPolicy;
+  readonly managedRuntime: ManagedRuntimePolicy;
+}
 
 const parseAllArrays = (
   env: Environment,
 ): Result<ParsedArrays, ConfigurationError> => {
   const loaderArgs = parseLoaderArgs(env.HOPPER_LOADER_ARGS_JSON);
   if (!loaderArgs.ok) return loaderArgs;
-  const executableRoots = parseStringArray(
-    env.REA_PROCESS_EXECUTABLE_ROOTS_JSON,
-    "REA_PROCESS_EXECUTABLE_ROOTS_JSON",
-  );
-  if (!executableRoots.ok) return executableRoots;
-  const workingRoots = parseStringArray(
-    env.REA_PROCESS_WORKING_ROOTS_JSON,
-    "REA_PROCESS_WORKING_ROOTS_JSON",
-  );
-  if (!workingRoots.ok) return workingRoots;
-  const allowedEnvironment = parseStringArray(
-    env.REA_PROCESS_ALLOWED_ENV_JSON,
-    "REA_PROCESS_ALLOWED_ENV_JSON",
-  );
-  if (!allowedEnvironment.ok) return allowedEnvironment;
   const evidenceRoots = parseStringArray(
     env.REA_EVIDENCE_ROOTS_JSON,
     "REA_EVIDENCE_ROOTS_JSON",
@@ -119,15 +100,6 @@ const parseAllArrays = (
     "REA_REFERENCE_SECRET_PATTERNS_JSON",
   );
   if (!secretPatterns.ok) return secretPatterns;
-  const observations = parseObservationArrays(env);
-  if (!observations.ok) return observations;
-  const electronAutomation = parseElectronAutomationArrays(env);
-  if (!electronAutomation.ok) return electronAutomation;
-  const javascriptReplayRoots = parseAbsoluteRoots(
-    env.REA_JAVASCRIPT_REPLAY_ROOTS_JSON,
-    "REA_JAVASCRIPT_REPLAY_ROOTS_JSON",
-  );
-  if (!javascriptReplayRoots.ok) return javascriptReplayRoots;
   const managedRuntimeRoots = parseAbsoluteRoots(
     env.REA_MANAGED_RUNTIME_ROOTS_JSON,
     "REA_MANAGED_RUNTIME_ROOTS_JSON",
@@ -135,193 +107,13 @@ const parseAllArrays = (
   if (!managedRuntimeRoots.ok) return managedRuntimeRoots;
   return ok({
     loaderArgs: loaderArgs.value,
-    executableRoots: executableRoots.value,
-    workingRoots: workingRoots.value,
-    allowedEnvironment: allowedEnvironment.value,
     evidenceRoots: evidenceRoots.value,
     investigationInputRoots: investigationInputRoots.value,
     analysisSnapshotRoots: analysisSnapshotRoots.value,
     referenceRoots: referenceRoots.value,
     secretPatterns: secretPatterns.value,
-    ...observations.value,
-    ...electronAutomation.value,
-    javascriptReplayRoots: javascriptReplayRoots.value,
     managedRuntimeRoots: managedRuntimeRoots.value,
   });
-};
-
-const parseObservationArrays = (
-  env: Environment,
-): Result<ParsedObservationArrays, ConfigurationError> => {
-  const browserEndpoints = parseBrowserArray(
-    env.REA_BROWSER_CDP_ENDPOINTS_JSON,
-    "REA_BROWSER_CDP_ENDPOINTS_JSON",
-    browserEndpointSchema,
-    16,
-  );
-  if (!browserEndpoints.ok) return browserEndpoints;
-  const browserOrigins = parseBrowserArray(
-    env.REA_BROWSER_ALLOWED_ORIGINS_JSON,
-    "REA_BROWSER_ALLOWED_ORIGINS_JSON",
-    browserOriginSchema,
-    32,
-  );
-  if (!browserOrigins.ok) return browserOrigins;
-  const browserScenarioExecutableRoots = parseAbsoluteRoots(
-    env.REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON,
-    "REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON",
-  );
-  if (!browserScenarioExecutableRoots.ok) return browserScenarioExecutableRoots;
-  const browserScenarioEndpoints = parseBrowserArray(
-    env.REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON,
-    "REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON",
-    browserEndpointSchema,
-    16,
-  );
-  if (!browserScenarioEndpoints.ok) return browserScenarioEndpoints;
-  const browserScenarioOrigins = parseBrowserArray(
-    env.REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON,
-    "REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON",
-    browserOriginSchema,
-    32,
-  );
-  if (!browserScenarioOrigins.ok) return browserScenarioOrigins;
-  const browserScenarioEnvironment = parseStringArray(
-    env.REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON,
-    "REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON",
-  );
-  if (!browserScenarioEnvironment.ok) return browserScenarioEnvironment;
-  const electronEndpoints = parseBrowserArray(
-    env.REA_ELECTRON_CDP_ENDPOINTS_JSON,
-    "REA_ELECTRON_CDP_ENDPOINTS_JSON",
-    browserEndpointSchema,
-    16,
-  );
-  if (!electronEndpoints.ok) return electronEndpoints;
-  const electronFileRoots = parseElectronFileRoots(
-    env.REA_ELECTRON_FILE_ROOTS_JSON,
-  );
-  if (!electronFileRoots.ok) return electronFileRoots;
-  const v8InspectorEndpoints = parseBrowserArray(
-    env.REA_V8_INSPECTOR_ENDPOINTS_JSON,
-    "REA_V8_INSPECTOR_ENDPOINTS_JSON",
-    browserEndpointSchema,
-    16,
-  );
-  if (!v8InspectorEndpoints.ok) return v8InspectorEndpoints;
-  const v8InspectorFileRoots = parseAbsoluteRoots(
-    env.REA_V8_INSPECTOR_FILE_ROOTS_JSON,
-    "REA_V8_INSPECTOR_FILE_ROOTS_JSON",
-  );
-  if (!v8InspectorFileRoots.ok) return v8InspectorFileRoots;
-  const v8InspectorOrigins = parseBrowserArray(
-    env.REA_V8_INSPECTOR_ALLOWED_ORIGINS_JSON,
-    "REA_V8_INSPECTOR_ALLOWED_ORIGINS_JSON",
-    browserOriginSchema,
-    32,
-  );
-  if (!v8InspectorOrigins.ok) return v8InspectorOrigins;
-  return ok({
-    browserEndpoints: browserEndpoints.value,
-    browserOrigins: browserOrigins.value,
-    browserScenarioExecutableRoots: browserScenarioExecutableRoots.value,
-    browserScenarioEndpoints: browserScenarioEndpoints.value,
-    browserScenarioOrigins: browserScenarioOrigins.value,
-    browserScenarioEnvironment: browserScenarioEnvironment.value,
-    electronEndpoints: electronEndpoints.value,
-    electronFileRoots: electronFileRoots.value,
-    v8InspectorEndpoints: v8InspectorEndpoints.value,
-    v8InspectorFileRoots: v8InspectorFileRoots.value,
-    v8InspectorOrigins: v8InspectorOrigins.value,
-  });
-};
-
-const parseAbsoluteRoots = (
-  value: string,
-  name: string,
-): Result<readonly string[], ConfigurationError> => {
-  const parsed = parseStringArray(value, name);
-  if (!parsed.ok) return parsed;
-  return parsed.value.some((root) => !isAbsolute(root))
-    ? err(new ConfigurationError(`${name} must encode absolute roots`))
-    : parsed;
-};
-
-const appendProcessCaptureCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_PROCESS_CAPTURE_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("process_capture", arrays.workingRoots, {
-      executables: arrays.executableRoots,
-      environment_names: arrays.allowedEnvironment,
-      network:
-        env.REA_PROCESS_ALLOW_EXTERNAL_NETWORK === "true" ? "external" : "none",
-    }),
-  );
-};
-
-const appendBrowserObservationCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_BROWSER_OBSERVE_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("browser_observe", [], {
-      origins: [...arrays.browserEndpoints, ...arrays.browserOrigins],
-      network: browserNetworkScope(arrays.browserOrigins),
-    }),
-  );
-};
-
-const appendBrowserScenarioCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_BROWSER_SCENARIO_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("browser_automate", [], {
-      executables: arrays.browserScenarioExecutableRoots,
-      environment_names: arrays.browserScenarioEnvironment,
-      origins: [
-        ...arrays.browserScenarioEndpoints,
-        ...arrays.browserScenarioOrigins,
-      ],
-      network: browserNetworkScope(arrays.browserScenarioOrigins),
-    }),
-  );
-};
-
-const appendElectronObservationCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_ELECTRON_OBSERVE_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("electron_observe", arrays.electronFileRoots, {
-      origins: arrays.electronEndpoints,
-      network: "loopback",
-    }),
-  );
-};
-
-const appendV8InspectorObservationCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_V8_INSPECTOR_OBSERVE_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("v8_inspector_observe", arrays.v8InspectorFileRoots, {
-      origins: [...arrays.v8InspectorEndpoints, ...arrays.v8InspectorOrigins],
-      network: "loopback",
-    }),
-  );
 };
 
 const appendNativeMountCeiling = (
@@ -332,44 +124,10 @@ const appendNativeMountCeiling = (
     ceilings.push(permissionScope("native_mount", [], { mount: true }));
 };
 
-const appendJavaScriptReplayCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_JAVASCRIPT_REPLAY_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("javascript_replay", arrays.javascriptReplayRoots, {
-      executables: [
-        env.REA_JAVASCRIPT_REPLAY_NODE_PATH,
-        env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH,
-        env.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH,
-        env.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
-        env.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
-      ],
-      network: "none",
-      mount: true,
-    }),
-  );
-};
-
-const appendManagedRuntimeCeiling = (
-  ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ParsedArrays,
-): void => {
-  if (env.REA_MANAGED_RUNTIME_ENABLED !== "true") return;
-  ceilings.push(
-    permissionScope("managed_runtime", arrays.managedRuntimeRoots, {
-      executables: [env.REA_MANAGED_RUNTIME_EXECUTABLE_PATH],
-      network: "none",
-    }),
-  );
-};
-
 const buildPermissionCeilings = (
   env: Environment,
   arrays: ParsedArrays,
+  policies: ParsedPolicies,
 ): readonly PermissionCeiling[] => {
   const ceilings: PermissionCeiling[] = [
     permissionScope("evidence_read", arrays.evidenceRoots),
@@ -382,15 +140,13 @@ const buildPermissionCeilings = (
     permissionScope("artifact_extract", ["/"]),
     permissionScope("reference_read", arrays.referenceRoots),
   ];
-  appendProcessCaptureCeiling(ceilings, env, arrays);
-  appendBrowserObservationCeiling(ceilings, env, arrays);
-  appendBrowserScenarioCeiling(ceilings, env, arrays);
-  appendElectronObservationCeiling(ceilings, env, arrays);
-  appendElectronAutomationCeiling(ceilings, env, arrays);
-  appendV8InspectorObservationCeiling(ceilings, env, arrays);
+  appendProcessCaptureCeiling(ceilings, policies.processCapture);
+  appendPassiveObservationCeilings(ceilings, policies.passiveObservation);
+  appendBrowserScenarioCeiling(ceilings, policies.browserScenario);
+  appendElectronAutomationCeiling(ceilings, policies.electronAutomation);
   appendNativeMountCeiling(ceilings, env);
-  appendJavaScriptReplayCeiling(ceilings, env, arrays);
-  appendManagedRuntimeCeiling(ceilings, env, arrays);
+  appendJavaScriptReplayCeiling(ceilings, policies.javascriptReplay);
+  appendManagedRuntimeCeiling(ceilings, policies.managedRuntime);
   return ceilings;
 };
 
@@ -398,6 +154,7 @@ const buildAppConfig = (
   env: Environment,
   arrays: ParsedArrays,
   permissionCeilings: readonly PermissionCeiling[],
+  policies: ParsedPolicies,
 ): AppConfig => ({
   analysisProvider: env.REA_ANALYSIS_PROVIDER,
   ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
@@ -408,13 +165,7 @@ const buildAppConfig = (
   hopperTargetKind: env.HOPPER_TARGET_KIND,
   hopperLoaderArgs: arrays.loaderArgs,
   logLevel: env.REA_LOG_LEVEL,
-  processExecutionPolicy: {
-    enabled: env.REA_PROCESS_CAPTURE_ENABLED === "true",
-    executableRoots: arrays.executableRoots,
-    workingRoots: arrays.workingRoots,
-    allowedEnvironment: arrays.allowedEnvironment,
-    allowExternalNetwork: env.REA_PROCESS_ALLOW_EXTERNAL_NETWORK === "true",
-  },
+  processExecutionPolicy: policies.processCapture,
   artifactNativeMountEnabled: env.REA_ARTIFACT_NATIVE_MOUNT_ENABLED === "true",
   artifactIntegrityContinueEnabled:
     env.REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED === "true",
@@ -429,43 +180,13 @@ const buildAppConfig = (
     maxDepth: 32,
     maxPathBytes: 4_096,
   },
-  browserObservationEnabled: env.REA_BROWSER_OBSERVE_ENABLED === "true",
-  browserCdpEndpoints: arrays.browserEndpoints,
-  browserAllowedOrigins: arrays.browserOrigins,
-  browserScenarioPolicy: {
-    enabled: env.REA_BROWSER_SCENARIO_ENABLED === "true",
-    executableRoots: arrays.browserScenarioExecutableRoots,
-    cdpEndpoints: arrays.browserScenarioEndpoints,
-    allowedOrigins: arrays.browserScenarioOrigins,
-    allowedEnvironment: arrays.browserScenarioEnvironment,
-  },
-  electronObservationEnabled: env.REA_ELECTRON_OBSERVE_ENABLED === "true",
-  electronCdpEndpoints: arrays.electronEndpoints,
-  electronFileRoots: arrays.electronFileRoots,
-  electronAutomationPolicy: {
-    enabled: env.REA_ELECTRON_AUTOMATE_ENABLED === "true",
-    executableRoots: arrays.electronAutomationExecutableRoots,
-    applicationRoots: arrays.electronAutomationApplicationRoots,
-  },
-  v8InspectorObservationEnabled:
-    env.REA_V8_INSPECTOR_OBSERVE_ENABLED === "true",
-  v8InspectorEndpoints: arrays.v8InspectorEndpoints,
-  v8InspectorFileRoots: arrays.v8InspectorFileRoots,
-  v8InspectorAllowedOrigins: arrays.v8InspectorOrigins,
-  javascriptReplayPolicy: {
-    enabled: env.REA_JAVASCRIPT_REPLAY_ENABLED === "true",
-    roots: arrays.javascriptReplayRoots,
-    nodePath: env.REA_JAVASCRIPT_REPLAY_NODE_PATH,
-    bubblewrapPath: env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH,
-    systemdRunPath: env.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH,
-    systemctlPath: env.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
-    shellPath: env.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
-  },
-  managedRuntimePolicy: {
-    enabled: env.REA_MANAGED_RUNTIME_ENABLED === "true",
-    roots: arrays.managedRuntimeRoots,
-    executablePath: env.REA_MANAGED_RUNTIME_EXECUTABLE_PATH,
-  },
+  browserObservationPolicy: policies.passiveObservation.browser,
+  browserScenarioPolicy: policies.browserScenario,
+  electronObservationPolicy: policies.passiveObservation.electron,
+  electronAutomationPolicy: policies.electronAutomation,
+  v8InspectorObservationPolicy: policies.passiveObservation.v8Inspector,
+  javascriptReplayPolicy: policies.javascriptReplay,
+  managedRuntimePolicy: policies.managedRuntime,
   permissionCeilings,
   administratorPermissionGrants: administratorGrants(
     permissionCeilings.filter(
@@ -495,11 +216,44 @@ export const parseConfig = (
   if (!envResult.ok) return envResult;
   const arraysResult = parseAllArrays(envResult.value);
   if (!arraysResult.ok) return arraysResult;
+  const passiveObservationPolicies = parsePassiveObservationPolicies(
+    envResult.value,
+  );
+  if (!passiveObservationPolicies.ok) return passiveObservationPolicies;
+  const processCapturePolicy = parseProcessExecutionPolicy(envResult.value);
+  if (!processCapturePolicy.ok) return processCapturePolicy;
+  const browserScenarioPolicy = parseBrowserScenarioPolicy(envResult.value);
+  if (!browserScenarioPolicy.ok) return browserScenarioPolicy;
+  const electronAutomationPolicy = parseElectronAutomationPolicy(
+    envResult.value,
+  );
+  if (!electronAutomationPolicy.ok) return electronAutomationPolicy;
+  const javascriptReplayPolicy = parseJavaScriptReplayPolicy(envResult.value);
+  if (!javascriptReplayPolicy.ok) return javascriptReplayPolicy;
+  const managedRuntimePolicy = parseManagedRuntimePolicy(
+    envResult.value,
+    arraysResult.value.managedRuntimeRoots,
+  );
+  if (!managedRuntimePolicy.ok) return managedRuntimePolicy;
+  const policies = {
+    passiveObservation: passiveObservationPolicies.value,
+    processCapture: processCapturePolicy.value,
+    browserScenario: browserScenarioPolicy.value,
+    electronAutomation: electronAutomationPolicy.value,
+    javascriptReplay: javascriptReplayPolicy.value,
+    managedRuntime: managedRuntimePolicy.value,
+  } satisfies ParsedPolicies;
   const permissionCeilings = buildPermissionCeilings(
     envResult.value,
     arraysResult.value,
+    policies,
   );
   return ok(
-    buildAppConfig(envResult.value, arraysResult.value, permissionCeilings),
+    buildAppConfig(
+      envResult.value,
+      arraysResult.value,
+      permissionCeilings,
+      policies,
+    ),
   );
 };

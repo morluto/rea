@@ -173,7 +173,13 @@ describe("persistent cross-version investigation workspace", () => {
     ).resolves.toMatchObject({ ok: true, value: { reused: true } });
     await expect(
       runCrossVersionInvestigation(
-        { ...input, integrity_continue_approved: true },
+        {
+          ...input,
+          options: {
+            ...input.options,
+            change_limit: input.options.change_limit + 1,
+          },
+        },
         policy(directory),
         { inputRoots: [directory] },
       ),

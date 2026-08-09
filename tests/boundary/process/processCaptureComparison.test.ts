@@ -139,6 +139,26 @@ it("classifies missing observations as unknown and one-sided evidence as added",
   expect(unknown.status).toBe("unknown");
 });
 
+it("treats equivalent normalization records as equal regardless of member order", () => {
+  const capture = emptyCapture();
+
+  expect(
+    compareProcessCaptures(capture, {
+      ...capture,
+      normalization: {
+        patterns: [],
+        time_bucket_ms: 10,
+        ports: true,
+        pids: true,
+        paths: true,
+      },
+    }),
+  ).toMatchObject({
+    status: "unchanged",
+    first_divergence: { status: "none" },
+  });
+});
+
 it("compares raw terminal chunks even when rendered states agree", () => {
   const capture = {
     schema_version: 4 as const,

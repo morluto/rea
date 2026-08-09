@@ -85,6 +85,31 @@ it("projects remote failures without provider or bridge details", async () => {
   expect(text(result)).toBe(JSON.stringify(result.structuredContent));
 });
 
+it("lets the SDK validate a tool call before invoking its handler", async () => {
+  let invocations = 0;
+  const client = await connect({
+    execute: () => {
+      invocations += 1;
+      return Promise.resolve(ok([]));
+    },
+  });
+
+  const malformed = await client.callTool({
+    name: "procedure_info",
+    arguments: {},
+  });
+
+  expect(malformed.isError).toBe(true);
+  expect(invocations).toBe(0);
+
+  const valid = await client.callTool({
+    name: "list_documents",
+    arguments: {},
+  });
+  expect(valid.isError).not.toBe(true);
+  expect(invocations).toBe(1);
+});
+
 it("handles concurrent tool calls without corruption", async () => {
   const invocations: string[] = [];
   const client = await connect({

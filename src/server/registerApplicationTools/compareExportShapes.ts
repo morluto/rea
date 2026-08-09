@@ -3,12 +3,10 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { resolveCompareJavaScriptExportShapesRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
 import { compareJavaScriptExportShapesEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { compareJavaScriptExportShapesRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../domain/javascriptExportShapeComparisonSchemas.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
+import { toCallToolResult } from "../toolResult.js";
 import { recordResult, recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -23,14 +21,8 @@ export const registerCompareJavaScriptExportShapesTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareJavaScriptExportShapesRequestSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
       const resolved = resolveCompareJavaScriptExportShapesRequestValidated(
-        parsedInput.value,
+        input,
         options.evidenceLookup,
       );
       if (!resolved.ok) return toCallToolResult(resolved, contract);

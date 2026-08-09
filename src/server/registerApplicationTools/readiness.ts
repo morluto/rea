@@ -5,10 +5,8 @@ import {
   resolveReconstructionReadinessRequest,
 } from "../../application/ReconstructionReadinessService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { reconstructionReadinessInputSchema } from "../../domain/reconstructionReadinessSchemas.js";
 import { reconstructionReadinessReportSchema } from "../../domain/reconstructionReadinessSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { recordSources } from "./helpers.js";
@@ -25,13 +23,7 @@ export const registerReconstructionReadinessTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsed = safeParseToolInput(
-        reconstructionReadinessInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, contract);
-      const resolved = resolveReconstructionReadinessRequest(parsed.value);
+      const resolved = resolveReconstructionReadinessRequest(input);
       if (!resolved.ok) return toCallToolResult(resolved, contract);
       const result = await logToolExecution(options.logger, contract.name, () =>
         Promise.resolve(

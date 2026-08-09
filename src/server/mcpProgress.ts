@@ -1,22 +1,12 @@
+import type { ServerContext } from "@modelcontextprotocol/server";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import {
   createProgressReporter,
   silentProgressReporter,
 } from "../application/ProgressReporter.js";
 
-interface McpProgressContext {
-  readonly mcpReq: {
-    readonly _meta?: { readonly progressToken?: string | number | undefined };
-    notify(notification: {
-      readonly method: "notifications/progress";
-      readonly params: {
-        readonly progressToken: string | number;
-        readonly progress: number;
-        readonly total?: number;
-        readonly message?: string;
-      };
-    }): Promise<void>;
-  };
+export interface McpProgressContext {
+  readonly mcpReq: Pick<ServerContext["mcpReq"], "_meta" | "notify">;
 }
 
 /** Adapt the request's negotiated MCP progress token to application progress. */

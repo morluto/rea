@@ -9,6 +9,7 @@ import {
   MCP_RESOURCE_TEMPLATE_CATALOG,
 } from "./catalogIdentity.js";
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
+import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
 
@@ -111,11 +112,9 @@ const inspectProductionMcpSession = async (
         request,
       ),
     ]);
-  const expectedToolNames =
-    availableToolNames(requestFlow.structuredContent) ?? [];
   const inventory = {
     tools: compareInventory(
-      expectedToolNames,
+      TOOL_CONTRACTS.map(({ name }) => name),
       tools.tools.map(({ name }) => name),
     ),
     prompts: compareInventory(
@@ -181,27 +180,6 @@ const inspectProductionMcpSession = async (
     },
     checks,
   };
-};
-
-const availableToolNames = (
-  structuredContent: unknown,
-): readonly string[] | undefined => {
-  if (typeof structuredContent !== "object" || structuredContent === null)
-    return undefined;
-  const result = Reflect.get(structuredContent, "result");
-  if (typeof result !== "object" || result === null) return undefined;
-  const availability = Reflect.get(result, "tool_availability");
-  if (!Array.isArray(availability)) return undefined;
-  const names: string[] = [];
-  for (const item of availability) {
-    if (typeof item !== "object" || item === null) return undefined;
-    const name = Reflect.get(item, "name");
-    const available = Reflect.get(item, "available");
-    if (typeof name !== "string" || typeof available !== "boolean")
-      return undefined;
-    if (available) names.push(name);
-  }
-  return names;
 };
 
 /**

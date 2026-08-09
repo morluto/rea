@@ -53,23 +53,29 @@ describe("runtime permission reload", () => {
     runtime.reload();
     await validReadStarted.promise;
 
-    expect(runtime.notifications()).toBe(0);
-    expect(runtime.options.processPolicy?.enabled).toBe(false);
+    expect(runtime.options.processPolicy?.().status).toBe("disabled");
     expect(runtime.options.evidenceFilePolicy?.roots).toEqual([
       fixture.oldRoot,
     ]);
     expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(false);
+    expectOptionalPolicies(runtime.options, { status: "disabled" });
     expect(await canRead(runtime.authority, fixture.oldRoot)).toBe(true);
     expect(await canRead(runtime.authority, fixture.newRoot)).toBe(false);
 
     releaseValidRead.resolve();
-    await runtime.notificationCount(1);
+    await expect
+      .poll(() => canRead(runtime.authority, fixture.newRoot))
+      .toBe(true);
 
-    expect(runtime.options.processPolicy?.enabled).toBe(true);
+    expect(runtime.options.processPolicy?.().status).toBe("enabled");
     expect(runtime.options.evidenceFilePolicy?.roots).toEqual([
       fixture.newRoot,
     ]);
     expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
+    expectOptionalPolicies(runtime.options, {
+      status: "enabled",
+      root: fixture.newRoot,
+    });
     expect(await canRead(runtime.authority, fixture.oldRoot)).toBe(false);
     expect(await canRead(runtime.authority, fixture.newRoot)).toBe(true);
   });
@@ -102,13 +108,16 @@ describe("runtime permission reload", () => {
     expect(secondStarted).toBe(false);
     releaseFirstRead.resolve();
     await secondReadStarted.promise;
-    await runtime.notificationCount(2);
+    await expect
+      .poll(() => canRead(runtime.authority, fixture.latestRoot))
+      .toBe(true);
 
-    expect(runtime.options.processPolicy?.enabled).toBe(false);
+    expect(runtime.options.processPolicy?.().status).toBe("disabled");
     expect(runtime.options.evidenceFilePolicy?.roots).toEqual([
       fixture.latestRoot,
     ]);
     expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(false);
+    expectOptionalPolicies(runtime.options, { status: "disabled" });
     expect(await canRead(runtime.authority, fixture.newRoot)).toBe(false);
     expect(await canRead(runtime.authority, fixture.latestRoot)).toBe(true);
   });
@@ -125,18 +134,56 @@ describe("runtime permission reload", () => {
     configure(fixture.env, fixture.newRoot, true);
     runtime.reload();
     runtime.reload();
-    await runtime.notificationCount(1);
+    await expect.poll(() => reads).toBe(2);
+    await expect
+      .poll(() => canRead(runtime.authority, fixture.newRoot))
+      .toBe(true);
 
     expect(reads).toBe(2);
-    expect(runtime.options.processPolicy?.enabled).toBe(true);
+    expect(runtime.options.processPolicy?.().status).toBe("enabled");
     expect(runtime.options.evidenceFilePolicy?.roots).toEqual([
       fixture.newRoot,
     ]);
     expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
+    expectOptionalPolicies(runtime.options, {
+      status: "enabled",
+      root: fixture.newRoot,
+    });
     expect(await canRead(runtime.authority, fixture.oldRoot)).toBe(false);
     expect(await canRead(runtime.authority, fixture.newRoot)).toBe(true);
   });
 });
+
+type ExpectedOptionalPolicies =
+  | { readonly status: "disabled" }
+  | { readonly status: "enabled"; readonly root: string };
+
+const expectOptionalPolicies = (
+  options: CreateServerOptions,
+  expected: ExpectedOptionalPolicies,
+): void => {
+  const enabled = expected.status === "enabled";
+  expect(options.managedRuntimePolicy?.()).toEqual(
+    enabled
+      ? {
+          status: "enabled",
+          roots: [expected.root],
+          executablePath: process.execPath,
+        }
+      : { status: "disabled" },
+  );
+  expect(options.javascriptReplayPolicy?.()).toMatchObject(
+    enabled
+      ? { status: "enabled", roots: [expected.root] }
+      : { status: "disabled" },
+  );
+  expect(options.availabilityPolicy?.()).toMatchObject({
+    browserObservationEnabled: enabled,
+    electronObservationEnabled: enabled,
+    v8InspectorObservationEnabled: enabled,
+    javascriptReplayEnabled: enabled,
+  });
+};
 
 const reloadFixture = async () => {
   const directory = await createTestTempDirectory("rea-main-reload-");
@@ -169,6 +216,33 @@ const configure = (
   env.REA_PROCESS_EXECUTABLE_ROOTS_JSON = JSON.stringify([root]);
   env.REA_PROCESS_WORKING_ROOTS_JSON = JSON.stringify([root]);
   env.REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED = String(enabled);
+  env.REA_MANAGED_RUNTIME_ENABLED = String(enabled);
+  env.REA_MANAGED_RUNTIME_ROOTS_JSON = JSON.stringify([root]);
+  env.REA_MANAGED_RUNTIME_EXECUTABLE_PATH = process.execPath;
+  env.REA_JAVASCRIPT_REPLAY_ENABLED = String(enabled);
+  env.REA_JAVASCRIPT_REPLAY_ROOTS_JSON = JSON.stringify([root]);
+  env.REA_JAVASCRIPT_REPLAY_NODE_PATH = process.execPath;
+  env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH = process.execPath;
+  env.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH = process.execPath;
+  env.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH = process.execPath;
+  env.REA_JAVASCRIPT_REPLAY_SHELL_PATH = process.execPath;
+  env.REA_BROWSER_OBSERVE_ENABLED = String(enabled);
+  env.REA_BROWSER_CDP_ENDPOINTS_JSON = JSON.stringify([
+    "http://127.0.0.1:9222",
+  ]);
+  env.REA_BROWSER_ALLOWED_ORIGINS_JSON = JSON.stringify([
+    "https://example.test",
+  ]);
+  env.REA_ELECTRON_OBSERVE_ENABLED = String(enabled);
+  env.REA_ELECTRON_CDP_ENDPOINTS_JSON = JSON.stringify([
+    "http://127.0.0.1:9223",
+  ]);
+  env.REA_ELECTRON_FILE_ROOTS_JSON = JSON.stringify([root]);
+  env.REA_V8_INSPECTOR_OBSERVE_ENABLED = String(enabled);
+  env.REA_V8_INSPECTOR_ENDPOINTS_JSON = JSON.stringify([
+    "http://127.0.0.1:9224",
+  ]);
+  env.REA_V8_INSPECTOR_FILE_ROOTS_JSON = JSON.stringify([root]);
 };
 
 const startRuntime = async (
@@ -177,9 +251,6 @@ const startRuntime = async (
 ) => {
   let reload: (() => void) | undefined;
   let options: CreateServerOptions | undefined;
-  let notificationCount = 0;
-  let notification = deferred<void>();
-  const waiters = new Map<number, ReturnType<typeof deferred<void>>>();
   const result = await run({
     env,
     serve: (factory) => {
@@ -196,14 +267,7 @@ const startRuntime = async (
     readProjectPermissionStore: readStore,
     createServer: (analysis, session, received) => {
       options = received;
-      const server = createServer(analysis, session, received);
-      server.sendToolListChanged = () => {
-        notificationCount += 1;
-        notification.resolve(undefined);
-        notification = deferred<void>();
-        waiters.get(notificationCount)?.resolve(undefined);
-      };
-      return server;
+      return createServer(analysis, session, received);
     },
   });
   expect(result).toBe(0);
@@ -215,13 +279,6 @@ const startRuntime = async (
     reload,
     options: capturedOptions,
     authority,
-    notifications: () => notificationCount,
-    notificationCount: (count: number) => {
-      if (notificationCount >= count) return Promise.resolve();
-      const waiter = deferred<void>();
-      waiters.set(count, waiter);
-      return waiter.promise;
-    },
   };
 };
 

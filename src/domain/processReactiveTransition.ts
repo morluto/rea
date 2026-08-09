@@ -43,6 +43,10 @@ const applyProcessReactiveTransition = (input: {
   >[];
   readonly evaluations: readonly ProcessReactiveEvaluation[];
 }): ProcessReactiveDecision => {
+  if (input.effectResults.length !== input.transition.actions.length)
+    throw new TypeError(
+      "Reactive transition effects do not match the admitted actions",
+    );
   const outcome =
     input.transition.target.kind === "finish"
       ? input.transition.target.outcome
@@ -66,13 +70,17 @@ const applyProcessReactiveTransition = (input: {
   const consumed = new Set(input.snapshot.consumed_event_ids);
   for (const eventId of input.consumeEventIds) consumed.add(eventId);
   const checkpoints = [...input.snapshot.checkpoints];
-  for (const [index, action] of input.transition.actions.entries())
+  for (const [index, action] of input.transition.actions.entries()) {
+    const effect = input.effectResults[index];
+    if (effect === undefined)
+      throw new TypeError("Reactive transition effect is missing");
     if (action.type === "checkpoint")
       checkpoints.push({
         name: action.name,
-        event_id: input.effectResults[index]!.observation.event_id,
-        capture_order: input.effectResults[index]!.observation.capture_order,
+        event_id: effect.observation.event_id,
+        capture_order: effect.observation.capture_order,
       });
+  }
   const completedCaptureOrder = Math.max(
     input.observation.capture_order,
     ...input.effectResults.map(({ observation }) => observation.capture_order),

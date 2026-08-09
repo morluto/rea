@@ -30,12 +30,19 @@ export interface SpawnedOwnedProviderProcess {
 }
 
 /** Process handle returned by a provider-specific launcher. */
-export interface ProviderProcessLaunch {
-  readonly process: ChildProcess;
-  readonly ownsProcessLifetime: boolean;
-  readonly ownership?: OwnedProcessGroup;
-  readonly cleanup?: () => Promise<ProcessCleanupResult>;
-}
+export type ProviderProcessLaunch =
+  | {
+      readonly process: ChildProcess;
+      readonly ownsProcessLifetime: false;
+      readonly ownership?: never;
+      readonly cleanup?: never;
+    }
+  | {
+      readonly process: ChildProcess;
+      readonly ownsProcessLifetime: true;
+      readonly ownership?: OwnedProcessGroup;
+      readonly cleanup?: () => Promise<ProcessCleanupResult>;
+    };
 
 /** Detached diagnostics captured for one supervised provider process. */
 export interface ProviderProcessSnapshot {

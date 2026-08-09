@@ -53,6 +53,7 @@ describeBrowser("CdpBrowserProvider: document script 1", () => {
         approved: true,
         observation_ms: 0,
         include_script_sources: true,
+        source_capture_approved: true,
       }),
     );
 
@@ -355,6 +356,7 @@ describeBrowser("CdpBrowserProvider: document script 3", () => {
         approved: true,
         observation_ms: 0,
         include_script_sources: true,
+        source_capture_approved: true,
         limits: {
           max_frames: 1,
           max_dom_nodes: 1,

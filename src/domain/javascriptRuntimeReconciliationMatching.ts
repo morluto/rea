@@ -81,14 +81,16 @@ const reconcileEntity = (
     const combined = content.filter((candidate) =>
       locatedKeys.has(candidateKey(candidate)),
     );
-    if (combined.length === 1)
-      return matched(entity, combined[0]!, {
+    const combinedCandidate = combined.at(0);
+    if (combined.length === 1 && combinedCandidate !== undefined)
+      return matched(entity, combinedCandidate, {
         basis: "content-and-location",
         confidence: "high",
         reason: "content-and-location-match",
       });
-    if (content.length === 1) {
-      const candidate = content[0]!;
+    const contentCandidate = content.at(0);
+    if (content.length === 1 && contentCandidate !== undefined) {
+      const candidate = contentCandidate;
       const digestBasis = candidate.digests.find(
         ({ sha256 }) => sha256 === entity.sourceSha256,
       )?.basis;
@@ -123,8 +125,9 @@ const reconcileEntity = (
     });
   }
 
-  if (locations.length === 1) {
-    const located = locations[0]!;
+  const location = locations.at(0);
+  if (locations.length === 1 && location !== undefined) {
+    const located = location;
     return matched(entity, located.candidate, {
       basis: located.mapping.basis,
       confidence: "medium",
@@ -314,52 +317,57 @@ const reconciliationEvidence = (
   layer: ParsedStaticLayer,
   basis: JavaScriptRuntimeReconciliationItem["basis"],
   confidence: JavaScriptRuntimeReconciliationItem["confidence"],
-): ApplicationGraphEvidence => ({
-  authority: "cross-layer-reconciliation",
-  state: "inferred",
-  confidence: confidence === "medium" ? "medium" : "high",
-  artifact:
-    entity.sourceSha256 === null
-      ? {
-          available: false,
-          reason: "not-observed",
-          detail: "Runtime source bytes were not captured for this mapping.",
-        }
-      : {
-          available: true,
-          artifact_id: `art_${entity.sourceSha256}`,
-          sha256: entity.sourceSha256,
-        },
-  location: entity.node.observations[0]!.evidence.location,
-  extractor: {
-    name: "rea-javascript-runtime-reconciliation",
-    version: "1",
-    operation: "reconcile_javascript_runtime",
-    executable_sha256: null,
-  },
-  coverage:
-    layer.graph.coverage.status === "complete" &&
-    entity.capture.scriptsCompleteWithinScope
-      ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
-      : {
-          status: "partial",
-          truncated: false,
-          omitted_count: null,
-          limits: [],
-        },
-  limitations: [
-    basis === "content-sha256" ||
-    basis === "module-source-sha256" ||
-    basis === "content-and-location"
-      ? "Equal content digests establish byte identity, not execution causality."
-      : "Location correspondence is inferred from an artifact root or caller-declared mapping.",
-    "Passive script parsing or target presence does not prove feature execution.",
-  ],
-  evidence_ids: [
-    layer.evidence.evidence_id,
-    entity.capture.evidence.evidence_id,
-  ].sort(),
-});
+): ApplicationGraphEvidence => {
+  const observation = entity.node.observations.at(0);
+  if (observation === undefined)
+    throw new TypeError("Runtime reconciliation entity has no observation");
+  return {
+    authority: "cross-layer-reconciliation",
+    state: "inferred",
+    confidence: confidence === "medium" ? "medium" : "high",
+    artifact:
+      entity.sourceSha256 === null
+        ? {
+            available: false,
+            reason: "not-observed",
+            detail: "Runtime source bytes were not captured for this mapping.",
+          }
+        : {
+            available: true,
+            artifact_id: `art_${entity.sourceSha256}`,
+            sha256: entity.sourceSha256,
+          },
+    location: observation.evidence.location,
+    extractor: {
+      name: "rea-javascript-runtime-reconciliation",
+      version: "1",
+      operation: "reconcile_javascript_runtime",
+      executable_sha256: null,
+    },
+    coverage:
+      layer.graph.coverage.status === "complete" &&
+      entity.capture.scriptsCompleteWithinScope
+        ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
+        : {
+            status: "partial",
+            truncated: false,
+            omitted_count: null,
+            limits: [],
+          },
+    limitations: [
+      basis === "content-sha256" ||
+      basis === "module-source-sha256" ||
+      basis === "content-and-location"
+        ? "Equal content digests establish byte identity, not execution causality."
+        : "Location correspondence is inferred from an artifact root or caller-declared mapping.",
+      "Passive script parsing or target presence does not prove feature execution.",
+    ],
+    evidence_ids: [
+      layer.evidence.evidence_id,
+      entity.capture.evidence.evidence_id,
+    ].sort(),
+  };
+};
 
 const strongestLocationBasis = (
   values: readonly LocatedCandidate[],

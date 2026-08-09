@@ -1,3 +1,4 @@
+import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
@@ -126,6 +127,11 @@ const filesystemObservations = (
   },
 ];
 
+const sameJsonValue = (left: unknown, right: unknown): boolean => {
+  const encodedLeft = canonicalize(left);
+  return encodedLeft !== undefined && encodedLeft === canonicalize(right);
+};
+
 /** Canonical observations for one process-comparison dimension. */
 export const processDimensionObservations = (
   capture: ProcessCapture,
@@ -153,7 +159,7 @@ const classifyCollection = (
   left: readonly unknown[],
   right: readonly unknown[],
 ): ComparisonStatus => {
-  if (JSON.stringify(left) === JSON.stringify(right)) return "unchanged";
+  if (sameJsonValue(left, right)) return "unchanged";
   if (left.length === 0) return "added";
   if (right.length === 0) return "removed";
   return "changed";
@@ -194,7 +200,7 @@ const firstCollectionDivergence = (
   for (let index = 0; index < length; index += 1) {
     const leftValue = left[index] ?? null;
     const rightValue = right[index] ?? null;
-    if (JSON.stringify(leftValue) === JSON.stringify(rightValue)) continue;
+    if (sameJsonValue(leftValue, rightValue)) continue;
     return {
       status: "found",
       dimension,
@@ -242,8 +248,9 @@ const assertComparable = (
     ...validateProcessCapture(left),
     ...validateProcessCapture(right),
   ];
-  if (invalid.length > 0)
-    throw new TypeError(`Invalid Process Capture v4: ${invalid[0]!.path}`);
+  const firstInvalid = invalid.at(0);
+  if (firstInvalid !== undefined)
+    throw new TypeError(`Invalid Process Capture v4: ${firstInvalid.path}`);
   if (
     left.schema_version !== right.schema_version ||
     left.manifest.comparison_contract_sha256 !==
@@ -366,8 +373,10 @@ const compareDimensions = (
     exit:
       hasUnknown(left, "exit") || hasUnknown(right, "exit")
         ? "unknown"
-        : JSON.stringify({ exit: left.exit, settlement: left.settlement }) ===
-            JSON.stringify({ exit: right.exit, settlement: right.settlement })
+        : sameJsonValue(
+              { exit: left.exit, settlement: left.settlement },
+              { exit: right.exit, settlement: right.settlement },
+            )
           ? "unchanged"
           : "changed",
     filesystem: classify(
@@ -410,8 +419,10 @@ export const compareProcessCaptures = (
           trace: compareProcessTraces(left, right, options.traceSpecification),
         };
   }
-  const sameNormalization =
-    JSON.stringify(left.normalization) === JSON.stringify(right.normalization);
+  const sameNormalization = sameJsonValue(
+    left.normalization,
+    right.normalization,
+  );
   const exactDimensions = compareDimensions(left, right, sameNormalization);
   const trace =
     options.traceSpecification === undefined

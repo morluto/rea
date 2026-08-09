@@ -80,28 +80,30 @@ export const run = async (
   const transport = await startMcpTransport(dependencies, session, {
     logger,
     serverLogger,
-    loadOptionalProviders: async () => {
-      const [
-        { CdpBrowserProvider },
-        { PlaywrightBrowserScenarioProvider },
-        { CdpElectronProvider },
-        { PlaywrightElectronActiveProvider },
-        { V8InspectorProvider },
-      ] = await Promise.all([
-        import("./browser/CdpBrowserProvider.js"),
-        import("./browser/PlaywrightBrowserScenarioProvider.js"),
-        import("./browser/CdpElectronProvider.js"),
-        import("./browser/PlaywrightElectronActiveProvider.js"),
-        import("./browser/V8InspectorProvider.js"),
-      ]);
-      return {
-        browserObservation: new CdpBrowserProvider(),
-        browserScenarioCapture: new PlaywrightBrowserScenarioProvider(),
-        electronObservation: new CdpElectronProvider(),
-        electronActiveObservation: new PlaywrightElectronActiveProvider(),
-        javascriptRuntimeObservation: new V8InspectorProvider(),
-      };
-    },
+    loadOptionalProviders:
+      dependencies.loadOptionalProviders ??
+      (async () => {
+        const [
+          { CdpBrowserProvider },
+          { PlaywrightBrowserScenarioProvider },
+          { CdpElectronProvider },
+          { PlaywrightElectronActiveProvider },
+          { V8InspectorProvider },
+        ] = await Promise.all([
+          import("./browser/CdpBrowserProvider.js"),
+          import("./browser/PlaywrightBrowserScenarioProvider.js"),
+          import("./browser/CdpElectronProvider.js"),
+          import("./browser/PlaywrightElectronActiveProvider.js"),
+          import("./browser/V8InspectorProvider.js"),
+        ]);
+        return {
+          browserObservation: new CdpBrowserProvider(),
+          browserScenarioCapture: new PlaywrightBrowserScenarioProvider(),
+          electronObservation: new CdpElectronProvider(),
+          electronActiveObservation: new PlaywrightElectronActiveProvider(),
+          javascriptRuntimeObservation: new V8InspectorProvider(),
+        };
+      }),
     permissionAuthority: permissionAuthority.value,
     runtimeState,
   });
@@ -110,7 +112,6 @@ export const run = async (
     dependencies,
     permissionAuthority: permissionAuthority.value,
     runtimeState,
-    liveServers: transport.liveServers,
     serverLogger,
   });
   createShutdown({

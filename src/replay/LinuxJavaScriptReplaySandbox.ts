@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import {
   digestJson,
-  type JavaScriptReplayPolicy,
+  type EnabledJavaScriptReplayPolicy,
   type PreparedReplayPlan,
 } from "../application/JavaScriptReplayPlanning.js";
 import { buildLinuxX64ReplaySeccomp } from "./LinuxSeccompPolicy.js";
@@ -15,7 +15,7 @@ export type RuntimeFile = Awaited<
 
 export interface SandboxArgumentsOptions {
   readonly unit: string;
-  readonly policy: JavaScriptReplayPolicy;
+  readonly policy: EnabledJavaScriptReplayPolicy;
   readonly prepared: PreparedReplayPlan;
   readonly workerPath: string;
   readonly closure: readonly RuntimeFile[];

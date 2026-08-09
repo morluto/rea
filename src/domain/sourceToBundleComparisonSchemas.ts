@@ -9,14 +9,14 @@ const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
 const boundedTextSchema = z.string().min(1).max(4_096);
 
-export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = {
-  "exact-source-digest": 100,
-  "source-map-original-path": 70,
-  "current-path-exact": 60,
-  "current-path-suffix": 40,
-  "basename-match": 20,
-  "language-extension": 5,
-} as const;
+export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = [
+  ["exact-source-digest", 100],
+  ["source-map-original-path", 70],
+  ["current-path-exact", 60],
+  ["current-path-suffix", 40],
+  ["basename-match", 20],
+  ["language-extension", 5],
+] as const;
 
 const sourceToBundleSignalKindSchema = z.enum([
   "exact-source-digest",

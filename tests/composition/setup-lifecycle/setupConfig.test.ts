@@ -114,6 +114,39 @@ describe("JSON client configuration transaction", () => {
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
   });
+
+  it("does not rewrite an equivalent configuration with reordered environment keys", async () => {
+    directory = await createTestTempDirectory("rea-setup-");
+    const configPath = join(directory, "mcp.json");
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        mcpServers: {
+          rea: {
+            env: {
+              JAVA_HOME: "/usr/lib/jvm/jdk-21",
+              GHIDRA_INSTALL_DIR: "/opt/ghidra",
+            },
+            args: ["-y", pinnedPackage, "mcp"],
+            command: "npx",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      await configureJsonClient(
+        { name: "cursor", configPath },
+        {
+          GHIDRA_INSTALL_DIR: "/opt/ghidra",
+          JAVA_HOME: "/usr/lib/jvm/jdk-21",
+        },
+      ),
+    ).toEqual({ status: "unchanged" });
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
 });
 
 describe("JSON client configuration migration and provider paths", () => {

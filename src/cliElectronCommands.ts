@@ -16,7 +16,11 @@ import {
   listElectronTargetsInputSchema,
 } from "./domain/electronObservation.js";
 import { electronActiveObservationInputSchema } from "./domain/electronActiveObservation.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  projectAnalysisError,
+} from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
@@ -150,7 +154,9 @@ const registerElectronTargetList = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "list-electron-targets", async () => {
-        const context = await electronContext();
+        const context = await electronObservationContext(
+          "list_electron_targets",
+        );
         if (!context.ok) return context.error;
         const parsed = listElectronTargetsInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -186,7 +192,9 @@ const registerElectronPageInspection = (
     options: electronPageInspectionOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-electron-page", async () => {
-        const context = await electronContext();
+        const context = await electronObservationContext(
+          "inspect_electron_page",
+        );
         if (!context.ok) return context.error;
         const parsed = inspectElectronPageInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -268,7 +276,27 @@ const electronContext = async () => {
     authority: authority.value,
     provider: new CdpElectronProvider(),
     activeProvider: new PlaywrightElectronActiveProvider(),
-    allowedFileRoots: config.value.electronFileRoots,
+    observationPolicy: config.value.electronObservationPolicy,
+  };
+};
+
+const electronObservationContext = async (operation: string) => {
+  const context = await electronContext();
+  if (!context.ok) return context;
+  if (context.observationPolicy.status === "disabled")
+    return {
+      ok: false as const,
+      error: cliError(
+        new AnalysisCapabilityUnavailableError(
+          "rea-cdp-electron",
+          operation,
+          "Electron observation is disabled; configure exact endpoints and file roots before enabling it",
+        ),
+      ),
+    };
+  return {
+    ...context,
+    allowedFileRoots: context.observationPolicy.fileRoots,
   };
 };
 

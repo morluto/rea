@@ -189,6 +189,8 @@ const fixtureTarget: BinaryTarget = {
   format: "pe",
   architecture: "x86",
   availableArchitectures: ["x86"],
+  executableRole: "application",
+  managed: true,
 };
 const fixtureMembers = inspectManagedMembersBytes(
   fixtureBytes,

@@ -35,11 +35,11 @@ it("does not follow or disclose symlink targets outside declared roots", async (
         filesystem_roots: [root],
       }),
       {
-        enabled: true,
+        status: "enabled",
         executableRoots: ["/usr/bin"],
         workingRoots: [root],
         allowedEnvironment: [],
-        allowExternalNetwork: true,
+        networkAccess: "external",
       },
     );
     expect(result.ok).toBe(true);
@@ -65,11 +65,7 @@ it("does not launch when policy denies capture", async () => {
     working_directory: "/tmp",
   });
   const result = await captureProcessScenario(scenario, {
-    enabled: false,
-    executableRoots: [],
-    workingRoots: [],
-    allowedEnvironment: [],
-    allowExternalNetwork: true,
+    status: "disabled",
   });
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected policy refusal");
@@ -80,11 +76,11 @@ it("distinguishes timeout from cancellation and cleans both runs", async () => {
   const capability = await probeProcessCaptureCapability();
   if (!capability.available) return;
   const policy: ProcessExecutionPolicy = {
-    enabled: true,
+    status: "enabled",
     executableRoots: [dirname(process.execPath)],
     workingRoots: [dirname(processFixture)],
     allowedEnvironment: [],
-    allowExternalNetwork: true,
+    networkAccess: "external",
   };
   const timedOut = await captureProcessScenario(
     parseProcessScenario({
@@ -143,11 +139,11 @@ it("captures source-owned interactive, resize, Unicode, and signal behavior", as
       idle_timeout_ms: 2_000,
     }),
     {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [dirname(processFixture)],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     },
   );
   if (!result.ok) throw result.error;
@@ -177,7 +173,7 @@ it("dispatches scheduled events before a silent PTY produces output", async () =
       idle_timeout_ms: 2_000,
     }),
     {
-      enabled: true,
+      status: "enabled",
       executableRoots: [
         join(dirname(process.execPath), "missing"),
         dirname(process.execPath),
@@ -187,7 +183,7 @@ it("dispatches scheduled events before a silent PTY produces output", async () =
         dirname(processFixture),
       ],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     },
   );
   expect(result.ok).toBe(true);
@@ -214,11 +210,11 @@ it("samples and cleans a source-owned child and grandchild process tree", async 
       idle_timeout_ms: 2_000,
     }),
     {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [dirname(processFixture)],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     },
   );
   expect(result.ok).toBe(true);

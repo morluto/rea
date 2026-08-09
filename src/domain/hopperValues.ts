@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "./jsonValue.js";
 import { AnalysisOutputError, HopperProtocolError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 import { nativeApiBoundarySchema } from "./nativeApiBoundary.js";
@@ -62,31 +62,24 @@ const segmentSchema = z.object({
   writable: z.boolean().nullable().default(null),
   executable: z.boolean().nullable().default(null),
 });
-const addressedPageSchema = z
-  .object({
-    items: z.array(z.object({ address: z.string(), value: z.string() })),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1),
-    total: z.number().int().min(0),
-    next_offset: z.number().int().min(0).nullable(),
-    has_more: z.boolean(),
-  })
-  .superRefine((value, context) => {
-    if (value.has_more && value.next_offset === null) {
-      context.addIssue({
-        code: "custom",
-        message: "a page with more results must provide next_offset",
-        path: ["next_offset"],
-      });
-    }
-    if (!value.has_more && value.next_offset !== null) {
-      context.addIssue({
-        code: "custom",
-        message: "a complete page must not provide next_offset",
-        path: ["next_offset"],
-      });
-    }
-  });
+const addressedPageFacts = {
+  items: z.array(z.object({ address: z.string(), value: z.string() })),
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1),
+  total: z.number().int().min(0),
+} as const;
+const addressedPageSchema = z.discriminatedUnion("has_more", [
+  z.object({
+    ...addressedPageFacts,
+    has_more: z.literal(true),
+    next_offset: z.number().int().min(0),
+  }),
+  z.object({
+    ...addressedPageFacts,
+    has_more: z.literal(false),
+    next_offset: z.null(),
+  }),
+]);
 const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
   .strict();
@@ -111,16 +104,25 @@ export const localVariableSchema = z
     provenance: z.string().min(1),
   })
   .strict();
-const boundedSchema = <T extends z.ZodType>(item: T) =>
-  z
-    .object({
-      items: z.array(item),
-      total: z.number().int().min(0).nullable(),
-      returned: z.number().int().min(0),
-      truncated: z.boolean(),
-      next_offset: z.number().int().min(0).nullable(),
-    })
-    .strict()
+const boundedSchema = <T extends z.ZodType>(item: T) => {
+  const boundedFacts = {
+    items: z.array(item),
+    total: z.number().int().min(0).nullable(),
+    returned: z.number().int().min(0),
+  } as const;
+  return z
+    .discriminatedUnion("truncated", [
+      z.strictObject({
+        ...boundedFacts,
+        truncated: z.literal(false),
+        next_offset: z.null(),
+      }),
+      z.strictObject({
+        ...boundedFacts,
+        truncated: z.literal(true),
+        next_offset: z.number().int().min(0).nullable(),
+      }),
+    ])
     .superRefine((value, context) => {
       if (value.returned !== value.items.length) {
         context.addIssue({
@@ -136,14 +138,8 @@ const boundedSchema = <T extends z.ZodType>(item: T) =>
           path: ["total"],
         });
       }
-      if (value.next_offset !== null && !value.truncated) {
-        context.addIssue({
-          code: "custom",
-          message: "a continuation requires truncated output",
-          path: ["next_offset"],
-        });
-      }
     });
+};
 
 /** Provider-neutral bounded raw-instruction window for one analyzed function. */
 export const functionInstructionWindowSchema = z
@@ -201,14 +197,22 @@ export const functionDossierSchema = z
       })
       .strict(),
     pseudocode: z
-      .object({
-        text: z.string(),
-        total_chars: z.number().int().min(0),
-        returned_chars: z.number().int().min(0),
-        truncated: z.boolean(),
-        next_offset: z.number().int().min(0).nullable(),
-      })
-      .strict()
+      .discriminatedUnion("truncated", [
+        z.strictObject({
+          text: z.string(),
+          total_chars: z.number().int().min(0),
+          returned_chars: z.number().int().min(0),
+          truncated: z.literal(false),
+          next_offset: z.null(),
+        }),
+        z.strictObject({
+          text: z.string(),
+          total_chars: z.number().int().min(0),
+          returned_chars: z.number().int().min(0),
+          truncated: z.literal(true),
+          next_offset: z.number().int().min(0).nullable(),
+        }),
+      ])
       .superRefine((value, context) => {
         if (value.returned_chars !== [...value.text].length) {
           context.addIssue({
@@ -222,13 +226,6 @@ export const functionDossierSchema = z
             code: "custom",
             message: "total_chars cannot be smaller than returned_chars",
             path: ["total_chars"],
-          });
-        }
-        if (value.next_offset !== null && !value.truncated) {
-          context.addIssue({
-            code: "custom",
-            message: "a continuation requires truncated pseudocode",
-            path: ["next_offset"],
           });
         }
       }),
@@ -276,7 +273,7 @@ export const functionDossierSchema = z
     instruction_scan: z
       .object({ scanned: z.number().int().min(0), truncated: z.boolean() })
       .strict(),
-    native_api: nativeApiBoundarySchema.optional(),
+    native_api: nativeApiBoundarySchema.nullable().default(null),
     limitations: z.array(z.string()).default([]),
   })
   .strict();
@@ -290,7 +287,7 @@ export const parseFunctionDossier = (
 ): Result<JsonValue, AnalysisOutputError> => {
   const parsed = functionDossierSchema.safeParse(value);
   return parsed.success
-    ? ok(jsonValueSchema.parse(parsed.data))
+    ? ok(parsed.data)
     : err(
         new AnalysisOutputError(
           "analyze_function",

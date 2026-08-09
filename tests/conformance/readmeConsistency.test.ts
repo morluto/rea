@@ -55,6 +55,9 @@ const toolCountsFromReadme = (content: string, path: string): number[] => {
   throw new Error(`Missing tool-family inventory table in ${path}`);
 };
 
+const normalizedProse = (content: string): string =>
+  content.replace(/\s+/gu, " ").trim();
+
 describe("localized README product facts", () => {
   it.each(readmes)(
     "keeps commands and requirements aligned in %s",
@@ -92,18 +95,19 @@ describe("localized README product facts", () => {
     expect(content).toContain("--install-hopper");
     expect(content).toContain("docs/installation.md");
     expect(content).toContain("You do not need both");
-    expect(content).toContain(
+    expect(normalizedProse(content)).toContain(
       "npx -y rea-agents@latest setup` once to repair registrations",
     );
   });
 
   it("documents stale bootstrap recovery and explicit rollback", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
-    expect(content).toContain("before REA plans or writes configuration");
-    expect(content).toContain(
+    const prose = normalizedProse(content);
+    expect(prose).toContain("before REA plans or writes configuration");
+    expect(prose).toContain(
       "npm exec --yes --package=rea-agents@2.4.0 -- rea setup",
     );
-    expect(content).toContain(
+    expect(prose).toContain(
       "pin persistent MCP registrations to the exact version",
     );
   });

@@ -4,17 +4,16 @@ import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemas.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 type FunctionWorkflowName = "analyze_function" | "inspect_native_api";
 
 const functionWorkflow = <Name extends FunctionWorkflowName>(
   name: Name,
   description: string,
-): ToolContract<Name> => {
+) => {
   const inputSchema = enhancedInputSchemas[name];
-  const outputSchema = enhancedOutputSchemas[name];
-  if (outputSchema === undefined)
-    throw new Error(`Missing function workflow output schema for ${name}`);
+  const outputSchema = requireOutputSchema(enhancedOutputSchemas, name);
   return {
     name,
     ...toolContractMetadata(name),
@@ -30,7 +29,7 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
         ),
       },
     ],
-  };
+  } satisfies ToolContract<Name, typeof inputSchema, typeof outputSchema>;
 };
 
 /** Function dossier and native API reconstruction workflow contracts. */

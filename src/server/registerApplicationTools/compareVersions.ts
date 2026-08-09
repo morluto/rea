@@ -1,14 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { compareApplicationVersionsEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { resolveCompareApplicationVersionsRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
+import { compareApplicationVersionsEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { compareApplicationVersionsRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
 import { applicationVersionComparisonResultSchema } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { recordResult, recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -23,15 +21,8 @@ export const registerCompareApplicationVersionsTool = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareApplicationVersionsRequestSchema,
-        input,
-        compareContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, compareContract);
       const resolved = resolveCompareApplicationVersionsRequestValidated(
-        parsedInput.value,
+        input,
         options.evidenceLookup,
       );
       if (!resolved.ok) return toCallToolResult(resolved, compareContract);

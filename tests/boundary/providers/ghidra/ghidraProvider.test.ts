@@ -120,7 +120,8 @@ describe("Ghidra provider", () => {
     });
     expect(
       ghidra.inspectTargetSupport({
-        ...executableTarget("elf", "x86_64"),
+        path: "/tmp/fixture.asar",
+        sha256: "a".repeat(64),
         kind: "archive",
         format: "asar",
       }),
@@ -129,14 +130,15 @@ describe("Ghidra provider", () => {
       code: "target_kind_unsupported",
     });
     expect(
-      ghidra.inspectTargetSupport(executableTarget("javascript", "x86_64")),
+      ghidra.inspectTargetSupport({
+        path: "/tmp/fixture.js",
+        sha256: "a".repeat(64),
+        kind: "artifact",
+        format: "javascript",
+      }),
     ).toMatchObject({
       status: "unsupported",
-      code: "target_format_unsupported",
-    });
-    expect(ghidra.inspectTargetSupport(executableTarget("elf"))).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
+      code: "target_kind_unsupported",
     });
   });
 });
@@ -144,11 +146,7 @@ describe("Ghidra provider", () => {
 describe("Ghidra platform support", () => {
   it("keeps Windows P0 unavailable until native isolation authority exists", () => {
     const ghidra = provider({ ...installationHost(), platform: "win32" });
-    const nativeApplication: BinaryTarget = {
-      ...executableTarget("pe", "x86_64"),
-      executableRole: "application",
-      managed: false,
-    };
+    const nativeApplication = peTarget("x86_64");
 
     expect(ghidra.inspectTargetSupport(nativeApplication)).toMatchObject({
       status: "supported",
@@ -208,16 +206,13 @@ describe("Ghidra platform support", () => {
       code: "managed_target_unsupported",
     });
     expect(
-      ghidra.inspectTargetSupport({ ...nativeApplication, format: "elf" }),
+      ghidra.inspectTargetSupport(executableTarget("elf", "x86_64")),
     ).toMatchObject({
       status: "unsupported",
       code: "target_format_unsupported",
     });
     expect(
-      ghidra.inspectTargetSupport({
-        ...nativeApplication,
-        architecture: "arm64",
-      }),
+      ghidra.inspectTargetSupport(executableTarget("pe", "arm64")),
     ).toMatchObject({
       status: "unsupported",
       code: "architecture_unsupported",
@@ -470,14 +465,29 @@ const sessionInfo = () => ({
 });
 
 const executableTarget = (
-  format: BinaryTarget["format"],
-  architecture?: NonNullable<BinaryTarget["architecture"]>,
-): BinaryTarget => ({
+  format: "mach-o" | "elf" | "pe",
+  architecture: NonNullable<BinaryTarget["architecture"]>,
+): BinaryTarget =>
+  format === "pe"
+    ? peTarget(architecture)
+    : {
+        path: "/tmp/fixture",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format,
+        architecture,
+        availableArchitectures: [architecture],
+      };
+
+const peTarget = (
+  architecture: NonNullable<BinaryTarget["architecture"]>,
+): Extract<BinaryTarget, { format: "pe" }> => ({
   path: "/tmp/fixture",
   sha256: "a".repeat(64),
   kind: "executable",
-  format,
-  ...(architecture === undefined
-    ? {}
-    : { architecture, availableArchitectures: [architecture] }),
+  format: "pe",
+  architecture,
+  availableArchitectures: [architecture],
+  executableRole: "application",
+  managed: false,
 });

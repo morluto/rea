@@ -59,9 +59,12 @@ describe("browser runtime configuration", () => {
     const result = parseConfig(environment);
     if (!result.ok) throw result.error;
     expect(result.value.browserScenarioPolicy).toEqual({
-      enabled: true,
-      executableRoots: ["/opt/chromium"],
-      cdpEndpoints: ["http://127.0.0.1:9222"],
+      status: "enabled",
+      target: {
+        access: "launch-or-attach",
+        executableRoots: ["/opt/chromium"],
+        cdpEndpoints: ["http://127.0.0.1:9222"],
+      },
       allowedOrigins: ["https://app.example.test"],
       allowedEnvironment: ["REA_TEST_PASSWORD"],
     });
@@ -89,7 +92,74 @@ describe("browser runtime configuration", () => {
       }),
     );
   });
+});
 
+describe("browser scenario policy states", () => {
+  it("parses each legal browser-scenario access state", () => {
+    const launch = parseConfig({
+      REA_BROWSER_SCENARIO_ENABLED: "true",
+      REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON: '["/opt/chromium"]',
+      REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON: '["https://app.example.test"]',
+    });
+    expect(launch).toMatchObject({
+      ok: true,
+      value: {
+        browserScenarioPolicy: {
+          status: "enabled",
+          target: { access: "launch" },
+        },
+      },
+    });
+
+    const attach = parseConfig({
+      REA_BROWSER_SCENARIO_ENABLED: "true",
+      REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON: '["http://127.0.0.1:9222"]',
+      REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON: '["https://app.example.test"]',
+    });
+    expect(attach).toMatchObject({
+      ok: true,
+      value: {
+        browserScenarioPolicy: {
+          status: "enabled",
+          target: { access: "attach" },
+        },
+      },
+    });
+  });
+
+  it("rejects enabled browser scenarios without an origin or access path", () => {
+    expect(
+      parseConfig({
+        REA_BROWSER_SCENARIO_ENABLED: "true",
+        REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON: '["/opt/chromium"]',
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseConfig({
+        REA_BROWSER_SCENARIO_ENABLED: "true",
+        REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON:
+          '["https://app.example.test"]',
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("drops inactive browser-scenario settings from the parsed policy", () => {
+    expect(
+      parseConfig({
+        REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON: '["/ignored/chromium"]',
+        REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON: '["http://127.0.0.1:9222"]',
+        REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON:
+          '["https://ignored.example.test"]',
+        REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON: '["IGNORED_SECRET"]',
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { browserScenarioPolicy: { status: "disabled" } },
+    });
+  });
+});
+
+describe("browser runtime input scopes", () => {
   it.each([
     '["http://localhost:9222"]',
     '["http://192.168.1.5:9222"]',

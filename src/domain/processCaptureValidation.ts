@@ -18,9 +18,16 @@ type RequireInvariant = (
 const orderedTimestamps = (
   values: readonly { readonly at_ms: number }[],
 ): boolean =>
-  values.every(
-    (value, index) => index === 0 || value.at_ms >= values[index - 1]!.at_ms,
-  );
+  values.every((value, index) => {
+    const previous = values[index - 1];
+    return previous === undefined || value.at_ms >= previous.at_ms;
+  });
+
+const transitionsAreContiguous = (
+  previous: ProcessCapture["replay_transitions"][number] | undefined,
+  current: ProcessCapture["replay_transitions"][number],
+): boolean =>
+  previous !== undefined && previous.state_after === current.state_before;
 
 const validateCommitments = (
   capture: ProcessCapture,
@@ -156,7 +163,7 @@ const shimPlans = (capture: ProcessCapture) =>
     typeof shim.name === "string" &&
     Array.isArray(shim.routes)
       ? shim.routes.map((route, routeIndex) => ({
-          command: shim.name as string,
+          command: shim.name,
           route,
           routeIndex,
         }))
@@ -295,9 +302,12 @@ const validateReplayEvents = (
     if (index === 0)
       require(transition.state_before ===
         machine?.initial_state, "replay_transitions", "first replay transition does not start at the declared initial state");
+    const previous = capture.replay_transitions[index - 1];
     if (index > 0)
-      require(capture.replay_transitions[index - 1]!.state_after ===
-        transition.state_before, "replay_transitions", "replay transition states are not contiguous");
+      require(transitionsAreContiguous(
+        previous,
+        transition,
+      ), "replay_transitions", "replay transition states are not contiguous");
   }
 };
 

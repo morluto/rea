@@ -46,7 +46,8 @@ class FixtureLauncher implements BridgeLauncher {
     return Promise.resolve(
       ok({
         process: child,
-        ownsProcessLifetime: true,
+        ownsProcessLifetime: true as const,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }
@@ -63,7 +64,8 @@ class SilentLauncher implements BridgeLauncher {
             stdio: ["ignore", "ignore", "pipe"],
           },
         ),
-        ownsProcessLifetime: true,
+        ownsProcessLifetime: true as const,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }
@@ -89,7 +91,8 @@ class ExitingLauncher implements BridgeLauncher {
         process: spawn(process.execPath, ["-e", `process.exit(${this.code})`], {
           stdio: ["ignore", "ignore", "pipe"],
         }),
-        ownsProcessLifetime: true,
+        ownsProcessLifetime: true as const,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }
@@ -126,7 +129,8 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
           ],
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
-        ownsProcessLifetime: true,
+        ownsProcessLifetime: true as const,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -31,9 +32,7 @@ const expectAvailableToolInventory = async (client: Client): Promise<void> => {
     .parse(status.structuredContent).result.tool_availability;
   expect(availability).toHaveLength(CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
-    new Set(
-      availability.filter(({ available }) => available).map(({ name }) => name),
-    ),
+    new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );
 };
 

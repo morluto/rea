@@ -1,12 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { verifyManagedNativeBoundariesEvidence } from "../../application/ManagedNativeVerificationService.js";
-import { managedNativeVerificationReferenceInputSchema } from "../../contracts/managedWorkflowToolContracts.js";
 import { managedNativeVerificationResultSchema } from "../../domain/managedNativeVerification.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   recordManagedSources,
@@ -28,22 +26,15 @@ export const registerVerifyManagedNativeBoundaries = (
     nativeVerificationContract.name,
     toolRegistrationOptions(nativeVerificationContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        managedNativeVerificationReferenceInputSchema,
-        input,
-        nativeVerificationContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, nativeVerificationContract);
       const managedBoundaries = resolveManagedBoundaryEvidence(
         options.session,
-        parsedInput.value.managed_boundaries_evidence_id,
+        input.managed_boundaries_evidence_id,
       );
       if (!managedBoundaries.ok)
         return toCallToolResult(managedBoundaries, nativeVerificationContract);
       const nativeObservations = resolveNativeEvidence(
         options.session,
-        parsedInput.value.native_observation_evidence_ids,
+        input.native_observation_evidence_ids,
       );
       if (!nativeObservations.ok)
         return toCallToolResult(nativeObservations, nativeVerificationContract);
@@ -54,7 +45,7 @@ export const registerVerifyManagedNativeBoundaries = (
         managed_boundaries_evidence_id: _managedBoundariesEvidenceId,
         native_observation_evidence_ids: _nativeObservationEvidenceIds,
         ...referencedInput
-      } = parsedInput.value;
+      } = input;
       const parsed = {
         ...referencedInput,
         managed_boundaries: managedBoundary,

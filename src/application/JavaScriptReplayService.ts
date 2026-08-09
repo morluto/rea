@@ -6,6 +6,8 @@ import {
   replayExecutionResultSchema,
   controlledReplayOutputSchema,
   replayEvidenceSchema,
+  type ControlledReplayExecutionInput,
+  type ControlledReplayInput,
 } from "../domain/javascriptReplay.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -26,6 +28,7 @@ import { replayPermissionRequest } from "./JavaScriptReplayPermission.js";
 import {
   digestBytes,
   prepareReplayPlan,
+  type EnabledJavaScriptReplayPolicy,
   type JavaScriptReplayHost,
   type JavaScriptReplayPolicy,
   type JavaScriptReplayRunner,
@@ -36,7 +39,7 @@ const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
 export interface JavaScriptReplayDependencies {
-  readonly policy: JavaScriptReplayPolicy;
+  readonly policy: () => JavaScriptReplayPolicy;
   readonly host: JavaScriptReplayHost;
   readonly runner: JavaScriptReplayRunner;
   readonly authority: PermissionAuthority | undefined;
@@ -63,14 +66,20 @@ export const runControlledReplay = async (
 /** Plan or execute replay input already parsed by a trusted adapter. */
 export const runControlledReplayValidated = async (
   dependencies: JavaScriptReplayDependencies,
-  input: z.output<typeof controlledReplayInputSchema>,
+  input: ControlledReplayInput,
   options: ExecutionOptions = {},
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const authorized = await authorizeReplay(dependencies, input, options.signal);
+  const authorized = await authorizeReplay(
+    dependencies,
+    dependencies.policy(),
+    input,
+    options.signal,
+  );
   if (!authorized.ok) return authorized;
 
   const prepared = await prepareValidatedReplay(
     dependencies,
+    authorized.value,
     input,
     options.signal,
   );
@@ -91,7 +100,7 @@ export const runControlledReplayValidated = async (
   if (input.plan_digest !== prepared.value.publicPlan.plan_digest)
     return err(
       new ReplayPlanStaleError(
-        input.plan_digest ?? "",
+        input.plan_digest,
         prepared.value.publicPlan.plan_digest,
       ),
     );
@@ -103,12 +112,13 @@ export const runControlledReplayValidated = async (
   );
   if (!exportContext.ok) return exportContext;
 
-  const executed = await executeValidatedReplay(
-    dependencies,
-    prepared.value,
-    exportContext.value,
+  const executed = await executeValidatedReplay({
+    runner: dependencies.runner,
+    policy: authorized.value,
+    prepared: prepared.value,
+    exportContext: exportContext.value,
     options,
-  );
+  });
   if (!executed.ok) return executed;
 
   try {
@@ -133,10 +143,11 @@ export const runControlledReplayValidated = async (
 
 const authorizeReplay = async (
   dependencies: JavaScriptReplayDependencies,
-  input: z.output<typeof controlledReplayInputSchema>,
+  policy: JavaScriptReplayPolicy,
+  input: ControlledReplayInput,
   signal: AbortSignal | undefined,
-): Promise<Result<true, AnalysisError>> => {
-  if (!dependencies.policy.enabled)
+): Promise<Result<EnabledJavaScriptReplayPolicy, AnalysisError>> => {
+  if (policy.status === "disabled")
     return err(
       new AnalysisCapabilityUnavailableError(
         "rea-javascript-replay",
@@ -154,7 +165,7 @@ const authorizeReplay = async (
     );
   if (isAborted(signal)) return err(new AnalysisCancelledError(OPERATION));
 
-  const request = replayPermissionRequest(input, dependencies.policy);
+  const request = replayPermissionRequest(input, policy);
   const authorized =
     input.mode === "plan"
       ? await dependencies.authority.explain(request, "read")
@@ -167,21 +178,20 @@ const authorizeReplay = async (
             cause: authorized.error,
           }),
     );
-  return ok(true);
+  return ok(policy);
 };
 
 const prepareValidatedReplay = async (
   dependencies: JavaScriptReplayDependencies,
-  input: z.output<typeof controlledReplayInputSchema>,
+  policy: EnabledJavaScriptReplayPolicy,
+  input: ControlledReplayInput,
   signal: AbortSignal | undefined,
 ): Promise<
   Result<Awaited<ReturnType<typeof prepareReplayPlan>>, AnalysisError>
 > => {
   if (isAborted(signal)) return err(new AnalysisCancelledError(OPERATION));
   try {
-    return ok(
-      await prepareReplayPlan(input, dependencies.policy, dependencies.host),
-    );
+    return ok(await prepareReplayPlan(input, policy, dependencies.host));
   } catch (cause: unknown) {
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -200,12 +210,10 @@ interface ReproducerExportContext {
 
 const authorizeReproducerExport = async (
   authority: PermissionAuthority | undefined,
-  input: z.output<typeof controlledReplayInputSchema>,
+  input: ControlledReplayExecutionInput,
   prepared: Awaited<ReturnType<typeof prepareReplayPlan>>,
 ): Promise<Result<ReproducerExportContext | undefined, AnalysisError>> => {
   if (input.reproducer_export === undefined) return ok(undefined);
-  if (input.reproducer_export.approved !== true)
-    return err(new AnalysisInputError(`${OPERATION}:reproducer_export`));
   if (authority === undefined)
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -249,11 +257,16 @@ const authorizeReproducerExport = async (
   });
 };
 
+interface ReplayExecutionContext {
+  readonly runner: JavaScriptReplayRunner;
+  readonly policy: EnabledJavaScriptReplayPolicy;
+  readonly prepared: Awaited<ReturnType<typeof prepareReplayPlan>>;
+  readonly exportContext: ReproducerExportContext | undefined;
+  readonly options: ExecutionOptions;
+}
+
 const executeValidatedReplay = async (
-  dependencies: JavaScriptReplayDependencies,
-  prepared: Awaited<ReturnType<typeof prepareReplayPlan>>,
-  exportContext: ReproducerExportContext | undefined,
-  options: ExecutionOptions,
+  context: ReplayExecutionContext,
 ): Promise<
   Result<
     {
@@ -263,6 +276,7 @@ const executeValidatedReplay = async (
     AnalysisError
   >
 > => {
+  const { runner, policy, prepared, exportContext, options } = context;
   await options.progress?.report({
     phase: OPERATION,
     completed: 0,
@@ -274,11 +288,7 @@ const executeValidatedReplay = async (
 
   try {
     let executed = replayExecutionResultSchema.parse(
-      await dependencies.runner.execute(
-        prepared,
-        dependencies.policy,
-        options.signal,
-      ),
+      await runner.execute(prepared, policy, options.signal),
     );
     await options.progress?.report({
       phase: OPERATION,
@@ -505,9 +515,9 @@ const createReplayEvidence = (
   );
 };
 
-const asJson = (value: unknown): JsonValue =>
-  jsonValueSchema.parse(
-    JSON.parse(
-      JSON.stringify(controlledReplayOutputSchema.parse(value)),
-    ) as unknown,
+const asJson = (value: unknown): JsonValue => {
+  const serialized: unknown = JSON.parse(
+    JSON.stringify(controlledReplayOutputSchema.parse(value)),
   );
+  return jsonValueSchema.parse(serialized);
+};

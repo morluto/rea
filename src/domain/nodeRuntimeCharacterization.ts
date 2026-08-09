@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 import {
-  controlledReplayInputSchema,
-  controlledReplayOutputSchema,
+  controlledReplayExecutionOutputSchema,
+  controlledReplayPlanInputSchema,
+  controlledReplayPlanOutputSchema,
 } from "./javascriptReplay.js";
 import {
   javascriptExportInstrumentationInputSchema,
@@ -12,22 +13,24 @@ import { runtimeCharacterizationPlanSchema } from "./runtimeCharacterization.js"
 import { evidenceRecordSchema } from "./evidence.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const nodeCharacterizationExpectedEffectSchema = z.enum([
+  "pure",
+  "observation-only",
+]);
+const nodeRuntimeCharacterizationPlanSchema =
+  runtimeCharacterizationPlanSchema.extend({
+    expected_effect: nodeCharacterizationExpectedEffectSchema,
+  });
 
 export const nodeCharacterizationPreparationInputSchema = z
   .strictObject({
     preparation_approved: z.literal(true),
     selected_alias: z.string().min(1).max(200),
-    expected_effect: z.enum(["pure", "observation-only"]),
+    expected_effect: nodeCharacterizationExpectedEffectSchema,
     instrumentation: javascriptExportInstrumentationInputSchema,
-    replay: controlledReplayInputSchema,
+    replay: controlledReplayPlanInputSchema,
   })
   .superRefine((input, context) => {
-    if (input.replay.mode !== "plan")
-      context.addIssue({
-        code: "custom",
-        path: ["replay", "mode"],
-        message: "Characterization preparation requires replay plan mode",
-      });
     const selected = input.replay.left.modules.filter(
       ({ alias }) => alias === input.selected_alias,
     );
@@ -68,20 +71,20 @@ export const nodeCharacterizationExecutionInputSchema = z.strictObject({
 export const nodeCharacterizationPreparationOutputSchema = z.strictObject({
   schema_version: z.literal(1),
   phase: z.literal("preparation"),
-  plan: runtimeCharacterizationPlanSchema,
+  plan: nodeRuntimeCharacterizationPlanSchema,
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
-  replay: controlledReplayOutputSchema,
+  replay: controlledReplayPlanOutputSchema,
 });
 
 export const nodeCharacterizationExecutionOutputSchema = z.strictObject({
   schema_version: z.literal(1),
   phase: z.literal("execution"),
-  plan: runtimeCharacterizationPlanSchema,
+  plan: nodeRuntimeCharacterizationPlanSchema,
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
   evidence: evidenceRecordSchema,
-  replay: controlledReplayOutputSchema,
+  replay: controlledReplayExecutionOutputSchema,
 });
 
 export type NodeCharacterizationPreparationInput = z.infer<

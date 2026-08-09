@@ -345,4 +345,6 @@ const target = (bytes: Buffer): BinaryTarget => ({
   format: "pe",
   architecture: "x86",
   availableArchitectures: ["x86"],
+  executableRole: "application",
+  managed: true,
 });

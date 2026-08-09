@@ -1,11 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { planManagedRuntimeCorrelationEvidenceValidated } from "../../application/ManagedRuntimeCorrelationService.js";
-import { managedRuntimeCorrelationReferenceInputSchema } from "../../contracts/managedWorkflowToolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import { resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
@@ -23,15 +21,8 @@ export const registerPlanManagedRuntimeCorrelation = (
     runtimeContract.name,
     toolRegistrationOptions(runtimeContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        managedRuntimeCorrelationReferenceInputSchema,
-        input,
-        runtimeContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, runtimeContract);
       const resolved = resolveManagedEvidence(options.session, [
-        parsedInput.value.static_members_evidence_id,
+        input.static_members_evidence_id,
       ]);
       if (!resolved.ok) return toCallToolResult(resolved, runtimeContract);
       const staticMembers = resolved.value[0];
@@ -40,7 +31,7 @@ export const registerPlanManagedRuntimeCorrelation = (
       const {
         static_members_evidence_id: _staticMembersEvidenceId,
         ...referencedInput
-      } = parsedInput.value;
+      } = input;
       const parsed = { ...referencedInput, static_members: staticMembers };
       const result = await logToolExecution(
         options.logger,

@@ -20,6 +20,7 @@ import {
 } from "./ArtifactInventory.js";
 import { scanAuthorizedArtifactInventory } from "./AuthorizedArtifactInventory.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "./InvestigationProviders.js";
+import { resolveArtifactIntegrityPolicy } from "./ArtifactInventory/policy.js";
 
 export const AUTOMATIC_RUN_LIMITATION =
   "Automatic cross-version runs compare shipped artifact structure only; they do not execute either version.";
@@ -76,12 +77,15 @@ export const scanVersions = async (
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError("find_changed_behavior"));
     const limits = artifactLimits(input.options);
-    const integrity: ArtifactIntegrityPolicy = {
-      mode: input.integrity_policy,
-      approved: input.integrity_continue_approved,
-      enabled: integrityContinueEnabled,
-      maxMismatches: input.max_integrity_mismatches,
-    };
+    const integrity = resolveArtifactIntegrityPolicy(
+      input.integrity_policy === "fail"
+        ? { mode: "fail" }
+        : {
+            mode: input.integrity_policy,
+            maxMismatches: input.max_integrity_mismatches,
+          },
+      integrityContinueEnabled,
+    );
     return ok(
       await scanVersionInventories({
         leftPath: input.left_path,

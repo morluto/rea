@@ -31,8 +31,7 @@ describe("safe artifact output tree", () => {
       ),
     ).rejects.toThrow(/disagrees/u);
     expect(await tree.rollback()).toMatchObject({
-      attempted: true,
-      verified: true,
+      status: "complete",
       residualPaths: [],
     });
     await expect(access(output)).rejects.toThrow();
@@ -52,7 +51,7 @@ describe("safe artifact output tree", () => {
     );
 
     await tree.commit();
-    expect(await tree.rollback()).toMatchObject({ attempted: false });
+    expect(await tree.rollback()).toEqual({ status: "not-required" });
     expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
       "visible before seal",
     );
@@ -62,9 +61,13 @@ describe("safe artifact output tree", () => {
     const parent = await createTestTempDirectory("rea-safe-output-");
     const tree = await SafeOutputTree.create(join(parent, "published"), LIMITS);
     const cleanup = await tree.rollback();
-    (cleanup.residualPaths as string[]).push("/forged/path");
+    if (cleanup.status !== "complete") throw new Error("expected cleanup");
+    (cleanup.residualPaths as unknown as string[]).push("/forged/path");
 
-    expect(tree.cleanup.residualPaths).toEqual([]);
-    expect((await tree.rollback()).residualPaths).toEqual([]);
+    expect(tree.cleanup).toEqual({ status: "complete", residualPaths: [] });
+    expect(await tree.rollback()).toEqual({
+      status: "complete",
+      residualPaths: [],
+    });
   });
 });

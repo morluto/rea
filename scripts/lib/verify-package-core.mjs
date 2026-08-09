@@ -28,8 +28,8 @@ export const runWithStatus = async (command, args, env) => {
 /** Parse JSON from a command output string. */
 export const json = (text) => JSON.parse(text);
 
-/** Verify that the advertised MCP catalog matches the session's available tools. */
-export const verifyAvailableToolCatalog = async (client, options) => {
+/** Verify that the complete advertised MCP catalog matches session metadata. */
+export const verifyCompleteToolCatalog = async (client, options) => {
   const listed = await client.listTools(undefined, options);
   const status = await client.callTool(
     { name: "binary_session", arguments: { detail: "full" } },
@@ -38,14 +38,11 @@ export const verifyAvailableToolCatalog = async (client, options) => {
   const availability = status.structuredContent?.result?.tool_availability;
   if (!Array.isArray(availability))
     throw new Error("packaged MCP omitted tool availability");
-  const expected = availability
-    .filter(({ available }) => available === true)
-    .map(({ name }) => name)
-    .sort();
+  const expected = availability.map(({ name }) => name).sort();
   const observed = listed.tools.map(({ name }) => name).sort();
   if (JSON.stringify(observed) !== JSON.stringify(expected))
     throw new Error(
-      "packaged MCP tool inventory diverged from session availability",
+      "packaged MCP tool inventory diverged from session metadata",
     );
   return observed;
 };

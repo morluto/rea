@@ -62,11 +62,8 @@ export const targetKindSchema = z.enum([
   "artifact",
 ]);
 
-const providerCapability = z.object({
+const providerCapabilityFacts = {
   operation: z.string(),
-  available: z.boolean(),
-  reason: z.string().nullable(),
-  availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
   input_contract_version: z.number().int().min(1),
   output_contract_version: z.number().int().min(1),
   pagination: z.enum(["none", "offset", "cursor"]),
@@ -86,7 +83,23 @@ const providerCapability = z.object({
     timeout_ms: z.number().int().min(0).nullable(),
   }),
   limitations: z.array(z.string()),
-});
+};
+
+export const providerCapability = z.discriminatedUnion("available", [
+  z.object({
+    ...providerCapabilityFacts,
+    available: z.literal(true),
+    reason: z.null(),
+    availability_code: z.null(),
+  }),
+  z.object({
+    ...providerCapabilityFacts,
+    available: z.literal(false),
+    reason: z.string().nullable(),
+    availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
+  }),
+]);
+export type ProviderCapability = z.output<typeof providerCapability>;
 
 export const providerIdentity = z.object({
   id: z.string(),
@@ -225,32 +238,27 @@ export type ClientFeatureAvailability = z.infer<
   typeof clientFeatureAvailabilitySchema
 >;
 
-export const toolAvailability = z.object({
+const toolAvailabilityMode = z.discriminatedUnion("available", [
+  z.object({
+    name: z.string(),
+    available: z.literal(true),
+    missing_operations: z.array(z.string()).max(0),
+    remediation: z.null(),
+  }),
+  z.object({
+    name: z.string(),
+    available: z.literal(false),
+    missing_operations: z.array(z.string()).min(1),
+    remediation: z.string().nullable(),
+  }),
+]);
+export type ToolAvailabilityMode = z.output<typeof toolAvailabilityMode>;
+
+const toolAvailabilityFacts = {
   name: z.string(),
   surface: z.string(),
-  available: z.boolean(),
-  reason: z.enum([
-    "available",
-    "client_capability_missing",
-    "target_required",
-    "provider_missing",
-    "provider_unavailable",
-    "target_unsupported",
-    "unsupported_host",
-    "policy_disabled",
-  ]),
-  remediation: z.string().nullable(),
   default_mode_available: z.boolean().optional(),
-  modes: z
-    .array(
-      z.object({
-        name: z.string(),
-        available: z.boolean(),
-        missing_operations: z.array(z.string()),
-        remediation: z.string().nullable(),
-      }),
-    )
-    .optional(),
+  modes: z.array(toolAvailabilityMode).optional(),
   client_requirements: z.object({
     required: z.array(clientFeatureNameSchema),
     optional: z.array(clientFeatureNameSchema),
@@ -273,7 +281,36 @@ export const toolAvailability = z.object({
     idempotent: z.boolean(),
     open_world: z.boolean(),
   }),
-});
+};
+
+export const toolUnavailabilityReason = z.enum([
+  "client_capability_missing",
+  "target_required",
+  "provider_missing",
+  "provider_unavailable",
+  "target_unsupported",
+  "unsupported_host",
+  "policy_disabled",
+]);
+
+export const toolAvailability = z.discriminatedUnion("available", [
+  z.object({
+    ...toolAvailabilityFacts,
+    available: z.literal(true),
+    reason: z.literal("available"),
+    remediation: z.null(),
+  }),
+  z.object({
+    ...toolAvailabilityFacts,
+    available: z.literal(false),
+    reason: toolUnavailabilityReason,
+    remediation: z.string().nullable(),
+  }),
+]);
+export type ToolAvailability = z.output<typeof toolAvailability>;
+export type ToolUnavailabilityReason = z.output<
+  typeof toolUnavailabilityReason
+>;
 
 export const sessionProvider = z.object({
   provider: providerIdentity,
@@ -377,14 +414,25 @@ const availableMemoryPermissions = z.object({
   source: z.literal("ghidra-memory-block"),
 });
 
-export const bounded = (item: z.ZodType) =>
-  z.object({
+export const bounded = (item: z.ZodType) => {
+  const facts = {
     items: z.array(item),
     total: z.number().int().min(0).nullable(),
     returned: z.number().int().min(0),
-    truncated: z.boolean(),
-    next_offset: z.number().int().min(0).nullable(),
-  });
+  } as const;
+  return z.discriminatedUnion("truncated", [
+    z.object({
+      ...facts,
+      truncated: z.literal(false),
+      next_offset: z.null(),
+    }),
+    z.object({
+      ...facts,
+      truncated: z.literal(true),
+      next_offset: z.number().int().min(0).nullable(),
+    }),
+  ]);
+};
 
 const addressedValue = z.object({
   address: z.string(),

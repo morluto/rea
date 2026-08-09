@@ -89,7 +89,7 @@ export type TraversalState = {
   bytesRead: number;
   filesSeen: number;
   truncated: boolean;
-  stopped: boolean;
+  stopReason: "entry-limit" | undefined;
 };
 
 export type StableFileRequest = {

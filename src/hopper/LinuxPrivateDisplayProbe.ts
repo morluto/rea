@@ -10,6 +10,7 @@ import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
+  type ProviderProcessLaunch,
 } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
 
@@ -24,12 +25,11 @@ export type LinuxPrivateDisplayRunnableStrategy = Exclude<
 >;
 
 export interface LinuxPrivateDisplayProbeProcessResult {
+  readonly outcome: "exited" | "timed-out" | "cancelled" | "launch-failed";
   readonly exitCode: number | null | undefined;
   readonly stderr: string;
   readonly stderrBytes: number;
   readonly stderrTruncated: boolean;
-  readonly timedOut: boolean;
-  readonly cancelled: boolean;
   readonly cleanupIncomplete: boolean;
 }
 
@@ -103,7 +103,7 @@ export const selectLinuxPrivateDisplayStrategy = async (options: {
 export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
   async (strategy, options) => {
     if (options.signal?.aborted === true)
-      return emptyProcessResult({ cancelled: true });
+      return emptyProcessResult("cancelled");
     const command = privateDisplayProbeCommand(options.helperPath, strategy);
     let started: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>;
     try {
@@ -114,9 +114,9 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
         expectedCommand: null,
       });
     } catch {
-      return emptyProcessResult();
+      return emptyProcessResult("launch-failed");
     }
-    const launch = {
+    const launch: ProviderProcessLaunch = {
       process: started.process,
       ownsProcessLifetime: true,
       cleanup: () => cleanupOwnedProcessGroup(started.ownership),
@@ -136,12 +136,16 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
     } else supervisor.dispose();
     const snapshot = supervisor.snapshot();
     return {
+      outcome:
+        outcome === "exit"
+          ? "exited"
+          : outcome === "timeout"
+            ? "timed-out"
+            : "cancelled",
       exitCode: snapshot.exitCode,
       stderr: snapshot.stderr.text,
       stderrBytes: snapshot.stderr.bytes,
       stderrTruncated: snapshot.stderr.truncated,
-      timedOut: outcome === "timeout",
-      cancelled: outcome === "cancelled",
       cleanupIncomplete,
     };
   };
@@ -204,15 +208,20 @@ const evaluatedProbe = async (
       diagnostic: syntheticDiagnostic(strategy, "probe_failed"),
     };
   }
-  if (processResult.cancelled)
+  if (processResult.outcome === "cancelled")
     return {
       ok: false,
       diagnostic: syntheticDiagnostic(strategy, "cancelled"),
     };
-  if (processResult.timedOut)
+  if (processResult.outcome === "timed-out")
     return {
       ok: false,
       diagnostic: syntheticDiagnostic(strategy, "probe_timeout"),
+    };
+  if (processResult.outcome === "launch-failed")
+    return {
+      ok: false,
+      diagnostic: syntheticDiagnostic(strategy, "probe_failed"),
     };
   if (processResult.cleanupIncomplete)
     return {
@@ -288,16 +297,17 @@ const unavailable = (
 });
 
 const emptyProcessResult = (
-  overrides: Partial<LinuxPrivateDisplayProbeProcessResult> = {},
+  outcome: Extract<
+    LinuxPrivateDisplayProbeProcessResult["outcome"],
+    "cancelled" | "launch-failed"
+  >,
 ): LinuxPrivateDisplayProbeProcessResult => ({
+  outcome,
   exitCode: undefined,
   stderr: "",
   stderrBytes: 0,
   stderrTruncated: false,
-  timedOut: false,
-  cancelled: false,
   cleanupIncomplete: false,
-  ...overrides,
 });
 
 const waitForProbeExit = async (

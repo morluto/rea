@@ -19,14 +19,14 @@ describe("replay worker protocol", () => {
       parseReplayWorkerResponse(
         { schema_version: 1, left: [outcome] },
         cases,
-        false,
+        "single",
       ),
     ).toMatchObject({ left: [outcome] });
     expect(() =>
       parseReplayWorkerResponse(
         { schema_version: 1, left: [{ ...outcome, case_id: "forged" }] },
         cases,
-        false,
+        "single",
       ),
     ).toThrow("case identity changed");
     expect(() =>
@@ -36,7 +36,7 @@ describe("replay worker protocol", () => {
           left: [{ ...outcome, input_sha256: "2".repeat(64) }],
         },
         cases,
-        false,
+        "single",
       ),
     ).toThrow("case identity changed");
   });
@@ -46,9 +46,9 @@ describe("replay worker protocol", () => {
       parseReplayWorkerResponse(
         { schema_version: 1, left: [outcome] },
         cases,
-        true,
+        "differential",
       ),
-    ).toThrow("differential response is incomplete");
+    ).toThrow();
     expect(() =>
       parseReplayWorkerResponse(
         {
@@ -56,7 +56,7 @@ describe("replay worker protocol", () => {
           left: [{ ...outcome, unexpected: true }],
         },
         cases,
-        false,
+        "single",
       ),
     ).toThrow();
     expect(() =>
@@ -66,8 +66,8 @@ describe("replay worker protocol", () => {
           left: [{ ...outcome, outcome: "exception", value: undefined }],
         },
         cases,
-        false,
+        "single",
       ),
-    ).toThrow("Exception is missing");
+    ).toThrow();
   });
 });

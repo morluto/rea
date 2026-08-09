@@ -37,11 +37,11 @@ export interface GhidraLaunchSession {
 }
 
 /** Process plus private log coordinates returned by a Ghidra launcher. */
-export interface GhidraLaunch extends ProviderProcessLaunch {
+export type GhidraLaunch = ProviderProcessLaunch & {
   readonly projectRoot: string;
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
-}
+};
 
 /** Provider-owned capability that starts one isolated headless analysis. */
 export interface GhidraLauncher {
@@ -178,7 +178,7 @@ const ownedGhidraProcess = (
   spawned: SpawnedOwnedProviderProcess,
   platform: NodeJS.Platform,
 ): Pick<
-  GhidraLaunch,
+  Extract<ProviderProcessLaunch, { readonly ownsProcessLifetime: true }>,
   "process" | "ownsProcessLifetime" | "ownership" | "cleanup"
 > => ({
   process: spawned.process,

@@ -1,59 +1,48 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import type { ToolContract } from "../contracts/toolContracts.js";
-import {
-  compareFunctions,
-  functionComparisonInputSchema,
-} from "../domain/functionComparison.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
+import { compareFunctions } from "../domain/functionComparison.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
-import { toCallToolResult } from "./toolResult.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
+import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: ToolContract<"compare_functions">,
+  contract: (typeof SESSION_TOOL_CONTRACTS)[8],
 ): void => {
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        functionComparisonInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
       const expected = {
         operation: "analyze_function",
         predicate: "rea.analysis/v2",
       };
       const left = resolveSessionEvidenceIds(
         session,
-        parsed.left_evidence_ids,
+        input.left_evidence_ids,
         expected,
       );
       if (!left.ok) return toCallToolResult(left, contract);
       const right = resolveSessionEvidenceIds(
         session,
-        parsed.right_evidence_ids,
+        input.right_evidence_ids,
         expected,
       );
       if (!right.ok) return toCallToolResult(right, contract);
       const leftIds = left.value.map(({ evidence_id: id }) => id);
       const rightIds = right.value.map(({ evidence_id: id }) => id);
       const computed = await runDerivedOperation(context, contract.name, () =>
-        compareFunctions(left.value, right.value, parsed.offset, parsed.limit),
+        compareFunctions(left.value, right.value, input.offset, input.limit),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const comparison = computed.value;
@@ -63,8 +52,8 @@ export const registerFunctionComparisonTool = (
         parameters: {
           left_evidence_ids: leftIds,
           right_evidence_ids: rightIds,
-          offset: parsed.offset,
-          limit: parsed.limit,
+          offset: input.offset,
+          limit: input.limit,
         },
         result: jsonValueSchema.parse(comparison),
         confidence: "derived",
@@ -76,7 +65,7 @@ export const registerFunctionComparisonTool = (
         session,
         evidence,
         functionUnknownInput({
-          approved: parsed.unknown_registry_approved,
+          approved: input.unknown_registry_approved,
           status: comparison.status,
           leftIds,
           rightIds,

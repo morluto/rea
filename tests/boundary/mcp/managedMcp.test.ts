@@ -55,11 +55,11 @@ it("opens a managed PE and executes the managed static provider through MCP", as
   if (!authority.ok) throw authority.error;
   const server = createServer(session, session, {
     permissionAuthority: authority.value,
-    managedRuntimePolicy: {
-      enabled: true,
+    managedRuntimePolicy: () => ({
+      status: "enabled",
       roots: [directory],
       executablePath: runtimePath,
-    },
+    }),
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       evidenceFileRoots: 0,

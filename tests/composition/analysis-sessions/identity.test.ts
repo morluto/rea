@@ -48,7 +48,7 @@ describe("package identity", () => {
       "node scripts/generate-package-metadata.mjs --check",
     );
     expect(packageJson.scripts.prebuild).toBe(
-      "npm run deps:check && npm run metadata:check",
+      "npm run deps:check && npm run metadata:check && node scripts/clean-build-output.mjs",
     );
     expect(packageJson.scripts["precheck:fast"]).toBe("npm run deps:check");
     expect(packageJson.scripts["check:fast"]).toBe("turbo run typecheck lint");

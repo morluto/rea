@@ -300,6 +300,9 @@ const inspect = (
     kind: "executable",
     format: "pe",
     architecture: "x86",
+    availableArchitectures: ["x86"],
+    executableRole: "application",
+    managed: true,
   };
   const result = inspectManagedMembersBytes(bytes, target, limits);
   return {

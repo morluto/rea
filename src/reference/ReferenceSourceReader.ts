@@ -58,7 +58,7 @@ export const readReferenceSource = async (
     bytesRead: 0,
     filesSeen: 0,
     truncated: false,
-    stopped: false,
+    stopReason: undefined,
   };
   const traversal = await traverse(state);
   if (!traversal.ok) return traversal;
@@ -70,7 +70,7 @@ export const readReferenceSource = async (
     truncated: state.truncated,
     limitations: [
       PATH_RACE_LIMITATION,
-      ...(state.stopped
+      ...(state.stopReason === "entry-limit"
         ? ["Traversal stopped because the entry limit was reached."]
         : []),
     ],
@@ -80,7 +80,7 @@ export const readReferenceSource = async (
 const traverse = async (
   state: TraversalState,
 ): Promise<ReferenceSourceResult<undefined>> => {
-  while (state.pending.length > 0 && !state.stopped) {
+  while (state.pending.length > 0 && state.stopReason === undefined) {
     if (isAborted(state.signal))
       return err({
         tag: "reference-source-reader",

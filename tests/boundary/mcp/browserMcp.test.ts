@@ -38,7 +38,7 @@ it(
     const connected = await connectBrowser(browser);
 
     const tools = await connected.client.listTools();
-    expect(tools.tools.length).toBeLessThan(TOOL_CONTRACTS.length);
+    expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
     expect(tools.tools.map(({ name }) => name)).toEqual(
       expect.arrayContaining([
         "list_browser_targets",
@@ -80,6 +80,17 @@ it(
         targets: { items: [{ target_id: "allowed-page" }] },
       },
     });
+    const unapprovedSourceCapture = await connected.client.callTool({
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        approved: true,
+        include_script_sources: true,
+      },
+    });
+    expect(unapprovedSourceCapture.isError).toBe(true);
     const inspected = await connected.client.callTool({
       name: "inspect_web_page",
       arguments: {
@@ -95,6 +106,7 @@ it(
         include_websocket_shapes: true,
         websocket_shape_approved: true,
         include_script_sources: true,
+        source_capture_approved: true,
       },
     });
     expect(inspected.isError).not.toBe(true);
@@ -205,6 +217,11 @@ const verifySessionAndComparisonTools = async (
   expect(compared.structuredContent).toMatchObject({
     result: { overall_status: "unknown" },
   });
+  const incompleteComparison = await connected.client.callTool({
+    name: "compare_web_captures",
+    arguments: { before: { inspection: capture } },
+  });
+  expect(incompleteComparison.isError).toBe(true);
   const screenshot = await connected.client.callTool({
     name: "capture_web_screenshot",
     arguments: {

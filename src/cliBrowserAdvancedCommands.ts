@@ -10,7 +10,11 @@ import { loadConfiguredPermissionAuthority } from "./application/PermissionConfi
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  projectAnalysisError,
+} from "./domain/errors.js";
 import { browserCaptureComparisonInputSchema } from "./domain/browserCaptureComparison.js";
 import { discoverWebMcpToolsInputSchema } from "./domain/webMcpDiscovery.js";
 import {
@@ -92,7 +96,7 @@ const registerWebMcp = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "discover-webmcp-tools", async () => {
-        const context = await browserContext();
+        const context = await browserContext("discover_webmcp_tools");
         if (!context.ok) return context.error;
         const parsed = discoverWebMcpToolsInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -197,7 +201,7 @@ const registerScreenshot = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "capture-web-screenshot", async () => {
-        const context = await browserContext();
+        const context = await browserContext("capture_web_screenshot");
         if (!context.ok) return context.error;
         const parsed = captureWebScreenshotInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -263,9 +267,21 @@ const registerScreenshotDiff = (
   });
 };
 
-const browserContext = async () => {
+const browserContext = async (operation: string) => {
   const config = parseConfig(process.env);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
+  const policy = config.value.browserObservationPolicy;
+  if (policy.status === "disabled")
+    return {
+      ok: false as const,
+      error: cliError(
+        new AnalysisCapabilityUnavailableError(
+          "rea-cdp-browser",
+          operation,
+          "browser observation is disabled; configure exact endpoints and origins before enabling it",
+        ),
+      ),
+    };
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok)
     return { ok: false as const, error: cliError(authority.error) };
@@ -273,7 +289,7 @@ const browserContext = async () => {
     ok: true as const,
     authority: authority.value,
     provider: new CdpBrowserProvider(),
-    allowedBrowserOrigins: config.value.browserAllowedOrigins,
+    allowedBrowserOrigins: policy.allowedOrigins,
   };
 };
 

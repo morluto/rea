@@ -230,8 +230,9 @@ const parseSnapshots = (
 const assertCompatible = (
   snapshots: ReadonlyMap<string, FunctionSnapshot>,
 ): void => {
-  const first = snapshots.values().next().value as FunctionSnapshot | undefined;
-  if (first === undefined) return;
+  const firstEntry = snapshots.values().next();
+  if (firstEntry.done) return;
+  const first = firstEntry.value;
   for (const snapshot of snapshots.values()) {
     if (
       snapshot.subject.digest.sha256 !== first.subject.digest.sha256 ||

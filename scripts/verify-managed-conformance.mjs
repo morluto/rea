@@ -344,11 +344,11 @@ try {
   assert.equal(reconstructionImport.value.confidence, "inferred");
   const runtimePlan = await planManagedRuntimeCorrelationEvidence(
     {
-      policy: {
-        enabled: true,
+      policy: () => ({
+        status: "enabled",
         roots: [workspace],
         executablePath: runtimeExecutable,
-      },
+      }),
       authority: runtimeAuthority.value,
     },
     {

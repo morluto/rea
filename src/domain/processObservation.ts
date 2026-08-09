@@ -100,14 +100,14 @@ type ProjectedRecord = Omit<
 
 const atMilliseconds = (value: unknown): number | null => {
   if (typeof value !== "object" || value === null) return null;
-  for (const name of ["at_ms", "dispatched_at_ms"])
-    if (name in value) {
-      const candidate = value[name as keyof typeof value];
-      if (typeof candidate === "number" && Number.isSafeInteger(candidate))
-        return candidate;
-    }
+  if ("at_ms" in value && isSafeMillisecond(value.at_ms)) return value.at_ms;
+  if ("dispatched_at_ms" in value && isSafeMillisecond(value.dispatched_at_ms))
+    return value.dispatched_at_ms;
   return null;
 };
+
+const isSafeMillisecond = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value);
 
 /** Derive the stable capture-local identity for one normalized observation. */
 export const processObservationSubject = (

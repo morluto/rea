@@ -5,7 +5,10 @@ import {
   type ProcessCapturePort,
 } from "../../../src/application/ProcessPairedExperiment.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
-import { parseProcessCapture } from "../../../src/domain/processCapture.js";
+import {
+  parseProcessCapture,
+  type EnabledProcessExecutionPolicy,
+} from "../../../src/domain/processCapture.js";
 import {
   analyzeProcessRepeatability,
   bindProcessScenario,
@@ -47,12 +50,12 @@ const experiment = () =>
     ],
   });
 
-const policy = {
-  enabled: true,
+const policy: EnabledProcessExecutionPolicy = {
+  status: "enabled",
   executableRoots: ["/bin"],
   workingRoots: ["/tmp"],
   allowedEnvironment: ["SHARED", "SIDE"],
-  allowExternalNetwork: false,
+  networkAccess: "none",
 };
 
 describe("paired process experiments", () => {

@@ -16,7 +16,11 @@ import {
 } from "./domain/browserObservation.js";
 import { analyzeWebBundleInputSchema } from "./domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "./domain/browserSession.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  projectAnalysisError,
+} from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
@@ -81,7 +85,7 @@ const registerTargetList = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "list-browser-targets", async () => {
-        const context = await browserContext();
+        const context = await browserContext("list_browser_targets");
         if (!context.ok) return context.error;
         const parsed = listBrowserTargetsInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -116,7 +120,7 @@ const registerPageInspection = (
     options: browserPageInspectionOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-web-page", async () => {
-        const context = await browserContext();
+        const context = await browserContext("inspect_web_page");
         if (!context.ok) return context.error;
         const parsed = inspectWebPageInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -133,6 +137,7 @@ const registerPageInspection = (
           include_websocket_shapes: options.includeWebsocketShapes,
           websocket_shape_approved: options.websocketShapeApproved,
           include_script_sources: options.includeScriptSources,
+          source_capture_approved: options.sourceCaptureApproved,
           include_storage_keys: options.includeStorageKeys,
           include_storage_fingerprints: options.includeStorageFingerprints,
           limits: {
@@ -227,7 +232,7 @@ const registerBundleAnalysis = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "analyze-web-bundle", async () => {
-        const context = await browserContext();
+        const context = await browserContext("analyze_web_bundle");
         if (!context.ok) return context.error;
         const parsed = analyzeWebBundleInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -283,7 +288,7 @@ const registerObservationSession = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "observe-web-session", async () => {
-        const context = await browserContext();
+        const context = await browserContext("observe_web_session");
         if (!context.ok) return context.error;
         const parsed = observeWebSessionInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
@@ -306,9 +311,21 @@ const registerObservationSession = (
   });
 };
 
-const browserContext = async () => {
+const browserContext = async (operation: string) => {
   const config = parseConfig(process.env);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
+  const policy = config.value.browserObservationPolicy;
+  if (policy.status === "disabled")
+    return {
+      ok: false as const,
+      error: cliError(
+        new AnalysisCapabilityUnavailableError(
+          "rea-cdp-browser",
+          operation,
+          "browser observation is disabled; configure exact endpoints and origins before enabling it",
+        ),
+      ),
+    };
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok)
     return { ok: false as const, error: cliError(authority.error) };
@@ -316,7 +333,7 @@ const browserContext = async () => {
     ok: true as const,
     authority: authority.value,
     provider: new CdpBrowserProvider(),
-    allowedBrowserOrigins: config.value.browserAllowedOrigins,
+    allowedBrowserOrigins: policy.allowedOrigins,
   };
 };
 

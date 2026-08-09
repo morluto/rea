@@ -177,15 +177,22 @@ export const sorted = (values: readonly unknown[]): readonly unknown[] =>
 export const combineCoverage = <Item>(
   left: FunctionCollection<Item>,
   right: FunctionCollection<Item>,
-): FunctionCollection<Item> => ({
-  items: [...left.items, ...right.items],
-  total:
-    left.total === null || right.total === null
-      ? null
-      : left.total + right.total,
-  complete: left.complete && right.complete,
-  truncated: left.truncated || right.truncated,
-});
+): FunctionCollection<Item> => {
+  const base = {
+    items: [...left.items, ...right.items],
+    total:
+      left.total === null || right.total === null
+        ? null
+        : left.total + right.total,
+  };
+  return left.complete && right.complete
+    ? { ...base, complete: true, truncated: false }
+    : {
+        ...base,
+        complete: false,
+        truncated: left.truncated || right.truncated,
+      };
+};
 
 export const project = <Input, Output>(
   collection: FunctionCollection<Input>,

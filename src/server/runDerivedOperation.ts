@@ -1,3 +1,4 @@
+import type { ServerContext } from "@modelcontextprotocol/server";
 import { setImmediate } from "node:timers/promises";
 
 import {
@@ -5,22 +6,11 @@ import {
   AnalysisInputError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
+import { mcpProgressReporter, type McpProgressContext } from "./mcpProgress.js";
 
-export interface DerivedOperationContext {
-  readonly mcpReq: {
-    readonly signal: AbortSignal;
-    readonly _meta?: { readonly progressToken?: string | number | undefined };
-    notify(notification: {
-      readonly method: "notifications/progress";
-      readonly params: {
-        readonly progressToken: string | number;
-        readonly progress: number;
-        readonly total?: number;
-        readonly message?: string;
-      };
-    }): Promise<void>;
-  };
+export interface DerivedOperationContext extends McpProgressContext {
+  readonly mcpReq: McpProgressContext["mcpReq"] &
+    Pick<ServerContext["mcpReq"], "signal">;
 }
 
 /** Run synchronous derived work with transport yields and a publication guard. */

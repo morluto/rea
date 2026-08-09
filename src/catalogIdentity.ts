@@ -16,12 +16,18 @@ const toolCatalog = TOOL_CONTRACTS.map((contract) => ({
   description: contract.description,
   effects: { ...contract.effects },
   annotations: contract.annotations,
-  input_schema: z.toJSONSchema(contract.inputSchema, {
-    unrepresentable: "any",
-  }),
-  output_schema: z.toJSONSchema(contract.outputSchema, {
-    unrepresentable: "any",
-  }),
+  input_schema: {
+    type: "object",
+    ...z.toJSONSchema(contract.inputSchema, {
+      unrepresentable: "any",
+    }),
+  },
+  output_schema: {
+    type: "object",
+    ...z.toJSONSchema(contract.outputSchema, {
+      unrepresentable: "any",
+    }),
+  },
 })).sort((left, right) => left.name.localeCompare(right.name));
 
 const promptCatalog = PROMPT_CONTRACTS.map((contract) => ({

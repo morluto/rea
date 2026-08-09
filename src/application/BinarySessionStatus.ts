@@ -14,9 +14,9 @@ interface BinarySessionStatusInput {
   readonly target: BinaryTarget | undefined;
   readonly route: SessionProviderRoute;
   readonly router: SessionProviderRouter;
-  readonly runtimeAvailability: ReadonlyMap<
+  readonly runtimeUnavailability: ReadonlyMap<
     string,
-    { readonly available: boolean; readonly reason: string | null }
+    { readonly reason: string }
   >;
   readonly runId: string | undefined;
   readonly runtimeLineageSnapshots: readonly ProviderRuntimeLineageSnapshot[];
@@ -28,7 +28,7 @@ export const binarySessionStatus = ({
   target,
   route,
   router,
-  runtimeAvailability,
+  runtimeUnavailability,
   runId,
   runtimeLineageSnapshots,
   requestActivitySnapshots,
@@ -38,10 +38,16 @@ export const binarySessionStatus = ({
   const providers = router.providerIdentities(route).map(providerSummary);
   const capabilities = [...(route.capabilities?.values() ?? [])]
     .sort((left, right) => left.operation.localeCompare(right.operation))
-    .map((descriptor) => ({
-      ...descriptor,
-      ...runtimeAvailability.get(descriptor.operation),
-    }))
+    .map((descriptor) => {
+      const unavailable = runtimeUnavailability.get(descriptor.operation);
+      return unavailable === undefined
+        ? descriptor
+        : {
+            ...descriptor,
+            available: false as const,
+            reason: unavailable.reason,
+          };
+    })
     .map(capabilityStatus);
   const analysisProviderBinding =
     route.binding === null

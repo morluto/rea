@@ -158,20 +158,6 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (!["mach-o", "elf", "pe"].includes(target.format))
-      return {
-        status: "unsupported",
-        code: "target_format_unsupported",
-        reason: `Hopper cannot open ${target.format} through this adapter.`,
-        diagnostics,
-      };
-    if (target.architecture === undefined)
-      return {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: "Hopper requires a supported concrete target architecture.",
-        diagnostics,
-      };
     return {
       status: "supported",
       code: null,

@@ -21,12 +21,14 @@ export interface SafeOutputFile {
   readonly bytesWritten: number;
 }
 
-/** Cleanup facts established while rolling back an uncommitted tree. */
-export interface SafeOutputCleanup {
-  readonly attempted: boolean;
-  readonly verified: boolean;
-  readonly residualPaths: readonly string[];
-}
+/** Cleanup state established while rolling back an uncommitted tree. */
+export type SafeOutputCleanup =
+  | { readonly status: "not-required" }
+  | { readonly status: "complete"; readonly residualPaths: readonly [] }
+  | {
+      readonly status: "incomplete";
+      readonly residualPaths: readonly [string, ...string[]];
+    };
 
 /** Symlink-resistant materialization in an exclusively owned, initially absent tree. */
 export class SafeOutputTree {
@@ -37,9 +39,7 @@ export class SafeOutputTree {
   #totalBytes = 0;
   #published = false;
   #cleanup: SafeOutputCleanup = {
-    attempted: false,
-    verified: false,
-    residualPaths: [],
+    status: "not-required",
   };
 
   private constructor(
@@ -208,11 +208,12 @@ export class SafeOutputTree {
     if (this.#published) return structuredClone(this.#cleanup);
     await rm(this.#stagingRoot, { recursive: true, force: true });
     const absent = await isAbsent(this.#stagingRoot);
-    this.#cleanup = {
-      attempted: true,
-      verified: absent,
-      residualPaths: absent ? [] : [basename(this.#stagingRoot)],
-    };
+    this.#cleanup = absent
+      ? { status: "complete", residualPaths: [] }
+      : {
+          status: "incomplete",
+          residualPaths: [basename(this.#stagingRoot)],
+        };
     if (!absent)
       throw new ArtifactReaderFailure(
         "integrity",

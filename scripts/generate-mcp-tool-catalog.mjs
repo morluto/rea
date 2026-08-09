@@ -1,6 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "prettier";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { McpServer } from "@modelcontextprotocol/server";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../dist/contracts/managedWorkflowToolContracts.js";
@@ -8,7 +10,6 @@ import { ArtifactProvider } from "../dist/artifacts/ArtifactProvider.js";
 import { ManagedStaticProvider } from "../dist/dotnet/ManagedStaticProvider.js";
 import { NativeMacOSProvider } from "../dist/native/NativeMacOSProvider.js";
 import { toolRegistrationOptions } from "../dist/server/toolRegistrationOptions.js";
-import { applyToolInputJsonSchemaOverride } from "../dist/contracts/toolSchemaJsonOverrides.js";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
 const arguments_ = new Set(process.argv.slice(2));
@@ -26,8 +27,11 @@ const sessionToolNames = new Set([
   ),
   ...MANAGED_WORKFLOW_TOOL_CONTRACTS.map(({ name }) => name),
 ]);
+const advertisedTools = await sdkToolCatalog();
 const catalog = TOOL_CONTRACTS.map((contract) => {
-  const options = toolRegistrationOptions(contract);
+  const advertised = advertisedTools.get(contract.name);
+  if (advertised === undefined)
+    throw new Error(`MCP SDK omitted registered tool ${contract.name}`);
   return {
     name: contract.name,
     analysisOperation: [
@@ -39,23 +43,40 @@ const catalog = TOOL_CONTRACTS.map((contract) => {
     ].includes(contract.kind)
       ? contract.name
       : null,
-    title: options.title,
-    description: options.description,
+    title: advertised.title,
+    description: advertised.description,
     kind: contract.kind,
     requiresSession: sessionToolNames.has(contract.name),
-    inputSchema: applyToolInputJsonSchemaOverride(
-      contract.name,
-      options.inputSchema["~standard"].jsonSchema.input({
-        target: "draft-2020-12",
-      }),
-    ),
-    outputSchema: options.outputSchema["~standard"].jsonSchema.output({
-      target: "draft-2020-12",
-    }),
-    annotations: options.annotations,
+    inputSchema: advertised.inputSchema,
+    outputSchema: advertised.outputSchema,
+    annotations: advertised.annotations,
     effects: contract.effects,
   };
 });
+
+async function sdkToolCatalog() {
+  const server = new McpServer({ name: "rea-catalog-generator", version: "0" });
+  for (const contract of TOOL_CONTRACTS)
+    server.registerTool(
+      contract.name,
+      toolRegistrationOptions(contract),
+      async () => ({
+        content: [{ type: "text", text: "Catalog-only handler" }],
+        isError: true,
+      }),
+    );
+  const client = new Client({ name: "rea-catalog-generator", version: "0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    return new Map(tools.map((tool) => [tool.name, tool]));
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+}
 const auxiliaryProviders = [
   new ArtifactProvider(false, false),
   new NativeMacOSProvider(undefined, CATALOG_PLATFORM),

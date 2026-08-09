@@ -3,44 +3,25 @@ import type { z } from "zod";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { runCrossVersionInvestigationValidated } from "../application/CrossVersionInvestigation.js";
-import type { ToolContract } from "../contracts/toolContracts.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
-import { buildCallPath, callPathInputSchema } from "../domain/callPath.js";
-import {
-  correlateStaticAndRuntime,
-  staticRuntimeCorrelationInputSchema,
-} from "../domain/staticRuntimeCorrelation.js";
-import {
-  reconstructionVerificationInputSchema,
-  verifyReconstruction,
-} from "../domain/reconstructionVerification.js";
-import {
-  changedBehaviorResultSchema,
-  changedBehaviorInputSchema,
-  findChangedBehavior,
-} from "../domain/changedBehavior.js";
-import { createEvidence } from "../domain/evidence.js";
-import { type AnalysisError } from "../domain/errors.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { Result } from "../domain/result.js";
-import {
-  CALL_PATH_PROVIDER,
-  CHANGED_BEHAVIOR_PROVIDER,
-  RECONSTRUCTION_PROVIDER,
-  STATIC_RUNTIME_PROVIDER,
-} from "./sessionToolPolicies.js";
-import { toCallToolResult } from "./toolResult.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
-import {
-  runDerivedOperation,
-  type DerivedOperationContext,
-} from "./runDerivedOperation.js";
 import {
   authorizeFileReadWithDeferredWrite,
   authorizeRootPermission,
   type DeferredFileWriteAuthorization,
 } from "../application/DeferredFileAuthorization.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { buildCallPath } from "../domain/callPath.js";
+import {
+  changedBehaviorInputSchema,
+  changedBehaviorResultSchema,
+  findChangedBehavior,
+} from "../domain/changedBehavior.js";
+import { type AnalysisError } from "../domain/errors.js";
+import { createEvidence } from "../domain/evidence.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
+import { verifyReconstruction } from "../domain/reconstructionVerification.js";
+import type { Result } from "../domain/result.js";
+import { correlateStaticAndRuntime } from "../domain/staticRuntimeCorrelation.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
 import {
   comparisonClosure,
   evidenceClosure,
@@ -51,16 +32,28 @@ import {
   verifyCoverageReadiness,
 } from "./registerInvestigationTools/helpers.js";
 import type { InvestigationToolPolicies } from "./registerInvestigationTools/types.js";
+import {
+  runDerivedOperation,
+  type DerivedOperationContext,
+} from "./runDerivedOperation.js";
+import {
+  CALL_PATH_PROVIDER,
+  CHANGED_BEHAVIOR_PROVIDER,
+  RECONSTRUCTION_PROVIDER,
+  STATIC_RUNTIME_PROVIDER,
+} from "./sessionToolPolicies.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 /** Register Evidence-composed differential investigation workflows. */
 export const registerInvestigationTools = (
   server: McpServer,
   session: BinarySessionPort,
   contracts: readonly [
-    ToolContract<"find_changed_behavior">,
-    ToolContract<"build_call_path">,
-    ToolContract<"correlate_static_and_runtime">,
-    ToolContract<"verify_reconstruction">,
+    (typeof SESSION_TOOL_CONTRACTS)[10],
+    (typeof SESSION_TOOL_CONTRACTS)[11],
+    (typeof SESSION_TOOL_CONTRACTS)[12],
+    (typeof SESSION_TOOL_CONTRACTS)[13],
   ],
   policies: InvestigationToolPolicies,
 ): void => {
@@ -73,21 +66,14 @@ export const registerInvestigationTools = (
 const registerChangedBehavior = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: ToolContract<"find_changed_behavior">,
+  contract: (typeof SESSION_TOOL_CONTRACTS)[10],
   policies: InvestigationToolPolicies,
 ): void => {
   server.registerTool(
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        changedBehaviorInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
-      const investigationRun = parsed.investigation_run;
+      const investigationRun = input.investigation_run;
       if (investigationRun !== undefined)
         return runAutomaticInvestigation({
           server,
@@ -95,17 +81,17 @@ const registerChangedBehavior = (
           contract,
           policies,
           investigationRun,
-          unknownRegistryApproved: parsed.unknown_registry_approved,
+          unknownRegistryApproved: input.unknown_registry_approved,
           context,
         });
       const closure = evidenceClosure(
         session,
-        comparisonClosure(parsed.comparisons),
+        comparisonClosure(input.comparisons),
       );
       if (!closure.ok) return toCallToolResult(closure, contract);
       const links = closure.value;
       const computed = await runDerivedOperation(context, contract.name, () =>
-        findChangedBehavior(parsed.comparisons, parsed.offset, parsed.limit),
+        findChangedBehavior(input.comparisons, input.offset, input.limit),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const result = computed.value;
@@ -113,11 +99,11 @@ const registerChangedBehavior = (
         predicateType: "rea.changed-behavior/v1",
         operation: contract.name,
         parameters: {
-          comparison_evidence_ids: parsed.comparisons.map(
+          comparison_evidence_ids: input.comparisons.map(
             ({ evidence_id: id }) => id,
           ),
-          offset: parsed.offset,
-          limit: parsed.limit,
+          offset: input.offset,
+          limit: input.limit,
         },
         result: jsonValueSchema.parse(result),
         confidence: "derived",
@@ -128,7 +114,7 @@ const registerChangedBehavior = (
       const recorded = recordWorkflowEvidence(
         session,
         evidence,
-        parsed.unknown_registry_approved,
+        input.unknown_registry_approved,
         isIncomplete(result.behavior_status),
         {
           question:
@@ -153,7 +139,7 @@ const registerChangedBehavior = (
 const runAutomaticInvestigation = async (input: {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
-  readonly contract: ToolContract<"find_changed_behavior">;
+  readonly contract: (typeof SESSION_TOOL_CONTRACTS)[10];
   readonly policies: InvestigationToolPolicies;
   readonly investigationRun: NonNullable<
     z.output<typeof changedBehaviorInputSchema>["investigation_run"]
@@ -253,27 +239,20 @@ const runAutomaticInvestigation = async (input: {
 const registerCallPath = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: ToolContract<"build_call_path">,
+  contract: (typeof SESSION_TOOL_CONTRACTS)[11],
 ): void => {
   server.registerTool(
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        callPathInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
       const closure = evidenceClosure(
         session,
-        functionEvidenceIds(parsed.functions),
+        functionEvidenceIds(input.functions),
       );
       if (!closure.ok) return toCallToolResult(closure, contract);
       const links = closure.value;
       const computed = await runDerivedOperation(context, contract.name, () =>
-        buildCallPath(parsed),
+        buildCallPath(input),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const result = computed.value;
@@ -281,12 +260,12 @@ const registerCallPath = (
         predicateType: "rea.call-path/v1",
         operation: contract.name,
         parameters: {
-          start: parsed.start.address,
-          goal: parsed.goal.address,
-          max_depth: parsed.max_depth,
-          max_paths: parsed.max_paths,
-          offset: parsed.offset,
-          limit: parsed.limit,
+          start: input.start.address,
+          goal: input.goal.address,
+          max_depth: input.max_depth,
+          max_paths: input.max_paths,
+          offset: input.offset,
+          limit: input.limit,
         },
         result: jsonValueSchema.parse(result),
         confidence: "derived",
@@ -297,7 +276,7 @@ const registerCallPath = (
       const recorded = recordWorkflowEvidence(
         session,
         evidence,
-        parsed.unknown_registry_approved,
+        input.unknown_registry_approved,
         result.status === "unknown" || result.status === "truncated",
         {
           question:
@@ -322,30 +301,23 @@ const registerCallPath = (
 const registerStaticRuntime = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: ToolContract<"correlate_static_and_runtime">,
+  contract: (typeof SESSION_TOOL_CONTRACTS)[12],
 ): void => {
   server.registerTool(
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        staticRuntimeCorrelationInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
       const closure = evidenceClosure(
         session,
         comparisonClosure([
-          ...parsed.static_comparisons,
-          ...parsed.runtime_comparisons,
+          ...input.static_comparisons,
+          ...input.runtime_comparisons,
         ]),
       );
       if (!closure.ok) return toCallToolResult(closure, contract);
       const links = closure.value;
       const computed = await runDerivedOperation(context, contract.name, () =>
-        correlateStaticAndRuntime(parsed),
+        correlateStaticAndRuntime(input),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
       const result = computed.value;
@@ -353,9 +325,9 @@ const registerStaticRuntime = (
         predicateType: "rea.static-runtime-correlation/v1",
         operation: contract.name,
         parameters: {
-          mapping_count: parsed.mappings.length,
-          offset: parsed.offset,
-          limit: parsed.limit,
+          mapping_count: input.mappings.length,
+          offset: input.offset,
+          limit: input.limit,
         },
         result: jsonValueSchema.parse(result),
         confidence: "inferred",
@@ -367,7 +339,7 @@ const registerStaticRuntime = (
         recordWorkflowEvidence(
           session,
           evidence,
-          parsed.unknown_registry_approved,
+          input.unknown_registry_approved,
           result.status === "unknown" || result.status === "truncated",
           {
             question:
@@ -393,28 +365,21 @@ const registerStaticRuntime = (
 const registerReconstruction = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: ToolContract<"verify_reconstruction">,
+  contract: (typeof SESSION_TOOL_CONTRACTS)[13],
 ): void => {
   server.registerTool(
     contract.name,
     contractOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        reconstructionVerificationInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
-      const coverage = verifyCoverageReadiness(session, parsed.coverage);
+      const coverage = verifyCoverageReadiness(session, input.coverage);
       if (!coverage.ok) return toCallToolResult(coverage, contract);
       const owned = session.exportEvidenceBundle();
       const computed = await runDerivedOperation(context, contract.name, () =>
         verifyReconstruction(
-          parsed.specification,
+          input.specification,
           owned,
-          parsed.offset,
-          parsed.limit,
+          input.offset,
+          input.limit,
         ),
       );
       if (!computed.ok) return toCallToolResult(computed, contract);
@@ -427,9 +392,9 @@ const registerReconstruction = (
         operation: contract.name,
         parameters: {
           specification_sha256: result.specification_sha256,
-          claim_ids: parsed.specification.claims.map(({ claim_id: id }) => id),
-          offset: parsed.offset,
-          limit: parsed.limit,
+          claim_ids: input.specification.claims.map(({ claim_id: id }) => id),
+          offset: input.offset,
+          limit: input.limit,
         },
         result: jsonValueSchema.parse(result),
         confidence: "derived",
@@ -441,7 +406,7 @@ const registerReconstruction = (
         recordWorkflowEvidence(
           session,
           evidence,
-          parsed.unknown_registry_approved,
+          input.unknown_registry_approved,
           result.status === "unknown",
           {
             question: "Does the reconstruction satisfy every declared claim?",

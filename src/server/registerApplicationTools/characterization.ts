@@ -5,18 +5,15 @@ import {
   prepareNodeCharacterization,
 } from "../../application/NodeRuntimeCharacterizationService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import {
-  nodeCharacterizationExecutionInputSchema,
   nodeCharacterizationExecutionOutputSchema,
-  nodeCharacterizationPreparationInputSchema,
   nodeCharacterizationPreparationOutputSchema,
 } from "../../domain/nodeRuntimeCharacterization.js";
-import { parseEvidence } from "../../domain/evidence.js";
-import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
-import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { mcpProgressReporter } from "../mcpProgress.js";
+import { logToolExecution } from "../toolLogging.js";
+import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
+import { toCallToolResult } from "../toolResult.js";
 import { recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -36,17 +33,11 @@ export const registerCharacterizationTools = (
     prepareContract.name,
     toolRegistrationOptions(prepareContract),
     async (input, context) => {
-      const parsed = safeParseToolInput(
-        nodeCharacterizationPreparationInputSchema,
-        input,
-        prepareContract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, prepareContract);
       const result = await logToolExecution(
         options.logger,
         prepareContract.name,
         () =>
-          prepareNodeCharacterization(options.replay, parsed.value, {
+          prepareNodeCharacterization(options.replay, input, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),
@@ -69,17 +60,11 @@ export const registerCharacterizationTools = (
     executeContract.name,
     toolRegistrationOptions(executeContract),
     async (input, context) => {
-      const parsed = safeParseToolInput(
-        nodeCharacterizationExecutionInputSchema,
-        input,
-        executeContract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, executeContract);
       const result = await logToolExecution(
         options.logger,
         executeContract.name,
         () =>
-          executeNodeCharacterization(options.replay, parsed.value, {
+          executeNodeCharacterization(options.replay, input, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),
@@ -91,7 +76,7 @@ export const registerCharacterizationTools = (
       const sources = [
         output.transformation_evidence,
         ...output.replay.source_evidence,
-        ...(output.replay.evidence === null ? [] : [output.replay.evidence]),
+        output.replay.evidence,
         output.evidence,
       ].map((item) => parseEvidence(item));
       const recorded = recordSources(options.recordEvidence, sources);

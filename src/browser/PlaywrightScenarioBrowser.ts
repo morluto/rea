@@ -138,9 +138,9 @@ export const openPlaywrightScenarioBrowser = async (
       );
       await configureAttachedEnvironment(target.context, target.page, scenario);
       return { ...target, browser, profilePath: undefined };
-    } catch (error) {
+    } catch (cause: unknown) {
       await browser.close();
-      throw error;
+      throw cause;
     }
   }
 
@@ -174,9 +174,9 @@ export const openPlaywrightScenarioBrowser = async (
     }
     const page = context.pages()[0] ?? (await context.newPage());
     return { context, page, browser, profilePath };
-  } catch (error) {
+  } catch (cause: unknown) {
     await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
-    throw error;
+    throw cause;
   }
 };
 

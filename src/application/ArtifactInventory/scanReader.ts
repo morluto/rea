@@ -166,19 +166,19 @@ const digestArtifactEntry = async (
   context.totalBytes += digest.bytes;
   const mismatched =
     entry.declaredSha256 !== null && entry.declaredSha256 !== digest.sha256;
-  if (mismatched && context.integrity.mode === "fail")
-    throw new ArtifactReaderFailure(
-      "integrity",
-      `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-      undefined,
-      {
-        logicalPath,
-        declaredSha256: entry.declaredSha256,
-        calculatedSha256: digest.sha256,
-        unpacked: entry.unpacked,
-      },
-    );
   if (mismatched && entry.declaredSha256 !== null) {
+    if (context.integrity.mode === "fail")
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+        undefined,
+        {
+          logicalPath,
+          declaredSha256: entry.declaredSha256,
+          calculatedSha256: digest.sha256,
+          unpacked: entry.unpacked,
+        },
+      );
     if (context.pendingContradictions.length >= context.integrity.maxMismatches)
       throw new ArtifactReaderFailure(
         "limit",

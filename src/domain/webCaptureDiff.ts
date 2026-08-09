@@ -405,22 +405,25 @@ const accessibilityProjection = (
   includeText: boolean,
   includeNodes: boolean,
 ): unknown => {
-  const result = {
-    total_nodes: accessibility.total_nodes,
-  } as { total_nodes: number; nodes?: readonly unknown[] };
-  if (!includeNodes) return result;
+  if (!includeNodes) return { total_nodes: accessibility.total_nodes };
   const nodeIndexes = new Map(
     accessibility.nodes.map((node, index) => [node.node_id, index]),
   );
-  result.nodes = accessibility.nodes.map((node) => ({
-    parent_index:
-      node.parent_id === null ? null : (nodeIndexes.get(node.parent_id) ?? -1),
-    role: node.role,
-    ignored: node.ignored,
-    states: node.states,
-    ...(includeText ? { name: node.name, description: node.description } : {}),
-  }));
-  return result;
+  return {
+    total_nodes: accessibility.total_nodes,
+    nodes: accessibility.nodes.map((node) => ({
+      parent_index:
+        node.parent_id === null
+          ? null
+          : (nodeIndexes.get(node.parent_id) ?? -1),
+      role: node.role,
+      ignored: node.ignored,
+      states: node.states,
+      ...(includeText
+        ? { name: node.name, description: node.description }
+        : {}),
+    })),
+  };
 };
 
 const storageKeysComparable = (inspection: WebPageInspection): boolean =>

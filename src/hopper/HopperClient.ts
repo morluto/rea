@@ -537,6 +537,6 @@ const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 const startupInterruption = (
   deadline: ProviderStartupDeadline,
 ): HopperCancelledError | HopperTimeoutError =>
-  deadline.cancelled
+  deadline.interruption === "cancelled"
     ? new HopperCancelledError()
     : new HopperTimeoutError(deadline.timeoutMs);

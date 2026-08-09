@@ -43,12 +43,6 @@ describe("Hopper provider discovery", () => {
       code: "target_kind_unsupported",
       diagnostics: { target_kind: "archive", target_format: "asar" },
     });
-    expect(
-      hopper.inspectTargetSupport(executableTargetWithoutArchitecture()),
-    ).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-    });
   });
 
   it("advertises the exact bounded byte-read limit", () => {
@@ -88,21 +82,26 @@ const databaseTarget = (): BinaryTarget => ({
 const executableTarget = (
   format: "mach-o" | "elf" | "pe",
   architecture: "x86" | "x86_64" | "arm" | "arm64",
-): BinaryTarget => ({
-  path: "/tmp/fixture",
-  sha256: "b".repeat(64),
-  kind: "executable",
-  format,
-  architecture,
-  availableArchitectures: [architecture],
-});
-
-const executableTargetWithoutArchitecture = (): BinaryTarget => ({
-  path: "/tmp/fixture",
-  sha256: "b".repeat(64),
-  kind: "executable",
-  format: "elf",
-});
+): BinaryTarget =>
+  format === "pe"
+    ? {
+        path: "/tmp/fixture",
+        sha256: "b".repeat(64),
+        kind: "executable",
+        format,
+        architecture,
+        availableArchitectures: [architecture],
+        executableRole: "application",
+        managed: false,
+      }
+    : {
+        path: "/tmp/fixture",
+        sha256: "b".repeat(64),
+        kind: "executable",
+        format,
+        architecture,
+        availableArchitectures: [architecture],
+      };
 
 const artifactTarget = (): BinaryTarget => ({
   path: "/tmp/app.asar",

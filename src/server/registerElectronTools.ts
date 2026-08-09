@@ -1,40 +1,29 @@
-import type { McpServer } from "@modelcontextprotocol/server";
-import type { z } from "zod";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
-import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
+import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,
 } from "../application/ElectronObservationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
-import {
-  analyzeJavaScriptApplicationToolInputSchema,
-  ELECTRON_TOOL_CONTRACTS,
-} from "../contracts/electronToolContracts.js";
-import {
-  inspectElectronPageInputSchema,
-  listElectronTargetsInputSchema,
-} from "../domain/electronObservation.js";
-import { electronActiveObservationInputSchema } from "../domain/electronActiveObservation.js";
-import { reconcileJavaScriptRuntimeInputSchema } from "../domain/javascriptRuntimeReconciliationSchemas.js";
-import type { Logger } from "../logger.js";
-import { logToolExecution } from "./toolLogging.js";
-import { toCallToolResult } from "./toolResult.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { Result } from "../domain/result.js";
-import type { AnalysisError } from "../domain/errors.js";
+import { ELECTRON_TOOL_CONTRACTS } from "../contracts/electronToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
+import type { AnalysisError } from "../domain/errors.js";
+import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { Result } from "../domain/result.js";
+import type { Logger } from "../logger.js";
 import { summarizeJavaScriptApplicationEvidence } from "./javascriptApplicationResult.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+import { logToolExecution } from "./toolLogging.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 interface ElectronToolRegistration {
   readonly logger: Logger;
@@ -49,23 +38,8 @@ interface ElectronToolContext {
   readonly progress: ProgressReporter;
 }
 
-interface ElectronToolSpec<Schema extends z.ZodType> {
-  readonly contract: ToolContract;
-  readonly schema: Schema;
-  readonly execute: (
-    parsed: z.output<Schema>,
-    context: ElectronToolContext,
-  ) => Promise<Result<Evidence, AnalysisError>>;
-  readonly projectEvidence?: (
-    evidence: Evidence,
-    parsed: z.output<Schema>,
-  ) => {
-    readonly structured: JsonValue;
-    readonly text?: JsonValue;
-  };
-}
-
 /** Register Electron tools even when provider or permission policy is absent. */
+// oxlint-disable-next-line max-lines-per-function -- direct SDK calls retain each schema-handler type correlation.
 export const registerElectronTools = (
   server: McpServer,
   options: ElectronToolRegistration,
@@ -78,100 +52,130 @@ export const registerElectronTools = (
     activeContract,
   ] = ELECTRON_TOOL_CONTRACTS;
 
-  registerElectronTool(server, options, {
-    contract: listContract,
-    schema: listElectronTargetsInputSchema,
-    execute: (parsed, { signal }) =>
-      listElectronTargets(
-        options.electron,
-        options.permissionAuthority,
-        parsed,
+  server.registerTool(
+    listContract.name,
+    toolRegistrationOptions(listContract),
+    (input, context) =>
+      runElectronTool(
+        options,
+        listContract,
+        { input, context },
+        (parsed, { signal }) =>
+          listElectronTargets(
+            options.electron,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal,
+            },
+          ),
+      ),
+  );
+  server.registerTool(
+    inspectContract.name,
+    toolRegistrationOptions(inspectContract),
+    (input, context) =>
+      runElectronTool(
+        options,
+        inspectContract,
+        { input, context },
+        (parsed, { signal, progress }) =>
+          inspectElectronPage(
+            options.electron,
+            options.permissionAuthority,
+            parsed,
+            {
+              signal,
+              progress,
+            },
+          ),
+      ),
+  );
+  server.registerTool(
+    analyzeContract.name,
+    toolRegistrationOptions(analyzeContract),
+    (input, context) =>
+      runElectronTool(
+        options,
+        analyzeContract,
         {
-          signal,
+          input,
+          context,
+          projectEvidence: (evidence, parsed) => {
+            const summary = summarizeJavaScriptApplicationEvidence(evidence);
+            return parsed.detail === "full"
+              ? { structured: evidence.normalized_result, text: summary }
+              : { structured: summary };
+          },
         },
+        (parsed, { signal, progress }) =>
+          analyzeJavaScriptApplicationValidated(
+            options.permissionAuthority,
+            parsed,
+            { signal, progress },
+          ),
       ),
-  });
-  registerElectronTool(server, options, {
-    contract: inspectContract,
-    schema: inspectElectronPageInputSchema,
-    execute: (parsed, { signal, progress }) =>
-      inspectElectronPage(
-        options.electron,
-        options.permissionAuthority,
-        parsed,
-        {
-          signal,
-          progress,
-        },
+  );
+  server.registerTool(
+    reconcileContract.name,
+    toolRegistrationOptions(reconcileContract),
+    (input, context) =>
+      runElectronTool(
+        options,
+        reconcileContract,
+        { input, context },
+        (parsed) =>
+          Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
       ),
-  });
-  registerElectronTool(server, options, {
-    contract: analyzeContract,
-    schema: analyzeJavaScriptApplicationToolInputSchema,
-    execute: (parsed, { signal, progress }) =>
-      analyzeJavaScriptApplicationValidated(
-        options.permissionAuthority,
-        parsed,
-        { signal, progress },
+  );
+  server.registerTool(
+    activeContract.name,
+    toolRegistrationOptions(activeContract),
+    (input, context) =>
+      runElectronTool(
+        options,
+        activeContract,
+        { input, context },
+        (parsed, { signal, progress }) =>
+          captureElectronScenario(
+            options.electronActive,
+            options.permissionAuthority,
+            parsed,
+            { signal, progress },
+          ),
       ),
-    projectEvidence: (evidence, parsed) => {
-      const summary = summarizeJavaScriptApplicationEvidence(evidence);
-      return parsed.detail === "full"
-        ? { structured: evidence.normalized_result, text: summary }
-        : { structured: summary };
-    },
-  });
-  registerElectronTool(server, options, {
-    contract: reconcileContract,
-    schema: reconcileJavaScriptRuntimeInputSchema,
-    execute: (parsed, _context) =>
-      Promise.resolve(reconcileJavaScriptRuntimeEvidenceValidated(parsed)),
-  });
-  registerElectronTool(server, options, {
-    contract: activeContract,
-    schema: electronActiveObservationInputSchema,
-    execute: (parsed, { signal, progress }) =>
-      captureElectronScenario(
-        options.electronActive,
-        options.permissionAuthority,
-        parsed,
-        { signal, progress },
-      ),
-  });
+  );
 };
 
-const registerElectronTool = <Schema extends z.ZodType>(
-  server: McpServer,
+const runElectronTool = async <Input>(
   options: ElectronToolRegistration,
-  spec: ElectronToolSpec<Schema>,
-): void => {
-  server.registerTool(
-    spec.contract.name,
-    toolRegistrationOptions(spec.contract),
-    async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        spec.schema,
-        input,
-        spec.contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, spec.contract);
-      const result = await logToolExecution(
-        options.logger,
-        spec.contract.name,
-        () =>
-          spec.execute(parsedInput.value, {
-            signal: context.mcpReq.signal,
-            progress: mcpProgressReporter(context),
-          }),
-      );
-      if (!result.ok) return toCallToolResult(result, spec.contract);
-      return evidenceResult(
-        options,
-        spec.contract,
-        result.value,
-        spec.projectEvidence?.(result.value, parsedInput.value),
-      );
-    },
+  contract: ToolContract,
+  request: {
+    readonly input: Input;
+    readonly context: ServerContext;
+    readonly projectEvidence?: (
+      evidence: Evidence,
+      input: Input,
+    ) => { readonly structured: JsonValue; readonly text?: JsonValue };
+  },
+  execute: (
+    input: Input,
+    context: ElectronToolContext,
+  ) => Promise<Result<Evidence, AnalysisError>>,
+) => {
+  const { input, context, projectEvidence } = request;
+  const result = await logToolExecution(options.logger, contract.name, () =>
+    execute(input, {
+      signal: context.mcpReq.signal,
+      progress: mcpProgressReporter(context),
+    }),
+  );
+  if (!result.ok) return toCallToolResult(result, contract);
+  return evidenceResult(
+    options,
+    contract,
+    result.value,
+    projectEvidence?.(result.value, input),
   );
 };
 

@@ -7,15 +7,12 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { MCP_STARTUP_POLICY } from "../dist/mcpStartupPolicy.js";
 import * as prompts from "./verify-package-prompts.mjs";
-import {
-  json,
-  verifyAvailableToolCatalog,
-} from "./lib/verify-package-core.mjs";
+import { json, verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 
 const execute = promisify(execFile);
 
 const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
-  await verifyAvailableToolCatalog(client, mcpOptions);
+  await verifyCompleteToolCatalog(client, mcpOptions);
   await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
   await prompts.verifyPromptCompletion(client, mcpOptions, false);
 };
@@ -43,11 +40,21 @@ const verifyMcpReplay = async (client, mcpOptions, investigationReplay) => {
 };
 
 const verifyMcpTargetFree = async (client, mcpOptions) => {
-  const names = (await client.listTools(undefined, mcpOptions)).tools.map(
-    ({ name }) => name,
+  const status = await client.callTool(
+    { name: "binary_session", arguments: { detail: "full" } },
+    mcpOptions,
   );
-  if (names.includes("current_document"))
-    throw new Error("packaged target-free MCP advertised a target-bound tool");
+  const currentDocument =
+    status.structuredContent?.result?.tool_availability?.find(
+      ({ name }) => name === "current_document",
+    );
+  if (
+    currentDocument?.available !== false ||
+    currentDocument.reason !== "target_required"
+  )
+    throw new Error(
+      "packaged target-free MCP omitted target-bound availability metadata",
+    );
 };
 
 const verifyMcpUnknownProvider = async (client, mcpOptions) => {
@@ -96,11 +103,12 @@ const verifyMcpOpenAndBind = async (client, mcpOptions) => {
 };
 
 const verifyMcpLinuxToolAvailability = async (client, mcpOptions) => {
-  const names = (await client.listTools(undefined, mcpOptions)).tools.map(
-    ({ name }) => name,
+  const current = await client.callTool(
+    { name: "current_document", arguments: {} },
+    mcpOptions,
   );
-  if (names.includes("current_document"))
-    throw new Error("packaged Linux MCP advertised unavailable Hopper tools");
+  if (current.isError !== true)
+    throw new Error("packaged Linux MCP executed an unavailable Hopper tool");
 };
 
 const verifyMcpNonLinuxCurrentDocument = async (

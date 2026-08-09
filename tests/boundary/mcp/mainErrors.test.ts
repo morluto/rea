@@ -14,12 +14,14 @@ const dependencies = ({
   shutdown,
   exitCodes,
   shutdownUnregistrations = [],
+  loadOptionalProviders,
 }: {
   readonly serve: RuntimeDependencies["serve"];
   readonly output: string[];
   readonly shutdown: Array<() => void>;
   readonly exitCodes: number[];
   readonly shutdownUnregistrations?: string[];
+  readonly loadOptionalProviders?: RuntimeDependencies["loadOptionalProviders"];
 }): RuntimeDependencies => ({
   env: {},
   serve,
@@ -29,6 +31,7 @@ const dependencies = ({
     shutdown.push(handler);
     return () => shutdownUnregistrations.push("shutdown");
   },
+  ...(loadOptionalProviders === undefined ? {} : { loadOptionalProviders }),
 });
 
 describe("MCP runtime errors", () => {
@@ -119,6 +122,28 @@ describe("MCP runtime errors", () => {
     expect(output).toEqual([
       "REA could not start its MCP connection. Restart REA from your MCP client; run `rea doctor` if it fails again.\n",
     ]);
+  });
+
+  it("starts the core transport when optional providers fail to load", async () => {
+    const output: string[] = [];
+    let serveCalls = 0;
+    expect(
+      await run(
+        dependencies({
+          serve: () => {
+            serveCalls += 1;
+            return { close: () => Promise.resolve() };
+          },
+          output,
+          shutdown: [],
+          exitCodes: [],
+          loadOptionalProviders: () =>
+            Promise.reject(new Error("synthetic optional import failure")),
+        }),
+      ),
+    ).toBe(0);
+    expect(serveCalls).toBe(1);
+    expect(output).toEqual([]);
   });
 
   it("reports shutdown failure and sets a failing exit code", async () => {
