@@ -96,26 +96,40 @@ export const managedNativeVerificationReferenceInputSchema = z
     }
   });
 
-/** MCP references for projecting managed Evidence into an application graph. */
+const managedApplicationGraphReferenceFacts = {
+  limits: projectManagedApplicationGraphInputSchema.shape.limits,
+} as const;
+
+/** MCP references requiring at least one managed Evidence source. */
 export const managedApplicationGraphReferenceInputSchema = z
-  .strictObject({
-    managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
-    managed_members_evidence_id: managedEvidenceIdSchema.optional(),
-    managed_native_boundaries_evidence_id:
-      managedBoundaryEvidenceIdSchema.optional(),
-    limits: projectManagedApplicationGraphInputSchema.shape.limits,
-  })
+  .union([
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema,
+      managed_members_evidence_id: managedEvidenceIdSchema.optional(),
+      managed_native_boundaries_evidence_id:
+        managedBoundaryEvidenceIdSchema.optional(),
+    }),
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
+      managed_members_evidence_id: managedEvidenceIdSchema,
+      managed_native_boundaries_evidence_id:
+        managedBoundaryEvidenceIdSchema.optional(),
+    }),
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
+      managed_members_evidence_id: managedEvidenceIdSchema.optional(),
+      managed_native_boundaries_evidence_id: managedBoundaryEvidenceIdSchema,
+    }),
+  ])
   .superRefine((input, context) => {
     const ids = [
       input.managed_artifact_evidence_id,
       input.managed_members_evidence_id,
       input.managed_native_boundaries_evidence_id,
     ].filter((id): id is string => id !== undefined);
-    if (ids.length === 0)
-      context.addIssue({
-        code: "custom",
-        message: "At least one managed Evidence ID is required",
-      });
     if (new Set(ids).size !== ids.length)
       context.addIssue({
         code: "custom",

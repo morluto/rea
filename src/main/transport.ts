@@ -16,15 +16,14 @@ import {
 
 type McpServerInstance = ReturnType<typeof createServer>;
 
-type OptionalProviders = Required<
-  Pick<
-    CreateServerOptions,
-    | "browserObservation"
-    | "browserScenarioCapture"
-    | "electronObservation"
-    | "electronActiveObservation"
-    | "javascriptRuntimeObservation"
-  >
+/** Optional adapters whose absence must not prevent the core MCP server. */
+export type OptionalProviders = Pick<
+  CreateServerOptions,
+  | "browserObservation"
+  | "browserScenarioCapture"
+  | "electronObservation"
+  | "electronActiveObservation"
+  | "javascriptRuntimeObservation"
 >;
 
 interface ServerContext {
@@ -49,9 +48,16 @@ export const startMcpTransport = async (
 > => {
   const liveServers = new Set<McpServerInstance>();
   const { serverLogger } = serverContext;
+  let optionalProviders: OptionalProviders = {};
+  try {
+    optionalProviders = await serverContext.loadOptionalProviders();
+  } catch {
+    serverLogger.warn(
+      "Optional MCP providers could not load; affected tools remain unavailable",
+    );
+  }
   let handle: StdioServerHandle;
   try {
-    const optionalProviders = await serverContext.loadOptionalProviders();
     handle = dependencies.serve(
       () => {
         const server = (dependencies.createServer ?? createServer)(

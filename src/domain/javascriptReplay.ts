@@ -222,7 +222,7 @@ const replayPlanSchema = z
     filesystem: z
       .object({
         host_writes: z.literal(false),
-        private_tmpfs_bytes: z.number().int(),
+        private_tmpfs_bytes: z.number().int().nonnegative(),
       })
       .strict(),
     runtime: z

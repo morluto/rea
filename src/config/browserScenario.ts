@@ -66,7 +66,7 @@ export const parseBrowserScenarioPolicy = (
     "REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON",
   );
   if (!allowedEnvironment.ok) return allowedEnvironment;
-  if (env.REA_BROWSER_SCENARIO_ENABLED === "false")
+  if (env.REA_BROWSER_SCENARIO_ENABLED !== "true")
     return ok({ status: "disabled" });
   const [firstOrigin, ...remainingOrigins] = allowedOrigins.value;
   if (firstOrigin === undefined)

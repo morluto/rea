@@ -28,7 +28,7 @@ export const parseProcessExecutionPolicy = (
     "REA_PROCESS_ALLOWED_ENV_JSON",
   );
   if (!allowedEnvironment.ok) return allowedEnvironment;
-  if (env.REA_PROCESS_CAPTURE_ENABLED === "false")
+  if (env.REA_PROCESS_CAPTURE_ENABLED !== "true")
     return ok({ status: "disabled" });
   const parsedExecutables = requireRoots(
     executableRoots.value,

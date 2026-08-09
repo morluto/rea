@@ -40,7 +40,7 @@ const replayEventHeadersSchema = z
   });
 
 const replayEventFields = {
-  at_ms: z.number().int().nonnegative().safe(),
+  at_ms: z.number().int().safe().nonnegative(),
   path: z.string().startsWith("/").max(8_192),
   headers: replayEventHeadersSchema,
   body: z.string().max(1_000_000),

@@ -18,7 +18,7 @@ export const parseJavaScriptReplayPolicy = (
     "REA_JAVASCRIPT_REPLAY_ROOTS_JSON",
   );
   if (!roots.ok) return roots;
-  if (env.REA_JAVASCRIPT_REPLAY_ENABLED === "false")
+  if (env.REA_JAVASCRIPT_REPLAY_ENABLED !== "true")
     return ok({ status: "disabled" });
   const [firstRoot, ...remainingRoots] = roots.value;
   if (firstRoot === undefined)

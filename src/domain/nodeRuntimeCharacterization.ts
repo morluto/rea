@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 import {
+  controlledReplayExecutionOutputSchema,
   controlledReplayPlanInputSchema,
-  controlledReplayOutputSchema,
+  controlledReplayPlanOutputSchema,
 } from "./javascriptReplay.js";
 import {
   javascriptExportInstrumentationInputSchema,
@@ -65,7 +66,7 @@ export const nodeCharacterizationPreparationOutputSchema = z.strictObject({
   plan: runtimeCharacterizationPlanSchema,
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
-  replay: controlledReplayOutputSchema,
+  replay: controlledReplayPlanOutputSchema,
 });
 
 export const nodeCharacterizationExecutionOutputSchema = z.strictObject({
@@ -75,7 +76,7 @@ export const nodeCharacterizationExecutionOutputSchema = z.strictObject({
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
   evidence: evidenceRecordSchema,
-  replay: controlledReplayOutputSchema,
+  replay: controlledReplayExecutionOutputSchema,
 });
 
 export type NodeCharacterizationPreparationInput = z.infer<

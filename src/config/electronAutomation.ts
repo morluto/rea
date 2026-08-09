@@ -28,7 +28,7 @@ export const parseElectronAutomationPolicy = (
     "REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON",
   );
   if (!applicationRoots.ok) return applicationRoots;
-  if (env.REA_ELECTRON_AUTOMATE_ENABLED === "false")
+  if (env.REA_ELECTRON_AUTOMATE_ENABLED !== "true")
     return ok({ status: "disabled" });
   const [firstExecutableRoot, ...remainingExecutableRoots] =
     executableRoots.value;

@@ -126,7 +126,7 @@ const parseBrowserObservationPolicy = (
     32,
   );
   if (!origins.ok) return origins;
-  if (env.REA_BROWSER_OBSERVE_ENABLED === "false")
+  if (env.REA_BROWSER_OBSERVE_ENABLED !== "true")
     return ok({ status: "disabled" });
   const parsedEndpoints = requireFirst(
     endpoints.value,
@@ -157,7 +157,7 @@ const parseElectronObservationPolicy = (
   if (!endpoints.ok) return endpoints;
   const roots = parseElectronFileRoots(env.REA_ELECTRON_FILE_ROOTS_JSON);
   if (!roots.ok) return roots;
-  if (env.REA_ELECTRON_OBSERVE_ENABLED === "false")
+  if (env.REA_ELECTRON_OBSERVE_ENABLED !== "true")
     return ok({ status: "disabled" });
   const parsedEndpoints = requireFirst(
     endpoints.value,
@@ -198,7 +198,7 @@ const parseV8InspectorObservationPolicy = (
     32,
   );
   if (!origins.ok) return origins;
-  if (env.REA_V8_INSPECTOR_OBSERVE_ENABLED === "false")
+  if (env.REA_V8_INSPECTOR_OBSERVE_ENABLED !== "true")
     return ok({ status: "disabled" });
   const parsedEndpoints = requireFirst(
     endpoints.value,

@@ -10,7 +10,7 @@ export const parseManagedRuntimePolicy = (
   env: Environment,
   roots: readonly string[],
 ): Result<ManagedRuntimePolicy, ConfigurationError> => {
-  if (env.REA_MANAGED_RUNTIME_ENABLED === "false")
+  if (env.REA_MANAGED_RUNTIME_ENABLED !== "true")
     return ok({ status: "disabled" });
   const [firstRoot, ...remainingRoots] = roots;
   if (firstRoot === undefined)
