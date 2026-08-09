@@ -260,11 +260,11 @@ export const importReferenceSource = async (
 
   try {
     return ok(createHistoricalSourceGraph(input));
-  } catch (error) {
+  } catch (cause: unknown) {
     return err(
       failure(
         "parse",
-        error instanceof Error ? error.message : "Graph failed validation",
+        cause instanceof Error ? cause.message : "Graph failed validation",
       ),
     );
   }

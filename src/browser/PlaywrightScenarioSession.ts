@@ -297,11 +297,11 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         remaining(),
         options.signal,
       );
-    } catch (error) {
+    } catch (cause: unknown) {
       void opening
         .then((lateOpened) => closePlaywrightScenarioBrowser(lateOpened))
         .catch(() => undefined);
-      throw error;
+      throw cause;
     }
     try {
       await withPlaywrightExecutionBoundary(
@@ -336,9 +336,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         options.signal,
       );
       return session;
-    } catch (error) {
+    } catch (cause: unknown) {
       await closePlaywrightScenarioBrowser(opened);
-      throw error;
+      throw cause;
     }
   }
 
