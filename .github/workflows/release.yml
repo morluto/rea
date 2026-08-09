@@ -25,7 +25,9 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A dedicated credential lets release-PR updates trigger CI. GitHub
+          # requires manual approval for pull_request events from GITHUB_TOKEN.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Check out release pull request
         if: steps.release.outputs.prs_created == 'true'
@@ -53,7 +55,8 @@ jobs:
         if: steps.release.outputs.prs_created == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use the same identity for the follow-up commit so it also triggers CI.
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           RELEASE_PR_JSON: ${{ steps.release.outputs.pr }}
         run: |
           release_pr_branch="$(node --input-type=module -e '
