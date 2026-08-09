@@ -67,7 +67,7 @@ REA는 분석을 바이너리 증거에 근거하게 합니다. 원본 소스 �
 ### 코딩 에이전트에서 시작하기(권장)
 
 ```bash
-npx --yes --prefer-online rea-agents@latest setup
+npx --yes rea-agents@latest setup
 ```
 
 에이전트에게 REA 설정을 요청하세요. Mac을 확인하고 필요한 설치 내용을 설명한 뒤 승인을 요청하며 시스템 프롬프트를 안내합니다. 전체 도구를 불러오기 위해 재시작하라고 하면 설정 후 에이전트를 재시작하세요.
@@ -91,7 +91,7 @@ Ubuntu 24.04+, Fedora 41+, 64비트 Arch Linux에서 REA는 공식 DEB, RPM 또�
 ```bash
 # 1. REA 설정
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx --yes --prefer-online rea-agents@latest setup
+npx --yes rea-agents@latest setup
 ```
 
 macOS나 설치 프로그램이 확인을 요청하면 해당 절차를 완료하고 같은 명령을 다시 실행하세요.

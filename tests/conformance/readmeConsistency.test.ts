@@ -67,9 +67,7 @@ describe("localized README product facts", () => {
         "curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash",
       );
       expect(content).toContain("npx rea-agents setup");
-      expect(content).toContain(
-        "npx --yes --prefer-online rea-agents@latest setup",
-      );
+      expect(content).toContain("npx --yes rea-agents@latest setup");
       expect(content).toContain("npx -y rea-agents@latest doctor");
       expect(content).toContain("rea uninstall");
       expect(content).toContain(
@@ -98,17 +96,13 @@ describe("localized README product facts", () => {
     expect(content).toContain("--install-hopper");
     expect(content).toContain("docs/installation.md");
     expect(content).toContain("You do not need both");
-    expect(content).toContain(
-      "npx --yes --prefer-online rea-agents@latest setup",
-    );
+    expect(content).toContain("npx --yes rea-agents@latest setup");
   });
 
   it("documents explicit setup freshness and rollback", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
     const prose = normalizedProse(content);
-    expect(prose).toContain(
-      "explicit `@latest` request and `--prefer-online` metadata policy",
-    );
+    expect(prose).toContain("explicit `@latest` request");
     expect(prose).toContain(
       "npm exec --yes --package=rea-agents@2.4.0 -- rea setup",
     );

@@ -67,7 +67,7 @@ REA 让调查始终以二进制证据为依据。它不会声称能恢复原始�
 ### 使用编程智能体（推荐）
 
 ```bash
-npx --yes --prefer-online rea-agents@latest setup
+npx --yes rea-agents@latest setup
 ```
 
 让智能体设置 REA。它会检查你的 Mac，说明需要安装的内容，先征得同意，并引导你处理系统提示。如果智能体要求重启以加载完整工具，请在设置后重启。
@@ -91,7 +91,7 @@ npx --yes --prefer-online rea-agents@latest setup
 ```bash
 # 1. 安装和配置 REA
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx --yes --prefer-online rea-agents@latest setup
+npx --yes rea-agents@latest setup
 ```
 
 如果 macOS 或安装程序要求确认，请完成提示，然后再次运行同一命令。

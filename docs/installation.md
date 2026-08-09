@@ -7,7 +7,7 @@ REA separates installing its CLI from configuring external software and agents.
 The recommended setup entrypoint is:
 
 ```bash
-npx --yes --prefer-online rea-agents@latest setup
+npx --yes rea-agents@latest setup
 ```
 
 If npm asks to download and run the package, that approval applies only to the
@@ -15,8 +15,8 @@ current package-runner invocation. REA still prints its own setup plan and asks
 for separate approval before changing agent configuration or installing a
 product-owned component.
 
-The explicit `@latest` request and `--prefer-online` metadata policy prevent a
-project dependency or stale npx cache entry from choosing the setup version.
+The explicit `@latest` request prevents a project dependency or stale npx cache
+entry from choosing the setup version.
 REA runs the version npm selected and never silently replaces an intentional
 version request after launch. To repair registrations written by an older
 release, rerun the command above and review the resulting setup plan.
