@@ -52,7 +52,7 @@ const roots = [
   ),
 ];
 const policy = {
-  enabled: true,
+  status: "enabled",
   roots,
   nodePath: process.execPath,
   bubblewrapPath:
@@ -93,7 +93,7 @@ const authority = new PermissionAuthority(
   ),
 );
 const dependencies = {
-  policy,
+  policy: () => policy,
   host: new SystemJavaScriptReplayHost(),
   runner: new LinuxJavaScriptReplayRunner(),
   authority,
