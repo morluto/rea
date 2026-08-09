@@ -1,11 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { projectManagedApplicationGraphEvidence } from "../../application/ManagedApplicationGraphService.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../contracts/managedWorkflowToolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   recordManagedSources,
@@ -29,40 +27,34 @@ export const registerProjectManagedApplicationGraph = (
     graphContract.name,
     toolRegistrationOptions(graphContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        managedApplicationGraphReferenceInputSchema,
-        input,
-        graphContract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, graphContract);
       const managedArtifact =
-        parsedInput.value.managed_artifact_evidence_id === undefined
+        input.managed_artifact_evidence_id === undefined
           ? undefined
           : resolveManagedArtifactEvidence(
               options.session,
-              parsedInput.value.managed_artifact_evidence_id,
+              input.managed_artifact_evidence_id,
             );
       if (managedArtifact !== undefined && !managedArtifact.ok)
         return toCallToolResult(managedArtifact, graphContract);
       const managedMembers =
-        parsedInput.value.managed_members_evidence_id === undefined
+        input.managed_members_evidence_id === undefined
           ? undefined
           : resolveManagedEvidence(options.session, [
-              parsedInput.value.managed_members_evidence_id,
+              input.managed_members_evidence_id,
             ]);
       if (managedMembers !== undefined && !managedMembers.ok)
         return toCallToolResult(managedMembers, graphContract);
       const managedBoundaries =
-        parsedInput.value.managed_native_boundaries_evidence_id === undefined
+        input.managed_native_boundaries_evidence_id === undefined
           ? undefined
           : resolveManagedBoundaryEvidence(
               options.session,
-              parsedInput.value.managed_native_boundaries_evidence_id,
+              input.managed_native_boundaries_evidence_id,
             );
       if (managedBoundaries !== undefined && !managedBoundaries.ok)
         return toCallToolResult(managedBoundaries, graphContract);
       const parsed = {
-        limits: parsedInput.value.limits,
+        limits: input.limits,
         managed_artifact: managedArtifact?.value[0],
         managed_members: managedMembers?.value[0],
         managed_native_boundaries: managedBoundaries?.value[0],

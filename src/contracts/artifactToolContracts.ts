@@ -100,11 +100,14 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   },
 };
 
-const artifact = <Name extends string>(
+const artifact = <
+  Name extends string,
+  Schema extends z.ZodType<Readonly<Record<string, unknown>>>,
+>(
   name: Name,
   description: string,
-  inputSchema: z.ZodType<Readonly<Record<string, unknown>>>,
-): ToolContract<Name> => {
+  inputSchema: Schema,
+) => {
   const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
     name,
@@ -119,7 +122,7 @@ const artifact = <Name extends string>(
         input: exampleInputSchema.parse(examples[name] ?? {}),
       },
     ],
-  };
+  } satisfies ToolContract<Name, Schema, typeof outputSchema>;
 };
 
 /** Artifact-graph inventory and explicitly approved safe extraction contracts. */

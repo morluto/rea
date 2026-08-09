@@ -5,59 +5,61 @@ import {
   createRequestStateCodec,
   McpServer,
   PROTOCOL_VERSION_META_KEY,
+  type ServerContext,
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
-import { silentLogger, type Logger } from "../logger.js";
-import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
-import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
-import { registerGuidedPrompts } from "./registerPrompts.js";
-import { registerEvidenceResources } from "./registerEvidenceResources.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import type {
+  JavaScriptReplayHost,
+  JavaScriptReplayPolicy,
+  JavaScriptReplayRunner,
+} from "../application/JavaScriptReplayPlanning.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
+import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
 import { MANAGED_RUNTIME_DISABLED } from "../application/ManagedRuntimeCorrelationService.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
+import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
+import { silentLogger, type Logger } from "../logger.js";
 import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
-import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
-import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
+import { mcpClientMetadata, mcpEnvelopeValue } from "./mcpClientMetadata.js";
 import {
-  DENY_EVIDENCE_FILE_POLICY,
-  DENY_PROCESS_POLICY,
-} from "./sessionToolPolicies.js";
+  PROCESS_CAPTURE_ELICITATION_POLICY,
+  type ProcessCaptureElicitationState,
+} from "./ProcessCaptureElicitation.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
+import { registerEvidenceResources } from "./registerEvidenceResources.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
+import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
+import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
+import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
+import {
+  DENY_EVIDENCE_FILE_POLICY,
+  DENY_PROCESS_POLICY,
+} from "./sessionToolPolicies.js";
 
 const TARGET_FREE_INSTRUCTIONS =
   "ASAR/JavaScript -> analyze_javascript_application; archive/package -> open_binary(path), then inspect_artifact/inventory_artifact (active target); managed PE/CLI -> inspect_managed_artifact; browser/Electron -> list_browser_targets/list_electron_targets; approved -> capture_browser_scenario/capture_electron_scenario; Node/Electron Inspector -> list_javascript_runtime_targets; native binary/database -> open_binary, then binary_overview. Start with binary_session; use tools/list; capabilities via binary_session. Use summaries, cite Evidence IDs; Never repeat identical analysis or read full Evidence.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Start native analysis with binary_overview, then narrow with analyze_function, literal search, callers, callees, and xrefs. Prefer summary views, never repeat an identical call, and read full Evidence only when the task requires it.";
-import type {
-  JavaScriptReplayHost,
-  JavaScriptReplayPolicy,
-  JavaScriptReplayRunner,
-} from "../application/JavaScriptReplayPlanning.js";
-import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
-import {
-  PROCESS_CAPTURE_ELICITATION_POLICY,
-  type ProcessCaptureElicitationState,
-} from "./ProcessCaptureElicitation.js";
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
@@ -114,9 +116,7 @@ type ProcessCaptureElicitation = {
     typeof createRequestStateCodec<ProcessCaptureElicitationState>
   >;
   readonly supported: (context: {
-    readonly mcpReq: {
-      readonly envelope?: Readonly<Record<string, unknown>>;
-    };
+    readonly mcpReq: Pick<ServerContext["mcpReq"], "envelope">;
   }) => boolean;
   readonly now: typeof Date.now;
   readonly consumedNonces: Map<string, number>;
@@ -128,8 +128,11 @@ const createProcessCaptureElicitation = (
   stateCodec,
   supported: (context) => {
     const envelope = context.mcpReq.envelope;
-    const version = envelope?.[PROTOCOL_VERSION_META_KEY];
-    const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+    const version = mcpEnvelopeValue(envelope, PROTOCOL_VERSION_META_KEY);
+    const capabilities = mcpEnvelopeValue(
+      envelope,
+      CLIENT_CAPABILITIES_META_KEY,
+    );
     return (
       typeof version === "string" &&
       PROCESS_CAPTURE_ELICITATION_POLICY.protocolVersions.some(
@@ -155,8 +158,7 @@ const createMcpServer = (
     },
     {
       capabilities: {
-        tools: { listChanged: true },
-        resources: { listChanged: true, subscribe: true },
+        resources: { subscribe: true },
       },
       inputRequired: {
         maxRounds: 3,
@@ -229,6 +231,9 @@ export const createServer = (
   }
   return server;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const createSessionRecorders = (
   server: McpServer,
@@ -381,10 +386,9 @@ const registerServerIdentityResource = (
       description: "Live package, SDK, protocol, and catalog identity.",
       mimeType: "application/json",
     },
-    async (uri) => {
+    async (uri, context) => {
       const { createServerIdentity } = await import("../serverIdentity.js");
-      const client = server.server.getClientVersion();
-      const protocolVersion = server.server.getNegotiatedProtocolVersion();
+      const { client, protocolVersion } = mcpClientMetadata(context);
       return {
         contents: [
           {
@@ -405,6 +409,3 @@ const registerServerIdentityResource = (
     },
   );
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);

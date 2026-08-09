@@ -70,6 +70,29 @@ describe("process-capture MCP elicitation handshake", () => {
     });
     try {
       await client.connect(clientTransport);
+      const identity = await client.readResource({
+        uri: "rea://server/identity",
+      });
+      const identityContent = identity.contents[0];
+      if (identityContent === undefined || !("text" in identityContent))
+        throw new Error("missing modern server identity resource");
+      expect(JSON.parse(identityContent.text)).toMatchObject({
+        client: { name: "process-elicit", version: "1" },
+      });
+      const status = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "full" },
+      });
+      expect(status.structuredContent).toMatchObject({
+        result: {
+          client_features: {
+            elicitation_form: true,
+            elicitation_url: false,
+            roots: false,
+            sampling: false,
+          },
+        },
+      });
       const captured = await client.callTool({
         name: "capture_process_scenario",
         arguments: {

@@ -207,103 +207,126 @@ const DEFAULT_BROWSER_INSPECTION_LIMITS = {
   max_total_websocket_shape_bytes: 1_024 * 1_024,
 } as const;
 
+const inspectWebPageInputFacts = {
+  ...approvedBrowserInput,
+  target_id: z.string().trim().min(1).max(256),
+  observation_ms: z.number().int().min(0).max(10_000).default(500),
+  include_accessibility_text: z.boolean().default(false),
+  include_console_text: z.boolean().default(false),
+  console_text_approved: z.boolean().default(false),
+  include_json_body_shapes: z.boolean().default(false),
+  json_body_schema_approved: z.boolean().default(false),
+  include_websocket_shapes: z.boolean().default(false),
+  websocket_shape_approved: z.boolean().default(false),
+  include_storage_keys: z.boolean().default(false),
+  include_storage_fingerprints: z.boolean().default(false),
+  limits: browserInspectionLimitsSchema.default(
+    DEFAULT_BROWSER_INSPECTION_LIMITS,
+  ),
+} as const;
+
+const inspectWebPageWithoutSourceSchema = z.strictObject({
+  ...inspectWebPageInputFacts,
+  include_script_sources: z.literal(false).default(false),
+  source_capture_approved: z.literal(false).default(false),
+});
+
+const inspectWebPageWithSourceShapeSchema = z.strictObject({
+  ...inspectWebPageInputFacts,
+  include_script_sources: z.literal(true).default(true),
+  source_capture_approved: z.literal(true),
+});
+
+type InspectWebPageShape =
+  | z.output<typeof inspectWebPageWithoutSourceSchema>
+  | z.output<typeof inspectWebPageWithSourceShapeSchema>;
+
+const refineInspectWebPageInput = (
+  input: InspectWebPageShape,
+  context: z.RefinementCtx,
+): void => {
+  if (input.include_storage_fingerprints && !input.include_storage_keys)
+    context.addIssue({
+      code: "custom",
+      path: ["include_storage_fingerprints"],
+      message: "Storage fingerprints require storage key capture",
+    });
+  if (
+    input.limits.max_script_source_bytes >
+    input.limits.max_total_script_source_bytes
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["limits", "max_script_source_bytes"],
+      message: "Per-script source limit cannot exceed the total source limit",
+    });
+  for (const [include, approved, path, message] of [
+    [
+      input.include_console_text,
+      input.console_text_approved,
+      "console_text_approved",
+      "Console text capture requires separate approval",
+    ],
+    [
+      input.include_json_body_shapes,
+      input.json_body_schema_approved,
+      "json_body_schema_approved",
+      "JSON body schema capture requires separate approval",
+    ],
+    [
+      input.include_websocket_shapes,
+      input.websocket_shape_approved,
+      "websocket_shape_approved",
+      "WebSocket shape capture requires separate approval",
+    ],
+  ] as const)
+    if (include && !approved)
+      context.addIssue({ code: "custom", path: [path], message });
+  if (
+    input.limits.max_console_text_field_bytes >
+    input.limits.max_total_console_text_bytes
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["limits", "max_console_text_field_bytes"],
+      message:
+        "Per-field console text limit cannot exceed the total text limit",
+    });
+  if (input.limits.max_json_body_bytes > input.limits.max_total_json_body_bytes)
+    context.addIssue({
+      code: "custom",
+      path: ["limits", "max_json_body_bytes"],
+      message: "Per-body JSON limit cannot exceed the total body limit",
+    });
+  if (
+    input.limits.max_websocket_shape_bytes >
+    input.limits.max_total_websocket_shape_bytes
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["limits", "max_websocket_shape_bytes"],
+      message: "Per-frame WebSocket limit cannot exceed the total frame limit",
+    });
+  if (
+    input.limits.max_ax_text_field_bytes > input.limits.max_total_ax_text_bytes
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["limits", "max_ax_text_field_bytes"],
+      message:
+        "Per-field accessibility text limit cannot exceed the total text limit",
+    });
+};
+
+/** Source-capturing inspection input, reusable by static bundle analysis. */
+export const inspectWebPageWithSourceInputSchema =
+  inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
+
 /** Public input for one passive, bounded inspection of an existing page. */
-export const inspectWebPageInputSchema = z
-  .object({
-    ...approvedBrowserInput,
-    target_id: z.string().trim().min(1).max(256),
-    observation_ms: z.number().int().min(0).max(10_000).default(500),
-    include_accessibility_text: z.boolean().default(false),
-    include_console_text: z.boolean().default(false),
-    console_text_approved: z.boolean().default(false),
-    include_json_body_shapes: z.boolean().default(false),
-    json_body_schema_approved: z.boolean().default(false),
-    include_websocket_shapes: z.boolean().default(false),
-    websocket_shape_approved: z.boolean().default(false),
-    include_script_sources: z.boolean().default(false),
-    include_storage_keys: z.boolean().default(false),
-    include_storage_fingerprints: z.boolean().default(false),
-    limits: browserInspectionLimitsSchema.default(
-      DEFAULT_BROWSER_INSPECTION_LIMITS,
-    ),
-  })
-  .superRefine((input, context) => {
-    if (input.include_storage_fingerprints && !input.include_storage_keys)
-      context.addIssue({
-        code: "custom",
-        path: ["include_storage_fingerprints"],
-        message: "Storage fingerprints require storage key capture",
-      });
-    if (
-      input.limits.max_script_source_bytes >
-      input.limits.max_total_script_source_bytes
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["limits", "max_script_source_bytes"],
-        message: "Per-script source limit cannot exceed the total source limit",
-      });
-    for (const [include, approved, path, message] of [
-      [
-        input.include_console_text,
-        input.console_text_approved,
-        "console_text_approved",
-        "Console text capture requires separate approval",
-      ],
-      [
-        input.include_json_body_shapes,
-        input.json_body_schema_approved,
-        "json_body_schema_approved",
-        "JSON body schema capture requires separate approval",
-      ],
-      [
-        input.include_websocket_shapes,
-        input.websocket_shape_approved,
-        "websocket_shape_approved",
-        "WebSocket shape capture requires separate approval",
-      ],
-    ] as const)
-      if (include && !approved)
-        context.addIssue({ code: "custom", path: [path], message });
-    if (
-      input.limits.max_console_text_field_bytes >
-      input.limits.max_total_console_text_bytes
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["limits", "max_console_text_field_bytes"],
-        message:
-          "Per-field console text limit cannot exceed the total text limit",
-      });
-    if (
-      input.limits.max_json_body_bytes > input.limits.max_total_json_body_bytes
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["limits", "max_json_body_bytes"],
-        message: "Per-body JSON limit cannot exceed the total body limit",
-      });
-    if (
-      input.limits.max_websocket_shape_bytes >
-      input.limits.max_total_websocket_shape_bytes
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["limits", "max_websocket_shape_bytes"],
-        message:
-          "Per-frame WebSocket limit cannot exceed the total frame limit",
-      });
-    if (
-      input.limits.max_ax_text_field_bytes >
-      input.limits.max_total_ax_text_bytes
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["limits", "max_ax_text_field_bytes"],
-        message:
-          "Per-field accessibility text limit cannot exceed the total text limit",
-      });
-  });
+export const inspectWebPageInputSchema = z.union([
+  inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
+  inspectWebPageWithSourceInputSchema,
+]);
 
 export type ListBrowserTargetsInput = z.infer<
   typeof listBrowserTargetsInputSchema

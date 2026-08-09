@@ -1,13 +1,9 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
-import {
-  AnalysisOutputError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "../domain/errors.js";
-import type { Result } from "../domain/result.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
+import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { Result } from "../domain/result.js";
 
 interface ToolResultOptions {
   readonly evidenceResourcesAvailable?: boolean;
@@ -57,34 +53,13 @@ const successResult = (
   const candidate =
     compactEvidence(value, options.evidenceResultProjection) ??
     (contract.kind === "session" ? { result: value } : value);
-  const parsed = contract.outputSchema.safeParse(candidate);
-  if (!parsed.success) {
-    const structuredContent = {
-      error: projectAnalysisError(
-        new AnalysisOutputError(
-          contract.name,
-          "output does not match the tool contract",
-        ),
-      ),
-    };
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(structuredContent),
-        },
-      ],
-      structuredContent,
-      isError: true,
-    };
-  }
   return {
     content: [
       {
         type: "text",
         text: JSON.stringify(
           options.evidenceTextProjection === undefined
-            ? parsed.data
+            ? candidate
             : (compactEvidence(value, options.evidenceTextProjection) ??
                 options.evidenceTextProjection),
         ),

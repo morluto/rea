@@ -5,22 +5,21 @@ import type {
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import type { Logger } from "../logger.js";
-import { logToolExecution } from "./toolLogging.js";
-import { toCallToolResult } from "./toolResult.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import {
   AnalysisProtocolError,
   PermissionRequiredError,
 } from "../domain/errors.js";
+import { createEvidence, type Evidence } from "../domain/evidence.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err } from "../domain/result.js";
+import type { Logger } from "../logger.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+import { logToolExecution } from "./toolLogging.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 interface EvidenceToolRegistration {
   readonly logger: Logger;
@@ -52,13 +51,7 @@ export const registerEvidenceTools = (
           total: 1,
           message: "started",
         });
-        const parsedInput = safeParseToolInput(
-          contract.inputSchema,
-          input,
-          contract.name,
-        );
-        if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-        const parameters = jsonObjectSchema.parse(parsedInput.value);
+        const parameters = jsonObjectSchema.parse(input);
         if (options.permissionAuthority !== undefined) {
           const request = permissionRequest(contract.name, parameters);
           if (request !== undefined) {

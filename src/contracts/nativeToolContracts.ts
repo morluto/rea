@@ -14,11 +14,11 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   demangle_swift: { symbols: ["$s4Test3fooyyF"] },
 };
 
-const native = <Name extends string>(
+const native = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
-): ToolContract<Name> => {
+  inputSchema: Schema,
+) => {
   const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   return {
     name,
@@ -35,7 +35,7 @@ const native = <Name extends string>(
           .parse(examples[name] ?? {}),
       },
     ],
-  };
+  } satisfies ToolContract<Name, Schema, typeof outputSchema>;
 };
 
 /** Provider-neutral semantic operations backed initially by macOS utilities. */

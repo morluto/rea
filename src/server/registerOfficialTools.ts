@@ -1,31 +1,32 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { AnalysisExecution } from "../application/AnalysisProvider.js";
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
+} from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ToolContract } from "../contracts/toolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import type { BinaryTarget } from "../domain/binaryTarget.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  UnknownRegistryError,
+  type AnalysisError,
+} from "../domain/errors.js";
+import { createEvidence } from "../domain/evidence.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
-import { toCallToolResult } from "./toolResult.js";
-import type { Logger } from "../logger.js";
-import { logToolExecution } from "./toolLogging.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence } from "../domain/evidence.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  type AnalysisError,
-  UnknownRegistryError,
-} from "../domain/errors.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
-import type { ToolContract } from "../contracts/toolContracts.js";
 import type { Result } from "../domain/result.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { Logger } from "../logger.js";
+import { mcpProgressReporter } from "./mcpProgress.js";
+import { logToolExecution } from "./toolLogging.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
@@ -66,13 +67,7 @@ const registerOfficialTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        contract.inputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const arguments_ = projectOfficialArguments(contract, parsedInput.value);
+      const arguments_ = projectOfficialArguments(contract, input);
       const progress = mcpProgressReporter(context);
       const result = await runOfficialOperation(
         analysis,

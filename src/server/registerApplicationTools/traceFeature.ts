@@ -1,13 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { traceApplicationFeatureEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { resolveTraceApplicationFeatureRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
+import { traceApplicationFeatureEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { traceApplicationFeatureRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { recordResult, recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -22,14 +20,8 @@ export const registerTraceFeatureTool = (
     traceContract.name,
     toolRegistrationOptions(traceContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        traceApplicationFeatureRequestSchema,
-        input,
-        traceContract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, traceContract);
       const resolved = resolveTraceApplicationFeatureRequestValidated(
-        parsedInput.value,
+        input,
         options.evidenceLookup,
       );
       if (!resolved.ok) return toCallToolResult(resolved, traceContract);

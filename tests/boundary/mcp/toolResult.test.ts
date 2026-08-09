@@ -87,31 +87,6 @@ describe("tool result projection", () => {
     });
     expect(JSON.stringify(result)).not.toContain("cookie");
   });
-  it("classifies output contract failures without naming a provider", () => {
-    const result = toCallToolResult(ok({ value: 42 }), contract);
-    expect(result).toMatchObject({
-      structuredContent: {
-        error: {
-          code: "unreadable_output",
-          category: "execution_failure",
-          message:
-            "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
-          retryable: false,
-          remediation: {
-            action:
-              "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
-            restart_required: false,
-          },
-        },
-      },
-      isError: true,
-    });
-    expect(result.content[0]).toEqual({
-      type: "text",
-      text: JSON.stringify(result.structuredContent),
-    });
-  });
-
   it("links successful evidence only when its session resource exists", () => {
     const evidence = createEvidence(
       undefined,

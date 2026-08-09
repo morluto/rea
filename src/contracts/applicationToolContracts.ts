@@ -407,13 +407,49 @@ export const APPLICATION_TOOL_CONTRACTS = [
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
-export const applicationToolContract = (
+export function applicationToolContract(
+  name: "trace_application_feature",
+): (typeof APPLICATION_TOOL_CONTRACTS)[0];
+export function applicationToolContract(
+  name: "trace_javascript_semantics",
+): (typeof APPLICATION_TOOL_CONTRACTS)[1];
+export function applicationToolContract(
+  name: "compare_application_versions",
+): (typeof APPLICATION_TOOL_CONTRACTS)[2];
+export function applicationToolContract(
+  name: "compare_source_to_bundle",
+): (typeof APPLICATION_TOOL_CONTRACTS)[3];
+export function applicationToolContract(
+  name: "compare_javascript_export_shapes",
+): (typeof APPLICATION_TOOL_CONTRACTS)[4];
+export function applicationToolContract(
+  name: "run_controlled_replay",
+): (typeof APPLICATION_TOOL_CONTRACTS)[5];
+export function applicationToolContract(
+  name: "prepare_node_characterization",
+): (typeof APPLICATION_TOOL_CONTRACTS)[6];
+export function applicationToolContract(
+  name: "execute_node_characterization",
+): (typeof APPLICATION_TOOL_CONTRACTS)[7];
+export function applicationToolContract(
+  name: "build_reconstruction_obligation_ledger",
+): (typeof APPLICATION_TOOL_CONTRACTS)[8];
+export function applicationToolContract(
+  name: "evaluate_reconstruction_readiness",
+): (typeof APPLICATION_TOOL_CONTRACTS)[9];
+export function applicationToolContract(
+  name: "commit_reconstruction_coverage",
+): (typeof APPLICATION_TOOL_CONTRACTS)[10];
+export function applicationToolContract(
+  name: "query_reconstruction_coverage",
+): (typeof APPLICATION_TOOL_CONTRACTS)[11];
+export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
-): (typeof APPLICATION_TOOL_CONTRACTS)[number] => {
+): (typeof APPLICATION_TOOL_CONTRACTS)[number] {
   const contract = APPLICATION_TOOL_CONTRACTS.find(
     ({ name: candidate }) => candidate === name,
   );
   if (contract === undefined)
     throw new Error(`Missing application tool contract: ${name}`);
   return contract;
-};
+}

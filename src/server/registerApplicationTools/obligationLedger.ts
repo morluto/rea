@@ -5,9 +5,7 @@ import {
   resolveReconstructionObligationLedgerRequest,
 } from "../../application/ReconstructionObligationLedgerService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { reconstructionObligationLedgerInputSchema } from "../../domain/reconstructionObligationLedgerSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { recordResult, recordSources } from "./helpers.js";
@@ -26,15 +24,7 @@ export const registerReconstructionObligationLedgerTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsed = safeParseToolInput(
-        reconstructionObligationLedgerInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, contract);
-      const resolved = resolveReconstructionObligationLedgerRequest(
-        parsed.value,
-      );
+      const resolved = resolveReconstructionObligationLedgerRequest(input);
       if (!resolved.ok) return toCallToolResult(resolved, contract);
       const result = await logToolExecution(options.logger, contract.name, () =>
         Promise.resolve(

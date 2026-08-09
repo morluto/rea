@@ -67,11 +67,11 @@ export {
 
 export type { ToolContract, ToolExample } from "./toolContractTypes.js";
 
-const official = <Name extends string>(
+const official = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
-): ToolContract<Name> => {
+  inputSchema: Schema,
+) => {
   const trackedInputSchema = inputSchema.extend({
     unknown_registry_approved: z
       .literal(true)
@@ -88,36 +88,38 @@ const official = <Name extends string>(
     inputSchema: trackedInputSchema,
     outputSchema: requireOutputSchema(officialOutputSchemas, name),
     examples: examplesFor(name, trackedInputSchema),
-  };
+  } satisfies ToolContract<Name, typeof trackedInputSchema>;
 };
 
-const enhanced = <Name extends string>(
+const enhanced = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
-): ToolContract<Name> => ({
-  name,
-  ...toolContractMetadata(name),
-  description,
-  kind: "enhanced",
-  inputSchema,
-  outputSchema: requireOutputSchema(enhancedOutputSchemas, name),
-  examples: examplesFor(name, inputSchema),
-});
+  inputSchema: Schema,
+) =>
+  ({
+    name,
+    ...toolContractMetadata(name),
+    description,
+    kind: "enhanced",
+    inputSchema,
+    outputSchema: requireOutputSchema(enhancedOutputSchemas, name),
+    examples: examplesFor(name, inputSchema),
+  }) satisfies ToolContract<Name, Schema>;
 
-const session = <Name extends string>(
+const session = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
-): ToolContract<Name> => ({
-  name,
-  ...toolContractMetadata(name),
-  description,
-  kind: "session",
-  inputSchema,
-  outputSchema: requireOutputSchema(sessionOutputSchemas, name),
-  examples: examplesFor(name, inputSchema),
-});
+  inputSchema: Schema,
+) =>
+  ({
+    name,
+    ...toolContractMetadata(name),
+    description,
+    kind: "session",
+    inputSchema,
+    outputSchema: requireOutputSchema(sessionOutputSchemas, name),
+    examples: examplesFor(name, inputSchema),
+  }) satisfies ToolContract<Name, Schema>;
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [

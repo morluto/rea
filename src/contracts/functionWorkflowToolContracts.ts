@@ -11,7 +11,7 @@ type FunctionWorkflowName = "analyze_function" | "inspect_native_api";
 const functionWorkflow = <Name extends FunctionWorkflowName>(
   name: Name,
   description: string,
-): ToolContract<Name> => {
+) => {
   const inputSchema = enhancedInputSchemas[name];
   const outputSchema = requireOutputSchema(enhancedOutputSchemas, name);
   return {
@@ -29,7 +29,7 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
         ),
       },
     ],
-  };
+  } satisfies ToolContract<Name, typeof inputSchema, typeof outputSchema>;
 };
 
 /** Function dossier and native API reconstruction workflow contracts. */

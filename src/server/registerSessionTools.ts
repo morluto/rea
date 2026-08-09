@@ -1,65 +1,58 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import {
-  addressContextInputSchema,
-  navigationContextInputSchema,
-  SESSION_TOOL_CONTRACTS,
-} from "../contracts/toolContracts.js";
-import { toCallToolResult } from "./toolResult.js";
-import type { Logger } from "../logger.js";
-import { logToolExecution } from "./toolLogging.js";
-import { ok, type Result } from "../domain/result.js";
+  getNavigationContext,
+  inspectAddressContext,
+} from "../application/AnalysisContextQueries.js";
+import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
+import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import { processCapturePermissionRequest } from "../application/ProcessCapturePermission.js";
+import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
+import { captureProcessScenario } from "../application/ProcessHarness.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
 import type {
   ProcessCapture,
   ProcessExecutionPolicy,
   ProcessScenario,
 } from "../domain/processCapture.js";
-import { processScenarioSchema } from "../domain/processCapture.js";
-import { captureProcessScenario } from "../application/ProcessHarness.js";
-import { processCapturePermissionRequest } from "../application/ProcessCapturePermission.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
-import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
-import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
-import {
-  DENY_EVIDENCE_FILE_POLICY,
-  DENY_PROCESS_POLICY,
-} from "./sessionToolPolicies.js";
-import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
-import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
-import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
-import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
-import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
-import { registerInvestigationTools } from "./registerInvestigationTools.js";
-import { openBinaryInputSchema } from "../contracts/sessionLifecycleInputs.js";
-import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
+import { ok, type Result } from "../domain/result.js";
+import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import { permissionFailure } from "./permissionFailure.js";
 import {
   authorizeProcessCaptureWithElicitation,
   type ProcessCaptureElicitation,
 } from "./ProcessCaptureElicitation.js";
-import { isInputRequiredResult } from "@modelcontextprotocol/server";
+import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
+import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
+import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
+import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
+import { registerInvestigationTools } from "./registerInvestigationTools.js";
+import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
+import { registerReplayMachineTool } from "./registerReplayMachineTool.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import { registerReplayMachineTool } from "./registerReplayMachineTool.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 import {
   sessionAvailabilityPolicy,
   type SessionAvailability,
 } from "./sessionAvailabilityPolicy.js";
-import { permissionFailure } from "./permissionFailure.js";
-import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import {
-  getNavigationContext,
-  inspectAddressContext,
-} from "../application/AnalysisContextQueries.js";
+  DENY_EVIDENCE_FILE_POLICY,
+  DENY_PROCESS_POLICY,
+} from "./sessionToolPolicies.js";
+import { logToolExecution } from "./toolLogging.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -123,14 +116,7 @@ const registerProcessTools = ({
     captureContract.name,
     toolRegistrationOptions(captureContract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        processScenarioSchema,
-        input,
-        captureContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, captureContract);
-      const scenario = parsedInput.value;
+      const scenario = input;
       if (permissionAuthority !== undefined) {
         const request = processCapturePermissionRequest(scenario);
         const authorized =
@@ -232,25 +218,18 @@ const registerOpenLifecycleTool = ({
     openContract.name,
     toolRegistrationOptions(openContract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        openBinaryInputSchema,
-        input,
-        openContract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, openContract);
-      const parsed = parsedInput.value;
       let snapshot: AnalysisSnapshot | undefined;
-      if (parsed.snapshot_path !== undefined) {
+      if (input.snapshot_path !== undefined) {
         if (permissionAuthority !== undefined) {
           const authorized = await permissionAuthority.authorize(
             {
               capability: "snapshot_read",
-              roots: [parsed.snapshot_path],
+              roots: [input.snapshot_path],
               executables: [],
               environment_names: [],
               network: "none",
               mount: false,
-              operation_identity: `open_binary:snapshot:${parsed.snapshot_path}`,
+              operation_identity: `open_binary:snapshot:${input.snapshot_path}`,
             },
             "read",
           );
@@ -261,18 +240,18 @@ const registerOpenLifecycleTool = ({
             );
         }
         const loaded = await readAnalysisSnapshot(
-          parsed.snapshot_path,
+          input.snapshot_path,
           snapshotFilePolicy,
         );
         if (!loaded.ok) return toCallToolResult(loaded, openContract);
         snapshot = loaded.value;
       }
       const opened = await logToolExecution(logger, openContract.name, () =>
-        session.open(parsed.path, {
+        session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(parsed.provider_id === undefined
+          ...(input.provider_id === undefined
             ? {}
-            : { providerId: parsed.provider_id }),
+            : { providerId: input.provider_id }),
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );
@@ -334,18 +313,8 @@ const registerContextTools = (
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
     async (input, context) => {
-      const parsed = safeParseToolInput(
-        navigationContextInputSchema,
-        input,
-        navigationContract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, navigationContract);
       return toCallToolResult(
-        await getNavigationContext(
-          session,
-          parsed.value,
-          context.mcpReq.signal,
-        ),
+        await getNavigationContext(session, input, context.mcpReq.signal),
         navigationContract,
       );
     },
@@ -354,18 +323,8 @@ const registerContextTools = (
     addressContract.name,
     toolRegistrationOptions(addressContract),
     async (input, context) => {
-      const parsed = safeParseToolInput(
-        addressContextInputSchema,
-        input,
-        addressContract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, addressContract);
       return toCallToolResult(
-        await inspectAddressContext(
-          session,
-          parsed.value,
-          context.mcpReq.signal,
-        ),
+        await inspectAddressContext(session, input, context.mcpReq.signal),
         addressContract,
       );
     },

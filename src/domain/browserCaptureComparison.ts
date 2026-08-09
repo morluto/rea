@@ -11,92 +11,41 @@ import {
   compareWebCaptures,
   captureSnapshotSchema,
   webCaptureDiffSchema,
-  type CompareWebCapturesInput,
   type WebCaptureDiff,
 } from "./webCaptureDiff.js";
 
-/** Top-level MCP shape for legacy page or step-indexed scenario comparison. */
-export const browserCaptureComparisonWireSchema = z
-  .strictObject({
-    before: captureSnapshotSchema
-      .optional()
-      .describe("Earlier passive web-page capture; pair with after."),
-    after: captureSnapshotSchema
-      .optional()
-      .describe("Later passive web-page capture; pair with before."),
-    before_scenario: compareBrowserScenariosInputSchema.shape.before_scenario
-      .optional()
-      .describe("Earlier browser scenario capture; pair with after_scenario."),
-    after_scenario: compareBrowserScenariosInputSchema.shape.after_scenario
-      .optional()
-      .describe("Later browser scenario capture; pair with before_scenario."),
+const maxChangesSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(20_000)
+  .default(2_000)
+  .describe("Maximum normalized change records to retain.");
+
+/** Top-level MCP shape for exactly one complete passive or scenario pair. */
+export const browserCaptureComparisonInputSchema = z.union([
+  z.strictObject({
+    before: captureSnapshotSchema.describe("Earlier passive web-page capture."),
+    after: captureSnapshotSchema.describe("Later passive web-page capture."),
+    max_changes: maxChangesSchema,
+  }),
+  z.strictObject({
+    before_scenario:
+      compareBrowserScenariosInputSchema.shape.before_scenario.describe(
+        "Earlier browser scenario capture.",
+      ),
+    after_scenario:
+      compareBrowserScenariosInputSchema.shape.after_scenario.describe(
+        "Later browser scenario capture.",
+      ),
     normalization:
       compareBrowserScenariosInputSchema.shape.normalization.describe(
-        "Scenario-only exact-literal normalization policy.",
+        "Exact-literal normalization policy.",
       ),
-    max_changes: z
-      .number()
-      .int()
-      .min(1)
-      .max(20_000)
-      .default(2_000)
-      .describe("Maximum normalized change records to retain."),
-  })
-  .superRefine((input, context) => {
-    const hasPassive = input.before !== undefined || input.after !== undefined;
-    const hasScenario =
-      input.before_scenario !== undefined || input.after_scenario !== undefined;
-    if (hasPassive === hasScenario)
-      context.addIssue({
-        code: "custom",
-        message:
-          "Provide exactly one complete pair: before/after or before_scenario/after_scenario",
-      });
-    if (hasPassive && (input.before === undefined || input.after === undefined))
-      context.addIssue({
-        code: "custom",
-        message: "Passive comparison requires both before and after",
-      });
-    if (
-      hasScenario &&
-      (input.before_scenario === undefined ||
-        input.after_scenario === undefined)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Browser scenario comparison requires both before_scenario and after_scenario",
-      });
-    if (hasPassive && input.normalization.rules.length > 0)
-      context.addIssue({
-        code: "custom",
-        path: ["normalization"],
-        message:
-          "Literal normalization rules apply only to browser scenario captures",
-      });
-  });
+    max_changes: maxChangesSchema,
+  }),
+]);
 
-/** Parsed legacy page snapshots or step-indexed browser scenarios. */
-export const browserCaptureComparisonInputSchema =
-  browserCaptureComparisonWireSchema.transform((input) => {
-    if (
-      input.before_scenario !== undefined &&
-      input.after_scenario !== undefined
-    )
-      return {
-        before_scenario: input.before_scenario,
-        after_scenario: input.after_scenario,
-        normalization: input.normalization,
-        max_changes: input.max_changes,
-      } satisfies CompareBrowserScenariosInput;
-    if (input.before !== undefined && input.after !== undefined)
-      return {
-        before: input.before,
-        after: input.after,
-        max_changes: input.max_changes,
-      } satisfies CompareWebCapturesInput;
-    throw new TypeError("Capture comparison pair refinement failed");
-  });
 /** Parsed browser capture comparison input. */
 export type BrowserCaptureComparisonInput = z.output<
   typeof browserCaptureComparisonInputSchema

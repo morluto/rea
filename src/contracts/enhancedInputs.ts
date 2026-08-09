@@ -94,20 +94,3 @@ export const enhancedInputSchemas = {
 } as const;
 
 export type EnhancedToolName = keyof typeof enhancedInputSchemas;
-
-/** Runtime parser for dispatching only the closed enhanced names. */
-export const enhancedToolNameSchema = z.enum([
-  "swift_classes",
-  "get_objc_classes",
-  "get_objc_protocols",
-  "batch_decompile",
-  "get_call_graph",
-  "analyze_swift_types",
-  "find_xrefs_to_name",
-  "binary_overview",
-  "analyze_function",
-  "inspect_native_api",
-  "trace_feature",
-  "find_code_for_string",
-  "trace_call_path",
-]);

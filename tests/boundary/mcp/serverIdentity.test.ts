@@ -283,7 +283,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
       server: SDK_IDENTITY.server,
       client_test: PACKAGE_METADATA.clientSdkVersion,
     },
-    client: { name: "identity-test", version: "9" },
+    client: null,
     alignment: { state: "unknown" },
   });
 };
@@ -318,7 +318,7 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
             required: [],
             optional: ["elicitation_form"],
             missing_required: [],
-            missing_optional: [],
+            missing_optional: ["elicitation_form"],
           },
         }),
         expect.objectContaining({
@@ -336,7 +336,7 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
         }),
       ]),
       client_features: {
-        elicitation_form: true,
+        elicitation_form: false,
         elicitation_url: false,
         roots: false,
         sampling: false,
@@ -386,7 +386,7 @@ const assertCapabilityViews = async (client: Client): Promise<void> => {
         has_more: true,
       },
       client_features: {
-        elicitation_form: true,
+        elicitation_form: false,
         elicitation_url: false,
         roots: false,
         sampling: false,

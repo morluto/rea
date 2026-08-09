@@ -151,8 +151,8 @@ const input = (overrides: Record<string, unknown> = {}) =>
       target_id: "page-1",
       approved: true,
       include_script_sources: true,
+      source_capture_approved: true,
     }),
-    source_capture_approved: true,
     ...overrides,
   });
 

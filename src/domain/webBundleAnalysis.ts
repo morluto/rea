@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { inspectWebPageInputSchema } from "./browserObservation.js";
+import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
 const webBundleLimitsSchema = z.object({
@@ -24,19 +24,18 @@ const webBundleLimitsSchema = z.object({
 });
 
 /** Capture-and-analyze input with separate source and source-map approvals. */
-const analyzeWebBundleFactsSchema = inspectWebPageInputSchema.safeExtend({
-  include_script_sources: z.literal(true).default(true),
-  source_capture_approved: z.literal(true),
-  analysis_limits: webBundleLimitsSchema.default({
-    max_findings: 1_000,
-    max_ast_nodes: 250_000,
-    max_source_maps: 100,
-    max_source_map_bytes: 4 * 1_024 * 1_024,
-    max_total_source_map_bytes: 16 * 1_024 * 1_024,
-    max_source_map_mappings: 10_000,
-    max_original_sources: 2_000,
-  }),
-});
+const analyzeWebBundleFactsSchema =
+  inspectWebPageWithSourceInputSchema.safeExtend({
+    analysis_limits: webBundleLimitsSchema.default({
+      max_findings: 1_000,
+      max_ast_nodes: 250_000,
+      max_source_maps: 100,
+      max_source_map_bytes: 4 * 1_024 * 1_024,
+      max_total_source_map_bytes: 16 * 1_024 * 1_024,
+      max_source_map_mappings: 10_000,
+      max_original_sources: 2_000,
+    }),
+  });
 export const analyzeWebBundleInputSchema = z
   .union([
     analyzeWebBundleFactsSchema.safeExtend({

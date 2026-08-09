@@ -68,6 +68,12 @@ describe("Node runtime characterization", () => {
       },
       replay: { phase: "plan" },
     });
+    expect(() =>
+      nodeCharacterizationPreparationOutputSchema.parse({
+        ...output,
+        plan: { ...output.plan, expected_effect: "bounded-effects" },
+      }),
+    ).toThrow();
 
     const stale = await executeNodeCharacterization(dependencies, {
       execution_approved: true,

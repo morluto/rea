@@ -2,16 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import { runControlledReplayValidated } from "../../application/JavaScriptReplayService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import {
-  controlledReplayInputSchema,
-  controlledReplayOutputSchema,
-} from "../../domain/javascriptReplay.js";
 import { parseEvidence } from "../../domain/evidence.js";
-import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
-import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { controlledReplayOutputSchema } from "../../domain/javascriptReplay.js";
 import { mcpProgressReporter } from "../mcpProgress.js";
+import { logToolExecution } from "../toolLogging.js";
+import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
+import { toCallToolResult } from "../toolResult.js";
 import { recordSources } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -26,18 +22,11 @@ export const registerControlledReplayTool = (
     replayContract.name,
     toolRegistrationOptions(replayContract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        controlledReplayInputSchema,
-        input,
-        replayContract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, replayContract);
-      const parsed = parsedInput.value;
       const result = await logToolExecution(
         options.logger,
         replayContract.name,
         () =>
-          runControlledReplayValidated(options.replay, parsed, {
+          runControlledReplayValidated(options.replay, input, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
           }),

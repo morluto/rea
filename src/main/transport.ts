@@ -14,8 +14,6 @@ import {
   MCP_CONNECTION_START_FAILED,
 } from "./messages.js";
 
-type McpServerInstance = ReturnType<typeof createServer>;
-
 /** Optional adapters whose absence must not prevent the core MCP server. */
 export type OptionalProviders = Pick<
   CreateServerOptions,
@@ -42,11 +40,9 @@ export const startMcpTransport = async (
   | {
       readonly ok: true;
       readonly handle: StdioServerHandle;
-      readonly liveServers: Set<McpServerInstance>;
     }
   | { readonly ok: false }
 > => {
-  const liveServers = new Set<McpServerInstance>();
   const { serverLogger } = serverContext;
   let optionalProviders: OptionalProviders = {};
   try {
@@ -59,35 +55,27 @@ export const startMcpTransport = async (
   let handle: StdioServerHandle;
   try {
     handle = dependencies.serve(
-      () => {
-        const server = (dependencies.createServer ?? createServer)(
-          session,
-          session,
-          {
-            logger: serverContext.logger,
-            processPolicy: () =>
-              serverContext.runtimeState.currentConfig.processExecutionPolicy,
-            evidenceFilePolicy: serverContext.runtimeState.evidencePolicy,
-            investigationInputRoots:
-              serverContext.runtimeState.investigationRoots,
-            analysisSnapshotFilePolicy:
-              serverContext.runtimeState.snapshotPolicy,
-            permissionAuthority: serverContext.permissionAuthority,
-            ...optionalProviders,
-            artifactIntegrityContinueEnabled: () =>
-              serverContext.runtimeState.currentConfig
-                .artifactIntegrityContinueEnabled,
-            javascriptReplayPolicy: () =>
-              serverContext.runtimeState.currentConfig.javascriptReplayPolicy,
-            managedRuntimePolicy: () =>
-              serverContext.runtimeState.currentConfig.managedRuntimePolicy,
-            availabilityPolicy: () =>
-              runtimeAvailability(serverContext.runtimeState),
-          },
-        );
-        liveServers.add(server);
-        return server;
-      },
+      () =>
+        (dependencies.createServer ?? createServer)(session, session, {
+          logger: serverContext.logger,
+          processPolicy: () =>
+            serverContext.runtimeState.currentConfig.processExecutionPolicy,
+          evidenceFilePolicy: serverContext.runtimeState.evidencePolicy,
+          investigationInputRoots:
+            serverContext.runtimeState.investigationRoots,
+          analysisSnapshotFilePolicy: serverContext.runtimeState.snapshotPolicy,
+          permissionAuthority: serverContext.permissionAuthority,
+          ...optionalProviders,
+          artifactIntegrityContinueEnabled: () =>
+            serverContext.runtimeState.currentConfig
+              .artifactIntegrityContinueEnabled,
+          javascriptReplayPolicy: () =>
+            serverContext.runtimeState.currentConfig.javascriptReplayPolicy,
+          managedRuntimePolicy: () =>
+            serverContext.runtimeState.currentConfig.managedRuntimePolicy,
+          availabilityPolicy: () =>
+            runtimeAvailability(serverContext.runtimeState),
+        }),
       {
         onerror: () => {
           serverLogger.error(MCP_CONNECTION_LOST);
@@ -101,7 +89,7 @@ export const startMcpTransport = async (
     dependencies.writeStderr(`${MCP_CONNECTION_START_FAILED}\n`);
     return { ok: false };
   }
-  return { ok: true, handle, liveServers };
+  return { ok: true, handle };
 };
 
 const runtimeAvailability = (state: RuntimeState) => ({

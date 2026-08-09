@@ -13,12 +13,20 @@ import { runtimeCharacterizationPlanSchema } from "./runtimeCharacterization.js"
 import { evidenceRecordSchema } from "./evidence.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const nodeCharacterizationExpectedEffectSchema = z.enum([
+  "pure",
+  "observation-only",
+]);
+const nodeRuntimeCharacterizationPlanSchema =
+  runtimeCharacterizationPlanSchema.extend({
+    expected_effect: nodeCharacterizationExpectedEffectSchema,
+  });
 
 export const nodeCharacterizationPreparationInputSchema = z
   .strictObject({
     preparation_approved: z.literal(true),
     selected_alias: z.string().min(1).max(200),
-    expected_effect: z.enum(["pure", "observation-only"]),
+    expected_effect: nodeCharacterizationExpectedEffectSchema,
     instrumentation: javascriptExportInstrumentationInputSchema,
     replay: controlledReplayPlanInputSchema,
   })
@@ -63,7 +71,7 @@ export const nodeCharacterizationExecutionInputSchema = z.strictObject({
 export const nodeCharacterizationPreparationOutputSchema = z.strictObject({
   schema_version: z.literal(1),
   phase: z.literal("preparation"),
-  plan: runtimeCharacterizationPlanSchema,
+  plan: nodeRuntimeCharacterizationPlanSchema,
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
   replay: controlledReplayPlanOutputSchema,
@@ -72,7 +80,7 @@ export const nodeCharacterizationPreparationOutputSchema = z.strictObject({
 export const nodeCharacterizationExecutionOutputSchema = z.strictObject({
   schema_version: z.literal(1),
   phase: z.literal("execution"),
-  plan: runtimeCharacterizationPlanSchema,
+  plan: nodeRuntimeCharacterizationPlanSchema,
   transformation: javascriptExportTransformationManifestSchema,
   transformation_evidence: evidenceRecordSchema,
   evidence: evidenceRecordSchema,

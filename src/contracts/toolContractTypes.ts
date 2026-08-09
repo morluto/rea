@@ -35,13 +35,21 @@ export const TOOL_KINDS = [
 export type ToolKind = (typeof TOOL_KINDS)[number];
 
 /** Single source of truth for a public MCP tool. */
-export interface ToolContract<Name extends string = string> {
+export interface ToolContract<
+  Name extends string = string,
+  InputSchema extends z.ZodType<Readonly<Record<string, unknown>>> = z.ZodType<
+    Readonly<Record<string, unknown>>
+  >,
+  OutputSchema extends z.ZodType<Readonly<Record<string, unknown>>> = z.ZodType<
+    Readonly<Record<string, unknown>>
+  >,
+> {
   readonly name: Name;
   readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
-  readonly inputSchema: z.ZodType<Readonly<Record<string, unknown>>>;
-  readonly outputSchema: z.ZodType<Readonly<Record<string, unknown>>>;
+  readonly inputSchema: InputSchema;
+  readonly outputSchema: OutputSchema;
   readonly effects: ToolEffects;
   readonly annotations: ToolAnnotations;
   readonly examples: readonly ToolExample[];
