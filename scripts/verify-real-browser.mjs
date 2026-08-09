@@ -114,6 +114,7 @@ try {
       observation_ms: 1_000,
       include_accessibility_text: true,
       include_script_sources: true,
+      source_capture_approved: true,
       include_console_text: true,
       console_text_approved: true,
       include_json_body_shapes: true,
