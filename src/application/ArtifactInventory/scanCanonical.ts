@@ -44,14 +44,6 @@ export const scanCanonicalArtifactInventory = async (
   options: ArtifactInventoryOptions = {},
 ): Promise<ArtifactInventorySnapshot> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
-  if (
-    integrity.mode === "record-and-continue" &&
-    (!integrity.approved || !integrity.enabled)
-  )
-    throw new ArtifactReaderFailure(
-      "policy",
-      "Integrity continuation requires explicit approval and operator policy",
-    );
   const metadata = await lstat(path);
   const rootFormat = await classifyRoot(path, metadata.isDirectory());
   const rootDigest = metadata.isDirectory()

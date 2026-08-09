@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  controlledReplayInputSchema,
+  controlledReplayPlanInputSchema,
   controlledReplayOutputSchema,
 } from "./javascriptReplay.js";
 import {
@@ -19,15 +19,9 @@ export const nodeCharacterizationPreparationInputSchema = z
     selected_alias: z.string().min(1).max(200),
     expected_effect: z.enum(["pure", "observation-only"]),
     instrumentation: javascriptExportInstrumentationInputSchema,
-    replay: controlledReplayInputSchema,
+    replay: controlledReplayPlanInputSchema,
   })
   .superRefine((input, context) => {
-    if (input.replay.mode !== "plan")
-      context.addIssue({
-        code: "custom",
-        path: ["replay", "mode"],
-        message: "Characterization preparation requires replay plan mode",
-      });
     const selected = input.replay.left.modules.filter(
       ({ alias }) => alias === input.selected_alias,
     );

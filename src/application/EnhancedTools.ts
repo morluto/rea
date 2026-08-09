@@ -164,23 +164,19 @@ export class EnhancedTools {
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
-    const parsed = enhancedInputSchemas[name].safeParse(input);
+    if (name === "trace_call_path") {
+      const parsed = enhancedInputSchemas.trace_call_path.safeParse(input);
+      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+      return this.executeValidated({ name, input: parsed.data }, signal);
+    }
+    if (name === "trace_feature") {
+      const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
+      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+      return this.executeValidated({ name, input: parsed.data }, signal);
+    }
+    const parsed = enhancedInputSchemas.find_code_for_string.safeParse(input);
     if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
-    if (name === "trace_call_path")
-      return this.executeValidated(
-        {
-          name,
-          input: enhancedInputSchemas.trace_call_path.parse(parsed.data),
-        },
-        signal,
-      );
-    return this.executeValidated(
-      {
-        name,
-        input: enhancedInputSchemas[name].parse(parsed.data),
-      },
-      signal,
-    );
+    return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
   #executeFunctionAnalysis(
@@ -188,23 +184,14 @@ export class EnhancedTools {
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
-    const parsed = enhancedInputSchemas[name].safeParse(input);
+    if (name === "analyze_function") {
+      const parsed = enhancedInputSchemas.analyze_function.safeParse(input);
+      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+      return this.executeValidated({ name, input: parsed.data }, signal);
+    }
+    const parsed = enhancedInputSchemas.inspect_native_api.safeParse(input);
     if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
-    if (name === "analyze_function")
-      return this.executeValidated(
-        {
-          name,
-          input: enhancedInputSchemas.analyze_function.parse(parsed.data),
-        },
-        signal,
-      );
-    return this.executeValidated(
-      {
-        name,
-        input: enhancedInputSchemas.inspect_native_api.parse(parsed.data),
-      },
-      signal,
-    );
+    return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
   async #analyzeFunction(

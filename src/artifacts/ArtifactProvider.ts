@@ -31,6 +31,10 @@ import {
 import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
+import {
+  resolveArtifactIntegrityPolicy,
+  resolveNativeMountPolicy,
+} from "../application/ArtifactInventory/policy.js";
 
 const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
@@ -276,16 +280,19 @@ class ArtifactClient implements AnalysisClient {
       },
       {
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        nativeMount: {
-          nativeMountApproved: parsed.native_mount_approved === true,
-          nativeMountEnabled: this.nativeMountEnabled,
-        },
-        integrity: {
-          mode: parsed.integrity_policy,
-          approved: parsed.integrity_continue_approved === true,
-          enabled: this.integrityContinueEnabled,
-          maxMismatches: parsed.max_integrity_mismatches,
-        },
+        nativeMount: resolveNativeMountPolicy(
+          parsed.native_mount_approved === true,
+          this.nativeMountEnabled,
+        ),
+        integrity: resolveArtifactIntegrityPolicy(
+          parsed.integrity_policy === "fail"
+            ? { mode: "fail" }
+            : {
+                mode: parsed.integrity_policy,
+                maxMismatches: parsed.max_integrity_mismatches,
+              },
+          this.integrityContinueEnabled,
+        ),
       },
     );
   }

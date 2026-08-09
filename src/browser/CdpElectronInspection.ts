@@ -99,7 +99,9 @@ const runElectronInspection = async (
   startedAt: string,
 ): Promise<ElectronPageInspection> => {
   const frames = await authorizeInitialFrames(context, state);
-  const main = frames[0]!;
+  const main = frames.at(0);
+  if (main === undefined)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   state.mainFrameId = main.frame_id;
   await enableElectronCapture(context);
   await delayWithCancellation(

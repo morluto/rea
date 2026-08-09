@@ -53,6 +53,15 @@ const PATH_PROPERTIES = [
 ] as const;
 const MAX_PATH_SUFFIXES = 128;
 
+const signalWeight = (kind: SourceToBundleSignal["kind"]): number => {
+  const entry = SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS.find(
+    ([signal]) => signal === kind,
+  );
+  if (entry === undefined)
+    throw new TypeError(`Missing source-to-bundle signal weight: ${kind}`);
+  return entry[1];
+};
+
 /** Keep source-bearing application nodes in stable identifier order. */
 export const sourceBearingNodes = (
   nodes: readonly ApplicationNode[],
@@ -227,7 +236,7 @@ const signal = (
   currentValues: readonly string[],
 ): SourceToBundleSignal => ({
   kind,
-  weight: SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS[kind],
+  weight: signalWeight(kind),
   source_value: sourceValue,
   current_values: [...new Set(currentValues)].sort(compareText).slice(0, 64),
 });

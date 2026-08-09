@@ -202,6 +202,8 @@ const retain = <Groups extends Record<string, readonly Component[]>>(
   maximum: number,
 ): { [Key in keyof Groups]: Component[] } => {
   let remaining = maximum;
+  // SAFETY: the projection preserves every key from Groups and replaces only
+  // each readonly Component array with a bounded mutable Component array.
   return Object.fromEntries(
     Object.entries(groups).map(([key, values]) => {
       const selected = [...values]

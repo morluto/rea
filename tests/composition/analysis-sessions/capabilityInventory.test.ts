@@ -22,13 +22,37 @@ const status = (
       readonly operation: string;
       readonly available: boolean;
       readonly reason: string | null;
-      readonly availability_code?: string;
+      readonly availability_code?: "unsupported_host";
     }[];
   } = {},
 ) => ({
   open: options.open ?? false,
   ...(options.kind === undefined ? {} : { kind: options.kind }),
-  capabilities: [...(options.capabilities ?? [])],
+  capabilities: (options.capabilities ?? []).map((capability) => ({
+    ...capability,
+    availability_code: capability.available
+      ? null
+      : (capability.availability_code ?? null),
+    input_contract_version: 1,
+    output_contract_version: 1,
+    pagination: "none" as const,
+    exhaustive: true,
+    effects: {
+      mutates_artifact: false,
+      launches_process: false,
+      may_show_ui: false,
+      may_access_network: false,
+      may_write_filesystem: false,
+      changes_permissions: false,
+      requires_root: false,
+    },
+    limits: {
+      max_results: null,
+      max_payload_bytes: null,
+      timeout_ms: null,
+    },
+    limitations: [],
+  })),
 });
 
 const entry = (

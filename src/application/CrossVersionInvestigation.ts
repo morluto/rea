@@ -67,7 +67,7 @@ export interface CrossVersionInvestigationExecution {
 
 /** Run or resume a deterministic cross-version artifact investigation. */
 export const runCrossVersionInvestigation = async (
-  input: CrossVersionInvestigationInput,
+  input: unknown,
   policy: EvidenceFilePolicy,
   execution: CrossVersionInvestigationExecution,
 ): Promise<Result<CrossVersionInvestigationOutcome, AnalysisError>> => {

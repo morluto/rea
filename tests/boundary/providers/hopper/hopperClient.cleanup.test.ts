@@ -48,6 +48,7 @@ class FixtureLauncher implements BridgeLauncher {
       ok({
         process: child,
         ownsProcessLifetime: true,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }
@@ -78,9 +79,9 @@ class OwnedFixtureLauncher implements BridgeLauncher {
     this.ownership = started.ownership;
     return ok({
       process: started.process,
-      ownsProcessLifetime: true,
+      ownsProcessLifetime: true as const,
       ownership: started.ownership,
-      shutdownByCleanup: true,
+      shutdownMode: "process-cleanup" as const,
       cleanup: () => cleanupOwnedProcessGroup(started.ownership),
     });
   }
@@ -102,6 +103,29 @@ class UnconfirmedFixtureLauncher implements BridgeLauncher {
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
         ownsProcessLifetime: false,
+        shutdownMode: "bridge-request" as const,
+      }),
+    );
+  }
+}
+
+class UnconfirmedOwnedFixtureLauncher implements BridgeLauncher {
+  launch(session: BridgeSession) {
+    return Promise.resolve(
+      ok({
+        process: spawn(
+          process.execPath,
+          [
+            fixturePath,
+            session.socketPath,
+            session.token,
+            session.runId,
+            "unconfirmed",
+          ],
+          { stdio: ["ignore", "ignore", "pipe"] },
+        ),
+        ownsProcessLifetime: true as const,
+        shutdownMode: "bridge-request" as const,
       }),
     );
   }
@@ -181,6 +205,26 @@ describe("HopperClient cleanup", () => {
           resources: ["hopper-document"],
         },
       });
+  });
+
+  it("does not treat an owned launcher exit as bridge document shutdown", async () => {
+    const client = new HopperClient({
+      launcher: new UnconfirmedOwnedFixtureLauncher(),
+      startupTimeoutMs: 1_000,
+    });
+    clients.push(client);
+    expect((await client.start()).ok).toBe(true);
+
+    const closed = await client.closeWithOutcome();
+
+    expect(closed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        cleanupIncomplete: true,
+        cleanupResources: ["hopper-document"],
+      },
+    });
   });
 
   it("kills only its owned Hopper group and emits sanitized shutdown coordinates", async () => {

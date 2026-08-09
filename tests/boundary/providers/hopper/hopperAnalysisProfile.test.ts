@@ -27,8 +27,12 @@ describe("Hopper analysis profiles", () => {
     [target("pe", "x86"), ["-l", "WinPE", "--intel-32"]],
     [
       {
-        ...target("mach-o", "arm64"),
-        availableArchitectures: ["x86_64", "arm64"],
+        path: "/tmp/fixture",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format: "mach-o",
+        architecture: "arm64",
+        availableArchitectures: ["x86_64", "arm64"] as const,
       } satisfies BinaryTarget,
       ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
     ],
@@ -141,11 +145,23 @@ describe("Hopper analysis profiles", () => {
 const target = (
   format: "mach-o" | "elf" | "pe",
   architecture: "x86" | "x86_64" | "arm" | "arm64",
-): BinaryTarget => ({
-  path: "/tmp/fixture",
-  sha256: "a".repeat(64),
-  kind: "executable",
-  format,
-  architecture,
-  availableArchitectures: [architecture],
-});
+): BinaryTarget =>
+  format === "pe"
+    ? {
+        path: "/tmp/fixture",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format,
+        architecture,
+        availableArchitectures: [architecture],
+        executableRole: "application",
+        managed: false,
+      }
+    : {
+        path: "/tmp/fixture",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format,
+        architecture,
+        availableArchitectures: [architecture],
+      };

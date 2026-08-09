@@ -1,11 +1,7 @@
 import { z } from "zod";
 
 import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Read-only direct operations admitted by the Ghidra v1 adapter. */
@@ -80,7 +76,7 @@ export const parseGhidraInventoryInput = (
   const parsed = inputSchemas[operation].safeParse(value);
   if (!parsed.success)
     return err(new AnalysisInputError(operation, { cause: parsed.error }));
-  return ok(jsonObjectSchema.parse(parsed.data));
+  return ok(parsed.data);
 };
 
 export const ghidraCanonicalAddressSchema = z
@@ -126,17 +122,29 @@ const procedureItem = z
 const stringItem = z.object({ ...baseItem, string: stringFacts }).strict();
 const searchItem = z.object(baseItem).strict();
 
-const pageSchema = <Item extends z.ZodType>(item: Item, maximumLimit: number) =>
-  z
-    .object({
-      items: z.array(item),
-      offset: z.number().int().min(0),
-      limit: z.number().int().min(1).max(maximumLimit),
-      total: z.number().int().min(0),
-      next_offset: z.number().int().min(0).nullable(),
-      has_more: z.boolean(),
-    })
-    .strict()
+const pageSchema = <Item extends z.ZodType>(
+  item: Item,
+  maximumLimit: number,
+) => {
+  const pageFacts = {
+    items: z.array(item),
+    offset: z.number().int().min(0),
+    limit: z.number().int().min(1).max(maximumLimit),
+    total: z.number().int().min(0),
+  } as const;
+  return z
+    .discriminatedUnion("has_more", [
+      z.strictObject({
+        ...pageFacts,
+        has_more: z.literal(true),
+        next_offset: z.number().int().min(0),
+      }),
+      z.strictObject({
+        ...pageFacts,
+        has_more: z.literal(false),
+        next_offset: z.null(),
+      }),
+    ])
     .superRefine((page, context) => {
       const next = page.offset + page.items.length;
       const hasMore = next < page.total;
@@ -171,6 +179,7 @@ const pageSchema = <Item extends z.ZodType>(item: Item, maximumLimit: number) =>
           message: "page continuation offset is inconsistent",
         });
     });
+};
 
 const availablePermissions = z
   .object({
@@ -241,7 +250,7 @@ export const parseGhidraInventoryResult = (
 ): Result<JsonValue, AnalysisOutputError> => {
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(jsonValueSchema.parse(parsed.data))
+    ? ok(parsed.data)
     : err(
         new AnalysisOutputError(
           operation,

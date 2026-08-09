@@ -1,39 +1,31 @@
 import { z } from "zod";
 
-import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
+import {
+  providerCapability,
+  type ClientFeatureAvailability,
+  type ProviderCapability,
+  type ToolAvailability,
+  type ToolAvailabilityMode,
+  type ToolUnavailabilityReason,
+} from "../contracts/toolOutputSchemaPrimitives.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import {
+  clientRequirementsFor,
+  NO_CLIENT_FEATURES,
+} from "./CapabilityClientRequirements.js";
 
 const statusSchema = z.object({
   open: z.boolean(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
-  capabilities: z.array(
-    z.object({
-      operation: z.string(),
-      available: z.boolean(),
-      reason: z.string().nullable(),
-      availability_code: z.string().nullable().optional(),
-    }),
-  ),
+  capabilities: z.array(providerCapability),
 });
 
-type ToolAvailabilityReason =
-  | "available"
-  | "client_capability_missing"
-  | "target_required"
-  | "provider_missing"
-  | "provider_unavailable"
-  | "target_unsupported"
-  | "unsupported_host"
-  | "policy_disabled";
+type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
-type ProviderDescriptor = {
-  readonly available: boolean;
-  readonly reason: string | null;
-  readonly availability_code?: string | null;
-};
+type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
   readonly evidenceFileRoots: number;
@@ -47,44 +39,25 @@ export type AvailabilityPolicy = {
   readonly managedRuntimeEnabled?: boolean;
 };
 
-type ClientFeatureName = keyof ClientFeatureAvailability;
-
-const NO_CLIENT_FEATURES: ClientFeatureAvailability = {
-  elicitation_form: false,
-  elicitation_url: false,
-  roots: false,
-  sampling: false,
-};
-
-const CLIENT_FEATURE_REQUIREMENTS: Readonly<
-  Record<
-    string,
-    {
-      readonly required: readonly ClientFeatureName[];
-      readonly optional: readonly ClientFeatureName[];
-    }
-  >
-> = {
-  capture_process_scenario: {
-    required: [],
-    optional: ["elicitation_form"],
-  },
-};
-type Availability = {
-  readonly reason: ToolAvailabilityReason;
-  readonly remediation: string | null;
+type AvailabilityFacts = {
   readonly defaultModeAvailable?: boolean;
-  readonly modes?: readonly CapabilityMode[];
+  readonly modes?: readonly ToolAvailabilityMode[];
 };
-type CapabilityMode = {
-  readonly name: string;
-  readonly available: boolean;
-  readonly missing_operations: readonly string[];
-  readonly remediation: string | null;
-};
-type NavigationModeResult = CapabilityMode & {
-  readonly reason: ToolAvailabilityReason;
-};
+type Availability = AvailabilityFacts &
+  (
+    | { readonly reason: "available"; readonly remediation: null }
+    | {
+        readonly reason: ToolUnavailabilityReason;
+        readonly remediation: string | null;
+      }
+  );
+type NavigationModeResult =
+  | (Extract<ToolAvailabilityMode, { available: true }> & {
+      readonly reason: "available";
+    })
+  | (Extract<ToolAvailabilityMode, { available: false }> & {
+      readonly reason: ToolUnavailabilityReason;
+    });
 type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
@@ -143,19 +116,12 @@ export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
   clientFeatures: ClientFeatureAvailability = NO_CLIENT_FEATURES,
-) => {
+): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
-    status.capabilities.map((descriptor) => [
-      descriptor.operation,
-      {
-        available: descriptor.available,
-        reason: descriptor.reason,
-        availability_code: descriptor.availability_code ?? null,
-      },
-    ]),
+    status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return GENERATED_MCP_TOOL_CATALOG.map((contract) => {
+  return GENERATED_MCP_TOOL_CATALOG.map((contract): ToolAvailability => {
     const availability = availabilityFor({
       name: contract.name,
       kind: contract.kind,
@@ -169,22 +135,15 @@ export const buildCapabilityInventory = (
       clientFeatures,
     );
     const clientBlocked = clientRequirements.missing_required.length > 0;
-    return {
+    const facts = {
       name: contract.name,
       surface: contract.kind,
-      available: availability.reason === "available" && !clientBlocked,
-      reason: clientBlocked
-        ? ("client_capability_missing" as const)
-        : availability.reason,
-      remediation: clientBlocked
-        ? `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`
-        : availability.remediation,
       ...(availability.defaultModeAvailable === undefined
         ? {}
         : { default_mode_available: availability.defaultModeAvailable }),
       ...(availability.modes === undefined
         ? {}
-        : { modes: availability.modes }),
+        : { modes: [...availability.modes] }),
       client_requirements: clientRequirements,
       effects: { ...contract.effects },
       annotations: {
@@ -194,27 +153,27 @@ export const buildCapabilityInventory = (
         open_world: contract.annotations.openWorldHint ?? true,
       },
     };
+    if (clientBlocked)
+      return {
+        ...facts,
+        available: false,
+        reason: "client_capability_missing",
+        remediation: `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`,
+      };
+    return availability.reason === "available"
+      ? {
+          ...facts,
+          available: true,
+          reason: availability.reason,
+          remediation: null,
+        }
+      : {
+          ...facts,
+          available: false,
+          reason: availability.reason,
+          remediation: availability.remediation,
+        };
   }).sort((left, right) => left.name.localeCompare(right.name));
-};
-
-const clientRequirementsFor = (
-  name: string,
-  clientFeatures: ClientFeatureAvailability,
-) => {
-  const requirements = CLIENT_FEATURE_REQUIREMENTS[name] ?? {
-    required: [],
-    optional: [],
-  };
-  return {
-    required: [...requirements.required],
-    optional: [...requirements.optional],
-    missing_required: requirements.required.filter(
-      (feature) => !clientFeatures[feature],
-    ),
-    missing_optional: requirements.optional.filter(
-      (feature) => !clientFeatures[feature],
-    ),
-  };
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
@@ -408,10 +367,7 @@ const providerAvailability = ({
 const composedAvailability = (
   name: string,
   descriptors: ReadonlyMap<string, ProviderDescriptor>,
-): {
-  readonly reason: ToolAvailabilityReason;
-  readonly remediation: string | null;
-} => {
+): Availability => {
   const requirements = ENHANCED_REQUIREMENTS[name];
   if (requirements === undefined)
     return {
@@ -455,9 +411,17 @@ const navigationContextAvailability = (
         mode.requirements,
         descriptors,
       );
+      if (availability.reason === "available")
+        return {
+          name: mode.name,
+          available: true,
+          reason: availability.reason,
+          missing_operations: [],
+          remediation: null,
+        };
       return {
         name: mode.name,
-        available: availability.reason === "available",
+        available: false,
         reason: availability.reason,
         missing_operations: mode.requirements.filter((operation) => {
           const descriptor = descriptors.get(operation);
@@ -467,38 +431,46 @@ const navigationContextAvailability = (
       };
     },
   );
-  const modes = modeResults.map(
-    ({ name, available, missing_operations, remediation }) => ({
-      name,
-      available,
-      missing_operations,
-      remediation,
-    }),
+  const modes: ToolAvailabilityMode[] = modeResults.map((mode) =>
+    mode.available
+      ? {
+          name: mode.name,
+          available: true,
+          missing_operations: [],
+          remediation: null,
+        }
+      : {
+          name: mode.name,
+          available: false,
+          missing_operations: [...mode.missing_operations],
+          remediation: mode.remediation,
+        },
   );
   const availableMode = modeResults.find((mode) => mode.available);
-  const failure = modeResults
-    .filter((mode) => !mode.available)
-    .sort(
-      (left, right) =>
-        navigationFailurePriority(left.reason) -
-        navigationFailurePriority(right.reason),
-    )[0];
+  const failures = modeResults.flatMap((mode) =>
+    mode.available ? [] : [mode],
+  );
+  const failure = failures.sort(
+    (left, right) =>
+      navigationFailurePriority(left.reason) -
+      navigationFailurePriority(right.reason),
+  )[0];
   const specificFailureRemediation =
     failure?.reason === "provider_missing" ? undefined : failure?.remediation;
-  return {
-    reason:
-      availableMode === undefined
-        ? (failure?.reason ?? "provider_missing")
-        : "available",
-    remediation:
-      availableMode === undefined
-        ? (specificFailureRemediation ??
-          `Configure a provider for one of: ${modes
-            .flatMap((mode) => mode.missing_operations)
-            .join(", ")}.`)
-        : null,
+  const facts = {
     defaultModeAvailable: modes[0]?.available ?? false,
     modes,
+  };
+  if (availableMode !== undefined)
+    return { ...facts, reason: "available", remediation: null };
+  return {
+    ...facts,
+    reason: failure?.reason ?? "provider_missing",
+    remediation:
+      specificFailureRemediation ??
+      `Configure a provider for one of: ${modes
+        .flatMap((mode) => mode.missing_operations)
+        .join(", ")}.`,
   };
 };
 

@@ -12,6 +12,7 @@ import {
   type TraceApplicationFeatureRequest,
   type TraceJavaScriptSemanticsRequest,
 } from "../contracts/applicationWorkflowInputContracts.js";
+import type { Evidence } from "../domain/evidence.js";
 import { AnalysisInputError, type AnalysisError } from "../domain/errors.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
@@ -69,11 +70,7 @@ export const resolveTraceApplicationFeatureRequestValidated = (
   input: TraceApplicationFeatureRequest,
   lookup?: EvidenceLookup,
 ): Result<TraceInput, AnalysisError> => {
-  const application = graphEvidence(
-    input.application,
-    input.application_evidence_id,
-    lookup,
-  );
+  const application = graphEvidence(input, lookup);
   if (!application.ok) return application;
   const native = resolveEvidenceReferences(
     lookup,
@@ -109,11 +106,7 @@ export const resolveTraceJavaScriptSemanticsRequestValidated = (
   input: TraceJavaScriptSemanticsRequest,
   lookup?: EvidenceLookup,
 ): Result<SemanticTraceInput, AnalysisError> => {
-  const application = graphEvidence(
-    input.application,
-    input.application_evidence_id,
-    lookup,
-  );
+  const application = graphEvidence(input, lookup);
   if (!application.ok) return application;
   const raw = { application: application.value, query: input.query };
   const parsed = traceJavaScriptSemanticsInputSchema.safeParse(raw);
@@ -138,9 +131,19 @@ export const resolveCompareApplicationVersionsRequestValidated = (
   input: CompareApplicationVersionsRequest,
   lookup?: EvidenceLookup,
 ): Result<ComparisonInput, AnalysisError> => {
-  const left = graphEvidence(input.left, input.left_evidence_id, lookup);
+  const left = graphEvidence(
+    "left" in input
+      ? { application: input.left }
+      : { application_evidence_id: input.left_evidence_id },
+    lookup,
+  );
   if (!left.ok) return left;
-  const right = graphEvidence(input.right, input.right_evidence_id, lookup);
+  const right = graphEvidence(
+    "right" in input
+      ? { application: input.right }
+      : { application_evidence_id: input.right_evidence_id },
+    lookup,
+  );
   if (!right.ok) return right;
   const leftNative = resolveEvidenceReferences(
     lookup,
@@ -190,11 +193,7 @@ export const resolveCompareSourceToBundleRequestValidated = (
   input: CompareSourceToBundleRequest,
   lookup?: EvidenceLookup,
 ): Result<SourceToBundleInput, AnalysisError> => {
-  const application = graphEvidence(
-    input.application,
-    input.application_evidence_id,
-    lookup,
-  );
+  const application = graphEvidence(input, lookup);
   if (!application.ok) return application;
   const raw = {
     reference: input.reference,
@@ -226,9 +225,19 @@ export const resolveCompareJavaScriptExportShapesRequestValidated = (
   input: CompareJavaScriptExportShapesRequest,
   lookup?: EvidenceLookup,
 ): Result<ExportShapeComparisonInput, AnalysisError> => {
-  const left = graphEvidence(input.left, input.left_evidence_id, lookup);
+  const left = graphEvidence(
+    "left" in input
+      ? { application: input.left }
+      : { application_evidence_id: input.left_evidence_id },
+    lookup,
+  );
   if (!left.ok) return left;
-  const right = graphEvidence(input.right, input.right_evidence_id, lookup);
+  const right = graphEvidence(
+    "right" in input
+      ? { application: input.right }
+      : { application_evidence_id: input.right_evidence_id },
+    lookup,
+  );
   if (!right.ok) return right;
   const raw = {
     left: left.value,
@@ -249,19 +258,15 @@ export const resolveCompareJavaScriptExportShapesRequestValidated = (
 };
 
 const graphEvidence = (
-  evidence:
-    | TraceApplicationFeatureRequest["application"]
-    | TraceJavaScriptSemanticsRequest["application"]
-    | CompareApplicationVersionsRequest["left"]
-    | CompareJavaScriptExportShapesRequest["left"]
-    | CompareSourceToBundleRequest["application"],
-  evidenceId: string | undefined,
+  source:
+    | { readonly application: Evidence }
+    | { readonly application_evidence_id: string },
   lookup: EvidenceLookup | undefined,
 ) => {
-  if (evidence !== undefined) return ok(evidence);
+  if ("application" in source) return ok(source.application);
   const resolved = resolveEvidenceReferences(
     lookup,
-    evidenceId === undefined ? [] : [evidenceId],
+    [source.application_evidence_id],
     APPLICATION_GRAPH_IDENTITIES,
   );
   return resolved.ok ? ok(resolved.value[0]) : resolved;

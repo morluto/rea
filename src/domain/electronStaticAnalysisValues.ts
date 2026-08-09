@@ -93,7 +93,10 @@ export const collectContextBridgeMembers = (
       unknown: 1,
       omitted: 0,
     };
-  const state = { members: [] as string[], unknown: 0 };
+  const state: { members: string[]; unknown: number } = {
+    members: [],
+    unknown: 0,
+  };
   collectMembersAt(node, "", 0, state);
   const members = [...new Set(state.members)].sort(compareCodePoints);
   return {

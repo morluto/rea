@@ -75,7 +75,7 @@ export const captureStorage = async (
         caches: caches.slice(0, maximum),
         limitations,
       })
-    : { items: [], complete: false, truncated: false };
+    : { items: [], complete: false as const, truncated: false };
   const truncated =
     [local.items, session.items, indexed, caches].some(
       (items) => items.length > maximum,

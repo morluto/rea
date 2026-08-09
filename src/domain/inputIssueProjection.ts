@@ -16,6 +16,10 @@ const projectIssue = (
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
+  if (issue.code === "invalid_union")
+    return issue.errors.flatMap((branch) =>
+      branch.flatMap((branchIssue) => projectIssue(branchIssue, input)),
+    );
   if (issue.code === "unrecognized_keys")
     return issue.keys.map((key) => ({
       path: [...path, key],
@@ -62,7 +66,8 @@ const valueAtPath = (
   let current = input;
   for (const part of path) {
     if (typeof current !== "object" || current === null) return undefined;
-    current = (current as Readonly<Record<string | number, unknown>>)[part];
+    const next: unknown = Reflect.get(current, part);
+    current = next;
   }
   return current;
 };

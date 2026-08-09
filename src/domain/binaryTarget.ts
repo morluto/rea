@@ -13,45 +13,13 @@ import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { BinaryTargetError } from "./errors.js";
+import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import { zipPackageFormatForPath } from "./zipPackageFormat.js";
 
-const execFileAsync = promisify(execFile);
+export type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 
-/** Provider-neutral CPU families detected from supported executable headers. */
-export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
-/**
- * Canonical local target identity and provider-neutral file classification.
- * Provider adapters translate this metadata into their own open options.
- */
-export interface BinaryTarget {
-  readonly path: string;
-  readonly sourcePath?: string;
-  readonly sha256: string;
-  readonly kind: "executable" | "database" | "archive" | "artifact";
-  readonly format:
-    | "analysis-database"
-    | "mach-o"
-    | "elf"
-    | "pe"
-    | "zip"
-    | "ipa"
-    | "apk"
-    | "msix"
-    | "appx"
-    | "asar"
-    | "dmg"
-    | "pkg"
-    | "plist"
-    | "javascript"
-    | "source-map";
-  readonly architecture?: BinaryArchitecture;
-  readonly availableArchitectures?: readonly BinaryArchitecture[];
-  /** Provider-neutral PE image role observed from COFF characteristics. */
-  readonly executableRole?: "application" | "shared-library" | "non-executable";
-  /** Whether a PE declares a non-empty CLI header data-directory entry. */
-  readonly managed?: boolean;
-}
+const execFileAsync = promisify(execFile);
 
 /**
  * Resolve and classify a readable local target before a provider is selected.
@@ -87,14 +55,16 @@ export const parseBinaryTarget = async (
           format: "analysis-database",
         });
       const artifactFormat = await detectArtifactFormat(path, handle);
-      if (artifactFormat !== undefined)
-        return ok({
+      if (artifactFormat !== undefined) {
+        const identity = {
           path,
           sourcePath: canonical,
           sha256: await sha256Handle(handle),
-          kind: isArchiveFormat(artifactFormat) ? "archive" : "artifact",
-          format: artifactFormat,
-        });
+        };
+        return isArchiveFormat(artifactFormat)
+          ? ok({ ...identity, kind: "archive", format: artifactFormat })
+          : ok({ ...identity, kind: "artifact", format: artifactFormat });
+      }
       const detected = await readExecutableMetadata(handle, hostArchitecture);
       if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
       return ok({
@@ -165,7 +135,12 @@ const namedArtifactFormat = (
   return /\.(?:m?js|cjs)$/u.test(lowerPath) ? "javascript" : undefined;
 };
 
-const isArchiveFormat = (format: BinaryTarget["format"]): boolean =>
+const isArchiveFormat = (
+  format: Exclude<
+    BinaryTarget["format"],
+    "analysis-database" | "mach-o" | "elf" | "pe"
+  >,
+): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(format);
 
 const sha256Handle = async (handle: FileHandle): Promise<string> => {
@@ -268,14 +243,22 @@ const decodeXml = (value: string): string =>
     .replaceAll("&quot;", '"')
     .replaceAll("&apos;", "'");
 
-type ExecutableMetadata = Pick<
-  BinaryTarget,
-  | "format"
-  | "architecture"
-  | "availableArchitectures"
-  | "executableRole"
-  | "managed"
->;
+type ExecutableMetadata =
+  | {
+      readonly format: "mach-o" | "elf";
+      readonly architecture: BinaryArchitecture;
+      readonly availableArchitectures: readonly BinaryArchitecture[];
+    }
+  | {
+      readonly format: "pe";
+      readonly architecture: BinaryArchitecture;
+      readonly availableArchitectures: readonly BinaryArchitecture[];
+      readonly executableRole:
+        | "application"
+        | "shared-library"
+        | "non-executable";
+      readonly managed: boolean;
+    };
 
 const readExecutableMetadata = async (
   handle: FileHandle,

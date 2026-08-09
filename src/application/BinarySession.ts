@@ -74,9 +74,9 @@ export class BinarySession
   #transition: Promise<void> = Promise.resolve();
   readonly #calls = new Set<Promise<unknown>>();
   readonly #providerRouter: SessionProviderRouter;
-  readonly #runtimeAvailability = new Map<
+  readonly #runtimeUnavailability = new Map<
     string,
-    { readonly available: boolean; readonly reason: string | null }
+    { readonly reason: string }
   >();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
@@ -272,7 +272,7 @@ export class BinarySession
       target: this.#active?.target,
       route: this.#currentRoute(),
       router: this.#providerRouter,
-      runtimeAvailability: this.#runtimeAvailability,
+      runtimeUnavailability: this.#runtimeUnavailability,
       runId: this.#active?.runId,
       runtimeLineageSnapshots:
         this.#active?.client.runtimeLineageSnapshots?.() ?? [],
@@ -344,12 +344,12 @@ export class BinarySession
     result: Result<AnalysisExecution, AnalysisError>,
   ): void {
     if (result.ok) {
-      if (this.#setRuntimeAvailability(operation, true, null))
+      if (this.#markRuntimeAvailable(operation))
         this.#emitAvailabilityChanged();
       return;
     }
     if (result.error._tag === "AnalysisCapabilityUnavailableError") {
-      if (this.#setRuntimeAvailability(operation, false, result.error.message))
+      if (this.#markRuntimeUnavailable(operation, result.error.message))
         this.#emitAvailabilityChanged();
       return;
     }
@@ -367,32 +367,28 @@ export class BinarySession
       for (const descriptor of capabilities?.values() ?? [])
         if (providerId !== undefined && descriptor.provider.id === providerId)
           changed =
-            this.#setRuntimeAvailability(
+            this.#markRuntimeUnavailable(
               descriptor.operation,
-              false,
               "Provider became unavailable during this session.",
             ) || changed;
       if (changed) this.#emitAvailabilityChanged();
     }
   }
 
-  #setRuntimeAvailability(
-    operation: string,
-    available: boolean,
-    reason: string | null,
-  ): boolean {
-    const current = this.#runtimeAvailability.get(operation);
-    if (current?.available === available && current.reason === reason)
-      return false;
-    if (available && current === undefined) return false;
-    if (available) this.#runtimeAvailability.delete(operation);
-    else this.#runtimeAvailability.set(operation, { available, reason });
+  #markRuntimeAvailable(operation: string): boolean {
+    return this.#runtimeUnavailability.delete(operation);
+  }
+
+  #markRuntimeUnavailable(operation: string, reason: string): boolean {
+    const current = this.#runtimeUnavailability.get(operation);
+    if (current?.reason === reason) return false;
+    this.#runtimeUnavailability.set(operation, { reason });
     return true;
   }
 
   #clearRuntimeAvailability(): void {
-    if (this.#runtimeAvailability.size === 0) return;
-    this.#runtimeAvailability.clear();
+    if (this.#runtimeUnavailability.size === 0) return;
+    this.#runtimeUnavailability.clear();
     this.#emitAvailabilityChanged();
   }
 

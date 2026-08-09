@@ -23,14 +23,23 @@ import { digestJson } from "./JavaScriptReplayPlanning.js";
 
 const OPERATION = "plan_managed_runtime_correlation" as const;
 
-export interface ManagedRuntimePolicy {
-  readonly enabled: boolean;
-  readonly roots: readonly string[];
-  readonly executablePath: string;
-}
+/** Parsed availability and authority scope for managed runtime correlation. */
+export type ManagedRuntimePolicy =
+  | { readonly status: "disabled" }
+  | {
+      readonly status: "enabled";
+      readonly roots: readonly [string, ...string[]];
+      readonly executablePath: string;
+    };
 
+/** A managed-runtime policy that grants no runtime-correlation authority. */
+export const MANAGED_RUNTIME_DISABLED = {
+  status: "disabled",
+} as const satisfies ManagedRuntimePolicy;
+
+/** Live policy and authority dependencies for managed runtime correlation. */
 export interface ManagedRuntimeCorrelationDependencies {
-  readonly policy: ManagedRuntimePolicy;
+  readonly policy: () => ManagedRuntimePolicy;
   readonly authority: PermissionAuthority | undefined;
 }
 
@@ -53,7 +62,8 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
   dependencies: ManagedRuntimeCorrelationDependencies,
   input: ManagedRuntimeCorrelationInput,
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (!dependencies.policy.enabled)
+  const policy = dependencies.policy();
+  if (policy.status === "disabled")
     return err(
       new AnalysisCapabilityUnavailableError(
         MANAGED_WORKFLOW_PROVIDER.id,
@@ -69,8 +79,7 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
         "managed runtime permission policy is not configured",
       ),
     );
-  let staticEvidence: Evidence;
-  let artifactPath: string;
+  let staticEvidence: Evidence, artifactPath: string;
   try {
     staticEvidence = parseEvidence(input.static_members);
     artifactPath = artifactPathFor(staticEvidence);
@@ -81,7 +90,7 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
     {
       capability: "managed_runtime",
       roots: [artifactPath],
-      executables: [dependencies.policy.executablePath],
+      executables: [policy.executablePath],
       environment_names: [],
       network: "none",
       mount: false,
@@ -101,7 +110,7 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
   try {
     const result = planManagedRuntimeCorrelation(
       input,
-      dependencies.policy.executablePath,
+      policy.executablePath,
       authorized.value.grant_id,
     );
     return ok(

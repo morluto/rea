@@ -96,7 +96,7 @@ export const sanitizeCliOutput = (output: string): string => {
   const trimmed = output.trimStart();
   if (trimmed.startsWith("{")) {
     try {
-      const parsed = JSON.parse(trimmed) as unknown;
+      const parsed: unknown = JSON.parse(trimmed);
       const error = validationError(parsed);
       if (error !== undefined) {
         const safeError = {

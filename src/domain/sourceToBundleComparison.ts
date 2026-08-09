@@ -219,12 +219,10 @@ const comparisonCoverage = (
 const scoringModel = (): SourceToBundleComparisonResult["scoring"] => ({
   algorithm: "rea-source-to-bundle-signals/v1",
   minimum_candidate_score: 20,
-  weights: Object.entries(SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS).map(
-    ([signal, weight]) => ({
-      signal: signal as keyof typeof SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS,
-      weight,
-    }),
-  ),
+  weights: SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS.map(([signal, weight]) => ({
+    signal,
+    weight,
+  })),
 });
 
 const classifyMapping = (

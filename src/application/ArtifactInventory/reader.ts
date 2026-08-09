@@ -1,8 +1,5 @@
 import { AsarArtifactReader } from "../../artifacts/AsarArtifactReader.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactReader,
-} from "../../artifacts/ArtifactReader.js";
+import type { ArtifactReader } from "../../artifacts/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../artifacts/DirectoryArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../artifacts/MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../../artifacts/NativeDmgArtifactReader.js";
@@ -32,12 +29,7 @@ export const createReader = async (
         ? new MachOSliceArtifactReader(path)
         : undefined;
     case "dmg":
-      if (!nativeMount.nativeMountApproved) return undefined;
-      if (!nativeMount.nativeMountEnabled)
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          "Native DMG mounting is disabled by operator policy",
-        );
+      if (nativeMount.status === "disabled") return undefined;
       return NativeDmgArtifactReader.create(path, signal);
     default:
       return undefined;

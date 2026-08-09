@@ -22,9 +22,6 @@ const LIMITS = {
 
 const INTEGRITY = {
   mode: "fail",
-  approved: false,
-  enabled: false,
-  maxMismatches: 1,
 } as const;
 
 const deferred = <Value>() => {

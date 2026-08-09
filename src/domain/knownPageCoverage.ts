@@ -9,13 +9,19 @@ export interface KnownCollectionPage<Item> {
 }
 
 /** Fail-closed completeness derived from a known-total source page. */
-export interface KnownPageCoverageAssessment {
-  readonly complete: boolean;
-  readonly sourceComplete: boolean;
+export type KnownPageCoverageAssessment = {
   readonly includedCount: number;
   readonly omittedCount: number;
   readonly sourceOmittedCount: number;
-}
+} & (
+  | {
+      readonly complete: true;
+      readonly sourceComplete: true;
+      readonly omittedCount: 0;
+      readonly sourceOmittedCount: 0;
+    }
+  | { readonly complete: false; readonly sourceComplete: boolean }
+);
 
 /**
  * Assess source-page and downstream-projection completeness without treating an
@@ -37,11 +43,19 @@ export const assessKnownPageCoverage = <Item>(
     page.returned === page.total &&
     sourceOmittedCount === 0;
   const omittedCount = Math.max(0, page.total - retainedCount);
-  return {
-    complete: sourceComplete && omittedCount === 0,
-    sourceComplete,
-    includedCount: retainedCount,
-    omittedCount,
-    sourceOmittedCount,
-  };
+  return sourceComplete && omittedCount === 0
+    ? {
+        complete: true,
+        sourceComplete: true,
+        includedCount: retainedCount,
+        omittedCount: 0,
+        sourceOmittedCount: 0,
+      }
+    : {
+        complete: false,
+        sourceComplete,
+        includedCount: retainedCount,
+        omittedCount,
+        sourceOmittedCount,
+      };
 };

@@ -53,36 +53,35 @@ export type InvestigationRunOptions = z.infer<
 >;
 
 /** Explicit write approval and two local versions for an automatic run. */
-export const crossVersionInvestigationInputSchema = z
-  .object({
-    approved: z.literal(true),
-    workspace_path: z.string().min(1).max(4_096),
-    workspace_name: z.string().trim().min(1).max(200).default("default"),
-    expected_workspace_revision: z.number().int().min(1).optional(),
-    replay_run_id: z
-      .string()
-      .regex(/^run_[a-f0-9]{64}$/u)
-      .optional(),
-    left_path: z.string().min(1).max(4_096),
-    right_path: z.string().min(1).max(4_096),
-    integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
-    integrity_continue_approved: z.boolean().default(false),
+const crossVersionInvestigationFacts = {
+  approved: z.literal(true),
+  workspace_path: z.string().min(1).max(4_096),
+  workspace_name: z.string().trim().min(1).max(200).default("default"),
+  expected_workspace_revision: z.number().int().min(1).optional(),
+  replay_run_id: z
+    .string()
+    .regex(/^run_[a-f0-9]{64}$/u)
+    .optional(),
+  left_path: z.string().min(1).max(4_096),
+  right_path: z.string().min(1).max(4_096),
+  options: investigationRunOptionsSchema.default(
+    DEFAULT_INVESTIGATION_RUN_OPTIONS,
+  ),
+} as const;
+export const crossVersionInvestigationInputSchema = z.union([
+  z.object({
+    ...crossVersionInvestigationFacts,
+    integrity_policy: z.literal("fail").default("fail"),
+    integrity_continue_approved: z.literal(false).default(false),
     max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
-    options: investigationRunOptionsSchema.default(
-      DEFAULT_INVESTIGATION_RUN_OPTIONS,
-    ),
-  })
-  .superRefine((input, context) => {
-    if (
-      input.integrity_policy === "record-and-continue" &&
-      input.integrity_continue_approved !== true
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["integrity_continue_approved"],
-        message: "record-and-continue requires explicit approval",
-      });
-  });
+  }),
+  z.object({
+    ...crossVersionInvestigationFacts,
+    integrity_policy: z.literal("record-and-continue"),
+    integrity_continue_approved: z.literal(true),
+    max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
+  }),
+]);
 
 export type CrossVersionInvestigationInput = z.infer<
   typeof crossVersionInvestigationInputSchema

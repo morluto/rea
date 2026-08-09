@@ -110,12 +110,12 @@ const emptyInspection = (
 const readBoundaryInventory = (
   bytes: Buffer,
   pe: ManagedPeLayout,
+  cli: NonNullable<ManagedPeLayout["cli"]>,
   limits: ManagedNativeBoundaryInspectionLimits,
 ): {
   readonly layout: ManagedMetadataLayout;
   readonly inventory: Inventory;
 } => {
-  const cli = pe.cli!;
   const metadataOffset = pe.rvaToOffset(
     cli.metadata.rva,
     cli.metadata.size,
@@ -189,7 +189,7 @@ export const inspectManagedNativeBoundariesBytes = (
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
   try {
-    ({ layout, inventory } = readBoundaryInventory(bytes, pe, limits));
+    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli, limits));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", [cause.issue]);

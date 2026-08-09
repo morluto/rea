@@ -24,12 +24,14 @@ type DossierCollectionField = (typeof DOSSIER_COLLECTION_FIELDS)[number];
 type DossierItem<Field extends DossierCollectionField> =
   FunctionDossier[Field]["items"][number];
 
-export interface FunctionCollection<Item = unknown> {
+type FunctionCoverage =
+  | { readonly complete: true; readonly truncated: false }
+  | { readonly complete: false; readonly truncated: boolean };
+
+export type FunctionCollection<Item = unknown> = {
   readonly items: readonly Item[];
   readonly total: number | null;
-  readonly complete: boolean;
-  readonly truncated: boolean;
-}
+} & FunctionCoverage;
 
 type FunctionCollections = {
   readonly [Field in DossierCollectionField]: FunctionCollection<
@@ -46,9 +48,10 @@ export interface FunctionSnapshot {
   readonly pseudocode: {
     readonly text: string;
     readonly total: number;
-    readonly complete: boolean;
-    readonly truncated: boolean;
-  };
+  } & (
+    | { readonly complete: true; readonly truncated: false }
+    | { readonly complete: false; readonly truncated: true }
+  );
   readonly collections: FunctionCollections;
   readonly instructionScan: FunctionDossier["instruction_scan"];
   readonly limitations: readonly string[];
@@ -172,8 +175,9 @@ const mergePseudocode = (
   return {
     text: orderedValues(characters).join(""),
     total,
-    complete,
-    truncated: !complete,
+    ...(complete
+      ? { complete: true as const, truncated: false as const }
+      : { complete: false as const, truncated: true as const }),
   };
 };
 
@@ -210,8 +214,12 @@ const mergeCollection = <Field extends DossierCollectionField>(
   return {
     items: orderedValues(items),
     total,
-    complete,
-    truncated: scanLimited || (!unavailable && !complete),
+    ...(complete
+      ? { complete: true as const, truncated: false as const }
+      : {
+          complete: false as const,
+          truncated: scanLimited || !unavailable,
+        }),
   };
 };
 

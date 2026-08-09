@@ -1,7 +1,9 @@
 import type { HopperDiagnosticType } from "../domain/errors.js";
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
-import type { ProviderProcessStopResult } from "../process/ProviderProcess.js";
-import type { BridgeLaunch } from "./BridgeLauncher.js";
+import type {
+  ProviderProcessLaunch,
+  ProviderProcessStopResult,
+} from "../process/ProviderProcess.js";
 
 /** Sanitized Hopper launcher and owned-shutdown telemetry. */
 export type HopperDiagnostic =
@@ -25,7 +27,7 @@ export type HopperDiagnostic =
 
 /** Retain actionable ownership coordinates without exposing the run token. */
 export const createOwnedHopperShutdownDiagnostic = (
-  launch: BridgeLaunch,
+  launch: ProviderProcessLaunch,
   stopped: ProviderProcessStopResult,
   cleanup: ProcessCleanupResult | undefined,
 ): Extract<HopperDiagnostic, { readonly type: "owned-shutdown" }> => ({
