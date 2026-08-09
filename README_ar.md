@@ -65,7 +65,7 @@ npx rea-agents setup
 ### باستخدام وكيل برمجة — موصى به
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 اطلب من الوكيل إعداد REA. سيفحص جهاز Mac ويشرح ما يحتاج إلى تثبيته ويطلب الموافقة ويرشدك خلال رسائل النظام. أعد تشغيل الوكيل بعد الإعداد إذا طلب ذلك لتحميل مجموعة الأدوات الكاملة.
@@ -90,7 +90,7 @@ npx rea-agents setup
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 إذا طلب macOS أو برنامج التثبيت تأكيدًا، فأكمل الخطوة ثم شغّل الأمر نفسه مرة أخرى.

@@ -40,7 +40,7 @@ Run setup once. Agent integration installs an aligned MCP registration and the
 bundled routing skill together:
 
 ```bash
-npx --yes --prefer-online rea-agents@latest setup
+npx rea-agents setup
 ```
 
 Then ask:
@@ -89,7 +89,7 @@ REA shows how it reached its conclusions. It does not claim to recover original 
 ### Run setup — recommended
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 The npm package-runner prompt, when shown, approves downloading REA for this
@@ -137,7 +137,7 @@ Pass installer options after `bash -s --`, for example `--dry-run`, `--no-setup`
 ### With an agent — recommended
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 Choose Agent Integration in the reviewed setup plan. REA installs the pinned MCP
@@ -149,7 +149,7 @@ Review the setup plan, approve it if appropriate, then describe the app or featu
 ### From Terminal — no installation
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 npx -y rea-agents@latest doctor
 npx -y rea-agents@latest analyze /Applications/Notes.app
 ```

@@ -67,7 +67,7 @@ REA は調査をバイナリ上の根拠に結び付けます。元のソース�
 ### コーディングエージェントから（推奨）
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 エージェントに REA のセットアップを依頼してください。Mac を確認し、必要なインストールを説明して承認を求め、システムプロンプトを案内します。完全なツールを読み込むため再起動を求められた場合は、セットアップ後に再起動してください。
@@ -91,7 +91,7 @@ Ubuntu 24.04+、Fedora 41+、64 ビット Arch Linux では、REA が公式の D
 ```bash
 # 1. REA をセットアップ
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 macOS やインストーラーから確認を求められた場合は、その操作を完了してから同じコマンドをもう一度実行してください。
