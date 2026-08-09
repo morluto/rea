@@ -1,5 +1,33 @@
 # Changelog
 
+## [3.1.0](https://github.com/morluto/rea/compare/rea-agents-3.0.0...rea-agents-3.1.0) (2026-08-09)
+
+
+### Features
+
+* **electron:** add autonomous Electron runtime analysis ([#464](https://github.com/morluto/rea/issues/464)) ([8f229ed](https://github.com/morluto/rea/commit/8f229ede70c0a4e224c1cf71d61487e17b779d6a))
+
+
+### Bug Fixes
+
+* **ci:** guard Release Please PR branch parsing ([84cc819](https://github.com/morluto/rea/commit/84cc819284b9ce7ee648850c85d5daf3a33e5a24))
+* **ci:** guard release PR branch parsing ([6838b6b](https://github.com/morluto/rea/commit/6838b6bff9ab5c400432caefd8c8737b86c41f07))
+* harden evidence lifecycle and MCP contracts ([5155924](https://github.com/morluto/rea/commit/51559245d2e1c2d7550cfe489716950fe6154bd0))
+* harden structured configuration comparisons ([#467](https://github.com/morluto/rea/issues/467)) ([6901edc](https://github.com/morluto/rea/commit/6901edc05d56063bdbe8be96511b1b21863630b5))
+* **npm:** preserve explicit setup versions ([#465](https://github.com/morluto/rea/issues/465)) ([1783bf6](https://github.com/morluto/rea/commit/1783bf6dfdd4ec11e824870ce5b1a2f5a321450e))
+
+
+### Code Refactoring
+
+* **mcp:** make analysis states unrepresentable ([#468](https://github.com/morluto/rea/issues/468)) ([b8a9da0](https://github.com/morluto/rea/commit/b8a9da0c0f9f0b2b022a350d2c7c671d1fa3f886))
+
+
+### Documentation
+
+* clarify agent reverse-engineering promise ([ed4a628](https://github.com/morluto/rea/commit/ed4a62871f7924948e3774ae6cf880514a560ff4))
+* clarify the agent reverse-engineering promise ([#466](https://github.com/morluto/rea/issues/466)) ([ed4a628](https://github.com/morluto/rea/commit/ed4a62871f7924948e3774ae6cf880514a560ff4))
+* **npm:** simplify current setup command ([#469](https://github.com/morluto/rea/issues/469)) ([8b62b1a](https://github.com/morluto/rea/commit/8b62b1a71586e9409e4dd645f3d4947ef61e59b1))
+
 ## [3.0.0](https://github.com/morluto/rea/compare/rea-agents-2.7.0...rea-agents-3.0.0) (2026-08-01)
 
 
