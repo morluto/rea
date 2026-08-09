@@ -9,12 +9,17 @@ import { V8InspectorProvider } from "./browser/V8InspectorProvider.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { logCliCommand } from "./cliLogging.js";
 import { parseConfig } from "./config.js";
+import { v8InspectorLocationScopes } from "./config/passiveObservation.js";
 import {
   javascriptRuntimeKindSchema,
   listJavaScriptRuntimeTargetsInputSchema,
   observeJavaScriptRuntimeInputSchema,
 } from "./domain/javascriptRuntimeObservation.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  projectAnalysisError,
+} from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 
@@ -114,7 +119,9 @@ export const registerJavaScriptRuntimeObservationCommands = (
         logger,
         CLI_COMMANDS.listJavaScriptRuntimeTargets,
         async () => {
-          const context = await runtimeContext();
+          const context = await runtimeContext(
+            "list_javascript_runtime_targets",
+          );
           if (!context.ok) return context.error;
           const parsed = listJavaScriptRuntimeTargetsInputSchema.safeParse({
             inspector_endpoint: args.endpoint,
@@ -148,7 +155,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
     options: observeOptionsSchema,
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.observeJavaScriptRuntime, async () => {
-        const context = await runtimeContext();
+        const context = await runtimeContext("observe_javascript_runtime");
         if (!context.ok) return context.error;
         const parsed = observeJavaScriptRuntimeInputSchema.safeParse({
           inspector_endpoint: args.endpoint,
@@ -178,18 +185,31 @@ export const registerJavaScriptRuntimeObservationCommands = (
   });
 };
 
-const runtimeContext = async () => {
+const runtimeContext = async (operation: string) => {
   const config = parseConfig(process.env);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
+  const policy = config.value.v8InspectorObservationPolicy;
+  if (policy.status === "disabled")
+    return {
+      ok: false as const,
+      error: cliError(
+        new AnalysisCapabilityUnavailableError(
+          "rea-v8-inspector",
+          operation,
+          "V8 Inspector observation is disabled; configure exact endpoints and file or origin scopes before enabling it",
+        ),
+      ),
+    };
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok)
     return { ok: false as const, error: cliError(authority.error) };
+  const scopes = v8InspectorLocationScopes(policy.locations);
   return {
     ok: true as const,
     authority: authority.value,
     provider: new V8InspectorProvider(),
-    allowedFileRoots: config.value.v8InspectorFileRoots,
-    allowedOrigins: config.value.v8InspectorAllowedOrigins,
+    allowedFileRoots: scopes.fileRoots,
+    allowedOrigins: scopes.allowedOrigins,
   };
 };
 

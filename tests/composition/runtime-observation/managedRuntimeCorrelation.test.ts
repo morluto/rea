@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
+  MANAGED_RUNTIME_DISABLED,
   planManagedRuntimeCorrelationEvidence,
   type ManagedRuntimePolicy,
 } from "../../../src/application/ManagedRuntimeCorrelationService.js";
@@ -43,7 +44,7 @@ describe("managed runtime correlation planning", () => {
     const fixture = inspect(buildManagedPeFixture(), "/tmp/disabled.dll");
     const result = await planManagedRuntimeCorrelationEvidence(
       {
-        policy: disabledPolicy,
+        policy: () => MANAGED_RUNTIME_DISABLED,
         authority: undefined,
       },
       inputFor(fixture.evidence, fixture.method),
@@ -64,7 +65,7 @@ describe("managed runtime correlation planning", () => {
     const authority = await authorityFor(directory, executablePath, false);
     const result = await planManagedRuntimeCorrelationEvidence(
       {
-        policy: { enabled: true, roots: [directory], executablePath },
+        policy: () => enabledPolicy(directory, executablePath),
         authority,
       },
       inputFor(fixture.evidence, fixture.method),
@@ -82,10 +83,10 @@ describe("managed runtime correlation planning", () => {
     await writeFile(artifactPath, buildManagedPeFixture());
     await writeFile(executablePath, "#!/bin/sh\n");
     const fixture = inspect(buildManagedPeFixture(), artifactPath);
-    const policy = { enabled: true, roots: [directory], executablePath };
+    const policy = enabledPolicy(directory, executablePath);
     const authority = await authorityFor(directory, executablePath, true);
     const result = await planManagedRuntimeCorrelationEvidence(
-      { policy, authority },
+      { policy: () => policy, authority },
       inputFor(fixture.evidence, fixture.method),
     );
 
@@ -131,7 +132,7 @@ describe("managed runtime correlation planning", () => {
     const authority = await authorityFor(directory, executablePath, true);
     const result = await planManagedRuntimeCorrelationEvidence(
       {
-        policy: { enabled: true, roots: [directory], executablePath },
+        policy: () => enabledPolicy(directory, executablePath),
         authority,
       },
       {
@@ -162,7 +163,7 @@ describe("managed runtime correlation planning", () => {
     const authority = await authorityFor(directory, executablePath, true);
     const result = await planManagedRuntimeCorrelationEvidence(
       {
-        policy: { enabled: true, roots: [directory], executablePath },
+        policy: () => enabledPolicy(directory, executablePath),
         authority,
       },
       inputFor(fixture.evidence, fixture.method),
@@ -178,11 +179,14 @@ describe("managed runtime correlation planning", () => {
   });
 });
 
-const disabledPolicy: ManagedRuntimePolicy = {
-  enabled: false,
-  roots: [],
-  executablePath: "/usr/bin/dotnet",
-};
+const enabledPolicy = (
+  root: string,
+  executablePath: string,
+): ManagedRuntimePolicy => ({
+  status: "enabled",
+  roots: [root],
+  executablePath,
+});
 
 const authorityFor = async (
   root: string,
@@ -251,6 +255,9 @@ const inspect = (
     kind: "executable",
     format: "pe",
     architecture: "x86",
+    availableArchitectures: ["x86"],
+    executableRole: "application",
+    managed: true,
   };
   const result = inspectManagedMembersBytes(bytes, target, limits);
   const method = result.methods.items[0];

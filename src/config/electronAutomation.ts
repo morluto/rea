@@ -1,21 +1,23 @@
-import { isAbsolute } from "node:path";
-
 import type { PermissionCeiling } from "../domain/permissionPolicy.js";
 import { ConfigurationError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { permissionScope } from "./permissions.js";
-import { parseStringArray } from "./parsers.js";
+import { parseAbsoluteRoots } from "./parsers.js";
 import type { Environment } from "./environment.js";
 
-export interface ElectronAutomationArrays {
-  readonly electronAutomationExecutableRoots: readonly string[];
-  readonly electronAutomationApplicationRoots: readonly string[];
-}
+/** Parsed availability and authority scope for active Electron automation. */
+export type ElectronAutomationPolicy =
+  | { readonly status: "disabled" }
+  | {
+      readonly status: "enabled";
+      readonly executableRoots: readonly [string, ...string[]];
+      readonly applicationRoots: readonly [string, ...string[]];
+    };
 
-/** Parse the exact filesystem roots admitted for active Electron automation. */
-export const parseElectronAutomationArrays = (
+/** Parse active Electron automation into a closed disabled or enabled policy. */
+export const parseElectronAutomationPolicy = (
   env: Environment,
-): Result<ElectronAutomationArrays, ConfigurationError> => {
+): Result<ElectronAutomationPolicy, ConfigurationError> => {
   const executableRoots = parseAbsoluteRoots(
     env.REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON,
     "REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON",
@@ -26,38 +28,41 @@ export const parseElectronAutomationArrays = (
     "REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON",
   );
   if (!applicationRoots.ok) return applicationRoots;
+  if (env.REA_ELECTRON_AUTOMATE_ENABLED === "false")
+    return ok({ status: "disabled" });
+  const [firstExecutableRoot, ...remainingExecutableRoots] =
+    executableRoots.value;
+  if (firstExecutableRoot === undefined)
+    return err(
+      new ConfigurationError(
+        "REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON must encode at least one absolute root when Electron automation is enabled",
+      ),
+    );
+  const [firstApplicationRoot, ...remainingApplicationRoots] =
+    applicationRoots.value;
+  if (firstApplicationRoot === undefined)
+    return err(
+      new ConfigurationError(
+        "REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON must encode at least one absolute root when Electron automation is enabled",
+      ),
+    );
   return ok({
-    electronAutomationExecutableRoots: executableRoots.value,
-    electronAutomationApplicationRoots: applicationRoots.value,
+    status: "enabled",
+    executableRoots: [firstExecutableRoot, ...remainingExecutableRoots],
+    applicationRoots: [firstApplicationRoot, ...remainingApplicationRoots],
   });
 };
 
 /** Add the separately permissioned, no-network Electron automation ceiling. */
 export const appendElectronAutomationCeiling = (
   ceilings: PermissionCeiling[],
-  env: Environment,
-  arrays: ElectronAutomationArrays,
+  policy: ElectronAutomationPolicy,
 ): void => {
-  if (env.REA_ELECTRON_AUTOMATE_ENABLED !== "true") return;
+  if (policy.status === "disabled") return;
   ceilings.push(
-    permissionScope(
-      "electron_automate",
-      arrays.electronAutomationApplicationRoots,
-      {
-        executables: arrays.electronAutomationExecutableRoots,
-        network: "external",
-      },
-    ),
+    permissionScope("electron_automate", policy.applicationRoots, {
+      executables: policy.executableRoots,
+      network: "external",
+    }),
   );
-};
-
-const parseAbsoluteRoots = (
-  value: string,
-  name: string,
-): Result<readonly string[], ConfigurationError> => {
-  const parsed = parseStringArray(value, name);
-  if (!parsed.ok) return parsed;
-  return parsed.value.some((root) => !isAbsolute(root))
-    ? err(new ConfigurationError(`${name} must encode absolute roots`))
-    : parsed;
 };

@@ -11,8 +11,8 @@ import {
   prepareNodeCharacterization,
 } from "../../../src/application/NodeRuntimeCharacterizationService.js";
 import type {
+  EnabledJavaScriptReplayPolicy,
   JavaScriptReplayHost,
-  JavaScriptReplayPolicy,
   JavaScriptReplayRunner,
 } from "../../../src/application/JavaScriptReplayPlanning.js";
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
@@ -192,13 +192,12 @@ const preparationInput = (
       entry_export: "selected",
     },
     cases: [{ case_id: "trim", arguments: [" value "] }],
-    approved: false,
   },
 });
 
 const dependenciesFor = (root: string, onExecute: () => void) => {
-  const policy: JavaScriptReplayPolicy = {
-    enabled: true,
+  const policy: EnabledJavaScriptReplayPolicy = {
+    status: "enabled",
     roots: [root],
     nodePath: process.execPath,
     bubblewrapPath: process.execPath,
@@ -287,5 +286,5 @@ const dependenciesFor = (root: string, onExecute: () => void) => {
       ],
     ),
   );
-  return { policy, host, runner, authority };
+  return { policy: () => policy, host, runner, authority };
 };

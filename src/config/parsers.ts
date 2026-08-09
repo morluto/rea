@@ -1,8 +1,8 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {} from "../domain/browserObservation.js";
 import { electronFileRootsSchema } from "../domain/electronObservation.js";
 
 export const parseStringArray = (
@@ -27,6 +27,18 @@ export const parseStringArray = (
   } catch (cause: unknown) {
     return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
   }
+};
+
+/** Parse a JSON string array whose members must all be absolute paths. */
+export const parseAbsoluteRoots = (
+  encoded: string,
+  name: string,
+): Result<readonly string[], ConfigurationError> => {
+  const parsed = parseStringArray(encoded, name);
+  if (!parsed.ok) return parsed;
+  return parsed.value.some((root) => !isAbsolute(root))
+    ? err(new ConfigurationError(`${name} must encode absolute roots`))
+    : parsed;
 };
 
 export const parseBrowserArray = (

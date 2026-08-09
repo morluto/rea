@@ -7,6 +7,15 @@ import type {
   PermissionGrant,
 } from "../domain/permissionPolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { ManagedRuntimePolicy } from "../application/ManagedRuntimeCorrelationService.js";
+import type { JavaScriptReplayPolicy } from "../application/JavaScriptReplayPlanning.js";
+import type { ElectronAutomationPolicy } from "./electronAutomation.js";
+import type { BrowserScenarioPolicy } from "./browserScenario.js";
+import type {
+  BrowserObservationPolicy,
+  ElectronObservationPolicy,
+  V8InspectorObservationPolicy,
+} from "./passiveObservation.js";
 
 export interface AppConfig {
   readonly analysisProvider: AnalysisProviderSelector;
@@ -25,42 +34,13 @@ export interface AppConfig {
   readonly investigationInputRoots: readonly string[];
   readonly analysisSnapshotFilePolicy: EvidenceFilePolicy;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
-  readonly browserObservationEnabled: boolean;
-  readonly browserCdpEndpoints: readonly string[];
-  readonly browserAllowedOrigins: readonly string[];
-  readonly browserScenarioPolicy: {
-    readonly enabled: boolean;
-    readonly executableRoots: readonly string[];
-    readonly cdpEndpoints: readonly string[];
-    readonly allowedOrigins: readonly string[];
-    readonly allowedEnvironment: readonly string[];
-  };
-  readonly electronObservationEnabled: boolean;
-  readonly electronCdpEndpoints: readonly string[];
-  readonly electronFileRoots: readonly string[];
-  readonly electronAutomationPolicy: {
-    readonly enabled: boolean;
-    readonly executableRoots: readonly string[];
-    readonly applicationRoots: readonly string[];
-  };
-  readonly v8InspectorObservationEnabled: boolean;
-  readonly v8InspectorEndpoints: readonly string[];
-  readonly v8InspectorFileRoots: readonly string[];
-  readonly v8InspectorAllowedOrigins: readonly string[];
-  readonly javascriptReplayPolicy: {
-    readonly enabled: boolean;
-    readonly roots: readonly string[];
-    readonly nodePath: string;
-    readonly bubblewrapPath: string;
-    readonly systemdRunPath: string;
-    readonly systemctlPath: string;
-    readonly shellPath: string;
-  };
-  readonly managedRuntimePolicy: {
-    readonly enabled: boolean;
-    readonly roots: readonly string[];
-    readonly executablePath: string;
-  };
+  readonly browserObservationPolicy: BrowserObservationPolicy;
+  readonly browserScenarioPolicy: BrowserScenarioPolicy;
+  readonly electronObservationPolicy: ElectronObservationPolicy;
+  readonly electronAutomationPolicy: ElectronAutomationPolicy;
+  readonly v8InspectorObservationPolicy: V8InspectorObservationPolicy;
+  readonly javascriptReplayPolicy: JavaScriptReplayPolicy;
+  readonly managedRuntimePolicy: ManagedRuntimePolicy;
   readonly permissionCeilings: readonly PermissionCeiling[];
   readonly administratorPermissionGrants: readonly PermissionGrant[];
   readonly permissionProjectRoot: string | undefined;

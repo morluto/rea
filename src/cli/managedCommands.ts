@@ -489,7 +489,7 @@ const registerPlanManagedRuntimeCorrelation = (
         if (!authority.ok) return projectAnalysisError(authority.error);
         const result = await planManagedRuntimeCorrelationEvidence(
           {
-            policy: config.value.managedRuntimePolicy,
+            policy: () => config.value.managedRuntimePolicy,
             authority: authority.value,
           },
           input.value,
