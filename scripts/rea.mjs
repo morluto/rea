@@ -4,8 +4,6 @@ import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runPackageRunnerSetupBootstrap } from "./package-runner-bootstrap.mjs";
-
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while only dist/main.js may serve the stdio tool catalog.
 const args = process.argv.slice(2);
@@ -17,21 +15,13 @@ const isMcpMode =
   args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const bootstrapExitCode = await runPackageRunnerSetupBootstrap({
-  args,
-  environment: process.env,
-  packageRoot,
-  packageName: packageJson.name,
-});
 const runtimeFiles = isMcpMode
   ? ["dist/main.js"]
   : isMcpDoctorMode
     ? ["dist/main.js", "dist/mcpDoctor.js"]
     : ["dist/cli.js", "dist/cliOutput.js"];
 
-if (bootstrapExitCode !== undefined) {
-  process.exitCode = bootstrapExitCode;
-} else if (!(await compiledRuntimeExists(runtimeFiles))) {
+if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
     `REA's compiled runtime is missing. Run \`npm ci\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
   );

@@ -95,15 +95,17 @@ describe("localized README product facts", () => {
     expect(content).toContain("--install-hopper");
     expect(content).toContain("docs/installation.md");
     expect(content).toContain("You do not need both");
-    expect(normalizedProse(content)).toContain(
-      "npx -y rea-agents@latest setup` once to repair registrations",
+    expect(content).toContain(
+      "npx --yes --prefer-online rea-agents@latest setup",
     );
   });
 
-  it("documents stale bootstrap recovery and explicit rollback", async () => {
+  it("documents explicit setup freshness and rollback", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
     const prose = normalizedProse(content);
-    expect(prose).toContain("before REA plans or writes configuration");
+    expect(prose).toContain(
+      "explicit `@latest` request and `--prefer-online` metadata policy",
+    );
     expect(prose).toContain(
       "npm exec --yes --package=rea-agents@2.4.0 -- rea setup",
     );

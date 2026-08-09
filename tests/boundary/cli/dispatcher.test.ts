@@ -13,10 +13,6 @@ describe("executable dispatcher", () => {
       await workspace.mkdir("dist");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        copyFile(
-          "scripts/package-runner-bootstrap.mjs",
-          join(scripts, "package-runner-bootstrap.mjs"),
-        ),
         workspace.write(
           "package.json",
           JSON.stringify({ type: "module", version: "1.0.0" }),
@@ -72,10 +68,6 @@ describe("executable dispatcher", () => {
       const scripts = await workspace.mkdir("scripts");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        copyFile(
-          "scripts/package-runner-bootstrap.mjs",
-          join(scripts, "package-runner-bootstrap.mjs"),
-        ),
         workspace.write(
           "package.json",
           JSON.stringify({ type: "module", version: "1.0.0" }),

@@ -40,7 +40,7 @@ Run setup once. Agent integration installs an aligned MCP registration and the
 bundled routing skill together:
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 Then ask:
@@ -95,7 +95,7 @@ npx rea-agents setup
 The npm package-runner prompt, when shown, approves downloading REA for this
 invocation; it does not approve any setup changes. The REA wizard separately
 shows its complete plan and asks before applying it. Setup does not update
-Homebrew, Node.js, or npm. `npx rea-agents setup` opens with the work it
+Homebrew, Node.js, or npm. The setup command opens with the work it
 enables: investigate local apps from an agent, recover evidence through a
 deep-analysis provider, and reuse REA's guided workflow. It summarizes the
 detected agents, then asks which capabilities to set up: agent integration
@@ -103,13 +103,10 @@ detected agents, then asks which capabilities to set up: agent integration
 Nothing is preselected. Choosing agent integration opens a second empty
 checklist for the specific detected agents that should receive a registration.
 
-If bare `npx` selects an older REA package from a project or its local cache, its
-dispatcher restarts setup through `rea-agents@latest` with online metadata before
-planning any changes. This prevents a stale bootstrap from silently writing
-integration state. An already published older release cannot contain that
-dispatcher protection; run `npx -y rea-agents@latest setup` once to repair
-registrations created by one. Intentional rollbacks remain available through an
-exact package request.
+`@latest` makes the requested release explicit, and `--prefer-online` asks npm
+to refresh package metadata instead of relying on a cached resolution. REA does
+not silently replace the package version npm selected. Intentional rollbacks
+therefore remain available through an exact package request.
 
 REA keeps the journey inline so its history remains in the terminal. Selecting
 a capability does not select every detected target or authorize a change.

@@ -7,7 +7,7 @@ REA separates installing its CLI from configuring external software and agents.
 The recommended setup entrypoint is:
 
 ```bash
-npx rea-agents setup
+npx --yes --prefer-online rea-agents@latest setup
 ```
 
 If npm asks to download and run the package, that approval applies only to the
@@ -15,13 +15,11 @@ current package-runner invocation. REA still prints its own setup plan and asks
 for separate approval before changing agent configuration or installing a
 product-owned component.
 
-When bare `npx` resolves an older `rea-agents` package from the current project
-or its local cache, the selected dispatcher restarts setup through
-`rea-agents@latest` with online metadata before REA plans or writes
-configuration. This protects current and future releases from silently
-persisting stale integration state. Code in an already-published older release
-cannot acquire that check retroactively; invoke `npx -y rea-agents@latest setup`
-once to repair any registration it created.
+The explicit `@latest` request and `--prefer-online` metadata policy prevent a
+project dependency or stale npx cache entry from choosing the setup version.
+REA runs the version npm selected and never silently replaces an intentional
+version request after launch. To repair registrations written by an older
+release, rerun the command above and review the resulting setup plan.
 
 For an intentional rollback, make the package request explicit:
 
@@ -37,8 +35,8 @@ REA supports Node.js 22.19+ and 24.11+ (including newer releases). It uses the n
 
 Running `npm install rea-agents` without `--global` installs the executable only
 in the current project's `node_modules/.bin`; it does not make `rea` available
-on the shell `PATH`. Use `npx rea-agents setup` for the guided setup journey,
-`npx -y rea-agents@latest` for unattended one-off commands, or install globally
+on the shell `PATH`. Use the explicit setup command above for the guided setup
+journey, `npx -y rea-agents@latest` for unattended one-off commands, or install globally
 with `npm install --global rea-agents` for a shell-visible `rea` command.
 
 The optional curl wrapper installs only the global npm package:
