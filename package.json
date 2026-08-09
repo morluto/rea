@@ -61,7 +61,7 @@
     "mcp-registry:check": "node scripts/verify-mcp-registry-metadata.mjs",
     "mcp-catalog:generate": "npm run build:cached && node scripts/generate-mcp-tool-catalog.mjs",
     "mcp-catalog:check": "node scripts/generate-mcp-tool-catalog.mjs --check",
-    "prebuild": "npm run deps:check && npm run metadata:check",
+    "prebuild": "npm run deps:check && npm run metadata:check && node scripts/clean-build-output.mjs",
     "build": "tsc -p tsconfig.build.json",
     "precheck": "npm run deps:check",
     "check": "turbo run typecheck lint format:check knip metadata:check",
