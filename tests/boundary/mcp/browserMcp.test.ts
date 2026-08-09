@@ -38,7 +38,7 @@ it(
     const connected = await connectBrowser(browser);
 
     const tools = await connected.client.listTools();
-    expect(tools.tools.length).toBeLessThan(TOOL_CONTRACTS.length);
+    expect(tools.tools).toHaveLength(TOOL_CONTRACTS.length);
     expect(tools.tools.map(({ name }) => name)).toEqual(
       expect.arrayContaining([
         "list_browser_targets",

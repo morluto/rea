@@ -40,7 +40,6 @@ export const registerCloseLifecycleTool = ({
           session.close({ progress }),
         );
         await reportLifecycleEnd(progress, closeContract.name, closed.ok);
-        server.sendToolListChanged();
         return toCallToolResult(closed, closeContract);
       }
       if (permissionAuthority !== undefined) {
@@ -77,7 +76,6 @@ export const registerCloseLifecycleTool = ({
         session.close({ progress }),
       );
       await reportLifecycleEnd(progress, closeContract.name, closed.ok);
-      server.sendToolListChanged();
       return closed.ok
         ? toCallToolResult(
             ok({

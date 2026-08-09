@@ -34,13 +34,13 @@ describe("process-capture MCP elicitation handshake", () => {
       createServer(session, session, {
         logger: silentLogger,
         permissionAuthority: authority,
-        processPolicy: {
-          enabled: true,
+        processPolicy: () => ({
+          status: "enabled",
           executableRoots: [dirname(process.execPath)],
           workingRoots: [root],
           allowedEnvironment: [],
-          allowExternalNetwork: true,
-        },
+          networkAccess: "external",
+        }),
       });
     const client = new Client(
       { name: "process-elicit", version: "1" },

@@ -3,11 +3,7 @@ import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
 
 /** Fail-closed process policy used when operator configuration is absent. */
 export const DENY_PROCESS_POLICY: ProcessExecutionPolicy = {
-  enabled: false,
-  executableRoots: [],
-  workingRoots: [],
-  allowedEnvironment: [],
-  allowExternalNetwork: false,
+  status: "disabled",
 };
 
 /** Fail-closed evidence filesystem policy used without approved roots. */

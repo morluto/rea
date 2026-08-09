@@ -114,7 +114,6 @@ const NODE_PREPARATION_EXAMPLE = jsonObjectSchema.parse({
       entry_export: "selected",
     },
     cases: [{ case_id: "empty", arguments: [""] }],
-    approved: false,
   },
 });
 
@@ -280,7 +279,6 @@ export const APPLICATION_TOOL_CONTRACTS = [
             result_depth: 16,
             result_nodes: 10000,
           },
-          approved: false,
         },
       },
     ],

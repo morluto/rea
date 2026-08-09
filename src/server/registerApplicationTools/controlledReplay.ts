@@ -44,7 +44,7 @@ export const registerControlledReplayTool = (
       );
       if (!result.ok) return toCallToolResult(result, replayContract);
       const output = controlledReplayOutputSchema.parse(result.value);
-      if (output.evidence !== null) {
+      if (output.phase === "execute") {
         const sourcesRecorded = recordSources(
           options.recordEvidence,
           output.source_evidence.map((item) => parseEvidence(item)),
@@ -59,7 +59,7 @@ export const registerControlledReplayTool = (
       }
       return toCallToolResult(result, replayContract, {
         evidenceResourcesAvailable:
-          output.evidence !== null && options.recordEvidence !== undefined,
+          output.phase === "execute" && options.recordEvidence !== undefined,
       });
     },
   );

@@ -59,10 +59,8 @@ describe("direct replay machine MCP parity", () => {
           ],
         },
       });
-      expect(invalid).toMatchObject({
-        isError: true,
-        structuredContent: { error: { code: "invalid_request" } },
-      });
+      expect(invalid.isError).toBe(true);
+      expect(invalid.structuredContent).toBeUndefined();
       expect(JSON.stringify(invalid)).not.toContain("private-request-body");
     } finally {
       await client.close();

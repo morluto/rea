@@ -35,27 +35,30 @@ const traversalLimitsInput = {
   max_path_bytes: z.number().int().min(1).max(65_535).default(4_096),
 };
 
-/** Exact caller boundary for deterministic artifact inventory. */
-export const artifactInventoryInputSchema = z
-  .object({
-    native_mount_approved: z.boolean().default(false),
-    integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
-    integrity_continue_approved: z.boolean().default(false),
+const integrityInput = {
+  fail: {
+    integrity_policy: z.literal("fail").default("fail"),
+    integrity_continue_approved: z.literal(false).default(false),
     max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
-    ...pageInput,
-    ...traversalLimitsInput,
-  })
-  .superRefine((input, context) => {
-    if (
-      input.integrity_policy === "record-and-continue" &&
-      input.integrity_continue_approved !== true
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["integrity_continue_approved"],
-        message: "record-and-continue requires explicit approval",
-      });
-  });
+  },
+  continue: {
+    integrity_policy: z.literal("record-and-continue"),
+    integrity_continue_approved: z.literal(true),
+    max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
+  },
+} as const;
+
+const artifactInventoryFacts = {
+  native_mount_approved: z.boolean().default(false),
+  ...pageInput,
+  ...traversalLimitsInput,
+} as const;
+
+/** Exact caller boundary for deterministic artifact inventory. */
+export const artifactInventoryInputSchema = z.union([
+  z.object({ ...artifactInventoryFacts, ...integrityInput.fail }),
+  z.object({ ...artifactInventoryFacts, ...integrityInput.continue }),
+]);
 
 /** Exact caller boundary for approved artifact extraction. */
 export const artifactExtractionInputSchema = z.object({
@@ -75,26 +78,15 @@ export const artifactExtractionInputSchema = z.object({
 });
 
 /** Bounded provider-neutral inspection using one atomic inventory substep. */
-export const artifactInspectionInputSchema = z
-  .object({
-    native_mount_approved: z.boolean().default(false),
-    integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
-    integrity_continue_approved: z.boolean().default(false),
-    max_integrity_mismatches: z.number().int().min(1).max(100).default(10),
-    ...artifactInspectionLimitsSchema.shape,
-    ...traversalLimitsInput,
-  })
-  .superRefine((input, context) => {
-    if (
-      input.integrity_policy === "record-and-continue" &&
-      input.integrity_continue_approved !== true
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["integrity_continue_approved"],
-        message: "record-and-continue requires explicit approval",
-      });
-  });
+const artifactInspectionFacts = {
+  native_mount_approved: z.boolean().default(false),
+  ...artifactInspectionLimitsSchema.shape,
+  ...traversalLimitsInput,
+} as const;
+export const artifactInspectionInputSchema = z.union([
+  z.object({ ...artifactInspectionFacts, ...integrityInput.fail }),
+  z.object({ ...artifactInspectionFacts, ...integrityInput.continue }),
+]);
 
 const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
@@ -110,7 +102,7 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
 const artifact = <Name extends string>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
+  inputSchema: z.ZodType<Readonly<Record<string, unknown>>>,
 ): ToolContract<Name> => {
   const outputSchema = artifactOutputSchemas[name];
   if (outputSchema === undefined)

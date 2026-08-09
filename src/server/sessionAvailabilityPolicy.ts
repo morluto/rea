@@ -27,7 +27,7 @@ export const sessionAvailabilityPolicy = (
 ): (() => SessionAvailability) =>
   configured ??
   (() => ({
-    processCaptureEnabled: defaults.processPolicy.enabled,
+    processCaptureEnabled: defaults.processPolicy.status === "enabled",
     evidenceFileRoots: defaults.evidenceFilePolicy.roots.length,
     investigationInputRoots: defaults.investigationInputRoots.length,
     browserObservationEnabled:

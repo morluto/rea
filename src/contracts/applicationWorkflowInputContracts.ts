@@ -12,149 +12,140 @@ const evidenceIdSchema = z
   .regex(/^ev_[a-f0-9]{64}$/u)
   .describe("Evidence ID returned earlier in this session");
 
-const requireExactlyOne = (
-  context: z.RefinementCtx,
-  fields: readonly [string, unknown, string, unknown],
-): void => {
-  const [leftName, left, rightName, right] = fields;
-  if ((left === undefined) !== (right === undefined)) return;
-  context.addIssue({
-    code: "custom",
-    path: [left === undefined ? leftName : rightName],
-    message: `Supply exactly one of ${leftName} or ${rightName}`,
-  });
-};
+const traceApplicationFeatureFacts = {
+  native_observations:
+    traceApplicationFeatureInputSchema.shape.native_observations,
+  native_observation_evidence_ids: z
+    .array(evidenceIdSchema)
+    .max(64)
+    .default([]),
+  seed: traceApplicationFeatureInputSchema.shape.seed,
+  direction: traceApplicationFeatureInputSchema.shape.direction,
+  limits: traceApplicationFeatureInputSchema.shape.limits,
+} as const;
 
 /** MCP/CLI trace request accepting full Evidence or a ledger reference. */
-export const traceApplicationFeatureRequestSchema = z
-  .strictObject({
-    application: evidenceSchema.optional(),
-    application_evidence_id: evidenceIdSchema.optional(),
-    native_observations:
-      traceApplicationFeatureInputSchema.shape.native_observations,
-    native_observation_evidence_ids: z
-      .array(evidenceIdSchema)
-      .max(64)
-      .default([]),
-    seed: traceApplicationFeatureInputSchema.shape.seed,
-    direction: traceApplicationFeatureInputSchema.shape.direction,
-    limits: traceApplicationFeatureInputSchema.shape.limits,
-  })
-  .superRefine((input, context) => {
-    requireExactlyOne(context, [
-      "application",
-      input.application,
-      "application_evidence_id",
-      input.application_evidence_id,
-    ]);
-  });
+export const traceApplicationFeatureRequestSchema = z.union([
+  z.strictObject({
+    ...traceApplicationFeatureFacts,
+    application: evidenceSchema,
+  }),
+  z.strictObject({
+    ...traceApplicationFeatureFacts,
+    application_evidence_id: evidenceIdSchema,
+  }),
+]);
 
 /** MCP/CLI semantic trace request accepting full Evidence or a ledger reference. */
-export const traceJavaScriptSemanticsRequestSchema = z
-  .strictObject({
-    application: evidenceSchema.optional(),
-    application_evidence_id: evidenceIdSchema.optional(),
+export const traceJavaScriptSemanticsRequestSchema = z.union([
+  z.strictObject({
+    application: evidenceSchema,
     query: javaScriptSemanticQueryInputSchema,
-  })
-  .superRefine((input, context) => {
-    requireExactlyOne(context, [
-      "application",
-      input.application,
-      "application_evidence_id",
-      input.application_evidence_id,
-    ]);
-  });
+  }),
+  z.strictObject({
+    application_evidence_id: evidenceIdSchema,
+    query: javaScriptSemanticQueryInputSchema,
+  }),
+]);
+
+const compareApplicationVersionsFacts = {
+  left_native_observations:
+    compareApplicationVersionsInputSchema.shape.left_native_observations,
+  left_native_observation_evidence_ids: z
+    .array(evidenceIdSchema)
+    .max(64)
+    .default([]),
+  right_native_observations:
+    compareApplicationVersionsInputSchema.shape.right_native_observations,
+  right_native_observation_evidence_ids: z
+    .array(evidenceIdSchema)
+    .max(64)
+    .default([]),
+  limits: compareApplicationVersionsInputSchema.shape.limits,
+  unknown_registry_approved:
+    compareApplicationVersionsInputSchema.shape.unknown_registry_approved,
+} as const;
 
 /** MCP/CLI comparison request accepting full Evidence or ledger references. */
-export const compareApplicationVersionsRequestSchema = z
-  .strictObject({
-    left: evidenceSchema.optional(),
-    left_evidence_id: evidenceIdSchema.optional(),
-    right: evidenceSchema.optional(),
-    right_evidence_id: evidenceIdSchema.optional(),
-    left_native_observations:
-      compareApplicationVersionsInputSchema.shape.left_native_observations,
-    left_native_observation_evidence_ids: z
-      .array(evidenceIdSchema)
-      .max(64)
-      .default([]),
-    right_native_observations:
-      compareApplicationVersionsInputSchema.shape.right_native_observations,
-    right_native_observation_evidence_ids: z
-      .array(evidenceIdSchema)
-      .max(64)
-      .default([]),
-    limits: compareApplicationVersionsInputSchema.shape.limits,
-    unknown_registry_approved:
-      compareApplicationVersionsInputSchema.shape.unknown_registry_approved,
-  })
-  .superRefine((input, context) => {
-    requireExactlyOne(context, [
-      "left",
-      input.left,
-      "left_evidence_id",
-      input.left_evidence_id,
-    ]);
-    requireExactlyOne(context, [
-      "right",
-      input.right,
-      "right_evidence_id",
-      input.right_evidence_id,
-    ]);
-  });
+export const compareApplicationVersionsRequestSchema = z.union([
+  z.strictObject({
+    ...compareApplicationVersionsFacts,
+    left: evidenceSchema,
+    right: evidenceSchema,
+  }),
+  z.strictObject({
+    ...compareApplicationVersionsFacts,
+    left: evidenceSchema,
+    right_evidence_id: evidenceIdSchema,
+  }),
+  z.strictObject({
+    ...compareApplicationVersionsFacts,
+    left_evidence_id: evidenceIdSchema,
+    right: evidenceSchema,
+  }),
+  z.strictObject({
+    ...compareApplicationVersionsFacts,
+    left_evidence_id: evidenceIdSchema,
+    right_evidence_id: evidenceIdSchema,
+  }),
+]);
+
+const compareSourceToBundleFacts = {
+  reference: compareSourceToBundleInputSchema.shape.reference,
+  limits: compareSourceToBundleInputSchema.shape.limits,
+  unknown_registry_approved:
+    compareSourceToBundleInputSchema.shape.unknown_registry_approved,
+} as const;
 
 /** Historical-source comparison accepting full application Evidence or a ledger reference. */
-export const compareSourceToBundleRequestSchema = z
-  .strictObject({
-    reference: compareSourceToBundleInputSchema.shape.reference,
-    application: evidenceSchema.optional(),
-    application_evidence_id: evidenceIdSchema.optional(),
-    limits: compareSourceToBundleInputSchema.shape.limits,
-    unknown_registry_approved:
-      compareSourceToBundleInputSchema.shape.unknown_registry_approved,
-  })
-  .superRefine((input, context) => {
-    requireExactlyOne(context, [
-      "application",
-      input.application,
-      "application_evidence_id",
-      input.application_evidence_id,
-    ]);
-  });
+export const compareSourceToBundleRequestSchema = z.union([
+  z.strictObject({
+    ...compareSourceToBundleFacts,
+    application: evidenceSchema,
+  }),
+  z.strictObject({
+    ...compareSourceToBundleFacts,
+    application_evidence_id: evidenceIdSchema,
+  }),
+]);
+
+const compareJavaScriptExportShapesFacts = {
+  left_module_path:
+    compareJavaScriptExportShapesInputSchema.shape.left_module_path,
+  left_export_name:
+    compareJavaScriptExportShapesInputSchema.shape.left_export_name,
+  right_module_path:
+    compareJavaScriptExportShapesInputSchema.shape.right_module_path,
+  right_export_name:
+    compareJavaScriptExportShapesInputSchema.shape.right_export_name,
+  limits: compareJavaScriptExportShapesInputSchema.shape.limits,
+  unknown_registry_approved:
+    compareJavaScriptExportShapesInputSchema.shape.unknown_registry_approved,
+} as const;
 
 /** MCP/CLI export-shape request accepting full Evidence or ledger references. */
-export const compareJavaScriptExportShapesRequestSchema = z
-  .strictObject({
-    left: evidenceSchema.optional(),
-    left_evidence_id: evidenceIdSchema.optional(),
-    right: evidenceSchema.optional(),
-    right_evidence_id: evidenceIdSchema.optional(),
-    left_module_path:
-      compareJavaScriptExportShapesInputSchema.shape.left_module_path,
-    left_export_name:
-      compareJavaScriptExportShapesInputSchema.shape.left_export_name,
-    right_module_path:
-      compareJavaScriptExportShapesInputSchema.shape.right_module_path,
-    right_export_name:
-      compareJavaScriptExportShapesInputSchema.shape.right_export_name,
-    limits: compareJavaScriptExportShapesInputSchema.shape.limits,
-    unknown_registry_approved:
-      compareJavaScriptExportShapesInputSchema.shape.unknown_registry_approved,
-  })
-  .superRefine((input, context) => {
-    requireExactlyOne(context, [
-      "left",
-      input.left,
-      "left_evidence_id",
-      input.left_evidence_id,
-    ]);
-    requireExactlyOne(context, [
-      "right",
-      input.right,
-      "right_evidence_id",
-      input.right_evidence_id,
-    ]);
-  });
+export const compareJavaScriptExportShapesRequestSchema = z.union([
+  z.strictObject({
+    ...compareJavaScriptExportShapesFacts,
+    left: evidenceSchema,
+    right: evidenceSchema,
+  }),
+  z.strictObject({
+    ...compareJavaScriptExportShapesFacts,
+    left: evidenceSchema,
+    right_evidence_id: evidenceIdSchema,
+  }),
+  z.strictObject({
+    ...compareJavaScriptExportShapesFacts,
+    left_evidence_id: evidenceIdSchema,
+    right: evidenceSchema,
+  }),
+  z.strictObject({
+    ...compareJavaScriptExportShapesFacts,
+    left_evidence_id: evidenceIdSchema,
+    right_evidence_id: evidenceIdSchema,
+  }),
+]);
 
 export type TraceApplicationFeatureRequest = z.output<
   typeof traceApplicationFeatureRequestSchema

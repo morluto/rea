@@ -104,7 +104,7 @@ interface ProcessToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
-  readonly processPolicy: ProcessExecutionPolicy;
+  readonly processPolicy: () => ProcessExecutionPolicy;
   readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
   readonly permissionAuthority?: PermissionAuthority;
   readonly processCaptureElicitation?: ProcessCaptureElicitation;
@@ -162,7 +162,7 @@ const registerProcessTools = ({
         () =>
           captureProcessScenario(
             scenario,
-            processPolicy,
+            processPolicy(),
             context.mcpReq.signal,
           ),
       );
@@ -276,7 +276,6 @@ const registerOpenLifecycleTool = ({
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );
-      if (opened.ok) server.sendToolListChanged();
       return opened.ok
         ? toCallToolResult(
             {
@@ -301,7 +300,7 @@ const registerOpenLifecycleTool = ({
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions {
-  readonly processPolicy?: ProcessExecutionPolicy;
+  readonly processPolicy?: () => ProcessExecutionPolicy;
   readonly evidenceFilePolicy?: EvidenceFilePolicy;
   readonly investigationInputRoots?: readonly string[];
   readonly analysisSnapshotFilePolicy?: EvidenceFilePolicy;
@@ -379,7 +378,7 @@ export const registerSessionTools = (
   logger: Logger,
   options: SessionToolOptions = {},
 ): void => {
-  const processPolicy = options.processPolicy ?? DENY_PROCESS_POLICY;
+  const processPolicy = options.processPolicy ?? (() => DENY_PROCESS_POLICY);
   const evidenceFilePolicy =
     options.evidenceFilePolicy ?? DENY_EVIDENCE_FILE_POLICY;
   const analysisSnapshotFilePolicy =
@@ -410,7 +409,7 @@ export const registerSessionTools = (
     snapshotFilePolicy: analysisSnapshotFilePolicy,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(options.availabilityPolicy, {
-      processPolicy,
+      processPolicy: processPolicy(),
       evidenceFilePolicy,
       investigationInputRoots: options.investigationInputRoots ?? [],
     }),

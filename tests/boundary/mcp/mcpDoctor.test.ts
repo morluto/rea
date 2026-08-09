@@ -46,7 +46,7 @@ describe("production MCP doctor", () => {
     expect(result.inventory?.tools.expected).toBe(
       result.inventory?.tools.observed,
     );
-    expect(result.inventory?.tools.expected).toBeLessThan(
+    expect(result.inventory?.tools.expected).toBe(
       CATALOG_IDENTITY.counts.mcp_tools,
     );
   }, 30_000);

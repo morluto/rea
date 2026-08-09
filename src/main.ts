@@ -110,7 +110,6 @@ export const run = async (
     dependencies,
     permissionAuthority: permissionAuthority.value,
     runtimeState,
-    liveServers: transport.liveServers,
     serverLogger,
   });
   createShutdown({

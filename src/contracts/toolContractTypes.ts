@@ -40,8 +40,8 @@ export interface ToolContract<Name extends string = string> {
   readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
-  readonly inputSchema: z.ZodObject;
-  readonly outputSchema: z.ZodObject;
+  readonly inputSchema: z.ZodType<Readonly<Record<string, unknown>>>;
+  readonly outputSchema: z.ZodType<Readonly<Record<string, unknown>>>;
   readonly effects: ToolEffects;
   readonly annotations: ToolAnnotations;
   readonly examples: readonly ToolExample[];

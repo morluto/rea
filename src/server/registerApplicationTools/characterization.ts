@@ -91,7 +91,7 @@ export const registerCharacterizationTools = (
       const sources = [
         output.transformation_evidence,
         ...output.replay.source_evidence,
-        ...(output.replay.evidence === null ? [] : [output.replay.evidence]),
+        output.replay.evidence,
         output.evidence,
       ].map((item) => parseEvidence(item));
       const recorded = recordSources(options.recordEvidence, sources);

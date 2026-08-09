@@ -439,7 +439,7 @@ it("reports an unconfigured investigation ceiling before static analysis", async
     (await client.listTools()).tools.some(
       ({ name }) => name === "analyze_javascript_application",
     ),
-  ).toBe(false);
+  ).toBe(true);
 });
 
 const evidenceFor = (session: BinarySession, value: unknown) => {

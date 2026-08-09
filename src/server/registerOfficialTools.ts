@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { AnalysisExecution } from "../application/AnalysisProvider.js";
@@ -198,6 +199,10 @@ const projectOfficialArguments = (
   input: unknown,
 ): Readonly<Record<string, JsonValue>> => {
   const parsed = jsonObjectSchema.parse(input);
+  if (!(contract.inputSchema instanceof z.ZodObject))
+    throw new TypeError(
+      "Official tool input contract must be an object schema",
+    );
 
   const projected: Record<string, JsonValue> = {};
   for (const key of Object.keys(contract.inputSchema.shape)) {
