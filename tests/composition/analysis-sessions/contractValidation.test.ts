@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { traceJavaScriptSemanticsRequestSchema } from "../../../src/contracts/applicationWorkflowInputContracts.js";
+import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import {
   artifactInspectionInputSchema,
   artifactInventoryInputSchema,
@@ -19,7 +20,10 @@ import {
   annotationsFromEffects,
   toolContractMetadata,
 } from "../../../src/contracts/toolEffects.js";
-import { requireOutputSchema } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  requireOutputSchema,
+  toolAvailability,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE } from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
 
 const EVIDENCE_ID = `ev_${"a".repeat(64)}`;
@@ -80,6 +84,17 @@ describe("contract validation boundaries", () => {
     ).toBe(false);
   });
 
+  it("accepts each complete managed application Evidence source", () => {
+    for (const input of [
+      { managed_artifact_evidence_id: EVIDENCE_ID },
+      { managed_members_evidence_id: EVIDENCE_ID },
+      { managed_native_boundaries_evidence_id: EVIDENCE_ID },
+    ])
+      expect(
+        managedApplicationGraphReferenceInputSchema.safeParse(input).success,
+      ).toBe(true);
+  });
+
   it("requires explicit approval for record-and-continue artifact inspection", () => {
     const input = {
       integrity_policy: "record-and-continue" as const,
@@ -87,6 +102,30 @@ describe("contract validation boundaries", () => {
     };
     expect(artifactInventoryInputSchema.safeParse(input).success).toBe(false);
     expect(artifactInspectionInputSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("rejects contradictory tool availability states", () => {
+    const inventory = buildCapabilityInventory(
+      { open: false, capabilities: [] },
+      {
+        processCaptureEnabled: false,
+        evidenceFileRoots: 0,
+        investigationInputRoots: 0,
+      },
+    );
+    const unavailable = inventory.find(({ available }) => !available);
+    expect(unavailable).toBeDefined();
+    expect(toolAvailability.safeParse(unavailable).success).toBe(true);
+    expect(
+      toolAvailability.safeParse({ ...unavailable, available: true }).success,
+    ).toBe(false);
+    expect(
+      toolAvailability.safeParse({
+        ...unavailable,
+        available: false,
+        reason: "available",
+      }).success,
+    ).toBe(false);
   });
 
   it("covers deterministic contract rendering and defensive helper errors", () => {

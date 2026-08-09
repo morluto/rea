@@ -146,8 +146,12 @@ describe("managed artifact failures", () => {
 
     await client.close();
     const nativeClient = new ManagedStaticProvider().createClient({
-      ...parsed.value,
+      path: parsed.value.path,
+      sha256: parsed.value.sha256,
+      kind: "executable",
       format: "elf",
+      architecture: "x86",
+      availableArchitectures: ["x86"],
     });
     await expect(
       nativeClient.execute("inspect_managed_artifact", {}),
@@ -164,6 +168,8 @@ const target = (bytes: Buffer): BinaryTarget => ({
   format: "pe",
   architecture: "x86",
   availableArchitectures: ["x86"],
+  executableRole: "application",
+  managed: true,
 });
 
 const asManagedResult = (execution: AnalysisExecution) =>

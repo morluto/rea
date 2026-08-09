@@ -70,6 +70,10 @@ export const browserPageInspectionOptions = z.object({
     .boolean()
     .default(false)
     .describe("Include bounded JavaScript source text"),
+  sourceCaptureApproved: z
+    .boolean()
+    .default(false)
+    .describe("Approve capturing bounded script source text"),
   includeStorageKeys: z
     .boolean()
     .default(false)

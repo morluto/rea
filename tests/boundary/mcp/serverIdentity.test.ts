@@ -59,6 +59,41 @@ const availabilityProvider = (): AnalysisProvider => {
   };
 };
 
+const statusCapability = (
+  operation: string,
+  availability:
+    | { readonly available: true }
+    | {
+        readonly available: false;
+        readonly availability_code: "unsupported_host";
+        readonly reason: string;
+      } = { available: true },
+) => ({
+  operation,
+  input_contract_version: 1,
+  output_contract_version: 1,
+  pagination: "none" as const,
+  exhaustive: true,
+  effects: {
+    mutates_artifact: false,
+    launches_process: false,
+    may_show_ui: false,
+    may_access_network: false,
+    may_write_filesystem: false,
+    changes_permissions: false,
+    requires_root: false,
+  },
+  limits: {
+    max_results: null,
+    max_payload_bytes: null,
+    timeout_ms: null,
+  },
+  limitations: [],
+  ...(availability.available
+    ? { available: true as const, reason: null, availability_code: null }
+    : availability),
+});
+
 describe("server and catalog identity", () => {
   it("derives package and SDK versions from canonical package metadata", async () => {
     const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -132,7 +167,7 @@ describe("server and catalog identity", () => {
           "list_documents",
           "list_procedures",
           "list_strings",
-        ].map((operation) => ({ operation, available: true, reason: null })),
+        ].map((operation) => statusCapability(operation)),
       },
       policy,
     );
@@ -144,9 +179,7 @@ describe("server and catalog identity", () => {
         open: true,
         kind: "artifact",
         format: "javascript",
-        capabilities: [
-          { operation: "current_address", available: true, reason: null },
-        ],
+        capabilities: [statusCapability("current_address")],
       },
       policy,
     );
@@ -163,12 +196,11 @@ describe("server and catalog identity", () => {
         kind: "executable",
         format: "elf",
         capabilities: [
-          {
-            operation: "inspect_macho",
+          statusCapability("inspect_macho", {
             available: false,
             availability_code: "unsupported_host",
             reason: "Native macOS utilities require macOS.",
-          },
+          }),
         ],
       },
       policy,
@@ -184,7 +216,7 @@ describe("server and catalog identity", () => {
 });
 
 describe("live server identity over MCP", () => {
-  it("exposes live identity, labeled inventories, availability, and list changes", async () => {
+  it("exposes live identity, a stable catalog, and changing availability", async () => {
     const session = composeBinarySessionFromProvider(availabilityProvider());
     const server = createServer(session, session);
     const client = new Client(
@@ -209,12 +241,12 @@ describe("live server identity over MCP", () => {
       await assertCapabilityViews(client);
       expect(
         (await client.listTools()).tools.map(({ name }) => name),
-      ).not.toContain("current_address");
+      ).toContain("current_address");
       await client.callTool({
         name: "open_binary",
         arguments: { path: process.execPath },
       });
-      await expect.poll(() => toolListChanges).toBeGreaterThan(0);
+      expect(toolListChanges).toBe(0);
       expect(
         (await client.listTools()).tools.map(({ name }) => name),
       ).toContain("current_address");
@@ -251,7 +283,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
       server: SDK_IDENTITY.server,
       client_test: PACKAGE_METADATA.clientSdkVersion,
     },
-    client: { name: "identity-test", version: "9" },
+    client: null,
     alignment: { state: "unknown" },
   });
 };
@@ -286,7 +318,7 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
             required: [],
             optional: ["elicitation_form"],
             missing_required: [],
-            missing_optional: [],
+            missing_optional: ["elicitation_form"],
           },
         }),
         expect.objectContaining({
@@ -304,7 +336,7 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
         }),
       ]),
       client_features: {
-        elicitation_form: true,
+        elicitation_form: false,
         elicitation_url: false,
         roots: false,
         sampling: false,
@@ -354,7 +386,7 @@ const assertCapabilityViews = async (client: Client): Promise<void> => {
         has_more: true,
       },
       client_features: {
-        elicitation_form: true,
+        elicitation_form: false,
         elicitation_url: false,
         roots: false,
         sampling: false,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { projectNativeApiInspection } from "../../../../src/application/NativeApiInspection.js";
 import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { nativeApiBoundarySchema } from "../../../../src/domain/nativeApiBoundary.js";
 import { ghidraFunctionDossier } from "../../../fixtures/ghidraFunction.js";
 
 describe("native API inspection", () => {
@@ -58,5 +59,31 @@ describe("native API inspection", () => {
         expect.stringContaining("jump table"),
       ],
     });
+  });
+
+  it("rejects boundary types placed in the wrong ABI role", () => {
+    const boundary = functionDossierSchema.parse(
+      ghidraFunctionDossier(),
+    ).native_api;
+    if (boundary === null || boundary.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+
+    expect(
+      nativeApiBoundarySchema.safeParse({
+        ...boundary,
+        return_type: { ...boundary.return_type, role: "parameter" },
+      }).success,
+    ).toBe(false);
+    expect(
+      nativeApiBoundarySchema.safeParse({
+        ...boundary,
+        parameters: [
+          {
+            ...boundary.return_type,
+            role: "return",
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

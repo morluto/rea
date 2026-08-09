@@ -49,12 +49,11 @@ const processResult = (
   value: HopperStartupDiagnostic,
   overrides: Partial<LinuxPrivateDisplayProbeProcessResult> = {},
 ): LinuxPrivateDisplayProbeProcessResult => ({
+  outcome: "exited",
   exitCode: value.status === "ready" ? 0 : failureExit(value.failure_code),
   stderr: `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify(value)}\n`,
   stderrBytes: 0,
   stderrTruncated: false,
-  timedOut: false,
-  cancelled: false,
   cleanupIncomplete: false,
   ...overrides,
 });

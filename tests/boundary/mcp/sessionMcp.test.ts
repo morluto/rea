@@ -130,8 +130,8 @@ describe("target-free MCP workflow", () => {
     );
     expect(beforeNames).toContain("open_binary");
     expect(beforeNames).toContain("binary_session");
-    expect(beforeNames).not.toContain("current_document");
-    expect(beforeNames).not.toContain("capture_process_scenario");
+    expect(beforeNames).toContain("current_document");
+    expect(beforeNames).toContain("capture_process_scenario");
     expect(
       (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
         .isError,
@@ -235,13 +235,13 @@ describe("process residuals over MCP", () => {
     );
     const server = createServer(session, session, {
       logger: silentLogger,
-      processPolicy: {
-        enabled: true,
+      processPolicy: () => ({
+        status: "enabled",
         executableRoots: [dirname(process.execPath)],
         workingRoots: [dirname(processFixture)],
         allowedEnvironment: [],
-        allowExternalNetwork: true,
-      },
+        networkAccess: "external",
+      }),
     });
     const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
     const [clientTransport, serverTransport] =

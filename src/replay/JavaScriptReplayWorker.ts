@@ -7,52 +7,102 @@ import {
 } from "node:vm";
 import { types } from "node:util";
 
-interface WorkerModule {
-  readonly alias: string;
-  readonly format: "esm" | "commonjs-factory";
-  readonly dependencies: Readonly<Record<string, string>>;
-  readonly source: string;
-}
+import type {
+  WorkerModule,
+  WorkerOutcome,
+  WorkerRequest,
+  WorkerSide,
+} from "./JavaScriptReplayWorkerTypes.js";
 
-interface WorkerSide {
-  readonly modules: readonly WorkerModule[];
-  readonly entryAlias: string;
-  readonly entryExport: string;
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
-interface WorkerRequest {
-  readonly schemaVersion: 1;
-  readonly left: WorkerSide;
-  readonly right?: WorkerSide;
-  readonly cases: readonly {
-    readonly caseId: string;
-    readonly arguments: readonly unknown[];
-    readonly inputSha256: string;
-  }[];
-  readonly determinism: {
-    readonly clockIso: string;
-    readonly randomSeed: number;
-  };
-  readonly limits: {
-    readonly resultDepth: number;
-    readonly resultNodes: number;
-    readonly exceptionBytes: number;
-  };
-}
+const record = (value: unknown, label: string): Record<string, unknown> => {
+  if (!isRecord(value)) throw new TypeError(`Invalid replay worker ${label}`);
+  return value;
+};
 
-interface WorkerOutcome {
-  readonly case_id: string;
-  readonly outcome: "return" | "exception" | "serialization_error" | "denied";
-  readonly value?: unknown;
-  readonly exception?: {
-    readonly name: string;
-    readonly message: string;
-    readonly stack: string | null;
+const string = (value: unknown, label: string): string => {
+  if (typeof value !== "string")
+    throw new TypeError(`Invalid replay worker ${label}`);
+  return value;
+};
+
+const integer = (value: unknown, label: string): number => {
+  if (!Number.isSafeInteger(value) || Number(value) < 0)
+    throw new TypeError(`Invalid replay worker ${label}`);
+  return Number(value);
+};
+
+const parseWorkerModule = (value: unknown): WorkerModule => {
+  const module = record(value, "module");
+  const format = module.format;
+  if (format !== "esm" && format !== "commonjs-factory")
+    throw new TypeError("Invalid replay worker module format");
+  const dependencies = record(module.dependencies, "module dependencies");
+  if (
+    Object.values(dependencies).some(
+      (dependency) => typeof dependency !== "string",
+    )
+  )
+    throw new TypeError("Invalid replay worker module dependency");
+  return {
+    alias: string(module.alias, "module alias"),
+    format,
+    dependencies: Object.fromEntries(
+      Object.entries(dependencies).map(([key, dependency]) => [
+        key,
+        string(dependency, "module dependency"),
+      ]),
+    ),
+    source: string(module.source, "module source"),
   };
-  readonly input_sha256: string;
-  readonly output_sha256: null;
-  readonly truncated: false;
-}
+};
+
+const parseWorkerSide = (value: unknown): WorkerSide => {
+  const side = record(value, "side");
+  if (!Array.isArray(side.modules))
+    throw new TypeError("Invalid replay worker modules");
+  return {
+    modules: side.modules.map(parseWorkerModule),
+    entryAlias: string(side.entryAlias, "entry alias"),
+    entryExport: string(side.entryExport, "entry export"),
+  };
+};
+
+const parseWorkerRequest = (value: unknown): WorkerRequest => {
+  const request = record(value, "request");
+  if (request.schemaVersion !== 1 || !Array.isArray(request.cases))
+    throw new TypeError("Unsupported replay worker protocol");
+  const determinism = record(request.determinism, "determinism");
+  const limits = record(request.limits, "limits");
+  return {
+    schemaVersion: 1,
+    left: parseWorkerSide(request.left),
+    ...(request.right === undefined
+      ? {}
+      : { right: parseWorkerSide(request.right) }),
+    cases: request.cases.map((value) => {
+      const replayCase = record(value, "case");
+      if (!Array.isArray(replayCase.arguments))
+        throw new TypeError("Invalid replay worker case arguments");
+      return {
+        caseId: string(replayCase.caseId, "case ID"),
+        arguments: replayCase.arguments,
+        inputSha256: string(replayCase.inputSha256, "case digest"),
+      };
+    }),
+    determinism: {
+      clockIso: string(determinism.clockIso, "clock"),
+      randomSeed: integer(determinism.randomSeed, "random seed"),
+    },
+    limits: {
+      resultDepth: integer(limits.resultDepth, "result depth"),
+      resultNodes: integer(limits.resultNodes, "result nodes"),
+      exceptionBytes: integer(limits.exceptionBytes, "exception bytes"),
+    },
+  };
+};
 
 class ReplayDeniedError extends Error {
   override readonly name = "ReplayDeniedError";
@@ -61,11 +111,10 @@ class ReplayDeniedError extends Error {
 const main = async (): Promise<void> => {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  const request = JSON.parse(
+  const rawRequest: unknown = JSON.parse(
     Buffer.concat(chunks).toString("utf8"),
-  ) as WorkerRequest;
-  if (request.schemaVersion !== 1)
-    throw new TypeError("Unsupported replay worker protocol");
+  );
+  const request = parseWorkerRequest(rawRequest);
   const left: WorkerOutcome[] = [];
   const right: WorkerOutcome[] = [];
   for (let index = 0; index < request.cases.length; index += 1) {
@@ -146,25 +195,22 @@ const loadEntry = async (
       throw new TypeError(
         `Synchronous require cannot load ESM module: ${alias}`,
       );
-    const module = { exports: {} as Record<string, unknown> };
+    const module: { exports: Record<string, unknown> } = { exports: {} };
     commonJsCache.set(alias, module.exports);
-    const requireModule = ((specifier: string): Record<string, unknown> => {
+    const requireModule = (specifier: string): Record<string, unknown> => {
       const dependency = descriptor.dependencies[specifier];
       if (dependency === undefined)
         throw new ReplayDeniedError(`Undeclared require: ${specifier}`);
       return loadCommonJs(dependency);
-    }) as ((specifier: string) => Record<string, unknown>) &
-      Record<string, unknown>;
+    };
     installRspackHelpers(requireModule);
     const source = normalizeFactorySource(descriptor.source);
-    const factory = new Script(`(${source})`, {
+    const factory: unknown = new Script(`(${source})`, {
       filename: `/modules/${alias}.js`,
-    }).runInContext(context) as (
-      module: { exports: Record<string, unknown> },
-      exports: Record<string, unknown>,
-      require_: typeof requireModule,
-    ) => void;
-    factory(module, module.exports, requireModule);
+    }).runInContext(context);
+    if (typeof factory !== "function")
+      throw new TypeError(`CommonJS factory is not callable: ${alias}`);
+    Reflect.apply(factory, undefined, [module, module.exports, requireModule]);
     commonJsCache.set(alias, module.exports);
     return module.exports;
   };
@@ -219,7 +265,7 @@ const loadEntry = async (
       : exported[side.entryExport];
   }
   const namespace = (await loadEsm(side.entryAlias)).namespace;
-  return (namespace as Record<string, unknown>)[side.entryExport];
+  return Reflect.get(namespace, side.entryExport);
 };
 
 const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
@@ -239,7 +285,7 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
       return epoch;
     }
   }
-  const replayMath = Object.create(Math) as Math;
+  const replayMath: Math = Object.create(Math);
   Object.defineProperty(replayMath, "random", { value: random });
   return createContext(
     { Date: ReplayDate, Math: replayMath },
@@ -251,10 +297,9 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
 };
 
 const installRspackHelpers = (
-  require_: ((specifier: string) => Record<string, unknown>) &
-    Record<string, unknown>,
+  require_: (specifier: string) => Record<string, unknown>,
 ): void => {
-  require_.d = (
+  const defineExports = (
     exports: Record<string, unknown>,
     definitions: Record<string, () => unknown>,
   ) => {
@@ -262,16 +307,22 @@ const installRspackHelpers = (
       if (!Object.prototype.hasOwnProperty.call(exports, name))
         Object.defineProperty(exports, name, { enumerable: true, get: getter });
   };
-  require_.r = (exports: Record<string, unknown>) => {
+  const markModule = (exports: Record<string, unknown>) => {
     Object.defineProperty(exports, "__esModule", { value: true });
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
   };
-  require_.n = (module: Record<string, unknown>) => {
+  const normalizeModule = (module: Record<string, unknown>) => {
     const getter = () => (module.__esModule === true ? module.default : module);
     Object.defineProperty(getter, "a", { get: getter });
     return getter;
   };
-  require_.nmd = (module: Record<string, unknown>) => module;
+  const passModule = (module: Record<string, unknown>) => module;
+  Object.defineProperties(require_, {
+    d: { value: defineExports },
+    r: { value: markModule },
+    n: { value: normalizeModule },
+    nmd: { value: passModule },
+  });
 };
 
 const requiredModule = (
@@ -348,7 +399,7 @@ const projectLeaf = (candidate: unknown): unknown => {
 
 const assertSupportedPrototype = (candidate: object): void => {
   if (Array.isArray(candidate)) return;
-  const prototype = Object.getPrototypeOf(candidate) as object | null;
+  const prototype: object | null = Object.getPrototypeOf(candidate);
   if (prototype !== null && Object.getPrototypeOf(prototype) !== null)
     throw new TypeError("Unsupported replay result prototype");
 };
@@ -421,7 +472,7 @@ const exceptionDetails = (
   if (types.isProxy(error))
     return { name: "Error", message: "Proxy replay exception", stack: null };
   const own = Object.getOwnPropertyDescriptors(error);
-  const prototype = Object.getPrototypeOf(error) as object | null;
+  const prototype: object | null = Object.getPrototypeOf(error);
   const inherited =
     prototype === null ? {} : Object.getOwnPropertyDescriptors(prototype);
   const stringValue = (

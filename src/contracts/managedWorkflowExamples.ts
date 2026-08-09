@@ -57,15 +57,18 @@ const emptyManagedMembers = (
   limitations: [],
 });
 
-const emptyPage = <Item>(limit: number) => ({
-  items: [] as Item[],
-  offset: 0,
-  limit,
-  total: 0,
-  returned: 0,
-  dropped: 0,
-  complete: true,
-});
+const emptyPage = <Item>(limit: number) => {
+  const items: Item[] = [];
+  return {
+    items,
+    offset: 0,
+    limit,
+    total: 0,
+    returned: 0,
+    dropped: 0,
+    complete: true,
+  };
+};
 
 const evidence = (result: ManagedMemberInspection) =>
   createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {

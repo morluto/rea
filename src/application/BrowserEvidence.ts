@@ -93,11 +93,7 @@ const browserParameters = (
   input: BrowserEvidenceInput,
 ): EvidenceObservation["parameters"] => {
   if (!("cdp_endpoint" in input)) {
-    if (
-      "before_scenario" in input &&
-      input.before_scenario !== undefined &&
-      input.after_scenario !== undefined
-    )
+    if ("before_scenario" in input)
       return {
         comparison_kind: "browser_scenario",
         before_browser: input.before_scenario.browser,
@@ -166,9 +162,9 @@ const browserParameters = (
     include_storage_keys: input.include_storage_keys,
     include_storage_fingerprints: input.include_storage_fingerprints,
     limits: input.limits,
-    ...(input.include_script_sources && "source_capture_approved" in input
+    source_capture_approved: input.source_capture_approved,
+    ...(input.include_script_sources && "analysis_limits" in input
       ? {
-          source_capture_approved: input.source_capture_approved,
           fetch_source_maps: input.fetch_source_maps,
           source_map_fetch_approved: input.source_map_fetch_approved,
           analysis_limits: input.analysis_limits,

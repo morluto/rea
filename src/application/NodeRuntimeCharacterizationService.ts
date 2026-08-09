@@ -16,7 +16,10 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { controlledReplayOutputSchema } from "../domain/javascriptReplay.js";
+import {
+  controlledReplayOutputSchema,
+  type ControlledReplayExecutionOutput,
+} from "../domain/javascriptReplay.js";
 import type { ReplayPlan } from "../domain/javascriptReplay.js";
 import type { JavaScriptExportInstrumentation } from "../domain/javascriptExportInstrumentation.js";
 import {
@@ -89,7 +92,7 @@ export const executeNodeCharacterization = async (
   const plannedReplay = controlledReplayOutputSchema.parse(
     prepared.value.replay,
   );
-  if (plannedReplay.phase !== "plan" || plannedReplay.plan === null)
+  if (plannedReplay.phase !== "plan")
     return err(
       new AnalysisProtocolError(
         "Node characterization preparation did not produce a replay plan",
@@ -110,6 +113,13 @@ export const executeNodeCharacterization = async (
     options,
   );
   if (!executed.ok) return executed;
+  const replayOutput = controlledReplayOutputSchema.parse(executed.value);
+  if (replayOutput.phase !== "execute")
+    return err(
+      new AnalysisProtocolError(
+        "Node characterization execution omitted replay Evidence",
+      ),
+    );
   if (host.instrumentation === null)
     return err(
       new AnalysisProtocolError(
@@ -124,11 +134,8 @@ export const executeNodeCharacterization = async (
         plan: prepared.value.plan,
         transformation: host.instrumentation.manifest,
         transformation_evidence: prepared.value.transformation_evidence,
-        evidence: createCharacterizationEvidence(
-          prepared.value,
-          controlledReplayOutputSchema.parse(executed.value),
-        ),
-        replay: controlledReplayOutputSchema.parse(executed.value),
+        evidence: createCharacterizationEvidence(prepared.value, replayOutput),
+        replay: replayOutput,
       }),
     ),
   );
@@ -164,11 +171,7 @@ const prepareValidated = async (
   );
   if (!replay.ok) return replay;
   const output = controlledReplayOutputSchema.parse(replay.value);
-  if (
-    output.phase !== "plan" ||
-    output.plan === null ||
-    host.instrumentation === null
-  )
+  if (output.phase !== "plan" || host.instrumentation === null)
     return err(
       new AnalysisProtocolError(
         "Node characterization preparation omitted committed plan evidence",
@@ -240,12 +243,8 @@ const createCharacterizationEvidence = (
     readonly plan: RuntimeCharacterizationPlan;
     readonly transformation_evidence: Evidence;
   },
-  replay: z.output<typeof controlledReplayOutputSchema>,
+  replay: ControlledReplayExecutionOutput,
 ): Evidence => {
-  if (replay.phase !== "execute" || replay.evidence === null)
-    throw new AnalysisProtocolError(
-      "Node characterization execution omitted replay Evidence",
-    );
   return createEvidence(
     {
       path: prepared.plan.artifact.path,

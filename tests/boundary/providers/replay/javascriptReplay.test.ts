@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 import { runControlledReplay } from "../../../../src/application/JavaScriptReplayService.js";
 import type {
+  EnabledJavaScriptReplayPolicy,
   JavaScriptReplayHost,
   JavaScriptReplayPolicy,
   JavaScriptReplayRunner,
@@ -19,8 +20,8 @@ import {
 } from "../../../../src/domain/javascriptReplay.js";
 
 const root = resolve("tests/fixtures/replay");
-const policy: JavaScriptReplayPolicy = {
-  enabled: true,
+const policy: EnabledJavaScriptReplayPolicy = {
+  status: "enabled",
   roots: [root],
   nodePath: process.execPath,
   bubblewrapPath: process.execPath,
@@ -127,7 +128,7 @@ const input = (
     entry_export: "default",
   },
   cases: [{ case_id: "heading", arguments: ["# Title"] }],
-  approved: mode === "execute",
+  ...(mode === "execute" ? { approved: true as const } : {}),
 });
 
 const completedRunner = (): JavaScriptReplayRunner => ({
@@ -153,6 +154,45 @@ const completedRunner = (): JavaScriptReplayRunner => ({
 });
 
 describe("controlled JavaScript replay planning", () => {
+  it("parses planning and execution as disjoint legal states", () => {
+    expect(
+      controlledReplayInputSchema.safeParse({
+        ...input("execute"),
+        approved: false,
+        plan_digest: "0".repeat(64),
+      }).success,
+    ).toBe(false);
+    expect(
+      controlledReplayInputSchema.safeParse({
+        ...input("execute"),
+        approved: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      controlledReplayInputSchema.safeParse({
+        ...input("plan"),
+        plan_digest: "0".repeat(64),
+      }).success,
+    ).toBe(false);
+    expect(
+      controlledReplayInputSchema.safeParse({
+        ...input("plan"),
+        approved: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      controlledReplayInputSchema.safeParse({
+        ...input("execute"),
+        approved: true,
+        plan_digest: "0".repeat(64),
+        reproducer_export: {
+          path: "/tmp/reproducer",
+          approved: false,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects relative paths and more than 128 combined cases", () => {
     expect(
       controlledReplayInputSchema.safeParse({
@@ -180,7 +220,7 @@ describe("controlled JavaScript replay planning", () => {
     const readSource = vi.fn(host.readSource);
     const result = await runControlledReplay(
       {
-        policy,
+        policy: () => policy,
         host: { ...host, probe, readSource },
         runner: completedRunner(),
         authority: authority(),
@@ -199,11 +239,21 @@ describe("controlled JavaScript replay planning", () => {
   it("returns a deterministic plan without admitting application code", async () => {
     const execute = vi.fn(completedRunner().execute);
     const first = await runControlledReplay(
-      { policy, host, runner: { execute }, authority: authority() },
+      {
+        policy: () => policy,
+        host,
+        runner: { execute },
+        authority: authority(),
+      },
       input("plan"),
     );
     const second = await runControlledReplay(
-      { policy, host, runner: { execute }, authority: authority() },
+      {
+        policy: () => policy,
+        host,
+        runner: { execute },
+        authority: authority(),
+      },
       input("plan"),
     );
     expect(first).toEqual(second);
@@ -213,12 +263,26 @@ describe("controlled JavaScript replay planning", () => {
       plan: { network: "none", filesystem: { host_writes: false } },
       evidence: null,
     });
+    if (!first.ok) throw first.error;
+    const output = controlledReplayOutputSchema.parse(first.value);
+    expect(
+      controlledReplayOutputSchema.safeParse({ ...output, plan: null }).success,
+    ).toBe(false);
+    expect(
+      controlledReplayOutputSchema.safeParse({ ...output, phase: "execute" })
+        .success,
+    ).toBe(false);
   });
 
   it("rejects a stale digest before worker admission", async () => {
     const execute = vi.fn(completedRunner().execute);
     const result = await runControlledReplay(
-      { policy, host, runner: { execute }, authority: authority() },
+      {
+        policy: () => policy,
+        host,
+        runner: { execute },
+        authority: authority(),
+      },
       { ...input("execute"), plan_digest: "0".repeat(64) },
     );
     expect(result.ok).toBe(false);
@@ -227,10 +291,30 @@ describe("controlled JavaScript replay planning", () => {
   });
 });
 
+describe("controlled JavaScript replay policy snapshots", () => {
+  it("uses one enabled policy snapshot for the complete planning operation", async () => {
+    let reads = 0;
+    const configuredPolicy = (): JavaScriptReplayPolicy => {
+      reads += 1;
+      return reads === 1 ? policy : { status: "disabled" };
+    };
+    const result = await runControlledReplay(
+      {
+        policy: configuredPolicy,
+        host,
+        runner: completedRunner(),
+        authority: authority(),
+      },
+      input("plan"),
+    );
+    expect([result.ok, reads]).toEqual([true, 1]);
+  });
+});
+
 describe("controlled JavaScript replay evidence and authorization", () => {
   it("creates controlled-replay Evidence after an approved exact plan", async () => {
     const dependencies = {
-      policy,
+      policy: () => policy,
       host,
       runner: completedRunner(),
       authority: authority(),
@@ -272,6 +356,12 @@ describe("controlled JavaScript replay evidence and authorization", () => {
     expect(output.evidence?.evidence_links).toEqual([
       output.source_evidence[0]?.evidence_id,
     ]);
+    expect(
+      controlledReplayOutputSchema.safeParse({
+        ...output,
+        source_evidence: [],
+      }).success,
+    ).toBe(false);
   });
 
   it("cannot read or execute when replay is disabled", async () => {
@@ -279,7 +369,7 @@ describe("controlled JavaScript replay evidence and authorization", () => {
     const execute = vi.fn(completedRunner().execute);
     const result = await runControlledReplay(
       {
-        policy: { ...policy, enabled: false },
+        policy: () => ({ status: "disabled" }),
         host: { ...host, readSource },
         runner: { execute },
         authority: authority(),
@@ -293,7 +383,7 @@ describe("controlled JavaScript replay evidence and authorization", () => {
 
   it("changes the commitment when selected module bytes change", async () => {
     const dependencies = {
-      policy,
+      policy: () => policy,
       host,
       runner: completedRunner(),
       authority: authority(),
@@ -333,7 +423,7 @@ describe("controlled JavaScript replay cancellation and export", () => {
       }),
     );
     const dependencies = {
-      policy,
+      policy: () => policy,
       host,
       runner: { execute },
       authority: authority(),
@@ -365,7 +455,7 @@ describe("controlled JavaScript replay cancellation and export", () => {
     const execute = vi.fn(completedRunner().execute);
     const result = await runControlledReplay(
       {
-        policy,
+        policy: () => policy,
         host: {
           ...host,
           probe: async () => {
@@ -387,7 +477,7 @@ describe("controlled JavaScript replay cancellation and export", () => {
     const directory = await createTestTempDirectory("rea-reproducer-test-");
     const path = join(directory, "reproducer.json");
     const dependencies = {
-      policy,
+      policy: () => policy,
       host,
       runner: completedRunner(),
       authority: authority(directory),

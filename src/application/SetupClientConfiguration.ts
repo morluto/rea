@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import canonicalize from "canonicalize";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
@@ -257,8 +258,11 @@ const parseObject = (text: string): Record<string, unknown> =>
   objectSchema.parse(JSON.parse(text));
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-const sameConfiguration = (left: unknown, right: unknown): boolean =>
-  JSON.stringify(left) === JSON.stringify(right);
+const sameConfiguration = (left: unknown, right: unknown): boolean => {
+  const encodedLeft = canonicalize(left);
+  const encodedRight = canonicalize(right);
+  return encodedLeft !== undefined && encodedLeft === encodedRight;
+};
 
 const preserveConfigBackup = async (
   source: string,

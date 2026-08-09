@@ -47,6 +47,20 @@ const contractJsonSchema = (schema: z.ZodType) => {
   return converted;
 };
 
+const describesObject = (schema: ReturnType<typeof contractJsonSchema>) =>
+  schema.type === "object" ||
+  [schema.oneOf, schema.anyOf].some(
+    (variants) =>
+      Array.isArray(variants) &&
+      variants.every(
+        (variant) =>
+          typeof variant === "object" &&
+          variant !== null &&
+          "type" in variant &&
+          variant.type === "object",
+      ),
+  );
+
 const emptySchemaPaths = (value: unknown, path = "$"): string[] => {
   if (Array.isArray(value))
     return value.flatMap((item, index) =>
@@ -66,8 +80,8 @@ describe("tool contract surface", () => {
     for (const contract of contracts) {
       const inputSchema = contractJsonSchema(contract.inputSchema);
       const outputSchema = contractJsonSchema(contract.outputSchema);
-      expect(inputSchema.type).toBe("object");
-      expect(outputSchema.type).toBe("object");
+      expect(describesObject(inputSchema)).toBe(true);
+      expect(describesObject(outputSchema)).toBe(true);
       expect(contract.title.length).toBeGreaterThan(2);
       expect(contract.annotations).toEqual(
         annotationsFromEffects(contract.effects),

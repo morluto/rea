@@ -18,7 +18,7 @@ import {
   webMcpDiscoverySchema,
 } from "../domain/webMcpDiscovery.js";
 import {
-  browserCaptureComparisonWireSchema,
+  browserCaptureComparisonInputSchema,
   browserCaptureComparisonSchema,
 } from "../domain/browserCaptureComparison.js";
 import {
@@ -282,7 +282,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     description:
       "Compare either passive web captures or step-indexed browser scenarios. Scenario comparison aligns exact step IDs, records deterministic literal normalization, and exposes bounded artifact-level changes plus alignment failures. Missing or truncated evidence never proves equality.",
     kind: "browser-provider",
-    inputSchema: browserCaptureComparisonWireSchema,
+    inputSchema: browserCaptureComparisonInputSchema,
     outputSchema: captureDiffOutputSchema,
     examples: [
       {

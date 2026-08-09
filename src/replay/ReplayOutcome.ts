@@ -50,19 +50,21 @@ export const commitOutcomes = (
   outcomes: readonly WorkerProtocolOutcome[],
 ): ReplayExecutionResult["outcomes"] =>
   outcomes.map((outcome) => {
-    const semantic =
-      outcome.value === undefined ? (outcome.exception ?? null) : outcome.value;
+    if (outcome.outcome === "return")
+      return {
+        case_id: outcome.case_id,
+        outcome: outcome.outcome,
+        value: jsonValueSchema.parse(outcome.value),
+        input_sha256: outcome.input_sha256,
+        output_sha256: digestJson(outcome.value),
+        truncated: false,
+      };
     return {
       case_id: outcome.case_id,
       outcome: outcome.outcome,
-      ...(outcome.value === undefined
-        ? {}
-        : { value: jsonValueSchema.parse(outcome.value) }),
-      ...(outcome.exception === undefined
-        ? {}
-        : { exception: outcome.exception }),
+      exception: outcome.exception,
       input_sha256: outcome.input_sha256,
-      output_sha256: digestJson(semantic),
+      output_sha256: digestJson(outcome.exception),
       truncated: false,
     };
   });
@@ -101,13 +103,22 @@ export const terminationResult = (
   options: TerminationResultOptions,
 ): ReplayExecutionResult => {
   const { prepared, stderr, termination, cleanup, limitation } = options;
-  const outcomes = prepared.publicPlan.cases.map((item) => ({
-    case_id: item.case_id,
-    outcome: termination,
-    input_sha256: item.sha256,
-    output_sha256: null,
-    truncated: termination === "protocol_error",
-  }));
+  const outcomes: ReplayExecutionResult["outcomes"] =
+    termination === "protocol_error"
+      ? prepared.publicPlan.cases.map((item) => ({
+          case_id: item.case_id,
+          outcome: termination,
+          input_sha256: item.sha256,
+          output_sha256: null,
+          truncated: true,
+        }))
+      : prepared.publicPlan.cases.map((item) => ({
+          case_id: item.case_id,
+          outcome: termination,
+          input_sha256: item.sha256,
+          output_sha256: null,
+          truncated: false,
+        }));
   const differential = prepared.publicPlan.right !== undefined;
   return {
     schema_version: 1,

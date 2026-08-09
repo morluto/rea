@@ -66,7 +66,7 @@ export async function completeGhidraStartupHandshake(
 const interruptionFailure = (
   options: GhidraStartupHandshakeOptions,
 ): GhidraSessionError =>
-  options.deadline.cancelled
+  options.deadline.interruption === "cancelled"
     ? options.failure("cancelled", "Ghidra startup was cancelled")
     : options.failure("timeout", "Ghidra startup deadline elapsed", undefined, {
         timeoutMs: options.startupTimeoutMs,

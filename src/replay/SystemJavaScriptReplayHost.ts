@@ -15,7 +15,7 @@ import { spawn, type StdioOptions } from "node:child_process";
 
 import type {
   JavaScriptReplayHost,
-  JavaScriptReplayPolicy,
+  EnabledJavaScriptReplayPolicy,
   ReplayExecutableIdentity,
   ReplaySourceBytes,
 } from "../application/JavaScriptReplayPlanning.js";
@@ -86,7 +86,7 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
     return linuxX64ReplaySeccompDigest();
   }
 
-  async probe(policy: JavaScriptReplayPolicy): Promise<void> {
+  async probe(policy: EnabledJavaScriptReplayPolicy): Promise<void> {
     if (process.platform !== "linux" || process.arch !== "x64")
       throw new TypeError("Controlled replay requires Linux x86_64 in v1");
     const bwrapMetadata = await stat(policy.bubblewrapPath);

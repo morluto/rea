@@ -4,6 +4,7 @@ import type { ToolContract } from "./toolContracts.js";
 import { nativeOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},
@@ -13,14 +14,12 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   demangle_swift: { symbols: ["$s4Test3fooyyF"] },
 };
 
-const native = <Name extends string>(
+const native = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
-  inputSchema: z.ZodObject,
-): ToolContract<Name> => {
-  const outputSchema = nativeOutputSchemas[name];
-  if (outputSchema === undefined)
-    throw new Error(`Missing native output schema for ${name}`);
+  inputSchema: Schema,
+) => {
+  const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   return {
     name,
     ...toolContractMetadata(name),
@@ -36,7 +35,7 @@ const native = <Name extends string>(
           .parse(examples[name] ?? {}),
       },
     ],
-  };
+  } satisfies ToolContract<Name, Schema, typeof outputSchema>;
 };
 
 /** Provider-neutral semantic operations backed initially by macOS utilities. */

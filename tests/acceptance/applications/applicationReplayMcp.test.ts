@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { EnabledJavaScriptReplayPolicy } from "../../../src/application/JavaScriptReplayPlanning.js";
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 import { controlledReplayOutputSchema } from "../../../src/domain/javascriptReplay.js";
 import { nodeCharacterizationPreparationOutputSchema } from "../../../src/domain/nodeRuntimeCharacterization.js";
@@ -13,9 +14,9 @@ import { createPermissionPolicy } from "../../../src/domain/permissionPolicy.js"
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
-function createReplayPolicy(root: string) {
+function createReplayPolicy(root: string): EnabledJavaScriptReplayPolicy {
   return {
-    enabled: true,
+    status: "enabled",
     roots: [root],
     nodePath: process.execPath,
     bubblewrapPath: process.execPath,
@@ -64,7 +65,7 @@ function createReplayScenario(root: string) {
   }));
   const server = createServer(session, session, {
     permissionAuthority: createReplayAuthority(policy),
-    javascriptReplayPolicy: policy,
+    javascriptReplayPolicy: () => policy,
     javascriptReplayHost: {
       readSource: async (path) => ({
         canonicalPath: await realpath(path),
@@ -134,7 +135,6 @@ function createReplayInput(root: string) {
       entry_export: "default",
     },
     cases: [{ case_id: "heading", arguments: ["# Title"] }],
-    approved: false,
   };
 }
 
@@ -210,7 +210,6 @@ async function createCharacterizationInput(root: string) {
         entry_export: "selected",
       },
       cases: [{ case_id: "heading", arguments: ["# Title"] }],
-      approved: false,
     },
   };
 }

@@ -105,6 +105,32 @@ describe("agent lifecycle", () => {
     ).toEqual({ status: "unchanged" });
   });
 
+  it("does not rewrite an equivalent Codex registration with reordered environment keys", async () => {
+    const home = await createTestTempDirectory("rea-toml-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      `[mcp_servers.rea]\ncommand = "rea"\nargs = ["mcp"]\nstartup_timeout_sec = 30\n\n[mcp_servers.rea.env]\nJAVA_HOME = "/opt/jdk-21"\nHOPPER_LAUNCHER_PATH = "/Hopper Path"\nGHIDRA_INSTALL_DIR = "/opt/ghidra"\n`,
+    );
+
+    expect(
+      await configureTomlClient(
+        { name: "codex", configPath, format: "toml" },
+        {
+          HOPPER_LAUNCHER_PATH: "/Hopper Path",
+          GHIDRA_INSTALL_DIR: "/opt/ghidra",
+          JAVA_HOME: "/opt/jdk-21",
+        },
+        ["rea", "mcp"],
+      ),
+    ).toEqual({ status: "unchanged" });
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
+
   it("updates a symlink target without replacing the TOML config symlink", async () => {
     const home = await createTestTempDirectory("rea-toml-symlink-");
     roots.push(home);

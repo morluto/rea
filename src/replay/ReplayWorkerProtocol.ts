@@ -1,42 +1,54 @@
 import { z } from "zod";
 
-const workerOutcomeSchema = z
-  .object({
-    case_id: z.string(),
-    outcome: z.enum(["return", "exception", "serialization_error", "denied"]),
-    value: z.json().optional(),
-    exception: z
-      .object({
-        name: z.string(),
-        message: z.string(),
-        stack: z.string().nullable(),
-      })
-      .strict()
-      .optional(),
-    input_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    output_sha256: z.null(),
-    truncated: z.literal(false),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.outcome === "return" && value.value === undefined)
-      context.addIssue({ code: "custom", message: "Return value is missing" });
-    if (value.outcome !== "return" && value.exception === undefined)
-      context.addIssue({ code: "custom", message: "Exception is missing" });
-    if (value.outcome === "return" && value.exception !== undefined)
-      context.addIssue({ code: "custom", message: "Return has an exception" });
-  });
+const workerOutcomeFacts = {
+  case_id: z.string(),
+  input_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  output_sha256: z.null(),
+  truncated: z.literal(false),
+} as const;
 
-const workerResponseSchema = z
+const exceptionSchema = z
+  .object({
+    name: z.string(),
+    message: z.string(),
+    stack: z.string().nullable(),
+  })
+  .strict();
+
+const workerOutcomeSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    ...workerOutcomeFacts,
+    outcome: z.literal("return"),
+    value: z.json(),
+  }),
+  z.strictObject({
+    ...workerOutcomeFacts,
+    outcome: z.enum(["exception", "serialization_error", "denied"]),
+    exception: z.object(exceptionSchema.shape).strict(),
+  }),
+]);
+
+const singleWorkerResponseSchema = z
   .object({
     schema_version: z.literal(1),
     left: z.array(workerOutcomeSchema),
-    right: z.array(workerOutcomeSchema).optional(),
+  })
+  .strict();
+
+const differentialWorkerResponseSchema = z
+  .object({
+    schema_version: z.literal(1),
+    left: z.array(workerOutcomeSchema),
+    right: z.array(workerOutcomeSchema),
   })
   .strict();
 
 export type WorkerProtocolOutcome = z.infer<typeof workerOutcomeSchema>;
-export type WorkerProtocolResponse = z.infer<typeof workerResponseSchema>;
+export type WorkerProtocolResponse =
+  | (z.infer<typeof singleWorkerResponseSchema> & { readonly right?: never })
+  | z.infer<typeof differentialWorkerResponseSchema>;
+
+export type ReplayWorkerResponseMode = "single" | "differential";
 
 interface ExpectedCase {
   readonly case_id: string;
@@ -47,14 +59,18 @@ interface ExpectedCase {
 export const parseReplayWorkerResponse = (
   rawResponse: unknown,
   cases: readonly ExpectedCase[],
-  differential: boolean,
+  mode: ReplayWorkerResponseMode,
 ): WorkerProtocolResponse => {
-  const response = workerResponseSchema.parse(rawResponse);
-  if ((response.right !== undefined) !== differential)
-    throw new TypeError("Replay worker differential response is incomplete");
+  const response =
+    mode === "single"
+      ? singleWorkerResponseSchema.parse(rawResponse)
+      : differentialWorkerResponseSchema.parse(rawResponse);
   validateOutcomeSequence(response.left, cases);
-  if (response.right !== undefined)
-    validateOutcomeSequence(response.right, cases);
+  if (mode === "differential")
+    validateOutcomeSequence(
+      differentialWorkerResponseSchema.parse(response).right,
+      cases,
+    );
   return response;
 };
 

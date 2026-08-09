@@ -6,6 +6,7 @@ import {
   inputResponse,
   type InputRequiredResult,
   type RequestStateCodec,
+  type ServerContext,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -65,10 +66,11 @@ export interface ProcessCaptureElicitation {
 }
 
 interface ProcessCaptureElicitationContext {
-  readonly mcpReq: {
-    readonly envelope?: Readonly<Record<string, unknown>>;
-    readonly inputResponses?: Record<string, unknown>;
-    readonly requestState: () => unknown;
+  readonly mcpReq: Pick<
+    ServerContext["mcpReq"],
+    "envelope" | "inputResponses"
+  > & {
+    readonly requestState: () => ProcessCaptureElicitationState | undefined;
   };
 }
 

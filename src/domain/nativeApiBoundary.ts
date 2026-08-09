@@ -16,25 +16,35 @@ const inferenceEvidenceSchema = z
   })
   .strict();
 
-const inferredBoundaryTypeSchema = z
-  .object({
-    role: z.enum(["return", "parameter"]),
-    ordinal: z.number().int().min(0).nullable(),
-    name: z.string().min(1).nullable(),
-    data_type: z.string().min(1),
-    size_bytes: z.number().int().min(0).nullable(),
-    storage: z.string().min(1).nullable(),
-    confidence: inferenceConfidenceSchema,
-    evidence: z.array(inferenceEvidenceSchema).min(1),
-    decompiler_artifacts: z.array(
-      z.enum([
-        "recovered-signature",
-        "register-or-stack-storage",
-        "compiler-generated-variable",
-      ]),
-    ),
-  })
-  .strict();
+const inferredBoundaryTypeFacts = {
+  ordinal: z.number().int().min(0).nullable(),
+  name: z.string().min(1).nullable(),
+  data_type: z.string().min(1),
+  size_bytes: z.number().int().min(0).nullable(),
+  storage: z.string().min(1).nullable(),
+  confidence: inferenceConfidenceSchema,
+  evidence: z.array(inferenceEvidenceSchema).min(1),
+  decompiler_artifacts: z.array(
+    z.enum([
+      "recovered-signature",
+      "register-or-stack-storage",
+      "compiler-generated-variable",
+    ]),
+  ),
+} as const;
+
+const inferredReturnTypeSchema = z.strictObject({
+  ...inferredBoundaryTypeFacts,
+  role: z.literal("return"),
+  ordinal: z.null(),
+  name: z.null(),
+});
+
+const inferredParameterTypeSchema = z.strictObject({
+  ...inferredBoundaryTypeFacts,
+  role: z.literal("parameter"),
+  ordinal: z.number().int().min(0),
+});
 
 const jumpTableDataSourceSchema = z
   .object({
@@ -77,8 +87,8 @@ const availableNativeApiBoundarySchema = z
     provenance: z.string().min(1),
     signature_source: z.string().min(1),
     calling_convention: z.string().min(1),
-    return_type: inferredBoundaryTypeSchema,
-    parameters: z.array(inferredBoundaryTypeSchema),
+    return_type: inferredReturnTypeSchema,
+    parameters: z.array(inferredParameterTypeSchema),
     parameters_truncated: z.boolean(),
     jump_tables: z.array(inferredJumpTableSchema),
     jump_tables_truncated: z.boolean(),

@@ -34,10 +34,12 @@ export interface BridgeSession {
 }
 
 /** Process handle returned by a bridge launcher. */
-export interface BridgeLaunch extends ProviderProcessLaunch {
-  /** True when verified process cleanup completes bridge shutdown. */
-  readonly shutdownByCleanup?: boolean;
-}
+export type BridgeLaunch =
+  | (ProviderProcessLaunch & { readonly shutdownMode: "bridge-request" })
+  | (Extract<ProviderProcessLaunch, { readonly ownsProcessLifetime: true }> & {
+      readonly shutdownMode: "process-cleanup";
+      readonly cleanup: NonNullable<ProviderProcessLaunch["cleanup"]>;
+    });
 
 /** Application-owned capability that starts the in-Hopper bridge. */
 export interface BridgeLauncher {
@@ -184,7 +186,9 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         process: child,
         ownsProcessLifetime: true,
         ownership: started.ownership,
-        shutdownByCleanup: ownsProcessLifetime,
+        shutdownMode: ownsProcessLifetime
+          ? "process-cleanup"
+          : "bridge-request",
         cleanup: () => cleanupOwnedProcessGroup(started.ownership),
       });
     } catch (cause: unknown) {

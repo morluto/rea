@@ -85,7 +85,7 @@ describe("provider process runtime and wait primitives", () => {
     const waiting = deadline.wait(1_000);
     controller.abort();
     await expect(waiting).resolves.toBe("aborted");
-    expect(deadline.cancelled).toBe(true);
+    expect(deadline.interruption).toBe("cancelled");
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
     deadline.dispose();
@@ -99,7 +99,7 @@ describe("provider process runtime and wait primitives", () => {
     await vi.advanceTimersByTimeAsync(100);
 
     await expect(waiting).resolves.toBe("aborted");
-    expect(deadline.timedOut).toBe(true);
+    expect(deadline.interruption).toBe("timeout");
     expect(deadline.remainingMs()).toBe(0);
     deadline.dispose();
     expect(vi.getTimerCount()).toBe(0);
@@ -114,8 +114,7 @@ describe("provider process runtime and wait primitives", () => {
     controller.abort();
 
     expect(deadline.signal.reason).toMatchObject({ name: "TimeoutError" });
-    expect(deadline.timedOut).toBe(true);
-    expect(deadline.cancelled).toBe(false);
+    expect(deadline.interruption).toBe("timeout");
     expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
     deadline.dispose();

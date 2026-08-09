@@ -71,7 +71,6 @@ import {
 export { GHIDRA_PROVIDER_IDENTITY, GHIDRA_PROVIDER_TOOL_CONTRACTS };
 
 const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);
-const SUPPORTED_FORMATS = new Set(["elf", "pe", "mach-o"]);
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -155,17 +154,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       };
     if (hostPlatform === "win32")
       return inspectWindowsP0TargetSupport(target, diagnostics);
-    if (!SUPPORTED_FORMATS.has(target.format))
-      return {
-        status: "unsupported",
-        code: "target_format_unsupported",
-        reason: `Ghidra v1 does not import ${target.format} through this adapter.`,
-        diagnostics,
-      };
-    if (
-      target.architecture === undefined ||
-      !SUPPORTED_ARCHITECTURES.has(target.architecture)
-    )
+    if (!SUPPORTED_ARCHITECTURES.has(target.architecture))
       return {
         status: "unsupported",
         code: "architecture_unsupported",

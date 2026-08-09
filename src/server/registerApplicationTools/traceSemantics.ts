@@ -3,8 +3,6 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { resolveTraceJavaScriptSemanticsRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
 import { traceJavaScriptSemanticsEvidenceValidated } from "../../application/JavaScriptSemanticTraceService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { traceJavaScriptSemanticsRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
@@ -22,14 +20,8 @@ export const registerTraceJavaScriptSemanticsTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        traceJavaScriptSemanticsRequestSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
       const resolved = resolveTraceJavaScriptSemanticsRequestValidated(
-        parsedInput.value,
+        input,
         options.evidenceLookup,
       );
       if (!resolved.ok) return toCallToolResult(resolved, contract);

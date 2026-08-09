@@ -40,7 +40,7 @@ const replayEventHeadersSchema = z
   });
 
 const replayEventFields = {
-  at_ms: z.number().int().nonnegative().safe(),
+  at_ms: z.number().int().safe().nonnegative(),
   path: z.string().startsWith("/").max(8_192),
   headers: replayEventHeadersSchema,
   body: z.string().max(1_000_000),
@@ -125,7 +125,8 @@ export type ReplayMachineDecision =
 
 const parseJson = (value: string): unknown => {
   try {
-    return JSON.parse(value) as unknown;
+    const parsed: unknown = JSON.parse(value);
+    return parsed;
   } catch {
     return undefined;
   }
@@ -148,7 +149,8 @@ const atPath = (
       !Object.hasOwn(current, segment)
     )
       return undefined;
-    current = (current as Readonly<Record<string, unknown>>)[segment];
+    const next: unknown = Reflect.get(current, segment);
+    current = next;
   }
   return current;
 };

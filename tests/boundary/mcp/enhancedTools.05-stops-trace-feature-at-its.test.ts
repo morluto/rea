@@ -219,7 +219,7 @@ describe("enhanced MCP tools", () => {
     expect(JSON.stringify(result)).toContain("operation budget");
   });
 
-  it("returns correction-only structured validation issues", async () => {
+  it("lets the SDK reject misspelled and out-of-range inputs", async () => {
     const client = await connect();
     const valid = await client.callTool({
       name: "trace_feature",
@@ -230,18 +230,8 @@ describe("enhanced MCP tools", () => {
       name: "trace_feature",
       arguments: { query: "needle", max_operatons: 1 },
     });
-    expect(misspelled).toMatchObject({
-      isError: true,
-      structuredContent: {
-        error: {
-          code: "invalid_request",
-          retryable: true,
-          details: {
-            issues: [{ path: ["max_operatons"], reason: "unknown_argument" }],
-          },
-        },
-      },
-    });
+    expect(misspelled.isError).toBe(true);
+    expect(misspelled.structuredContent).toBeUndefined();
     const nestedMisspelled = await client.callTool({
       name: "analyze_function",
       arguments: {
@@ -249,42 +239,14 @@ describe("enhanced MCP tools", () => {
         collection_offset: { commentz: 1 },
       },
     });
-    expect(nestedMisspelled).toMatchObject({
-      isError: true,
-      structuredContent: {
-        error: {
-          details: {
-            issues: [
-              {
-                path: ["collection_offset", "commentz"],
-                reason: "unknown_argument",
-              },
-            ],
-          },
-        },
-      },
-    });
+    expect(nestedMisspelled.isError).toBe(true);
+    expect(nestedMisspelled.structuredContent).toBeUndefined();
     const bounded = await client.callTool({
       name: "trace_feature",
       arguments: { query: "needle", max_operations: 101 },
     });
-    expect(bounded.structuredContent).toMatchObject({
-      error: {
-        details: {
-          issues: [
-            {
-              path: ["max_operations"],
-              reason: "out_of_range",
-              maximum: 100,
-            },
-          ],
-        },
-      },
-    });
-    expect(bounded.content[0]).toEqual({
-      type: "text",
-      text: JSON.stringify(bounded.structuredContent),
-    });
+    expect(bounded.isError).toBe(true);
+    expect(bounded.structuredContent).toBeUndefined();
   });
 
   it("returns a typed tool error for malformed Hopper boundary values", async () => {

@@ -11,7 +11,7 @@ import {
   type EvidenceProvider,
   type EvidenceSubjectTarget,
 } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 interface InventoryProjectionInput {
@@ -71,7 +71,7 @@ export const projectInventoryEvidence = <
             inventory_evidence_ids: [...result.source_evidence_ids],
             limits: jsonValueSchema.parse(parsed.data.limits),
           },
-          result: jsonValueSchema.parse(result) as JsonValue,
+          result: jsonValueSchema.parse(result),
           rawResult: null,
           confidence: "inferred",
           authority: "analyst-inference",

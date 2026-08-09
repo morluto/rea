@@ -6,11 +6,7 @@ import {
   functionDossierSchema,
   type FunctionDossier,
 } from "../domain/hopperValues.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -117,7 +113,7 @@ export const parseGhidraFunctionInput = (
 ): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
   const parsed = inputSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(jsonObjectSchema.parse(parsed.data))
+    ? ok(parsed.data)
     : err(new AnalysisInputError(operation, { cause: parsed.error }));
 };
 
@@ -171,15 +167,24 @@ const referenceEdge = z
     kind: referenceKind,
   })
   .strict();
+const boundedReferenceFacts = {
+  items: z.array(referenceEdge),
+  total: z.number().int().min(0).nullable(),
+  returned: z.number().int().min(0),
+} as const;
 const boundedReferences = z
-  .object({
-    items: z.array(referenceEdge),
-    total: z.number().int().min(0).nullable(),
-    returned: z.number().int().min(0),
-    truncated: z.boolean(),
-    next_offset: z.number().int().min(0).nullable(),
-  })
-  .strict()
+  .discriminatedUnion("truncated", [
+    z.strictObject({
+      ...boundedReferenceFacts,
+      truncated: z.literal(false),
+      next_offset: z.null(),
+    }),
+    z.strictObject({
+      ...boundedReferenceFacts,
+      truncated: z.literal(true),
+      next_offset: z.number().int().min(0).nullable(),
+    }),
+  ])
   .superRefine((value, context) => {
     if (value.returned !== value.items.length)
       context.addIssue({
@@ -192,12 +197,6 @@ const boundedReferences = z
         code: "custom",
         path: ["total"],
         message: "total cannot be smaller than returned",
-      });
-    if (value.next_offset !== null && !value.truncated)
-      context.addIssue({
-        code: "custom",
-        path: ["next_offset"],
-        message: "a continuation requires truncated output",
       });
   });
 const procedureReferences = z
@@ -345,7 +344,7 @@ export const parseGhidraFunctionResult = (
 ): Result<JsonValue, AnalysisOutputError> => {
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(jsonValueSchema.parse(parsed.data))
+    ? ok(parsed.data)
     : err(
         new AnalysisOutputError(
           operation,

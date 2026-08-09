@@ -119,11 +119,11 @@ it("runs a login and reconnect replay machine inside process capture", async () 
     const capability = await probeProcessCaptureCapability();
     if (!capability.available) return;
     const capture = await captureProcessScenario(scenario, {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [root],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     });
     expect(capture.ok).toBe(true);
     if (!capture.ok) throw capture.error;
@@ -172,11 +172,11 @@ it("captures PTY, filesystem, descendants, HTTP replay, and redacts environment"
     ].join("\n"),
   );
   const policy: ProcessExecutionPolicy = {
-    enabled: true,
+    status: "enabled",
     executableRoots: [dirname(process.execPath)],
     workingRoots: [root],
     allowedEnvironment: ["SECRET"],
-    allowExternalNetwork: true,
+    networkAccess: "external",
   };
   const scenario = parseProcessScenario({
     approved: true,

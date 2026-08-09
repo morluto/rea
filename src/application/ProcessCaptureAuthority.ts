@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 
 import type {
-  ProcessExecutionPolicy,
+  EnabledProcessExecutionPolicy,
   ProcessScenario,
 } from "../domain/processCapture.js";
 import {
@@ -16,7 +16,7 @@ const isWithin = (candidate: string, root: string): boolean =>
 
 export const assertRealPathAuthority = async (
   scenario: ProcessScenario,
-  policy: ProcessExecutionPolicy,
+  policy: EnabledProcessExecutionPolicy,
 ): Promise<void> => {
   const executable = await realpath(scenario.executable);
   const executableRoots = await canonicalizeConfiguredRoots(

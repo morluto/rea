@@ -13,30 +13,25 @@ export interface InventoryPageInput {
   readonly edgeLimit: number;
 }
 
-/** Per-request authority combined with operator-owned native mount policy. */
-export interface ArtifactNativeMountPolicy {
-  readonly nativeMountApproved: boolean;
-  readonly nativeMountEnabled: boolean;
-}
+/** Resolved native mount authority admitted to the artifact reader. */
+export type ArtifactNativeMountPolicy =
+  | { readonly status: "disabled" }
+  | { readonly status: "approved" };
 
 export const NATIVE_MOUNT_DISABLED: ArtifactNativeMountPolicy = {
-  nativeMountApproved: false,
-  nativeMountEnabled: false,
+  status: "disabled",
 };
 
-/** Explicit caller approval bounded by operator-owned integrity policy. */
-export interface ArtifactIntegrityPolicy {
-  readonly mode: "fail" | "record-and-continue";
-  readonly approved: boolean;
-  readonly enabled: boolean;
-  readonly maxMismatches: number;
-}
+/** Resolved integrity behavior admitted to the artifact scanner. */
+export type ArtifactIntegrityPolicy =
+  | { readonly mode: "fail" }
+  | {
+      readonly mode: "record-and-continue";
+      readonly maxMismatches: number;
+    };
 
 export const STRICT_INTEGRITY_POLICY: ArtifactIntegrityPolicy = {
   mode: "fail",
-  approved: false,
-  enabled: false,
-  maxMismatches: 1,
 };
 
 /** Options shared by artifact inventory scans. */

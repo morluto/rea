@@ -218,7 +218,7 @@ const executeStep = async (input: {
       const remaining = scenario.limits.max_duration_ms - elapsed;
       if (remaining <= 0) throw new Error("Scenario duration limit reached");
       await session.perform(action, remaining, signal);
-    } catch (cause) {
+    } catch (cause: unknown) {
       status = requestCancelled() ? "cancelled" : "failed";
       error = session.redactError(cause);
     }
@@ -376,7 +376,7 @@ export class PlaywrightBrowserScenarioProvider
   ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
     try {
       return ok(await runScenario(this.factory, scenario, options));
-    } catch (cause) {
+    } catch (cause: unknown) {
       if (cause instanceof AnalysisError) return err(cause);
       return err(
         new ProviderAdapterError(

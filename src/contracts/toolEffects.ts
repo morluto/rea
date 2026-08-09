@@ -194,6 +194,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     writesFilesystem: true,
     launchesProcess: true,
+    accessesNetwork: true,
     idempotent: false,
   }),
   compare_process_captures: sessionEvidence,

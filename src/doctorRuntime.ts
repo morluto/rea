@@ -71,7 +71,7 @@ const inspectJavaScriptReplay = async (): Promise<DoctorCheck> => {
       detail: config.error.message,
       remediation: "Fix the reported REA_JAVASCRIPT_REPLAY_* configuration.",
     };
-  if (!config.value.javascriptReplayPolicy.enabled)
+  if (config.value.javascriptReplayPolicy.status === "disabled")
     return {
       name: "javascript-replay",
       ok: true,

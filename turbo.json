@@ -7,6 +7,7 @@
         "package.json",
         "package-lock.json",
         "scripts/check-dependency-install.mjs",
+        "scripts/clean-build-output.mjs",
         "scripts/generate-package-metadata.mjs",
         "scripts/lib/generated-file.mjs",
         "skills/reverse-engineer-anything/SKILL.md",

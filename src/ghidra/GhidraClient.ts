@@ -492,7 +492,7 @@ export class GhidraClient {
   }
 
   #interruptionFailure(deadline: ProviderStartupDeadline): GhidraSessionError {
-    return deadline.cancelled
+    return deadline.interruption === "cancelled"
       ? this.#failure("cancelled", "Ghidra startup was cancelled")
       : this.#failure("timeout", "Ghidra startup deadline elapsed", undefined, {
           timeoutMs: deadline.timeoutMs,

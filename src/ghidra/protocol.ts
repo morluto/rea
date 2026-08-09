@@ -3,46 +3,23 @@ import { z } from "zod";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-const responseSchema = z
-  .object({
+const responseSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
     id: z.number().int().positive(),
-    ok: z.boolean(),
-    result: jsonValueSchema.optional(),
+    ok: z.literal(true),
+    result: jsonValueSchema,
+  }),
+  z.strictObject({
+    id: z.number().int().positive(),
+    ok: z.literal(false),
     error: z
       .object({
         code: z.string().min(1).max(128),
         message: z.string().min(1).max(4_096),
       })
-      .strict()
-      .optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.ok && value.result === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["result"],
-        message: "Successful Ghidra response requires a result",
-      });
-    if (!value.ok && value.error === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["error"],
-        message: "Failed Ghidra response requires an error",
-      });
-    if (!value.ok && value.result !== undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["result"],
-        message: "Failed Ghidra response cannot include a result",
-      });
-    if (value.ok && value.error !== undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["error"],
-        message: "Successful Ghidra response cannot include an error",
-      });
-  });
+      .strict(),
+  }),
+]);
 
 /** Validated response emitted by REA's packaged Ghidra script. */
 export type GhidraBridgeResponse = z.infer<typeof responseSchema>;
@@ -80,10 +57,5 @@ export const ghidraResponseResult = (
   response: GhidraBridgeResponse,
 ): Result<JsonValue, GhidraRemoteError> =>
   response.ok
-    ? ok(response.result ?? null)
-    : err(
-        new GhidraRemoteError(
-          response.error?.code ?? "bridge_error",
-          response.error?.message ?? "Ghidra bridge request failed",
-        ),
-      );
+    ? ok(response.result)
+    : err(new GhidraRemoteError(response.error.code, response.error.message));

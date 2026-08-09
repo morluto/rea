@@ -1,12 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareManagedMembersEvidenceValidated } from "../../application/ManagedMemberComparisonService.js";
-import { compareManagedMembersReferenceInputSchema } from "../../contracts/managedWorkflowToolContracts.js";
 import { managedMemberComparisonResultSchema } from "../../domain/managedMemberComparison.js";
 import { logToolExecution } from "../toolLogging.js";
-import { toCallToolResult } from "../toolResult.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
+import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import { recordManagedSources, resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
@@ -22,16 +20,9 @@ export const registerCompareManagedMembers = (
     compareContract.name,
     toolRegistrationOptions(compareContract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareManagedMembersReferenceInputSchema,
-        input,
-        compareContract.name,
-      );
-      if (!parsedInput.ok)
-        return toCallToolResult(parsedInput, compareContract);
       const resolved = resolveManagedEvidence(options.session, [
-        parsedInput.value.left_evidence_id,
-        parsedInput.value.right_evidence_id,
+        input.left_evidence_id,
+        input.right_evidence_id,
       ]);
       if (!resolved.ok) return toCallToolResult(resolved, compareContract);
       const [left, right] = resolved.value;
@@ -41,7 +32,7 @@ export const registerCompareManagedMembers = (
         left_evidence_id: _leftEvidenceId,
         right_evidence_id: _rightEvidenceId,
         ...referencedInput
-      } = parsedInput.value;
+      } = input;
       const parsed = { ...referencedInput, left, right };
       const result = await logToolExecution(
         options.logger,

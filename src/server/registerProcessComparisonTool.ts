@@ -1,26 +1,22 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import {
-  processComparisonInputSchema,
-  SESSION_TOOL_CONTRACTS,
-} from "../contracts/toolContracts.js";
-import { createEvidence, type EvidenceLocation } from "../domain/evidence.js";
+import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { EvidenceIntegrityError } from "../domain/errors.js";
+import { createEvidence, type EvidenceLocation } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
 } from "../domain/processCapture.js";
-import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
+import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { err } from "../domain/result.js";
-import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
-import { toCallToolResult } from "./toolResult.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
 import { resolveSessionEvidenceIds } from "./sessionEvidence.js";
+import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 const PROCESS_CAPTURE_EVIDENCE = {
   operation: "capture_process_scenario",
@@ -43,22 +39,15 @@ export const registerProcessComparisonTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsedInput = safeParseToolInput(
-        processComparisonInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
       const leftRecord = resolveSessionEvidenceIds(
         session,
-        [parsed.left_evidence_id],
+        [input.left_evidence_id],
         PROCESS_CAPTURE_EVIDENCE,
       );
       if (!leftRecord.ok) return toCallToolResult(leftRecord, contract);
       const rightRecord = resolveSessionEvidenceIds(
         session,
-        [parsed.right_evidence_id],
+        [input.right_evidence_id],
         PROCESS_CAPTURE_EVIDENCE,
       );
       if (!rightRecord.ok) return toCallToolResult(rightRecord, contract);
@@ -74,12 +63,12 @@ export const registerProcessComparisonTool = (
         );
         const computed = await runDerivedOperation(context, contract.name, () =>
           compareProcessCaptures(leftCapture, rightCapture, {
-            ...(parsed.max_capture_age_ms === undefined
+            ...(input.max_capture_age_ms === undefined
               ? {}
-              : { maxCaptureAgeMs: parsed.max_capture_age_ms }),
-            ...(parsed.trace_spec === undefined
+              : { maxCaptureAgeMs: input.max_capture_age_ms }),
+            ...(input.trace_spec === undefined
               ? {}
-              : { traceSpecification: parsed.trace_spec }),
+              : { traceSpecification: input.trace_spec }),
             now,
           }),
         );
@@ -99,18 +88,18 @@ export const registerProcessComparisonTool = (
       }
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
         predicateType:
-          parsed.trace_spec === undefined
+          input.trace_spec === undefined
             ? "rea.process-comparison/v3"
             : "rea.process-comparison/v4",
         operation: contract.name,
         parameters: {
-          left_evidence_id: parsed.left_evidence_id,
-          right_evidence_id: parsed.right_evidence_id,
+          left_evidence_id: input.left_evidence_id,
+          right_evidence_id: input.right_evidence_id,
           left_normalization: leftCapture.normalization,
           right_normalization: rightCapture.normalization,
-          ...(parsed.trace_spec === undefined
+          ...(input.trace_spec === undefined
             ? {}
-            : { trace_spec: jsonValueSchema.parse(parsed.trace_spec) }),
+            : { trace_spec: jsonValueSchema.parse(input.trace_spec) }),
         },
         result: jsonValueSchema.parse(comparison),
         confidence: "derived",
@@ -120,13 +109,13 @@ export const registerProcessComparisonTool = (
           leftRecord.value[0]?.locations,
           rightRecord.value[0]?.locations,
         ),
-        evidenceLinks: [parsed.left_evidence_id, parsed.right_evidence_id],
+        evidenceLinks: [input.left_evidence_id, input.right_evidence_id],
       });
       return toCallToolResult(
         recordDerivedEvidence(
           session,
           evidence,
-          comparisonUnknownInput(parsed, comparison),
+          comparisonUnknownInput(input, comparison),
         ),
         contract,
       );

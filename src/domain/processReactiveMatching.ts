@@ -10,13 +10,14 @@ import {
 import type { ProcessReactiveSnapshot } from "./processReactiveRuntime.js";
 
 /** Internal bounded trigger-match result used by the pure reducer. */
-export interface ProcessReactiveTriggerMatch {
-  readonly matched: boolean;
+export type ProcessReactiveTriggerMatch = {
   readonly eventIds: readonly string[];
   readonly consumeIds: readonly string[];
   readonly lastOrder: number;
-  readonly overflow: boolean;
-}
+} & (
+  | { readonly matched: true; readonly overflow: false }
+  | { readonly matched: false; readonly overflow: boolean }
+);
 
 interface EvaluationBudget {
   remaining: number;
@@ -203,13 +204,20 @@ const matchTerminalText = (
 
 const mergeMatches = (
   matches: readonly ProcessReactiveTriggerMatch[],
-): ProcessReactiveTriggerMatch => ({
-  matched: matches.every(({ matched }) => matched),
-  eventIds: [...new Set(matches.flatMap(({ eventIds }) => eventIds))],
-  consumeIds: [...new Set(matches.flatMap(({ consumeIds }) => consumeIds))],
-  lastOrder: Math.max(-1, ...matches.map(({ lastOrder }) => lastOrder)),
-  overflow: matches.some(({ overflow }) => overflow),
-});
+): ProcessReactiveTriggerMatch => {
+  const base = {
+    eventIds: [...new Set(matches.flatMap(({ eventIds }) => eventIds))],
+    consumeIds: [...new Set(matches.flatMap(({ consumeIds }) => consumeIds))],
+    lastOrder: Math.max(-1, ...matches.map(({ lastOrder }) => lastOrder)),
+  };
+  return matches.every(({ matched }) => matched)
+    ? { ...base, matched: true, overflow: false }
+    : {
+        ...base,
+        matched: false,
+        overflow: matches.some(({ overflow }) => overflow),
+      };
+};
 
 const matchEarliestPrefix = (
   trigger: ProcessReactiveTrigger,

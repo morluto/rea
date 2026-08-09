@@ -151,11 +151,11 @@ const inventory = async (targetValue: BinaryTarget) => {
 
 const target = (
   path: string,
-  format: BinaryTarget["format"] | "directory",
+  format: Extract<BinaryTarget, { kind: "archive" }>["format"] | "directory",
 ): BinaryTarget => ({
   path,
   sourcePath: path,
   sha256: "0".repeat(64),
-  kind: format === "directory" ? "executable" : "archive",
-  format: format === "directory" ? "mach-o" : format,
+  kind: "archive",
+  format: format === "directory" ? "asar" : format,
 });

@@ -114,46 +114,61 @@ const determinismSchema = z
   })
   .strict();
 
+const controlledReplayInputShape = {
+  left: replaySideSchema,
+  right: replaySideSchema.optional(),
+  cases: z.array(explicitCaseSchema).max(128).default([]),
+  generator: generatorSchema.optional(),
+  determinism: determinismSchema.default({
+    clock_iso: "2000-01-01T00:00:00.000Z",
+    random_seed: 0,
+    locale: "en-US",
+    timezone: "UTC",
+    platform: "linux",
+  }),
+  limits: replayLimitsSchema.default({
+    wall_time_ms: 3_000,
+    memory_bytes: 128 * 1024 * 1024,
+    tasks: 8,
+    cpu_quota_percent: 50,
+    tmpfs_bytes: 16 * 1024 * 1024,
+    module_bytes: 4 * 1024 * 1024,
+    input_bytes: 256 * 1024,
+    protocol_bytes: 16 * 1024 * 1024,
+    output_bytes: 512 * 1024,
+    stderr_bytes: 32 * 1024,
+    result_depth: 16,
+    result_nodes: 10_000,
+  }),
+  reproducer_export: z
+    .strictObject({
+      path: absolutePathSchema,
+      approved: z.literal(true),
+      include_sources: z.boolean().default(false),
+    })
+    .optional(),
+} as const;
+
+/** Parse a replay request that can only construct a plan. */
+export const controlledReplayPlanInputSchema = z.strictObject({
+  ...controlledReplayInputShape,
+  mode: z.literal("plan"),
+});
+
+/** Parse a replay request carrying literal approval for one exact plan. */
+export const controlledReplayExecutionInputSchema = z.strictObject({
+  ...controlledReplayInputShape,
+  mode: z.literal("execute"),
+  approved: z.literal(true),
+  plan_digest: digestSchema,
+});
+
+/** Parse a controlled replay request into its legal plan or execution state. */
 export const controlledReplayInputSchema = z
-  .object({
-    mode: z.enum(["plan", "execute"]),
-    left: replaySideSchema,
-    right: replaySideSchema.optional(),
-    cases: z.array(explicitCaseSchema).max(128).default([]),
-    generator: generatorSchema.optional(),
-    determinism: determinismSchema.default({
-      clock_iso: "2000-01-01T00:00:00.000Z",
-      random_seed: 0,
-      locale: "en-US",
-      timezone: "UTC",
-      platform: "linux",
-    }),
-    limits: replayLimitsSchema.default({
-      wall_time_ms: 3_000,
-      memory_bytes: 128 * 1024 * 1024,
-      tasks: 8,
-      cpu_quota_percent: 50,
-      tmpfs_bytes: 16 * 1024 * 1024,
-      module_bytes: 4 * 1024 * 1024,
-      input_bytes: 256 * 1024,
-      protocol_bytes: 16 * 1024 * 1024,
-      output_bytes: 512 * 1024,
-      stderr_bytes: 32 * 1024,
-      result_depth: 16,
-      result_nodes: 10_000,
-    }),
-    approved: z.boolean().default(false),
-    plan_digest: digestSchema.optional(),
-    reproducer_export: z
-      .object({
-        path: absolutePathSchema,
-        approved: z.boolean(),
-        include_sources: z.boolean().default(false),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict()
+  .discriminatedUnion("mode", [
+    controlledReplayPlanInputSchema,
+    controlledReplayExecutionInputSchema,
+  ])
   .superRefine((value, context) => {
     if (value.cases.length === 0 && value.generator === undefined)
       context.addIssue({
@@ -166,15 +181,6 @@ export const controlledReplayInputSchema = z
         code: "custom",
         path: ["generator", "count"],
         message: "Explicit and generated replay cases must total at most 128",
-      });
-    if (
-      value.mode === "execute" &&
-      (value.approved !== true || value.plan_digest === undefined)
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["approved"],
-        message: "Execution requires literal approval and a plan digest",
       });
   });
 
@@ -216,7 +222,7 @@ const replayPlanSchema = z
     filesystem: z
       .object({
         host_writes: z.literal(false),
-        private_tmpfs_bytes: z.number().int(),
+        private_tmpfs_bytes: z.number().int().nonnegative(),
       })
       .strict(),
     runtime: z
@@ -273,34 +279,45 @@ const replayPlanSchema = z
   })
   .strict();
 
-const replayOutcomeSchema = z
+const replayOutcomeFacts = {
+  case_id: z.string(),
+  input_sha256: digestSchema,
+} as const;
+const replayExceptionSchema = z
   .object({
-    case_id: z.string(),
-    outcome: z.enum([
-      "return",
-      "exception",
-      "serialization_error",
-      "denied",
-      "timeout",
-      "oom",
-      "crash",
-      "cancelled",
-      "protocol_error",
-    ]),
-    value: z.json().optional(),
-    exception: z
-      .object({
-        name: z.string(),
-        message: z.string(),
-        stack: z.string().nullable(),
-      })
-      .strict()
-      .optional(),
-    input_sha256: digestSchema,
-    output_sha256: digestSchema.nullable(),
-    truncated: z.boolean(),
+    name: z.string(),
+    message: z.string(),
+    stack: z.string().nullable(),
   })
   .strict();
+const replayOutcomeSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    ...replayOutcomeFacts,
+    outcome: z.literal("return"),
+    value: z.json(),
+    output_sha256: digestSchema,
+    truncated: z.literal(false),
+  }),
+  z.strictObject({
+    ...replayOutcomeFacts,
+    outcome: z.enum(["exception", "serialization_error", "denied"]),
+    exception: z.object(replayExceptionSchema.shape).strict(),
+    output_sha256: digestSchema,
+    truncated: z.literal(false),
+  }),
+  z.strictObject({
+    ...replayOutcomeFacts,
+    outcome: z.enum(["timeout", "oom", "crash", "cancelled"]),
+    output_sha256: z.null(),
+    truncated: z.literal(false),
+  }),
+  z.strictObject({
+    ...replayOutcomeFacts,
+    outcome: z.literal("protocol_error"),
+    output_sha256: z.null(),
+    truncated: z.literal(true),
+  }),
+]);
 
 export const replayExecutionResultSchema = z
   .object({
@@ -360,31 +377,37 @@ export const replayEvidenceSchema = evidenceEnvelopeSchema
   .omit({ normalized_result: true })
   .extend({ normalized_result: replayExecutionResultSchema });
 
-export const controlledReplayOutputSchema = z
-  .object({
-    phase: z.enum(["plan", "execute"]),
-    plan: replayPlanSchema.nullable(),
-    source_evidence: z.array(replayEvidenceSchema),
-    evidence: replayEvidenceSchema.nullable(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (
-      (value.phase === "plan" &&
-        (value.plan === null ||
-          value.evidence !== null ||
-          value.source_evidence.length !== 0)) ||
-      (value.phase === "execute" &&
-        (value.plan !== null ||
-          value.evidence === null ||
-          value.source_evidence.length === 0))
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Replay output phase does not match its payload",
-      });
-  });
+/** A replay plan result with no claimed runtime observation. */
+export const controlledReplayPlanOutputSchema = z.strictObject({
+  phase: z.literal("plan"),
+  plan: replayPlanSchema,
+  source_evidence: z
+    .array(replayEvidenceSchema)
+    .length(0)
+    .brand<"NoReplayEvidence">(),
+  evidence: z.null(),
+});
+
+/** An executed replay result with its required source and aggregate Evidence. */
+export const controlledReplayExecutionOutputSchema = z.strictObject({
+  phase: z.literal("execute"),
+  plan: z.null(),
+  source_evidence: z.array(replayEvidenceSchema).min(1),
+  evidence: replayEvidenceSchema,
+});
+
+/** Parse replay output into its legal plan or execution state. */
+export const controlledReplayOutputSchema = z.discriminatedUnion("phase", [
+  controlledReplayPlanOutputSchema,
+  controlledReplayExecutionOutputSchema,
+]);
 
 export type ControlledReplayInput = z.infer<typeof controlledReplayInputSchema>;
+export type ControlledReplayExecutionInput = z.infer<
+  typeof controlledReplayExecutionInputSchema
+>;
+export type ControlledReplayExecutionOutput = z.infer<
+  typeof controlledReplayExecutionOutputSchema
+>;
 export type ReplayPlan = z.infer<typeof replayPlanSchema>;
 export type ReplayExecutionResult = z.infer<typeof replayExecutionResultSchema>;

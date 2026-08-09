@@ -420,6 +420,11 @@ export const prepareProcessCapture = async (
   readonly home: string;
   readonly before: SnapshotResult;
 }> => {
+  if (policy.status === "disabled")
+    throw new ProcessCaptureError("process capture is disabled", {
+      userCategory: "permission_required",
+      userMessage: processPolicyMessage("process capture is disabled"),
+    });
   const decision = authorizeProcessScenario(scenario, policy);
   if (!decision.allowed)
     throw new ProcessCaptureError(decision.reason, {

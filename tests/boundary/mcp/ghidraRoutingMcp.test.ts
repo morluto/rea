@@ -22,7 +22,7 @@ describe("Ghidra MCP capability routing", () => {
       const availableNames = (await mcp.listTools()).tools.map(
         ({ name }) => name,
       );
-      expect(availableNames).not.toContain("set_comment");
+      expect(availableNames).toContain("set_comment");
       expect(calls).not.toContain("set_comment");
 
       const status = await mcp.callTool({

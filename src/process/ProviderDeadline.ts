@@ -34,8 +34,7 @@ export class ProviderStartupDeadline {
   readonly #externalSignal: AbortSignal | undefined;
   readonly #onExternalAbort: () => void;
   #timer: NodeJS.Timeout | undefined;
-  #timedOut = false;
-  #cancelled = false;
+  #interruption: "cancelled" | "timeout" | undefined;
 
   constructor(
     readonly timeoutMs: number,
@@ -48,13 +47,13 @@ export class ProviderStartupDeadline {
     this.#onExternalAbort = () => {
       if (this.#controller.signal.aborted) return;
       if (Date.now() >= this.#deadlineAt) {
-        this.#timedOut = true;
+        this.#interruption = "timeout";
         this.#abort(
           new DOMException("Provider startup deadline elapsed", "TimeoutError"),
         );
         return;
       }
-      this.#cancelled = true;
+      this.#interruption = "cancelled";
       this.#abort(signal?.reason);
     };
     if (signal?.aborted === true) {
@@ -64,7 +63,7 @@ export class ProviderStartupDeadline {
     signal?.addEventListener("abort", this.#onExternalAbort, { once: true });
     this.#timer = setTimeout(() => {
       if (this.#controller.signal.aborted) return;
-      this.#timedOut = true;
+      this.#interruption = "timeout";
       this.#abort(
         new DOMException("Provider startup deadline elapsed", "TimeoutError"),
       );
@@ -76,15 +75,11 @@ export class ProviderStartupDeadline {
     return this.#controller.signal;
   }
 
-  /** True only when the external caller signal initiated cancellation. */
-  get cancelled(): boolean {
-    return this.#cancelled;
-  }
-
-  /** True when the absolute startup deadline has elapsed. */
-  get timedOut(): boolean {
+  /** First control path that interrupted startup, if any. */
+  get interruption(): "cancelled" | "timeout" | undefined {
     return (
-      this.#timedOut || (!this.#cancelled && Date.now() >= this.#deadlineAt)
+      this.#interruption ??
+      (Date.now() >= this.#deadlineAt ? "timeout" : undefined)
     );
   }
 

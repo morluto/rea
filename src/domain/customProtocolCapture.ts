@@ -166,8 +166,8 @@ export function failedAuthEvents(
 export function authFlowDuration(
   events: readonly AuthFlowEvent[],
 ): number | null {
-  if (events.length === 0) return null;
-  const first = events[0]!;
-  const last = events[events.length - 1]!;
+  const first = events.at(0);
+  const last = events.at(-1);
+  if (first === undefined || last === undefined) return null;
   return last.at_ms - first.at_ms;
 }

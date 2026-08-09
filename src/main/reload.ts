@@ -7,24 +7,14 @@ import type { RuntimeDependencies } from "./types.js";
 import type { RuntimeState } from "./state.js";
 import { MCP_PERMISSION_RELOAD_FAILED } from "./messages.js";
 
-type McpServerInstance = ReturnType<
-  typeof import("../server/createServer.js").createServer
->;
-
 export const registerConfigReload = (input: {
   readonly dependencies: RuntimeDependencies;
   readonly permissionAuthority: PermissionAuthority;
   readonly runtimeState: RuntimeState;
-  readonly liveServers: Set<McpServerInstance>;
   readonly serverLogger: Logger;
 }): (() => void) => {
-  const {
-    dependencies,
-    permissionAuthority,
-    runtimeState,
-    liveServers,
-    serverLogger,
-  } = input;
+  const { dependencies, permissionAuthority, runtimeState, serverLogger } =
+    input;
   let reloadQueue = Promise.resolve();
   return (
     dependencies.registerReload?.(() => {
@@ -66,10 +56,6 @@ export const registerConfigReload = (input: {
           }
           runtimeState.currentConfig = refreshed.value;
           Object.assign(
-            runtimeState.processPolicy,
-            refreshed.value.processExecutionPolicy,
-          );
-          Object.assign(
             runtimeState.evidencePolicy,
             refreshed.value.evidenceFilePolicy,
           );
@@ -82,15 +68,6 @@ export const registerConfigReload = (input: {
             runtimeState.investigationRoots.length,
             ...refreshed.value.investigationInputRoots,
           );
-          Object.assign(
-            runtimeState.javascriptReplayPolicy,
-            refreshed.value.javascriptReplayPolicy,
-          );
-          Object.assign(
-            runtimeState.managedRuntimePolicy,
-            refreshed.value.managedRuntimePolicy,
-          );
-          for (const server of liveServers) server.sendToolListChanged();
         })
         .catch(() => {
           serverLogger.error(MCP_PERMISSION_RELOAD_FAILED);

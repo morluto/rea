@@ -75,9 +75,9 @@ export const hopperLoaderArgsForTarget = (
   target: BinaryTarget,
 ): Result<readonly string[], ProviderAdapterError> => {
   if (target.kind === "database") return ok([]);
-  const architecture = target.architecture;
-  if (architecture === undefined)
+  if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
+  const architecture = target.architecture;
   const flag = hopperArchitectureFlag(architecture);
   switch (target.format) {
     case "mach-o":
@@ -90,10 +90,6 @@ export const hopperLoaderArgsForTarget = (
       return ok(["-l", "ELF", flag]);
     case "pe":
       return ok(["-l", "WinPE", flag]);
-    default:
-      return err(
-        new ProviderAdapterError("hopper", "resolve_analysis_profile"),
-      );
   }
 };
 

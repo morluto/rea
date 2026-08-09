@@ -29,36 +29,26 @@ describe("runtime configuration", () => {
         maxDepth: 32,
         maxPathBytes: 4_096,
       });
-      expect(result.value.browserObservationEnabled).toBe(false);
-      expect(result.value.browserCdpEndpoints).toEqual([]);
-      expect(result.value.browserAllowedOrigins).toEqual([]);
+      expect(result.value.browserObservationPolicy).toEqual({
+        status: "disabled",
+      });
       expect(result.value.browserScenarioPolicy).toEqual({
-        enabled: false,
-        executableRoots: [],
-        cdpEndpoints: [],
-        allowedOrigins: [],
-        allowedEnvironment: [],
+        status: "disabled",
       });
-      expect(result.value.electronObservationEnabled).toBe(false);
-      expect(result.value.electronCdpEndpoints).toEqual([]);
-      expect(result.value.electronFileRoots).toEqual([]);
+      expect(result.value.electronObservationPolicy).toEqual({
+        status: "disabled",
+      });
       expect(result.value.electronAutomationPolicy).toEqual({
-        enabled: false,
-        executableRoots: [],
-        applicationRoots: [],
+        status: "disabled",
       });
-      expect(result.value.v8InspectorObservationEnabled).toBe(false);
-      expect(result.value.v8InspectorEndpoints).toEqual([]);
-      expect(result.value.v8InspectorFileRoots).toEqual([]);
-      expect(result.value.v8InspectorAllowedOrigins).toEqual([]);
-      expect(result.value.javascriptReplayPolicy).toMatchObject({
-        enabled: false,
-        roots: [],
+      expect(result.value.v8InspectorObservationPolicy).toEqual({
+        status: "disabled",
       });
-      expect(result.value.managedRuntimePolicy).toMatchObject({
-        enabled: false,
-        roots: [],
-        executablePath: "/usr/bin/dotnet",
+      expect(result.value.javascriptReplayPolicy).toEqual({
+        status: "disabled",
+      });
+      expect(result.value.managedRuntimePolicy).toEqual({
+        status: "disabled",
       });
     }
   });
@@ -161,7 +151,7 @@ describe("active Electron permission configuration", () => {
     });
     if (!result.ok) throw result.error;
     expect(result.value.electronAutomationPolicy).toEqual({
-      enabled: true,
+      status: "enabled",
       executableRoots: ["/opt/electron"],
       applicationRoots: ["/tmp/apps"],
     });
@@ -204,6 +194,30 @@ describe("active Electron permission configuration", () => {
       }).ok,
     ).toBe(false);
   });
+
+  it("requires both root sets only for enabled Electron automation", () => {
+    expect(
+      parseConfig({
+        REA_ELECTRON_AUTOMATE_ENABLED: "true",
+        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseConfig({
+        REA_ELECTRON_AUTOMATE_ENABLED: "true",
+        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseConfig({
+        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/ignored/bin"]',
+        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/ignored/app"]',
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { electronAutomationPolicy: { status: "disabled" } },
+    });
+  });
 });
 
 describe("runtime permission configuration", () => {
@@ -245,6 +259,11 @@ describe("runtime permission configuration", () => {
       REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
     });
     if (!result.ok) throw result.error;
+    expect(result.value.javascriptReplayPolicy).toMatchObject({
+      status: "enabled",
+      roots: ["/tmp/extracted-modules"],
+      nodePath: "/opt/node/bin/node",
+    });
     expect(result.value.permissionCeilings).toContainEqual({
       capability: "javascript_replay",
       roots: ["/tmp/extracted-modules"],
@@ -267,6 +286,24 @@ describe("runtime permission configuration", () => {
     );
   });
 
+  it("requires a source root when JavaScript replay is enabled", () => {
+    expect(
+      parseConfig({ REA_JAVASCRIPT_REPLAY_ENABLED: "true" }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("does not retain dormant JavaScript replay authority", () => {
+    const result = parseConfig({
+      REA_JAVASCRIPT_REPLAY_ENABLED: "false",
+      REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["/tmp/extracted-modules"]',
+      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.javascriptReplayPolicy).toEqual({
+      status: "disabled",
+    });
+  });
+
   it("rejects relative JavaScript replay roots and executables", () => {
     expect(
       parseConfig({ REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["relative/module"]' })
@@ -287,7 +324,7 @@ describe("runtime target configuration", () => {
     });
     if (!result.ok) throw result.error;
     expect(result.value.managedRuntimePolicy).toEqual({
-      enabled: true,
+      status: "enabled",
       roots: ["/tmp/managed-targets"],
       executablePath: "/opt/dotnet/dotnet",
     });
@@ -318,6 +355,23 @@ describe("runtime target configuration", () => {
     ).toBe(false);
   });
 
+  it("requires a non-empty root set only for enabled managed runtime correlation", () => {
+    const enabled = parseConfig({ REA_MANAGED_RUNTIME_ENABLED: "true" });
+    expect(enabled.ok).toBe(false);
+    if (!enabled.ok)
+      expect(enabled.error.message).toContain("at least one absolute root");
+
+    expect(
+      parseConfig({
+        REA_MANAGED_RUNTIME_ROOTS_JSON: '["/ignored/while-disabled"]',
+        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/ignored/dotnet",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { managedRuntimePolicy: { status: "disabled" } },
+    });
+  });
+
   it("rejects relative Electron file roots", () => {
     expect(
       parseConfig({ REA_ELECTRON_FILE_ROOTS_JSON: '["relative/app"]' }).ok,
@@ -344,11 +398,7 @@ describe("runtime target configuration", () => {
         logLevel: "info",
         artifactNativeMountEnabled: false,
         processExecutionPolicy: {
-          enabled: false,
-          executableRoots: [],
-          workingRoots: [],
-          allowedEnvironment: [],
-          allowExternalNetwork: false,
+          status: "disabled",
         },
         evidenceFilePolicy: {
           roots: [],

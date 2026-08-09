@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const traceLiteralInputSchema = z.object({
+const traceLiteralInputSchema = z.strictObject({
   query: z.string().min(1),
   case_sensitive: z.boolean().default(false),
   limit: z.number().int().min(1).max(100).default(20),
@@ -13,27 +13,27 @@ const traceLiteralInputSchema = z.object({
 
 /** Input schemas shared by MCP registration and enhanced application dispatch. */
 export const enhancedInputSchemas = {
-  swift_classes: z.object({ pattern: z.string().default("") }),
-  get_objc_classes: z.object({ pattern: z.string().default("") }),
-  get_objc_protocols: z.object({}),
-  batch_decompile: z.object({
+  swift_classes: z.strictObject({ pattern: z.string().default("") }),
+  get_objc_classes: z.strictObject({ pattern: z.string().default("") }),
+  get_objc_protocols: z.strictObject({}),
+  batch_decompile: z.strictObject({
     addresses: z
       .array(z.string().describe("A provider-normalized procedure address"))
       .max(20)
       .default([]),
   }),
-  get_call_graph: z.object({
+  get_call_graph: z.strictObject({
     address: z.string().describe("A provider-normalized procedure address"),
     direction: z.enum(["forward", "backward"]).default("forward"),
     depth: z.number().int().min(1).max(5).default(2),
   }),
-  analyze_swift_types: z.object({}),
-  find_xrefs_to_name: z.object({ name: z.string() }),
-  binary_overview: z.object({
+  analyze_swift_types: z.strictObject({}),
+  find_xrefs_to_name: z.strictObject({ name: z.string() }),
+  binary_overview: z.strictObject({
     detail: z.enum(["concise", "detailed"]).default("concise"),
     limit: z.number().int().min(1).max(50).default(10),
   }),
-  analyze_function: z.object({
+  analyze_function: z.strictObject({
     procedure: z.string().describe("A procedure name or address"),
     include_assembly: z.boolean().default(false),
     limit: z.number().int().min(1).max(500).default(100),
@@ -42,7 +42,7 @@ export const enhancedInputSchemas = {
     pseudocode_offset: z.number().int().min(0).default(0),
     assembly_offset: z.number().int().min(0).default(0),
     collection_offset: z
-      .object({
+      .strictObject({
         comments: z.number().int().min(0).default(0),
         callers: z.number().int().min(0).default(0),
         callees: z.number().int().min(0).default(0),
@@ -63,7 +63,7 @@ export const enhancedInputSchemas = {
         basic_blocks: 0,
       }),
   }),
-  inspect_native_api: z.object({
+  inspect_native_api: z.strictObject({
     procedure: z.string().describe("A procedure name or address"),
     max_pseudocode_chars: z.number().int().min(1).max(100_000).default(20_000),
     max_instructions: z.number().int().min(1).max(5_000).default(500),
@@ -76,7 +76,7 @@ export const enhancedInputSchemas = {
   }),
   trace_feature: traceLiteralInputSchema,
   find_code_for_string: traceLiteralInputSchema,
-  trace_call_path: z.object({
+  trace_call_path: z.strictObject({
     start: z.string().describe("A provider-normalized procedure address"),
     goal: z
       .string()
@@ -94,20 +94,3 @@ export const enhancedInputSchemas = {
 } as const;
 
 export type EnhancedToolName = keyof typeof enhancedInputSchemas;
-
-/** Runtime parser for dispatching only the closed enhanced names. */
-export const enhancedToolNameSchema = z.enum([
-  "swift_classes",
-  "get_objc_classes",
-  "get_objc_protocols",
-  "batch_decompile",
-  "get_call_graph",
-  "analyze_swift_types",
-  "find_xrefs_to_name",
-  "binary_overview",
-  "analyze_function",
-  "inspect_native_api",
-  "trace_feature",
-  "find_code_for_string",
-  "trace_call_path",
-]);

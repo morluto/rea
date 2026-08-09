@@ -2,18 +2,18 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { z } from "zod";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
+import { buildCapabilityInventory } from "../application/CapabilityInventory.js";
 import {
   binarySessionInputSchema,
   SESSION_TOOL_CONTRACTS,
 } from "../contracts/toolContracts.js";
-import { toCallToolResult } from "./toolResult.js";
+import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
-import { buildCapabilityInventory } from "../application/CapabilityInventory.js";
-import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
+import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { SessionAvailability } from "./sessionAvailabilityPolicy.js";
+import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { toCallToolResult } from "./toolResult.js";
 
 type BinarySessionInput = z.output<typeof binarySessionInputSchema>;
 type ToolAvailability = ReturnType<typeof buildCapabilityInventory>[number];
@@ -35,22 +35,9 @@ export const registerSessionStatusTool = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    (input) => {
-      const parsedInput = safeParseToolInput(
-        binarySessionInputSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
-      const parsed = parsedInput.value;
-      const client = server.server.getClientVersion();
-      const clientCapabilities = server.server.getClientCapabilities();
-      const clientFeatures: ClientFeatureAvailability = {
-        elicitation_form: clientCapabilities?.elicitation?.form !== undefined,
-        elicitation_url: clientCapabilities?.elicitation?.url !== undefined,
-        roots: clientCapabilities?.roots !== undefined,
-        sampling: clientCapabilities?.sampling !== undefined,
-      };
+    (input, context) => {
+      const { client, clientFeatures, protocolVersion } =
+        mcpClientMetadata(context);
       const status = session.status();
       const statusObject = jsonObjectSchema.parse(status);
       const toolAvailability = buildCapabilityInventory(
@@ -61,28 +48,24 @@ export const registerSessionStatusTool = (
       const serverIdentity = createServerIdentity({
         startedAt,
         expected: {
-          ...(parsed.expected_package_version === undefined
+          ...(input.expected_package_version === undefined
             ? {}
-            : { package_version: parsed.expected_package_version }),
-          ...(parsed.expected_catalog_digest === undefined
+            : { package_version: input.expected_package_version }),
+          ...(input.expected_catalog_digest === undefined
             ? {}
-            : { catalog_digest: parsed.expected_catalog_digest }),
-          ...(parsed.expected_server_path === undefined
+            : { catalog_digest: input.expected_catalog_digest }),
+          ...(input.expected_server_path === undefined
             ? {}
-            : { server_path: parsed.expected_server_path }),
+            : { server_path: input.expected_server_path }),
         },
         ...(client === undefined ? {} : { client }),
-        ...(server.server.getNegotiatedProtocolVersion() === undefined
-          ? {}
-          : {
-              protocolVersion: server.server.getNegotiatedProtocolVersion(),
-            }),
+        ...(protocolVersion === undefined ? {} : { protocolVersion }),
       });
       return toCallToolResult(
         {
           ok: true,
           value: projectSessionStatus({
-            input: parsed,
+            input: input,
             status: statusObject,
             toolAvailability,
             serverIdentity,

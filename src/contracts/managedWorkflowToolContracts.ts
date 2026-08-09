@@ -15,6 +15,7 @@ import {
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const managedEvidenceIdSchema = evidenceIdSchema.describe(
@@ -96,26 +97,40 @@ export const managedNativeVerificationReferenceInputSchema = z
     }
   });
 
-/** MCP references for projecting managed Evidence into an application graph. */
+const managedApplicationGraphReferenceFacts = {
+  limits: projectManagedApplicationGraphInputSchema.shape.limits,
+} as const;
+
+/** MCP references requiring at least one managed Evidence source. */
 export const managedApplicationGraphReferenceInputSchema = z
-  .strictObject({
-    managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
-    managed_members_evidence_id: managedEvidenceIdSchema.optional(),
-    managed_native_boundaries_evidence_id:
-      managedBoundaryEvidenceIdSchema.optional(),
-    limits: projectManagedApplicationGraphInputSchema.shape.limits,
-  })
+  .union([
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema,
+      managed_members_evidence_id: managedEvidenceIdSchema.optional(),
+      managed_native_boundaries_evidence_id:
+        managedBoundaryEvidenceIdSchema.optional(),
+    }),
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
+      managed_members_evidence_id: managedEvidenceIdSchema,
+      managed_native_boundaries_evidence_id:
+        managedBoundaryEvidenceIdSchema.optional(),
+    }),
+    z.strictObject({
+      ...managedApplicationGraphReferenceFacts,
+      managed_artifact_evidence_id: managedArtifactEvidenceIdSchema.optional(),
+      managed_members_evidence_id: managedEvidenceIdSchema.optional(),
+      managed_native_boundaries_evidence_id: managedBoundaryEvidenceIdSchema,
+    }),
+  ])
   .superRefine((input, context) => {
     const ids = [
       input.managed_artifact_evidence_id,
       input.managed_members_evidence_id,
       input.managed_native_boundaries_evidence_id,
     ].filter((id): id is string => id !== undefined);
-    if (ids.length === 0)
-      context.addIssue({
-        code: "custom",
-        message: "At least one managed Evidence ID is required",
-      });
     if (new Set(ids).size !== ids.length)
       context.addIssue({
         code: "custom",
@@ -123,36 +138,26 @@ export const managedApplicationGraphReferenceInputSchema = z
       });
   });
 
-const comparisonOutputSchema =
-  managedWorkflowOutputSchemas.compare_managed_members;
-if (comparisonOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for compare_managed_members",
-  );
-const runtimeOutputSchema =
-  managedWorkflowOutputSchemas.plan_managed_runtime_correlation;
-if (runtimeOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for plan_managed_runtime_correlation",
-  );
-const reconstructionOutputSchema =
-  managedWorkflowOutputSchemas.import_managed_reconstruction;
-if (reconstructionOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for import_managed_reconstruction",
-  );
-const nativeVerificationOutputSchema =
-  managedWorkflowOutputSchemas.verify_managed_native_boundaries;
-if (nativeVerificationOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for verify_managed_native_boundaries",
-  );
-const managedApplicationGraphOutputSchema =
-  managedWorkflowOutputSchemas.project_managed_application_graph;
-if (managedApplicationGraphOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for project_managed_application_graph",
-  );
+const comparisonOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "compare_managed_members",
+);
+const runtimeOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "plan_managed_runtime_correlation",
+);
+const reconstructionOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "import_managed_reconstruction",
+);
+const nativeVerificationOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "verify_managed_native_boundaries",
+);
+const managedApplicationGraphOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "project_managed_application_graph",
+);
 
 /** Provider-neutral managed-code workflow contracts. */
 export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolContract } from "./toolContracts.js";
 import { managedOutputSchemas } from "./toolOutputSchemas.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedArtifactInputSchema = z.object({
@@ -110,18 +111,18 @@ export const managedNativeBoundaryInputSchema = z.object({
     .default(1_048_576),
 });
 
-const outputSchema = managedOutputSchemas.inspect_managed_artifact;
-if (outputSchema === undefined)
-  throw new Error("Missing managed output schema for inspect_managed_artifact");
-const memberOutputSchema = managedOutputSchemas.inspect_managed_members;
-if (memberOutputSchema === undefined)
-  throw new Error("Missing managed output schema for inspect_managed_members");
-const nativeBoundaryOutputSchema =
-  managedOutputSchemas.inspect_managed_native_boundaries;
-if (nativeBoundaryOutputSchema === undefined)
-  throw new Error(
-    "Missing managed output schema for inspect_managed_native_boundaries",
-  );
+const outputSchema = requireOutputSchema(
+  managedOutputSchemas,
+  "inspect_managed_artifact",
+);
+const memberOutputSchema = requireOutputSchema(
+  managedOutputSchemas,
+  "inspect_managed_members",
+);
+const nativeBoundaryOutputSchema = requireOutputSchema(
+  managedOutputSchemas,
+  "inspect_managed_native_boundaries",
+);
 
 /** Read-only managed artifact contracts. */
 export const MANAGED_TOOL_CONTRACTS = [

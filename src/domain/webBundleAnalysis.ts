@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { inspectWebPageInputSchema } from "./browserObservation.js";
+import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
 const webBundleLimitsSchema = z.object({
@@ -24,12 +24,8 @@ const webBundleLimitsSchema = z.object({
 });
 
 /** Capture-and-analyze input with separate source and source-map approvals. */
-export const analyzeWebBundleInputSchema = inspectWebPageInputSchema
-  .safeExtend({
-    include_script_sources: z.literal(true).default(true),
-    source_capture_approved: z.literal(true),
-    fetch_source_maps: z.boolean().default(false),
-    source_map_fetch_approved: z.boolean().default(false),
+const analyzeWebBundleFactsSchema =
+  inspectWebPageWithSourceInputSchema.safeExtend({
     analysis_limits: webBundleLimitsSchema.default({
       max_findings: 1_000,
       max_ast_nodes: 250_000,
@@ -39,14 +35,19 @@ export const analyzeWebBundleInputSchema = inspectWebPageInputSchema
       max_source_map_mappings: 10_000,
       max_original_sources: 2_000,
     }),
-  })
+  });
+export const analyzeWebBundleInputSchema = z
+  .union([
+    analyzeWebBundleFactsSchema.safeExtend({
+      fetch_source_maps: z.literal(false).default(false),
+      source_map_fetch_approved: z.literal(false).default(false),
+    }),
+    analyzeWebBundleFactsSchema.safeExtend({
+      fetch_source_maps: z.literal(true),
+      source_map_fetch_approved: z.literal(true),
+    }),
+  ])
   .superRefine((input, context) => {
-    if (input.fetch_source_maps && !input.source_map_fetch_approved)
-      context.addIssue({
-        code: "custom",
-        path: ["source_map_fetch_approved"],
-        message: "Source-map network fetch requires separate approval",
-      });
     if (
       input.analysis_limits.max_source_map_bytes >
       input.analysis_limits.max_total_source_map_bytes

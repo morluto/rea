@@ -128,7 +128,7 @@ export function decodeJsonRpc(rawPayload: Uint8Array): {
   truncated: boolean;
 } {
   const text = new TextDecoder().decode(rawPayload);
-  const parsed = JSON.parse(text);
+  const parsed = jsonValueSchema.parse(JSON.parse(text));
   const fields: DecodedField[] = [];
 
   if (typeof parsed === "object" && parsed !== null) {
@@ -144,7 +144,7 @@ export function decodeJsonRpc(rawPayload: Uint8Array): {
         fields.push({
           path: key,
           wire_type: "json",
-          value: value as never,
+          value,
           inferred: false,
         });
       }
@@ -164,7 +164,8 @@ export function decodeMessagePack(rawPayload: Uint8Array): {
   if (rawPayload.length === 0) {
     return { decoded_fields: [], truncated: false };
   }
-  const tag = rawPayload[0]!;
+  const tag = rawPayload[0];
+  if (tag === undefined) return { decoded_fields: [], truncated: false };
   // Map type: 0x80-0x8f (fixmap), 0xde (map16), 0xdf (map32)
   if ((tag >= 0x80 && tag <= 0x8f) || tag === 0xde || tag === 0xdf) {
     fields.push({
@@ -217,10 +218,10 @@ export function decodeGrpcFrame(rawPayload: Uint8Array): {
   }
   const compressed = rawPayload[0] !== 0;
   const length =
-    (rawPayload[1]! << 24) |
-    (rawPayload[2]! << 16) |
-    (rawPayload[3]! << 8) |
-    rawPayload[4]!;
+    ((rawPayload[1] ?? 0) << 24) |
+    ((rawPayload[2] ?? 0) << 16) |
+    ((rawPayload[3] ?? 0) << 8) |
+    (rawPayload[4] ?? 0);
   return {
     decoded_fields: [
       {

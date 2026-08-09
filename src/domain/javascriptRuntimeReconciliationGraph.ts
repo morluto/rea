@@ -24,10 +24,8 @@ interface GraphCoverageFacts {
   readonly projectionOmissions: number;
   readonly knownOmissions: number;
   readonly omissionsKnown: boolean;
-  readonly inputTruncated: boolean;
+  readonly inputStatus: "complete" | "partial" | "truncated";
   readonly outputTruncated: boolean;
-  readonly truncated: boolean;
-  readonly complete: boolean;
 }
 
 /** Combined graph plus omissions introduced while merging its observations. */
@@ -66,7 +64,7 @@ export const buildReconciledApplicationGraph = (
       "Runtime presence is bounded to passive capture windows and does not prove feature execution.",
       "Cross-layer observed_as edges are inferences; digest equality proves byte identity only.",
       "Source-map relationships retain their original static authority and are not promoted into runtime matches.",
-      ...(facts.inputTruncated
+      ...(facts.inputStatus === "truncated"
         ? [
             "One or more source graphs or passive captures were incomplete or truncated.",
           ]
@@ -154,6 +152,12 @@ const graphCoverageFacts = (
   const inputTruncated =
     input.layers.some(({ graph }) => graph.coverage.truncated) ||
     captureTruncated;
+  const inputComplete =
+    input.layers.every(({ graph }) => graph.coverage.status === "complete") &&
+    input.captures.every(
+      ({ inspection }) =>
+        inspection.completeness.status === "complete_within_window",
+    );
   const outputTruncated = projectionOmissions > 0;
   const sourceOmissions = input.layers.reduce(
     (total, { graph }) => total + (graph.coverage.omitted_count ?? 0),
@@ -167,17 +171,12 @@ const graphCoverageFacts = (
     projectionOmissions,
     knownOmissions: projectionOmissions + sourceOmissions,
     omissionsKnown,
-    inputTruncated,
+    inputStatus: inputTruncated
+      ? "truncated"
+      : inputComplete
+        ? "complete"
+        : "partial",
     outputTruncated,
-    truncated: inputTruncated || outputTruncated,
-    complete:
-      !inputTruncated &&
-      !outputTruncated &&
-      input.layers.every(({ graph }) => graph.coverage.status === "complete") &&
-      input.captures.every(
-        ({ inspection }) =>
-          inspection.completeness.status === "complete_within_window",
-      ),
   };
 };
 
@@ -186,15 +185,15 @@ const graphCoverage = (
   facts: GraphCoverageFacts,
   nodeCount: number,
 ): JavaScriptApplicationGraph["coverage"] =>
-  facts.complete
+  facts.inputStatus === "complete" && !facts.outputTruncated
     ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
-    : facts.truncated
+    : facts.inputStatus === "truncated" || facts.outputTruncated
       ? {
           status: "partial",
           truncated: true,
           omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
           limits: [
-            ...(facts.inputTruncated
+            ...(facts.inputStatus === "truncated"
               ? [
                   {
                     name: "runtime-reconciliation-input-coverage",

@@ -1,12 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { compareSourceToBundleEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { resolveCompareSourceToBundleRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
+import { compareSourceToBundleEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { compareSourceToBundleRequestSchema } from "../../contracts/applicationWorkflowInputContracts.js";
 import { sourceToBundleComparisonResultSchema } from "../../domain/sourceToBundleComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
-import { safeParseToolInput } from "../toolInputValidation.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { recordResult, recordSources } from "./helpers.js";
@@ -23,14 +21,8 @@ export const registerCompareSourceToBundleTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsedInput = safeParseToolInput(
-        compareSourceToBundleRequestSchema,
-        input,
-        contract.name,
-      );
-      if (!parsedInput.ok) return toCallToolResult(parsedInput, contract);
       const resolved = resolveCompareSourceToBundleRequestValidated(
-        parsedInput.value,
+        input,
         options.evidenceLookup,
       );
       if (!resolved.ok) return toCallToolResult(resolved, contract);

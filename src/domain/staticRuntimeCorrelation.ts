@@ -148,7 +148,9 @@ type Mapping = z.infer<typeof mappingSchema>;
 type CorrelationItem = z.infer<typeof correlationItemSchema>;
 type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
 
-const EXPECTED = {
+type ComparisonIdentity = readonly [string | readonly string[], string, string];
+
+const EXPECTED: Readonly<Record<string, ComparisonIdentity>> = {
   compare_artifacts: [
     "rea.artifact-comparison/v1",
     "rea-artifact-comparison",
@@ -164,7 +166,7 @@ const EXPECTED = {
     "rea-process",
     "REA deterministic process harness",
   ],
-} as const;
+};
 
 /** Correlate only caller-declared static/runtime hypotheses. */
 export const correlateStaticAndRuntime = (
@@ -307,11 +309,12 @@ const selectStatic = (
     const matches = result.dimensions.filter(
       ({ dimension }) => dimension === selector.dimension,
     );
-    if (matches.length !== 1)
+    const match = matches.at(0);
+    if (matches.length !== 1 || match === undefined)
       throw new TypeError("Function selector must resolve exactly once");
     return {
-      status: matches[0]!.status,
-      conclusion_kind: matches[0]!.conclusion_kind,
+      status: match.status,
+      conclusion_kind: match.conclusion_kind,
     };
   }
   if (evidence.operation !== "compare_artifacts")
@@ -332,11 +335,12 @@ const selectStatic = (
   const matches = result.changes.items.filter(
     ({ logical_path: path }) => path === selector.logical_path,
   );
-  if (matches.length !== 1)
+  const match = matches.at(0);
+  if (matches.length !== 1 || match === undefined)
     throw new TypeError(
       "Artifact selector must resolve exactly one reported delta",
     );
-  const status = matches[0]!.classification;
+  const status = match.classification;
   return {
     status,
     conclusion_kind:
@@ -402,7 +406,7 @@ const parseRuntime = (input: unknown): Evidence => {
 };
 
 const assertComparisonIdentity = (evidence: Evidence): void => {
-  const expected = EXPECTED[evidence.operation as keyof typeof EXPECTED];
+  const expected = EXPECTED[evidence.operation];
   if (
     expected === undefined ||
     !(Array.isArray(expected[0])

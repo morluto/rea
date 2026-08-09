@@ -32,7 +32,6 @@ interface CleanupState {
   readonly resources: Set<string>;
   cleanupResult: ProcessCleanupResult | undefined;
   shutdownConfirmed: boolean;
-  ownedProcessStopped: boolean;
 }
 
 export interface HopperCleanupInput {
@@ -59,7 +58,6 @@ export const cleanupHopperSession = async (
     resources: new Set(),
     cleanupResult: undefined,
     shutdownConfirmed: false,
-    ownedProcessStopped: false,
   };
   await report(input.progress, 0, "requesting Hopper document shutdown");
   await requestShutdown(input, state);
@@ -97,8 +95,7 @@ const requestShutdown = async (
   if (
     shutdown.ok &&
     isHopperCleanupRequired(shutdown.value) &&
-    input.launch?.shutdownByCleanup === true &&
-    input.launch.cleanup !== undefined
+    input.launch?.shutdownMode === "process-cleanup"
   ) {
     state.cleanupResult = await input.launch
       .cleanup()
@@ -161,7 +158,11 @@ const stopProcess = async (
   }
   input.logger.info(diagnostic, "Owned Hopper launcher shutdown completed");
   if (stopped.status !== "incomplete") {
-    state.ownedProcessStopped = stopped.status !== "not-owned";
+    if (
+      input.launch?.shutdownMode === "process-cleanup" &&
+      stopped.status !== "not-owned"
+    )
+      state.shutdownConfirmed = true;
     return;
   }
   const processGroupId = supervisor.launch.ownership?.processGroupId;
@@ -183,8 +184,7 @@ const recordUnconfirmedDocument = (
 ): void => {
   if (
     (input.socket === undefined && input.launch === undefined) ||
-    state.shutdownConfirmed ||
-    state.ownedProcessStopped
+    state.shutdownConfirmed
   )
     return;
   state.resources.add("hopper-document");

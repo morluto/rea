@@ -58,6 +58,13 @@ interface CaptureStorageFingerprintInput {
   readonly limitations: string[];
 }
 
+type StorageFingerprintCapture = {
+  readonly items: readonly StorageFingerprint[];
+} & (
+  | { readonly complete: true; readonly truncated: false }
+  | { readonly complete: false; readonly truncated: boolean }
+);
+
 /** Capture stable hashes of approved storage content without returning values. */
 export const captureStorageFingerprints = async ({
   context,
@@ -67,11 +74,7 @@ export const captureStorageFingerprints = async ({
   indexedDbNames,
   caches,
   limitations,
-}: CaptureStorageFingerprintInput): Promise<{
-  readonly items: readonly StorageFingerprint[];
-  readonly complete: boolean;
-  readonly truncated: boolean;
-}> => {
+}: CaptureStorageFingerprintInput): Promise<StorageFingerprintCapture> => {
   const state: FingerprintState = {
     items: [],
     maximum: context.input.limits.max_storage_keys,
@@ -90,14 +93,17 @@ export const captureStorageFingerprints = async ({
       `${right.scope}:${right.identity_sha256}`,
     ),
   );
-  return {
-    items: state.items,
-    complete:
-      state.complete &&
-      !state.truncated &&
-      state.items.every(({ complete }) => complete),
-    truncated: state.truncated,
-  };
+  const complete =
+    state.complete &&
+    !state.truncated &&
+    state.items.every(({ complete }) => complete);
+  return complete
+    ? { items: state.items, complete: true, truncated: false }
+    : {
+        items: state.items,
+        complete: false,
+        truncated: state.truncated,
+      };
 };
 
 const addStorageItems = (

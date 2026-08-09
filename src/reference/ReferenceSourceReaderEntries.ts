@@ -83,7 +83,7 @@ export const traverseDirectory = async (
   for (const name of names.value) {
     const result = await processEntry(state, current, name, directories);
     if (!result.ok) return result;
-    if (state.stopped) break;
+    if (state.stopReason !== undefined) break;
   }
   directories.reverse();
   state.pending.push(...directories);
@@ -297,6 +297,6 @@ const reserveEntry = (state: TraversalState): boolean => {
     return true;
   }
   state.truncated = true;
-  state.stopped = true;
+  state.stopReason = "entry-limit";
   return false;
 };

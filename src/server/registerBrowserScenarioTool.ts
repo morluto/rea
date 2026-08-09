@@ -5,10 +5,8 @@ import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioC
 import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../contracts/browserScenarioToolContracts.js";
-import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
-import { safeParseToolInput } from "./toolInputValidation.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
 
@@ -29,17 +27,11 @@ export const registerBrowserScenarioTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input, context) => {
-      const parsed = safeParseToolInput(
-        browserScenarioSchema,
-        input,
-        contract.name,
-      );
-      if (!parsed.ok) return toCallToolResult(parsed, contract);
       const result = await logToolExecution(options.logger, contract.name, () =>
         captureBrowserScenario(
           options.provider,
           options.permissionAuthority,
-          parsed.value,
+          input,
           { signal: context.mcpReq.signal },
         ),
       );

@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createElectronEvidence } from "../../../src/application/ElectronEvidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
+import { inspectElectronPageInputSchema } from "../../../src/domain/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { permissionAuthorityForRoot } from "../../fixtures/permissionAuthority.js";
 
@@ -233,7 +234,7 @@ const electronRuntimeEvidence = (
   const includeWorker = options.includeWorker ?? true;
   const targetId = options.targetId ?? "target-main";
   const sourceCaptureApproved = options.sourceCaptureApproved ?? true;
-  const input = {
+  const input = inspectElectronPageInputSchema.parse({
     cdp_endpoint: "http://127.0.0.1:9223",
     allowed_file_roots: [root],
     target_id: targetId,
@@ -250,7 +251,7 @@ const electronRuntimeEvidence = (
       max_script_source_bytes: 1_048_576,
       max_total_script_source_bytes: 4_194_304,
     },
-  };
+  });
   return createElectronEvidence(
     "inspect_electron_page",
     input,

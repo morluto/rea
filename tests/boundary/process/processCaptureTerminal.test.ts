@@ -132,11 +132,11 @@ it("renders terminal state, records shim invocations, and captures literal check
     const result = await captureProcessScenario(
       buildTerminalScenario(root, script),
       {
-        enabled: true,
+        status: "enabled",
         executableRoots: [dirname(process.execPath)],
         workingRoots: [root],
         allowedEnvironment: [],
-        allowExternalNetwork: true,
+        networkAccess: "external",
       },
     );
     expect(result.ok).toBe(true);

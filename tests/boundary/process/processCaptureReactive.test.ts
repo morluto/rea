@@ -287,11 +287,11 @@ it("drives a process from terminal observations and retains the reactive transit
     const capability = await probeProcessCaptureCapability();
     if (!capability.available) return;
     const result = await captureProcessScenario(scenario, {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [root],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     });
     if (!result.ok) throw result.error;
     assertCompletedCapture(result.value);
@@ -351,11 +351,11 @@ it("records target loss before post-exit settlement can win the deadline race", 
     const capability = await probeProcessCaptureCapability();
     if (!capability.available) return;
     const result = await captureProcessScenario(scenario, {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [root],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;

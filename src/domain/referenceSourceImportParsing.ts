@@ -305,11 +305,11 @@ const parseWithBabel = (
       plugins,
     });
     return { ast, parseState: "parsed" };
-  } catch (error) {
+  } catch (cause: unknown) {
     return {
       ast: undefined,
       parseState: "unknown",
-      reason: error instanceof Error ? error.message : "Parse failed",
+      reason: cause instanceof Error ? cause.message : "Parse failed",
     };
   }
 };

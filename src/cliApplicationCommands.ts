@@ -127,7 +127,7 @@ export const registerApplicationCommands = (
         if (!authority.ok) return projectAnalysisError(authority.error);
         const result = await runControlledReplay(
           {
-            policy: config.value.javascriptReplayPolicy,
+            policy: () => config.value.javascriptReplayPolicy,
             host: new SystemJavaScriptReplayHost(),
             runner: new LinuxJavaScriptReplayRunner(),
             authority: authority.value,
@@ -318,7 +318,7 @@ const replayDependencies = (
   config: AppConfig,
   authority: PermissionAuthority,
 ) => ({
-  policy: config.javascriptReplayPolicy,
+  policy: () => config.javascriptReplayPolicy,
   host: new SystemJavaScriptReplayHost(),
   runner: new LinuxJavaScriptReplayRunner(),
   authority,
