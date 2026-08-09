@@ -131,18 +131,20 @@ const defaultInput = {
     { case_id: "plain", arguments: ["plain"] },
   ],
   generator: { preset: "parser-boundaries", seed: 7, count: 4 },
-  approved: false,
 };
-const input =
+const suppliedPlanInput =
   suppliedInput === undefined
+    ? undefined
+    : (({ approved: _approved, plan_digest: _planDigest, ...planInput }) =>
+        planInput)(suppliedInput);
+const input =
+  suppliedPlanInput === undefined
     ? defaultInput
     : {
-        ...suppliedInput,
+        ...suppliedPlanInput,
         mode: "plan",
         left: suppliedLeft,
         ...(suppliedRight === undefined ? {} : { right: suppliedRight }),
-        approved: false,
-        plan_digest: undefined,
         reproducer_export: undefined,
       };
 
@@ -177,7 +179,21 @@ if (
     ({ status }) => status === "unknown",
   ) === true
 )
-  throw new Error("Real replay verifier received incomplete Evidence");
+  throw new Error(
+    `Real replay verifier received incomplete Evidence: ${JSON.stringify({
+      authority: evidence?.authority ?? null,
+      isolation: evidence?.environment?.isolation ?? null,
+      termination: evidence?.normalized_result?.termination ?? null,
+      cleanup: evidence?.normalized_result?.cleanup?.state ?? null,
+      outcomes:
+        evidence?.normalized_result?.outcomes?.map(({ outcome }) => outcome) ??
+        [],
+      stderr: evidence?.normalized_result?.stderr ?? null,
+      comparison_statuses:
+        evidence?.normalized_result?.comparison?.map(({ status }) => status) ??
+        [],
+    })}`,
+  );
 
 if (suppliedInput !== undefined) {
   process.stdout.write(
@@ -222,7 +238,6 @@ const runSingle = async (path, limits = undefined) => {
     },
     cases: [{ case_id: "probe", arguments: [] }],
     ...(limits === undefined ? {} : { limits }),
-    approved: false,
   };
   const proposed = await runControlledReplay(dependencies, manifest);
   if (!proposed.ok || proposed.value.plan === null)
@@ -288,7 +303,6 @@ const differentialTimeoutInput = {
   },
   cases: [{ case_id: "probe", arguments: [] }],
   limits: { wall_time_ms: 100 },
-  approved: false,
 };
 const differentialTimeoutPlan = await runControlledReplay(
   dependencies,

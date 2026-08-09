@@ -32,9 +32,10 @@ export const compareProcessTraces = (
     ...validateProcessCapture(left),
     ...validateProcessCapture(right),
   ];
-  if (captureIssues.length > 0)
+  const firstCaptureIssue = captureIssues.at(0);
+  if (firstCaptureIssue !== undefined)
     throw new TypeError(
-      `Invalid Process Capture v4: ${captureIssues[0]!.path}`,
+      `Invalid Process Capture v4: ${firstCaptureIssue.path}`,
     );
   const specification =
     processTraceSpecificationSchema.parse(specificationInput);

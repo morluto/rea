@@ -326,7 +326,9 @@ export const processScenarioSchema = z
   .strict()
   .superRefine((scenario, context) => {
     for (let index = 1; index < scenario.events.length; index += 1) {
-      if (scenario.events[index]!.at_ms < scenario.events[index - 1]!.at_ms) {
+      const event = scenario.events[index];
+      const previous = scenario.events[index - 1];
+      if (eventsOutOfOrder(event, previous)) {
         context.addIssue({
           code: "custom",
           message: "events must be ordered by at_ms",
@@ -408,6 +410,12 @@ export const processScenarioSchema = z
       });
   });
 
+const eventsOutOfOrder = (
+  event: { readonly at_ms: number } | undefined,
+  previous: { readonly at_ms: number } | undefined,
+): boolean =>
+  event !== undefined && previous !== undefined && event.at_ms < previous.at_ms;
+
 /** Parsed instructions and resource bounds for one process experiment. */
 export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 
@@ -415,14 +423,19 @@ export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 export const parseProcessScenario = (input: unknown): ProcessScenario =>
   processScenarioSchema.parse(input);
 
-/** Operator-owned ceiling applied in addition to per-scenario approval. */
-export interface ProcessExecutionPolicy {
-  readonly enabled: boolean;
-  readonly executableRoots: readonly string[];
-  readonly workingRoots: readonly string[];
+/** Complete operator-owned ceiling for enabled process capture. */
+export interface EnabledProcessExecutionPolicy {
+  readonly status: "enabled";
+  readonly executableRoots: readonly [string, ...string[]];
+  readonly workingRoots: readonly [string, ...string[]];
   readonly allowedEnvironment: readonly string[];
-  readonly allowExternalNetwork: boolean;
+  readonly networkAccess: "none" | "external";
 }
+
+/** Parsed operator-owned process-capture policy. */
+export type ProcessExecutionPolicy =
+  | { readonly status: "disabled" }
+  | EnabledProcessExecutionPolicy;
 
 /** Explicit authorization result; denial reasons are safe to show callers. */
 export type ProcessPolicyDecision =
@@ -449,9 +462,9 @@ export const authorizeProcessScenario = (
   scenario: ProcessScenario,
   policy: ProcessExecutionPolicy,
 ): ProcessPolicyDecision => {
-  if (!policy.enabled)
+  if (policy.status === "disabled")
     return { allowed: false, reason: "process capture is disabled" };
-  if (scenario.network_access === "host" && !policy.allowExternalNetwork)
+  if (scenario.network_access === "host" && policy.networkAccess === "none")
     return {
       allowed: false,
       reason: "host network access is not approved by operator policy",

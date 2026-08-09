@@ -187,7 +187,8 @@ const readJson = async (path: string): Promise<unknown> => {
       "Process input file is too large. Reduce it below 64 MiB, then try again.",
     );
   try {
-    return JSON.parse(bytes.toString("utf8")) as unknown;
+    const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+    return parsed;
   } catch {
     throw new ProcessCliFailure(
       "invalid_input",

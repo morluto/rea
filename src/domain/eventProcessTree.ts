@@ -209,7 +209,8 @@ export function getDescendants(
   const result: number[] = [];
   const queue: number[] = [rootPid];
   while (queue.length > 0) {
-    const pid = queue.shift()!;
+    const pid = queue.shift();
+    if (pid === undefined) break;
     if (visited.has(pid)) continue;
     visited.add(pid);
     const node = byPid.get(pid);

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   digestBytes,
-  type JavaScriptReplayPolicy,
+  type EnabledJavaScriptReplayPolicy,
   type JavaScriptReplayRunner,
   type PreparedReplayPlan,
 } from "../application/JavaScriptReplayPlanning.js";
@@ -42,7 +42,7 @@ const isAborted = (signal: AbortSignal | undefined): boolean =>
 export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
   async execute(
     prepared: PreparedReplayPlan,
-    policy: JavaScriptReplayPolicy,
+    policy: EnabledJavaScriptReplayPolicy,
     signal?: AbortSignal,
   ): Promise<ReplayExecutionResult> {
     if (isAborted(signal))
@@ -76,8 +76,7 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
         collected,
         unitResult,
         cleanup,
-        cancelled: replayProcess.cancelled,
-        timedOut: replayProcess.timedOut,
+        termination: replayProcess.termination,
       });
     } finally {
       signal?.removeEventListener("abort", replayProcess.terminate);
@@ -97,7 +96,7 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
 
 const validateReplayCommitments = async (
   prepared: PreparedReplayPlan,
-  policy: JavaScriptReplayPolicy,
+  policy: EnabledJavaScriptReplayPolicy,
 ): Promise<readonly RuntimeFile[]> => {
   const closure = await resolveLinuxRuntimeClosure(policy.nodePath);
   assertRuntimeCommitment(prepared, closure);
@@ -126,7 +125,7 @@ const buildWorkerPayload = (prepared: PreparedReplayPlan): Buffer => {
 
 interface LaunchReplayProcessOptions {
   readonly prepared: PreparedReplayPlan;
-  readonly policy: JavaScriptReplayPolicy;
+  readonly policy: EnabledJavaScriptReplayPolicy;
   readonly encoded: Buffer;
   readonly closure: readonly RuntimeFile[];
   readonly filterPath: string;
@@ -141,8 +140,7 @@ interface ReplayProcess {
   readonly terminate: () => void;
   readonly requestTermination: () => void;
   readonly terminationRequest: Promise<void> | undefined;
-  readonly cancelled: boolean;
-  readonly timedOut: boolean;
+  readonly termination: "cancelled" | "timeout" | undefined;
 }
 
 const launchReplayProcess = (
@@ -160,15 +158,14 @@ const launchReplayProcess = (
   });
   let child: ReturnType<typeof spawn> | undefined;
   let timeout: NodeJS.Timeout | undefined;
-  let cancelled = false;
-  let timedOut = false;
+  let termination: "cancelled" | "timeout" | undefined;
   let terminationRequest: Promise<void> | undefined;
   const requestTermination = (): void => {
     terminationRequest ??= killUnit(policy.systemctlPath, unit);
     child?.kill("SIGKILL");
   };
   const terminate = (): void => {
-    cancelled = true;
+    termination ??= "cancelled";
     requestTermination();
   };
   const completion = new Promise<CollectedProcess>((resolve, reject) => {
@@ -197,7 +194,7 @@ const launchReplayProcess = (
   signal?.addEventListener("abort", terminate, { once: true });
   if (isAborted(signal)) terminate();
   timeout = setTimeout(() => {
-    timedOut = true;
+    termination ??= "timeout";
     requestTermination();
   }, prepared.publicPlan.limits.wall_time_ms);
   timeout.unref();
@@ -212,11 +209,8 @@ const launchReplayProcess = (
     get terminationRequest() {
       return terminationRequest;
     },
-    get cancelled() {
-      return cancelled;
-    },
-    get timedOut() {
-      return timedOut;
+    get termination() {
+      return termination;
     },
   };
 };
@@ -239,20 +233,18 @@ interface ResolveReplayResultOptions {
   readonly collected: CollectedProcess;
   readonly unitResult: string;
   readonly cleanup: ReplayExecutionResult["cleanup"];
-  readonly cancelled: boolean;
-  readonly timedOut: boolean;
+  readonly termination: "cancelled" | "timeout" | undefined;
 }
 
 const resolveReplayResult = (
   options: ResolveReplayResultOptions,
 ): ReplayExecutionResult => {
-  const { prepared, collected, unitResult, cleanup, cancelled, timedOut } =
-    options;
-  if (cancelled || timedOut)
+  const { prepared, collected, unitResult, cleanup, termination } = options;
+  if (termination !== undefined)
     return terminationResult({
       prepared,
       stderr: collected.stderr,
-      termination: cancelled ? "cancelled" : "timeout",
+      termination,
       cleanup,
     });
   if (collected.outputExceeded)
@@ -277,7 +269,7 @@ const resolveReplayResult = (
     response = parseReplayWorkerResponse(
       rawResponse,
       prepared.publicPlan.cases,
-      prepared.publicPlan.right !== undefined,
+      prepared.publicPlan.right === undefined ? "single" : "differential",
     );
   } catch {
     return terminationResult({

@@ -248,8 +248,9 @@ const assertComparable = (
     ...validateProcessCapture(left),
     ...validateProcessCapture(right),
   ];
-  if (invalid.length > 0)
-    throw new TypeError(`Invalid Process Capture v4: ${invalid[0]!.path}`);
+  const firstInvalid = invalid.at(0);
+  if (firstInvalid !== undefined)
+    throw new TypeError(`Invalid Process Capture v4: ${firstInvalid.path}`);
   if (
     left.schema_version !== right.schema_version ||
     left.manifest.comparison_contract_sha256 !==

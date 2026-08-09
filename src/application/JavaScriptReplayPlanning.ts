@@ -37,15 +37,21 @@ export interface ReplayRuntimeFileIdentity {
   readonly sha256: string;
 }
 
-export interface JavaScriptReplayPolicy {
-  readonly enabled: boolean;
-  readonly roots: readonly string[];
+/** Complete executable and source authority for enabled JavaScript replay. */
+export interface EnabledJavaScriptReplayPolicy {
+  readonly status: "enabled";
+  readonly roots: readonly [string, ...string[]];
   readonly nodePath: string;
   readonly bubblewrapPath: string;
   readonly systemdRunPath: string;
   readonly systemctlPath: string;
   readonly shellPath: string;
 }
+
+/** Parsed JavaScript replay configuration. */
+export type JavaScriptReplayPolicy =
+  | { readonly status: "disabled" }
+  | EnabledJavaScriptReplayPolicy;
 
 export interface JavaScriptReplayHost {
   readonly readSource: (
@@ -61,7 +67,7 @@ export interface JavaScriptReplayHost {
     nodePath: string,
   ) => Promise<readonly ReplayRuntimeFileIdentity[]>;
   readonly seccompDigest: () => string;
-  readonly probe: (policy: JavaScriptReplayPolicy) => Promise<void>;
+  readonly probe: (policy: EnabledJavaScriptReplayPolicy) => Promise<void>;
 }
 
 export interface PreparedReplayPlan {
@@ -73,7 +79,7 @@ export interface PreparedReplayPlan {
 export interface JavaScriptReplayRunner {
   readonly execute: (
     prepared: PreparedReplayPlan,
-    policy: JavaScriptReplayPolicy,
+    policy: EnabledJavaScriptReplayPolicy,
     signal?: AbortSignal,
   ) => Promise<ReplayExecutionResult>;
 }
@@ -81,7 +87,7 @@ export interface JavaScriptReplayRunner {
 /** Read, normalize, and content-address every input to one replay experiment. */
 export const prepareReplayPlan = async (
   input: ControlledReplayInput,
-  policy: JavaScriptReplayPolicy,
+  policy: EnabledJavaScriptReplayPolicy,
   host: JavaScriptReplayHost,
 ): Promise<PreparedReplayPlan> => {
   const cases = replayCases(input).map((item) => ({
@@ -243,13 +249,13 @@ const replayCases = (
     return state >>> 0;
   };
   const corpus = boundaryCorpus(input.generator.preset);
-  const generated = Array.from(
-    { length: input.generator.count },
-    (_, index) => ({
-      case_id: `generated-${input.generator?.preset ?? "boundary"}-${String(index)}`,
-      arguments: [corpus[next() % corpus.length] ?? ""] as JsonValue[],
-    }),
-  );
+  const generated: {
+    readonly case_id: string;
+    readonly arguments: JsonValue[];
+  }[] = Array.from({ length: input.generator.count }, (_, index) => ({
+    case_id: `generated-${input.generator?.preset ?? "boundary"}-${String(index)}`,
+    arguments: [corpus[next() % corpus.length] ?? ""],
+  }));
   return uniqueCases([...explicit, ...generated]);
 };
 

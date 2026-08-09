@@ -206,14 +206,16 @@ const replayTransitions = (
       (run.controls[controlIndex]?.after_capture_order ??
         Number.MAX_SAFE_INTEGER) < observation.capture_order
     ) {
-      const control = run.controls[controlIndex]!;
+      const control = run.controls[controlIndex];
+      if (control === undefined) break;
       advanceControl(control, controlIndex);
       controlIndex += 1;
     }
     advance({ kind: "observation", observation });
   }
   for (; controlIndex < run.controls.length; controlIndex += 1) {
-    const control = run.controls[controlIndex]!;
+    const control = run.controls[controlIndex];
+    if (control === undefined) break;
     advanceControl(control, controlIndex);
   }
   require(transitionIndex ===
@@ -237,10 +239,11 @@ const validateControls = (
     require(admittedOrders.has(
       control.after_capture_order,
     ), `reactive_run.controls[${String(index)}].after_capture_order`, "reactive control cutoff must identify the last admitted observation");
+    const previous = run.controls.at(index - 1);
     require(index === 0 ||
-      control.after_capture_order >=
-        run.controls[index - 1]!
-          .after_capture_order, `reactive_run.controls[${String(index)}].after_capture_order`, "reactive control cutoffs must be ordered");
+      (previous !== undefined &&
+        control.after_capture_order >=
+          previous.after_capture_order), `reactive_run.controls[${String(index)}].after_capture_order`, "reactive control cutoffs must be ordered");
   }
 };
 

@@ -196,11 +196,11 @@ it("runs the committed multi-source reactive fixture deterministically", async (
   );
   const run = () =>
     captureProcessScenario(createMultiSourceScenario(root, script), {
-      enabled: true,
+      status: "enabled",
       executableRoots: [dirname(process.execPath)],
       workingRoots: [root],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     });
   try {
     const capability = await probeProcessCaptureCapability();

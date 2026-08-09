@@ -186,8 +186,10 @@ const systemHost: ProcessOwnershipHost = {
     const environment: Record<string, string> = {};
     for (const match of stdout.matchAll(
       /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)/gu,
-    ))
-      environment[match[1]!] = match[2] ?? "";
+    )) {
+      const name = match[1];
+      if (name !== undefined) environment[name] = match[2] ?? "";
+    }
     return environment;
   },
   signalGroup(processGroupId, signal) {

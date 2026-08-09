@@ -207,11 +207,11 @@ it("cleans the temporary root when capture home creation fails", async () => {
     prepareProcessCapture(
       parseProcessScenario(base),
       {
-        enabled: true,
+        status: "enabled",
         executableRoots: ["/bin"],
         workingRoots: ["/tmp"],
         allowedEnvironment: [],
-        allowExternalNetwork: true,
+        networkAccess: "external",
       },
       undefined,
       host,
@@ -375,11 +375,11 @@ it("parses bounded scenarios and rejects unordered events", () => {
 it("requires explicit operator approval for host network access", () => {
   expect(
     authorizeProcessScenario(parseProcessScenario(base), {
-      enabled: true,
+      status: "enabled",
       executableRoots: ["/bin"],
       workingRoots: ["/tmp"],
       allowedEnvironment: [],
-      allowExternalNetwork: false,
+      networkAccess: "none",
     }),
   ).toEqual({
     allowed: false,
@@ -394,11 +394,11 @@ it("refuses paths and environment outside operator policy", () => {
   });
   expect(
     authorizeProcessScenario(scenario, {
-      enabled: true,
+      status: "enabled",
       executableRoots: ["/bin"],
       workingRoots: ["/tmp"],
       allowedEnvironment: [],
-      allowExternalNetwork: true,
+      networkAccess: "external",
     }),
   ).toEqual({
     allowed: false,
