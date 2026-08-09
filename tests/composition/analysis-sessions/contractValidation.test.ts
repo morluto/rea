@@ -84,6 +84,17 @@ describe("contract validation boundaries", () => {
     ).toBe(false);
   });
 
+  it("accepts each complete managed application Evidence source", () => {
+    for (const input of [
+      { managed_artifact_evidence_id: EVIDENCE_ID },
+      { managed_members_evidence_id: EVIDENCE_ID },
+      { managed_native_boundaries_evidence_id: EVIDENCE_ID },
+    ])
+      expect(
+        managedApplicationGraphReferenceInputSchema.safeParse(input).success,
+      ).toBe(true);
+  });
+
   it("requires explicit approval for record-and-continue artifact inspection", () => {
     const input = {
       integrity_policy: "record-and-continue" as const,

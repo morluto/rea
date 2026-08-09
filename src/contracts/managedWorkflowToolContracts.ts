@@ -15,6 +15,7 @@ import {
   MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 const managedEvidenceIdSchema = evidenceIdSchema.describe(
@@ -137,36 +138,26 @@ export const managedApplicationGraphReferenceInputSchema = z
       });
   });
 
-const comparisonOutputSchema =
-  managedWorkflowOutputSchemas.compare_managed_members;
-if (comparisonOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for compare_managed_members",
-  );
-const runtimeOutputSchema =
-  managedWorkflowOutputSchemas.plan_managed_runtime_correlation;
-if (runtimeOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for plan_managed_runtime_correlation",
-  );
-const reconstructionOutputSchema =
-  managedWorkflowOutputSchemas.import_managed_reconstruction;
-if (reconstructionOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for import_managed_reconstruction",
-  );
-const nativeVerificationOutputSchema =
-  managedWorkflowOutputSchemas.verify_managed_native_boundaries;
-if (nativeVerificationOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for verify_managed_native_boundaries",
-  );
-const managedApplicationGraphOutputSchema =
-  managedWorkflowOutputSchemas.project_managed_application_graph;
-if (managedApplicationGraphOutputSchema === undefined)
-  throw new Error(
-    "Missing managed workflow output schema for project_managed_application_graph",
-  );
+const comparisonOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "compare_managed_members",
+);
+const runtimeOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "plan_managed_runtime_correlation",
+);
+const reconstructionOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "import_managed_reconstruction",
+);
+const nativeVerificationOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "verify_managed_native_boundaries",
+);
+const managedApplicationGraphOutputSchema = requireOutputSchema(
+  managedWorkflowOutputSchemas,
+  "project_managed_application_graph",
+);
 
 /** Provider-neutral managed-code workflow contracts. */
 export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [

@@ -5,6 +5,7 @@ import type { ToolContract } from "./toolContracts.js";
 import { artifactOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { artifactInspectionLimitsSchema } from "../domain/artifactInspection.js";
 
 const pageInput = {
@@ -104,9 +105,7 @@ const artifact = <Name extends string>(
   description: string,
   inputSchema: z.ZodType<Readonly<Record<string, unknown>>>,
 ): ToolContract<Name> => {
-  const outputSchema = artifactOutputSchemas[name];
-  if (outputSchema === undefined)
-    throw new Error(`Missing artifact output schema for ${name}`);
+  const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
     name,
     ...toolContractMetadata(name),

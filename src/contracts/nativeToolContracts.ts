@@ -4,6 +4,7 @@ import type { ToolContract } from "./toolContracts.js";
 import { nativeOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},
@@ -18,9 +19,7 @@ const native = <Name extends string>(
   description: string,
   inputSchema: z.ZodObject,
 ): ToolContract<Name> => {
-  const outputSchema = nativeOutputSchemas[name];
-  if (outputSchema === undefined)
-    throw new Error(`Missing native output schema for ${name}`);
+  const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   return {
     name,
     ...toolContractMetadata(name),
