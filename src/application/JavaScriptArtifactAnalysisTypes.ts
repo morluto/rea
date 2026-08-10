@@ -8,17 +8,34 @@ import type {
 } from "../domain/javascriptSemanticIr.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 
-/** Parsed package metadata used only for static entrypoint discovery. */
-export interface JavaScriptPackageObservation {
+interface JavaScriptStructuredObservation {
   readonly path: string;
   readonly sha256: string;
-  readonly status: "included" | "invalid" | "unavailable";
+}
+
+interface JavaScriptPackageValues {
   readonly name: string | null;
   readonly version: string | null;
   readonly main: string | null;
   readonly renderer: string | null;
-  readonly limitation: string | null;
 }
+
+/** Parsed package metadata used only for static entrypoint discovery. */
+export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
+  (
+    | (JavaScriptPackageValues & {
+        readonly status: "included";
+        readonly limitation: null;
+      })
+    | {
+        readonly status: "invalid" | "unavailable";
+        readonly name: null;
+        readonly version: null;
+        readonly main: null;
+        readonly renderer: null;
+        readonly limitation: string;
+      }
+  );
 
 /** One HTML script source observed without building or executing a DOM. */
 export interface JavaScriptHtmlScriptObservation {
@@ -36,24 +53,50 @@ export interface JavaScriptSourceMapOriginal {
 }
 
 /** Bounded local source-map parse result. */
-export interface JavaScriptSourceMapObservation {
-  readonly path: string;
-  readonly sha256: string;
-  readonly status: "included" | "truncated" | "invalid" | "not-approved";
-  readonly sources: readonly JavaScriptSourceMapOriginal[];
-  readonly omitted_sources: number | null;
-  readonly limitation: string | null;
-}
+export type JavaScriptSourceMapObservation = JavaScriptStructuredObservation &
+  (
+    | {
+        readonly status: "included";
+        readonly sources: readonly JavaScriptSourceMapOriginal[];
+        readonly omitted_sources: 0;
+        readonly limitation: null;
+      }
+    | {
+        readonly status: "truncated";
+        readonly sources: readonly JavaScriptSourceMapOriginal[];
+        readonly omitted_sources: number | null;
+        readonly limitation: string;
+      }
+    | {
+        readonly status: "invalid" | "not-approved";
+        readonly sources: readonly [];
+        readonly omitted_sources: 0;
+        readonly limitation: string;
+      }
+  );
 
 /** Bounded parse status for one inventoried JSON module. */
-export interface JavaScriptJsonModuleObservation {
-  readonly path: string;
-  readonly sha256: string;
-  readonly status: "included" | "invalid" | "unavailable";
-  readonly top_level_keys: readonly string[];
-  readonly omitted_top_level_keys: number | null;
-  readonly limitation: string | null;
-}
+export type JavaScriptJsonModuleObservation = JavaScriptStructuredObservation &
+  (
+    | {
+        readonly status: "included";
+        readonly top_level_keys: readonly string[];
+        readonly omitted_top_level_keys: number;
+        readonly limitation: null;
+      }
+    | {
+        readonly status: "invalid";
+        readonly top_level_keys: readonly [];
+        readonly omitted_top_level_keys: 0;
+        readonly limitation: string;
+      }
+    | {
+        readonly status: "unavailable";
+        readonly top_level_keys: readonly [];
+        readonly omitted_top_level_keys: null;
+        readonly limitation: string;
+      }
+  );
 
 /** One relevant file plus optional AST-only JavaScript facts. */
 export interface AnalyzedJavaScriptArtifactFile {

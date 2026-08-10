@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 import { createPermissionPolicy } from "../../../src/domain/permissionPolicy.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -33,7 +33,7 @@ describe("process-capture MCP elicitation handshake", () => {
           },
         ]),
       );
-      const session = composeBinarySessionFromFactory(() => ({
+      const session = createTestBinarySession(() => ({
         execute: () => Promise.resolve(observed(null)),
         close: () => Promise.resolve(),
       }));

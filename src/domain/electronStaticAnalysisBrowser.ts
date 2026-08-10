@@ -2,6 +2,8 @@ import * as t from "@babel/types";
 
 import type {
   ElectronBrowserWindowFinding,
+  ElectronBrowserWindowPreload,
+  ElectronContextBridgeApiKey,
   ElectronContextBridgeFinding,
   ElectronStaticValue,
   ElectronUtilityProcessFinding,
@@ -57,8 +59,7 @@ const inspectBrowserWindow = (
     web_preferences_status: collected.status,
     web_preferences: collected.preferences,
     omitted_web_preferences: collected.omitted,
-    preload_path: collected.preloadPath,
-    preload_resolution_context: collected.preloadResolutionContext,
+    ...collected.preload,
     module_key: null,
     location: range(node),
   };
@@ -76,8 +77,7 @@ const collectWindowOptions = (
 ): {
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
   readonly preferences: readonly ElectronWebPreference[];
-  readonly preloadPath: string | null;
-  readonly preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"];
+  readonly preload: ElectronBrowserWindowPreload;
   readonly unknown: number;
   readonly omitted: number;
 } => {
@@ -85,8 +85,7 @@ const collectWindowOptions = (
     return {
       status: options === undefined ? "missing" : "dynamic",
       preferences: [],
-      preloadPath: null,
-      preloadResolutionContext: null,
+      preload: { preload_path: null, preload_resolution_context: null },
       unknown: options === undefined ? 0 : 1,
       omitted: 0,
     };
@@ -95,8 +94,7 @@ const collectWindowOptions = (
     return {
       status: "missing",
       preferences: [],
-      preloadPath: null,
-      preloadResolutionContext: null,
+      preload: { preload_path: null, preload_resolution_context: null },
       unknown: 0,
       omitted: 0,
     };
@@ -104,8 +102,7 @@ const collectWindowOptions = (
     return {
       status: "dynamic",
       preferences: [],
-      preloadPath: null,
-      preloadResolutionContext: null,
+      preload: { preload_path: null, preload_resolution_context: null },
       unknown: 1,
       omitted: 0,
     };
@@ -118,16 +115,16 @@ const collectWebPreferences = (
 ): {
   readonly status: "object-literal";
   readonly preferences: readonly ElectronWebPreference[];
-  readonly preloadPath: string | null;
-  readonly preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"];
+  readonly preload: ElectronBrowserWindowPreload;
   readonly unknown: number;
   readonly omitted: number;
 } => {
   const preferences: ElectronWebPreference[] = [];
   let unknown = 0;
-  let preloadPath: string | null = null;
-  let preloadResolutionContext: ElectronBrowserWindowFinding["preload_resolution_context"] =
-    null;
+  let preload: ElectronBrowserWindowPreload = {
+    preload_path: null,
+    preload_resolution_context: null,
+  };
   for (const property of object.properties) {
     if (t.isSpreadElement(property)) {
       unknown += 1;
@@ -155,10 +152,11 @@ const collectWebPreferences = (
       continue;
     }
     const path = name === "preload" ? staticPath(property.value) : undefined;
-    if (path !== undefined) {
-      preloadPath = path;
-      preloadResolutionContext = staticPathResolutionContext(property.value);
-    }
+    if (path !== undefined)
+      preload = {
+        preload_path: path,
+        preload_resolution_context: staticPathResolutionContext(property.value),
+      };
     const value: ElectronStaticValue =
       path === undefined
         ? electronStaticValue(source, property.value)
@@ -170,8 +168,7 @@ const collectWebPreferences = (
   return {
     status: "object-literal",
     preferences: preferences.slice(0, MAX_WEB_PREFERENCES),
-    preloadPath,
-    preloadResolutionContext,
+    preload,
     unknown,
     omitted: Math.max(0, preferences.length - MAX_WEB_PREFERENCES),
   };
@@ -201,14 +198,16 @@ const inspectContextBridge = (
     (worldId?.status === "dynamic" ? 1 : 0) +
     api.unknown;
   accountForStructure(context, unknown, api.omitted);
+  const apiKey: ElectronContextBridgeApiKey =
+    key.status === "dynamic"
+      ? { api_key: null, api_key_expression: key.expression }
+      : typeof key.value === "string"
+        ? { api_key: key.value, api_key_expression: null }
+        : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
+    ...apiKey,
     world: isolated ? "isolated" : "main",
     world_id: worldId,
-    api_key:
-      key.status === "literal" && typeof key.value === "string"
-        ? key.value
-        : null,
-    api_key_expression: key.status === "dynamic" ? key.expression : null,
     api_status: api.status,
     members: api.members,
     unknown_members: api.unknown,
@@ -234,10 +233,6 @@ const inspectUtilityProcess = (
   const moduleNode = argumentNode(node.arguments[0]);
   const modulePath =
     moduleNode === undefined ? undefined : staticPath(moduleNode);
-  const moduleResolutionContext =
-    modulePath === undefined || moduleNode === undefined
-      ? null
-      : staticPathResolutionContext(moduleNode);
   const options = argumentNode(node.arguments[2]);
   const serviceName =
     t.isObjectExpression(options) &&
@@ -245,20 +240,27 @@ const inspectUtilityProcess = (
       ? staticPath(objectProperty(options, "serviceName")?.value ?? options)
       : undefined;
   if (modulePath === undefined) context.accumulator.unknownFindings += 1;
+  const moduleReference =
+    modulePath === undefined || moduleNode === undefined
+      ? {
+          module_path: null,
+          module_resolution_context: null,
+          module_expression: boundedExpression(context.source, moduleNode),
+        }
+      : {
+          module_path: modulePath,
+          module_resolution_context: staticPathResolutionContext(moduleNode),
+          module_expression: null,
+        };
   const finding: ElectronUtilityProcessFinding = {
-    module_path: modulePath ?? null,
-    module_resolution_context: moduleResolutionContext,
-    module_expression:
-      modulePath === undefined
-        ? boundedExpression(context.source, moduleNode)
-        : null,
+    ...moduleReference,
     service_name: serviceName ?? null,
     module_key: null,
     location: range(node),
   };
   addLocatedFinding(context, {
     collection: context.accumulator.utilityProcesses,
-    key: `electron-utility\0${modulePath ?? finding.module_expression ?? "[missing]"}`,
+    key: `electron-utility\0${finding.module_path ?? finding.module_expression}`,
     node,
     value: finding,
   });

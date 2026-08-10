@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { composeBinarySessionFromProvider } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -42,7 +42,7 @@ export const createSessionMcpHarness = async (
   const second = join(root, "second.hop");
   await Promise.all([writeFile(first, "one"), writeFile(second, "two")]);
   const closed: string[] = [];
-  const session = composeBinarySessionFromProvider(provider(closed), {
+  const session = createTestBinarySession(provider(closed), {
     resolveAnalysisProfile: () =>
       Promise.resolve(ok({ profile: SNAPSHOT_PROFILE, compatibility: {} })),
   });

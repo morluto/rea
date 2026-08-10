@@ -24,7 +24,7 @@ const installationHost = (
     major: 21,
     home: "/usr/lib/jvm/jdk-21",
     bits: 64,
-    jdk: true,
+    runtime: "jdk",
   }),
   ...overrides,
 });
@@ -159,7 +159,7 @@ describe("Ghidra doctor integration", () => {
             major: 17,
             home: "/usr/lib/jvm/jdk-17",
             bits: 64,
-            jdk: true,
+            runtime: "jdk",
           }),
         },
       ),

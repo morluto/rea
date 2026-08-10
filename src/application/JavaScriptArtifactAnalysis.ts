@@ -277,7 +277,7 @@ const invalidPackage = (
 const unavailablePackage = (
   file: JavaScriptArtifactFile,
   limitation: string,
-): JavaScriptPackageObservation => ({
+): JavaScriptPackageObservation & { readonly status: "unavailable" } => ({
   path: file.path,
   sha256: file.sha256,
   status: "unavailable",
@@ -394,17 +394,24 @@ const collectSourceMapOriginals = (
     }
   }
   const omitted = total - sources.length;
-  return {
-    path: file.path,
-    sha256: file.sha256,
-    status: omitted === 0 ? "included" : "truncated",
-    sources,
-    omitted_sources: omitted,
-    limitation:
-      omitted === 0
-        ? null
-        : "Original-source inventory reached the approved source-map limit.",
-  };
+  return omitted === 0
+    ? {
+        path: file.path,
+        sha256: file.sha256,
+        status: "included",
+        sources,
+        omitted_sources: 0,
+        limitation: null,
+      }
+    : {
+        path: file.path,
+        sha256: file.sha256,
+        status: "truncated",
+        sources,
+        omitted_sources: omitted,
+        limitation:
+          "Original-source inventory reached the approved source-map limit.",
+      };
 };
 
 const unavailableSourceMap = (

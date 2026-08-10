@@ -15,12 +15,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
-  AnalysisClientFactory,
   ExecutionOptions,
-  AnalysisProfileResolution,
-  AnalysisProfileResolutionOptions,
   AnalysisOperationPort,
-  AnalysisProvider,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
 import type { AnalysisOperation } from "./AnalysisProvider.js";
@@ -80,23 +76,9 @@ export class BinarySession
   >();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
-  constructor(
-    readonly provider:
-      | AnalysisProvider
-      | AnalysisClientFactory
-      | SessionProviderRouter,
-    options: {
-      readonly resolveAnalysisProfile?: (
-        target: BinaryTarget,
-        options?: AnalysisProfileResolutionOptions,
-      ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
-    } = {},
-  ) {
+  constructor(providerRouter: SessionProviderRouter) {
     super();
-    this.#providerRouter =
-      provider instanceof SessionProviderRouter
-        ? provider
-        : SessionProviderRouter.legacy(provider, options);
+    this.#providerRouter = providerRouter;
   }
 
   /** Identify the provider producing evidence for this session. */

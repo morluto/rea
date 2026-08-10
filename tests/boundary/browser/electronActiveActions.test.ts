@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 
-import { electronActiveObservationInputSchema } from "../../../src/domain/electronActiveObservation.js";
+import {
+  electronActiveObservationInputSchema,
+  electronActiveObservationResultSchema,
+} from "../../../src/domain/electronActiveObservation.js";
 import { runElectronActions } from "../../../src/browser/PlaywrightElectronActiveActions.js";
+import { createElectronActiveObservationFixtureResult } from "../../fixtures/electronActiveObservationResult.js";
 
 it("parses bounded window, renderer, and deep-link actions for agents", () => {
   const input = electronActiveObservationInputSchema.parse({
@@ -132,4 +136,24 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
       error: null,
     },
   ]);
+});
+
+it("rejects action outcomes that disagree with their error state", () => {
+  const result = createElectronActiveObservationFixtureResult("/opt/app");
+  const action = result.actions[0];
+  expect(action).toBeDefined();
+  if (action === undefined) return;
+
+  expect(
+    electronActiveObservationResultSchema.safeParse({
+      ...result,
+      actions: [{ ...action, error: "unexpected failure" }],
+    }).success,
+  ).toBe(false);
+  expect(
+    electronActiveObservationResultSchema.safeParse({
+      ...result,
+      actions: [{ ...action, status: "failed", error: null }],
+    }).success,
+  ).toBe(false);
 });

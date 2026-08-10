@@ -50,18 +50,28 @@ export const comparePngScreenshots = (
     if (changed) changedPixels += 1;
   }
   const pixels = before.width * before.height;
-  return {
-    schema_version: 1,
-    status: changedPixels === 0 ? "identical" : "different",
+  const context = {
+    schema_version: 1 as const,
     before: dimensions(before),
     after: dimensions(after),
     channel_threshold: input.channel_threshold,
     compared_pixels: pixels,
-    changed_pixels: changedPixels,
-    changed_ratio: changedPixels / pixels,
     maximum_channel_delta: maximumDelta,
     mean_absolute_channel_delta: totalDelta / (pixels * 4),
     limitations: limitations(),
+  };
+  if (changedPixels === 0)
+    return {
+      ...context,
+      status: "identical",
+      changed_pixels: 0,
+      changed_ratio: 0,
+    };
+  return {
+    ...context,
+    status: "different",
+    changed_pixels: changedPixels,
+    changed_ratio: changedPixels / pixels,
   };
 };
 

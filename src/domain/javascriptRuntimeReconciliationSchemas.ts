@@ -193,17 +193,11 @@ const reconciliationReasonSchema = z.enum([
   "reconciliation-limit-reached",
 ]);
 
-const reconciliationItemSchema = z.strictObject({
+const reconciliationItemShape = {
   reconciliation_id: z.string().regex(/^jrr_item_[a-f0-9]{64}$/u),
   entity_kind: z.enum(["target", "frame", "script", "worker"]),
   runtime_evidence_id: evidenceIdSchema,
   runtime_node_id: nodeIdSchema,
-  static_layer_id: z
-    .string()
-    .regex(/^jrl_[a-f0-9]{64}$/u)
-    .nullable(),
-  static_node_id: nodeIdSchema.nullable(),
-  status: z.enum(["matched", "ambiguous", "unmatched", "unknown"]),
   basis: z.enum([
     "content-and-location",
     "content-sha256",
@@ -224,7 +218,21 @@ const reconciliationItemSchema = z.strictObject({
       }),
     )
     .max(1_000),
-});
+};
+const reconciliationItemSchema = z.union([
+  z.strictObject({
+    ...reconciliationItemShape,
+    static_layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),
+    static_node_id: nodeIdSchema,
+    status: z.literal("matched"),
+  }),
+  z.strictObject({
+    ...reconciliationItemShape,
+    static_layer_id: z.null(),
+    static_node_id: z.null(),
+    status: z.enum(["ambiguous", "unmatched", "unknown"]),
+  }),
+]);
 
 const staticLoadStateSchema = z.strictObject({
   static_layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),

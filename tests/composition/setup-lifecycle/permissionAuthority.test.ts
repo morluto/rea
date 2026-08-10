@@ -37,11 +37,11 @@ describe("permission authority", () => {
         operation_identity: "read:inside-ceiling",
       },
       "read",
-      { elicitationSupported: true },
+      { remediation: "elicit" },
     );
     expect(inside).toMatchObject({
       ok: false,
-      error: { elicitationSupported: true, restartRequired: false },
+      error: { remediation: "elicit" },
     });
 
     const outside = await authority.value.createConnectionAuthority().authorize(
@@ -50,11 +50,11 @@ describe("permission authority", () => {
         operation_identity: "read:outside-ceiling",
       },
       "read",
-      { elicitationSupported: true },
+      { remediation: "elicit" },
     );
     expect(outside).toMatchObject({
       ok: false,
-      error: { elicitationSupported: false, restartRequired: true },
+      error: { remediation: "restart" },
     });
   });
 

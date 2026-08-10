@@ -97,7 +97,7 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
       operation_identity: operationIdentity(input, staticEvidence),
     },
     "read",
-    { restartRequired: true },
+    { remediation: "restart" },
   );
   if (!authorized.ok)
     return err(

@@ -74,8 +74,8 @@ export class SessionProviderRouter {
     private readonly runtime: SingleProviderRuntime | SelectableProviderRuntime,
   ) {}
 
-  /** Preserve the existing provider/factory seam used by focused embedders. */
-  static legacy(
+  /** Create routing for an embedding backed by one fixed provider or factory. */
+  static single(
     provider: AnalysisProvider | AnalysisClientFactory,
     options: {
       readonly resolveAnalysisProfile?: (

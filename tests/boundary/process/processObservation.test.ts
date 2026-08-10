@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
 import {
   processCaptureSchema,
-  type ProcessCapture,
+  type UnverifiedProcessCapture,
 } from "../../../src/domain/processCapture.js";
 import {
   createProcessObservation,
@@ -12,7 +12,7 @@ import {
 
 const emptyCapture = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 
-const capture: ProcessCapture = {
+const capture: UnverifiedProcessCapture = {
   ...emptyCapture,
   frames: [{ sequence: 0, at_ms: 1, data: "Ready" }],
   rendered_frames: [

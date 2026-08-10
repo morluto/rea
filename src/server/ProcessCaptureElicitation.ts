@@ -83,15 +83,14 @@ export const authorizeProcessCaptureWithElicitation = async (
   context: ProcessCaptureElicitationContext,
   elicitation: ProcessCaptureElicitation,
 ): Promise<PermissionResult | InputRequiredResult> => {
-  const supported = elicitation.supported(context);
   const initial = await authority.authorize(request, "read", {
-    elicitationSupported: supported,
+    remediation: elicitation.supported(context) ? "elicit" : "configure",
   });
   if (initial.ok || !(initial.error instanceof PermissionRequiredError))
     return initial;
   const denied = initial.error;
   if (
-    !supported ||
+    denied.remediation !== "elicit" ||
     denied.requested.capability !== "process_capture" ||
     denied.ceiling === null ||
     !isPermissionRequestWithinCeiling(denied.requested, denied.ceiling)
@@ -172,12 +171,12 @@ const grantAndAuthorize = async (
   const granted = authority.grant(grant);
   if (!granted.ok)
     return authority.authorize(request, "read", {
-      elicitationSupported: true,
+      remediation: "elicit",
     });
   let authorized: PermissionResult;
   try {
     authorized = await authority.authorize(request, "read", {
-      elicitationSupported: true,
+      remediation: "elicit",
     });
   } catch (cause: unknown) {
     authority.revoke(grant.grant_id);

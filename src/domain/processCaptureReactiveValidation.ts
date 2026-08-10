@@ -1,6 +1,6 @@
 import canonicalize from "canonicalize";
 
-import type { ProcessCapture } from "./processCapture.js";
+import type { UnverifiedProcessCapture } from "./processCapture.js";
 import {
   projectProcessObservation,
   type ProcessObservation,
@@ -23,12 +23,12 @@ type RequireInvariant = (
   path: string,
   message: string,
 ) => void;
-type ReactiveRun = NonNullable<ProcessCapture["reactive_run"]>;
+type ReactiveRun = NonNullable<UnverifiedProcessCapture["reactive_run"]>;
 type ReactiveTransition = ReactiveRun["transitions"][number];
 
 const admittedCollection = (
   collection: NonNullable<
-    ProcessCapture["event_journal"]
+    UnverifiedProcessCapture["event_journal"]
   >[number]["collection"],
 ): boolean =>
   [
@@ -41,7 +41,7 @@ const admittedCollection = (
   ].includes(collection);
 
 const reactiveObservations = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
 ): readonly ProcessObservation[] =>
   (capture.event_journal ?? []).flatMap((location) => {
     if (!admittedCollection(location.collection)) return [];
@@ -249,7 +249,7 @@ const validateControls = (
 
 /** Validate one capture's reactive journal by replaying the production reducer. */
 export const validateProcessCaptureReactiveRun = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const declared = capture.manifest.scenario["reactive"];

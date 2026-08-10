@@ -1,4 +1,8 @@
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  partialApplicationCoverage,
+  truncatedApplicationCoverage,
+} from "../domain/javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptSemanticIr,
   JavaScriptSemanticCallable,
@@ -7,7 +11,6 @@ import type {
 import { flattenSemanticReturnValue } from "../domain/javascriptSemanticReturns.js";
 import type { JavaScriptSourceRange } from "../domain/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactGraphCoverage } from "./JavaScriptArtifactGraphContext.js";
-import { partialReconstructionCoverage } from "./JavaScriptArtifactGraphEvidence.js";
 
 const MAX_PROJECTED_RETURN_SHAPES = 32;
 const MAX_PROJECTED_RETURN_FIELDS = 64;
@@ -43,30 +46,31 @@ export const projectJavaScriptExportReturnShapes = (input: {
     input.baseCoverage.status === "complete" &&
     callable.returnCoverage.status === "complete" &&
     projectionOmitted === 0;
+  const limits = [
+    ...input.baseCoverage.limits,
+    {
+      name: "return-shape-sites",
+      value: MAX_PROJECTED_RETURN_SHAPES,
+      unit: "items" as const,
+    },
+    {
+      name: "return-shape-fields",
+      value: MAX_PROJECTED_RETURN_FIELDS,
+      unit: "items" as const,
+    },
+    {
+      name: "return-shape-property-coverage",
+      value: MAX_PROJECTED_PROPERTY_COVERAGE,
+      unit: "items" as const,
+    },
+  ];
+  const omitted =
+    semanticOmitted === null ? null : semanticOmitted + projectionOmitted;
   const coverage = complete
     ? input.baseCoverage
-    : partialReconstructionCoverage(
-        [
-          ...input.baseCoverage.limits,
-          {
-            name: "return-shape-sites",
-            value: MAX_PROJECTED_RETURN_SHAPES,
-            unit: "items",
-          },
-          {
-            name: "return-shape-fields",
-            value: MAX_PROJECTED_RETURN_FIELDS,
-            unit: "items",
-          },
-          {
-            name: "return-shape-property-coverage",
-            value: MAX_PROJECTED_PROPERTY_COVERAGE,
-            unit: "items",
-          },
-        ],
-        semanticOmitted === null ? null : semanticOmitted + projectionOmitted,
-        callable.returnCoverage.status === "truncated" || projectionOmitted > 0,
-      );
+    : callable.returnCoverage.status === "truncated" || projectionOmitted > 0
+      ? truncatedApplicationCoverage(limits, omitted)
+      : partialApplicationCoverage(limits, omitted);
   const limitations = [
     ...input.ir.limitations,
     "Return shapes are inferred from inert syntax and do not prove runtime behavior.",

@@ -168,8 +168,8 @@ describe("analysis error projection: typed failures", () => {
           cause: secretCause,
         },
       ),
-      PermissionRequiredError: new PermissionRequiredError(
-        {
+      PermissionRequiredError: new PermissionRequiredError({
+        requested: {
           capability: "evidence_read",
           roots: ["/workspace/evidence.json"],
           executables: [],
@@ -178,11 +178,10 @@ describe("analysis error projection: typed failures", () => {
           mount: false,
           operation_identity: "read:evidence",
         },
-        { environment_names: ["TOKEN_NAME"] },
-        null,
-        false,
-        true,
-      ),
+        missing: { environment_names: ["TOKEN_NAME"] },
+        ceiling: null,
+        remediation: "restart",
+      }),
       ReplayPlanStaleError: new ReplayPlanStaleError(
         "a".repeat(64),
         "b".repeat(64),
@@ -250,6 +249,53 @@ describe("analysis error projection: typed failures", () => {
 });
 
 describe("analysis error projection: remediation", () => {
+  it.each([
+    [
+      "configure",
+      false,
+      false,
+      "Add the exact missing scope beneath the administrator ceiling, then retry.",
+    ],
+    [
+      "elicit",
+      false,
+      true,
+      "Approve the exact missing scope, then retry the operation.",
+    ],
+    [
+      "restart",
+      true,
+      false,
+      "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client.",
+    ],
+  ] as const)(
+    "projects %s permission remediation into the stable protocol fields",
+    (remediation, restartRequired, elicitationSupported, action) => {
+      const projected = projectAnalysisError(
+        new PermissionRequiredError({
+          requested: {
+            capability: "evidence_read",
+            roots: ["/workspace/evidence.json"],
+            executables: [],
+            environment_names: [],
+            network: "none",
+            mount: false,
+            operation_identity: "read:evidence",
+          },
+          missing: { roots: ["/workspace/evidence.json"] },
+          ceiling: null,
+          remediation,
+        }),
+      );
+
+      expect(projected.remediation).toEqual({
+        action,
+        restart_required: restartRequired,
+        elicitation_supported: elicitationSupported,
+      });
+    },
+  );
+
   it("gives missing residual unknowns a lookup-specific remediation", () => {
     expect(
       projectAnalysisError(new UnknownRegistryError("not-found")),

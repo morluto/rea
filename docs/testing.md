@@ -25,6 +25,11 @@ registries but do not cross production filesystem, process, socket, or browser b
 Boundary tests cross one production boundary. Only acceptance tests assemble
 the complete runtime or invoke the compiled product surface.
 
+Focused immutable builders shared by a domain test family live beside their
+production owner as `src/domain/*.fixture.ts`. They are typechecked with the
+suite and excluded from package builds; broader runtime and provider fixtures
+remain under `tests/fixtures/**`.
+
 `tests/process-global/**` is reserved for cases with a demonstrated dependency
 on process-global state. Those tests run without file parallelism. Reusable,
 test-scoped fixtures live under `tests/support/**`; immutable source artifacts
@@ -64,6 +69,9 @@ Use `npm run check:pr` before handing off a contribution.
 Local full-suite Vitest runs are intentionally capped at one worker and one
 project at a time. Boundary fixtures own real subprocesses, and this local cap
 keeps aggregate memory predictable; CI retains the existing two-worker budget.
+The pure domain/contracts and recording-port service projects share one worker
+module context because their tests own no mutable runtime resources; adapter,
+composition, and boundary projects retain per-file isolation.
 `npm test`, `npm run docs:check`, and `npm run docs:generate` share
 repository-local locks and fail fast when the same class of command is already
 running. The `npm test` build is inside that lock. `check:pr` runs its test task

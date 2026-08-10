@@ -65,25 +65,49 @@ const historySchema = z.strictObject({
     .max(256),
 });
 
-const storageValueSchema = z.strictObject({
+const hashedStorageValueShape = {
+  value_state: z.literal("hashed"),
+  value_sha256: digestSchema,
+};
+const redactedStorageValueShape = {
+  value_state: z.literal("redacted-secret"),
+  value_sha256: z.null(),
+};
+const storageValueFingerprintSchema = z.discriminatedUnion("value_state", [
+  z.strictObject(hashedStorageValueShape),
+  z.strictObject(redactedStorageValueShape),
+]);
+export type BrowserStorageValueFingerprint = z.infer<
+  typeof storageValueFingerprintSchema
+>;
+
+const storageValueSchema = z.discriminatedUnion("value_state", [
+  z.strictObject({
+    name: z.string().max(1_024),
+    ...hashedStorageValueShape,
+  }),
+  z.strictObject({
+    name: z.string().max(1_024),
+    ...redactedStorageValueShape,
+  }),
+]);
+
+const cookieShape = {
   name: z.string().max(1_024),
-  value_state: z.enum(["hashed", "redacted-secret"]),
-  value_sha256: digestSchema.nullable(),
-});
+  domain: z.string().max(2_048),
+  path: z.string().max(4_096),
+  secure: z.boolean(),
+  http_only: z.boolean(),
+  same_site: z.enum(["Strict", "Lax", "None"]),
+};
 
 const storageSnapshotSchema = z.strictObject({
   cookies: z
     .array(
-      z.strictObject({
-        name: z.string().max(1_024),
-        domain: z.string().max(2_048),
-        path: z.string().max(4_096),
-        secure: z.boolean(),
-        http_only: z.boolean(),
-        same_site: z.enum(["Strict", "Lax", "None"]),
-        value_state: z.enum(["hashed", "redacted-secret"]),
-        value_sha256: digestSchema.nullable(),
-      }),
+      z.discriminatedUnion("value_state", [
+        z.strictObject({ ...cookieShape, ...hashedStorageValueShape }),
+        z.strictObject({ ...cookieShape, ...redactedStorageValueShape }),
+      ]),
     )
     .max(512),
   local_storage: z.array(storageValueSchema).max(512),
@@ -106,8 +130,22 @@ const eventBase = {
 };
 
 const eventUrl = sanitizedBrowserUrlSchema.nullable();
+const networkEventShape = {
+  ...eventBase,
+  method: z.string().min(1).max(32),
+  url: sanitizedBrowserUrlSchema,
+  resource_type: z.string().min(1).max(64),
+  header_names: z.array(z.string().max(256)).max(256),
+};
+const webSocketFrameShape = {
+  ...eventBase,
+  kind: z.enum(["websocket-frame-sent", "websocket-frame-received"]),
+  url: sanitizedBrowserUrlSchema,
+  payload_bytes: z.number().int().min(0),
+  truncated: z.boolean(),
+};
 
-export const browserScenarioEventSchema = z.discriminatedUnion("kind", [
+export const browserScenarioEventSchema = z.union([
   z.strictObject({
     ...eventBase,
     kind: z.literal("console"),
@@ -122,14 +160,22 @@ export const browserScenarioEventSchema = z.discriminatedUnion("kind", [
     stack: z.string().max(262_144).nullable(),
   }),
   z.strictObject({
-    ...eventBase,
-    kind: z.enum(["request", "response", "request-failed"]),
-    method: z.string().min(1).max(32),
-    url: sanitizedBrowserUrlSchema,
-    resource_type: z.string().min(1).max(64),
-    status: z.number().int().min(100).max(599).nullable(),
-    header_names: z.array(z.string().max(256)).max(256),
-    failure: z.string().max(1_024).nullable(),
+    ...networkEventShape,
+    kind: z.literal("request"),
+    status: z.null(),
+    failure: z.null(),
+  }),
+  z.strictObject({
+    ...networkEventShape,
+    kind: z.literal("response"),
+    status: z.number().int().min(100).max(599),
+    failure: z.null(),
+  }),
+  z.strictObject({
+    ...networkEventShape,
+    kind: z.literal("request-failed"),
+    status: z.null(),
+    failure: z.string().min(1).max(1_024),
   }),
   z.strictObject({
     ...eventBase,
@@ -137,13 +183,14 @@ export const browserScenarioEventSchema = z.discriminatedUnion("kind", [
     url: sanitizedBrowserUrlSchema,
   }),
   z.strictObject({
-    ...eventBase,
-    kind: z.enum(["websocket-frame-sent", "websocket-frame-received"]),
-    url: sanitizedBrowserUrlSchema,
-    payload_type: z.enum(["text", "binary"]),
-    payload_bytes: z.number().int().min(0),
-    payload_text: z.string().max(65_536).nullable(),
-    truncated: z.boolean(),
+    ...webSocketFrameShape,
+    payload_type: z.literal("text"),
+    payload_text: z.string().max(65_536),
+  }),
+  z.strictObject({
+    ...webSocketFrameShape,
+    payload_type: z.literal("binary"),
+    payload_text: z.null(),
   }),
   z.strictObject({
     ...eventBase,
@@ -182,50 +229,92 @@ const completenessSectionSchema = z.enum([
   "popups",
   "websockets",
 ]);
+export type BrowserScenarioCompletenessSection = z.infer<
+  typeof completenessSectionSchema
+>;
 
-export const browserScenarioCompletenessSchema = z
-  .strictObject({
-    status: z.enum(["complete", "incomplete", "truncated"]),
-    equality_eligible: z.boolean(),
-    missing_sections: z.array(completenessSectionSchema),
-    truncated_sections: z.array(completenessSectionSchema),
-  })
-  .superRefine((value, context) => {
-    const expectedStatus =
-      value.truncated_sections.length > 0
-        ? "truncated"
-        : value.missing_sections.length > 0
-          ? "incomplete"
-          : "complete";
-    if (value.status !== expectedStatus)
-      context.addIssue({
-        code: "custom",
-        path: ["status"],
-        message: "Completeness status does not match section accounting",
-      });
-    if (value.equality_eligible !== (expectedStatus === "complete"))
-      context.addIssue({
-        code: "custom",
-        path: ["equality_eligible"],
-        message: "Missing or truncated evidence is never equality-eligible",
-      });
-  });
+export const browserScenarioCompletenessSchema = z.discriminatedUnion(
+  "status",
+  [
+    z.strictObject({
+      status: z.literal("complete"),
+      equality_eligible: z.literal(true),
+      missing_sections: z.tuple([]),
+      truncated_sections: z.tuple([]),
+    }),
+    z.strictObject({
+      status: z.literal("incomplete"),
+      equality_eligible: z.literal(false),
+      missing_sections: z.array(completenessSectionSchema).min(1),
+      truncated_sections: z.tuple([]),
+    }),
+    z.strictObject({
+      status: z.literal("truncated"),
+      equality_eligible: z.literal(false),
+      missing_sections: z.array(completenessSectionSchema),
+      truncated_sections: z.array(completenessSectionSchema).min(1),
+    }),
+  ],
+);
 export type BrowserScenarioCompleteness = z.infer<
   typeof browserScenarioCompletenessSchema
 >;
 
-export const browserScenarioStepSchema = z.strictObject({
+/** Classify canonical browser-scenario completeness from section accounting. */
+export const classifyBrowserScenarioCompleteness = (
+  missing: Iterable<BrowserScenarioCompletenessSection>,
+  truncated: Iterable<BrowserScenarioCompletenessSection>,
+): BrowserScenarioCompleteness => {
+  const missingSections = [...new Set(missing)].sort();
+  const truncatedSections = [...new Set(truncated)].sort();
+  if (truncatedSections.length > 0)
+    return browserScenarioCompletenessSchema.parse({
+      status: "truncated",
+      equality_eligible: false,
+      missing_sections: missingSections,
+      truncated_sections: truncatedSections,
+    });
+  if (missingSections.length > 0)
+    return browserScenarioCompletenessSchema.parse({
+      status: "incomplete",
+      equality_eligible: false,
+      missing_sections: missingSections,
+      truncated_sections: [],
+    });
+  return {
+    status: "complete",
+    equality_eligible: true,
+    missing_sections: [],
+    truncated_sections: [],
+  };
+};
+
+const browserScenarioStepShape = {
   step_index: z.number().int().min(0),
   step_id: z.string().min(1).max(64),
   action: z.string().min(1).max(64),
-  status: z.enum(["completed", "failed", "cancelled"]),
   elapsed_ms: z.number().int().min(0),
   before_url: sanitizedBrowserUrlSchema,
   after_url: sanitizedBrowserUrlSchema,
-  error: z.string().max(4_096).nullable(),
   event_sequence_start: z.number().int().min(1),
   event_sequence_end: z.number().int().min(0),
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
-});
+};
+export const browserScenarioStepSchema = z.union([
+  z.strictObject({
+    ...browserScenarioStepShape,
+    status: z.literal("completed"),
+    error: z.null(),
+  }),
+  z.strictObject({
+    ...browserScenarioStepShape,
+    status: z.enum(["failed", "cancelled"]),
+    error: z.string().max(4_096),
+  }),
+]);
 export type BrowserScenarioStep = z.infer<typeof browserScenarioStepSchema>;
+type StepOutcome<Step> = Step extends BrowserScenarioStep
+  ? Pick<Step, "status" | "error">
+  : never;
+export type BrowserScenarioStepOutcome = StepOutcome<BrowserScenarioStep>;

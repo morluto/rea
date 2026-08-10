@@ -28,12 +28,16 @@ export const analysisErrorRemediationAction = (
     return "Check that the unknown_id belongs to this session, then retry.";
   if (error instanceof ReplayPlanStaleError)
     return "Review the rebuilt replay plan and explicitly approve its new digest.";
-  if (error instanceof PermissionRequiredError)
-    return error.restartRequired
-      ? "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client."
-      : error.elicitationSupported
-        ? "Approve the exact missing scope, then retry the operation."
-        : "Add the exact missing scope beneath the administrator ceiling, then retry.";
+  if (error instanceof PermissionRequiredError) {
+    switch (error.remediation) {
+      case "configure":
+        return "Add the exact missing scope beneath the administrator ceiling, then retry.";
+      case "elicit":
+        return "Approve the exact missing scope, then retry the operation.";
+      case "restart":
+        return "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client.";
+    }
+  }
   return analysisErrorUserMessage(error);
 };
 

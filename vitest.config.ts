@@ -22,19 +22,26 @@ export const MAX_TEST_WORKERS = LOCAL_ONLY
 export const TEST_PROJECTS = [
   {
     name: "domain",
-    include: ["src/domain/**/*.test.ts"],
+    include: ["src/{contracts,domain}/**/*.test.ts"],
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
+    // Domain and contract modules are pure and own no process-global state, so
+    // per-file module isolation adds startup cost without protecting a seam.
+    isolate: false,
   },
   {
     name: "services",
     include: ["src/application/**/*.test.ts"],
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
+    // Service tests use recording ports and own no process-global state. Share
+    // their module graph so file startup does not dominate the lane.
+    isolate: false,
   },
   {
     name: "adapters",
     include: [
+      "src/config*.test.ts",
       "src/{artifacts,browser,dotnet,ghidra,hopper,native,process,reference,replay}/**/*.test.ts",
     ],
     pool: "forks" as const,

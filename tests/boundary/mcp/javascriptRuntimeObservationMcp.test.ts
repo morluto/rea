@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { observeJavaScriptRuntime } from "../../../src/application/JavaScriptRuntimeObservationService.js";
 import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
@@ -45,7 +45,7 @@ describe("JavaScript runtime observation MCP tools", () => {
     if (!config.ok) throw config.error;
     const authority = await loadConfiguredPermissionAuthority(config.value);
     if (!authority.ok) throw authority.error;
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
     }));

@@ -14,15 +14,13 @@ export const projectGhidraDoctorInspection = (
 ): DoctorProviderInspection => ({
   id: "ghidra",
   configured: inspection.installDir !== null,
-  available: inspection.available,
+  available: inspection.status === "available",
   providerVersion: inspection.providerVersion,
   registrationEnvironment:
-    inspection.available && inspection.installDir !== null
+    inspection.status === "available"
       ? {
           GHIDRA_INSTALL_DIR: inspection.installDir,
-          ...(inspection.javaHome === null
-            ? {}
-            : { JAVA_HOME: inspection.javaHome }),
+          JAVA_HOME: inspection.javaHome,
         }
       : {},
   checks: selectedChecks(inspection).map((check) =>
@@ -54,14 +52,14 @@ const selectedChecks = (
   );
   const configuration = byName.get("configuration");
   if (configuration === undefined) return [];
-  if (!configuration.ok) return [configuration];
+  if (configuration.status === "failed") return [configuration];
   const installation = byName.get("installation");
   return [
     configuration,
     byName.get("platform"),
     byName.get("architecture"),
     installation,
-    ...(installation?.ok === true
+    ...(installation?.status === "passed"
       ? [byName.get("version"), byName.get("headless")]
       : []),
     byName.get("java"),
@@ -75,14 +73,16 @@ const projectCheck = (
   configured: boolean,
 ): DoctorProviderCheck => ({
   name: check.name,
-  ok: check.ok,
-  code: check.code,
+  ok: check.status === "passed",
+  code: check.status === "failed" ? check.code : null,
   detail: check.detail,
-  remediation: check.remediation,
+  remediation: check.status === "failed" ? check.remediation : null,
   classification:
     check.name === "platform" || check.name === "architecture"
       ? "unsupported_host"
-      : check.name === "java" && check.code === "runtime_missing"
+      : check.name === "java" &&
+          check.status === "failed" &&
+          check.code === "runtime_missing"
         ? "missing_dependency"
         : configured
           ? "config_drift"

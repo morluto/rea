@@ -5,10 +5,7 @@ import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
 import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
 import { parseAddressedPage } from "../domain/hopperValues.js";
-import {
-  processCaptureSchema,
-  validateProcessCapture,
-} from "../domain/processCapture.js";
+import { processCaptureSchema } from "../domain/processCapture.js";
 
 const COMPLETION_SCAN_LIMIT = 10_000;
 const PROCEDURE_PAGE_SIZE = 500;
@@ -183,7 +180,7 @@ const evidenceValues = (
 const isProcessCaptureEvidence = (evidence: LedgerEvidence): boolean => {
   if (evidence.operation !== "capture_process_scenario") return false;
   const capture = processCaptureSchema.safeParse(evidence.normalized_result);
-  return capture.success && validateProcessCapture(capture.data).length === 0;
+  return capture.success;
 };
 
 const unknownCandidates = (

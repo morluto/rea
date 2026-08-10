@@ -2,6 +2,7 @@ import type { IPty } from "@lydell/node-pty";
 import type {
   InteractionEvent,
   ProcessCapture,
+  UnverifiedProcessCapture,
   ProcessCaptureEventJournalEntry,
   ProcessExecutionPolicy,
   ProcessSample,
@@ -9,7 +10,7 @@ import type {
   RecordProcessCaptureEvent,
   TerminalFrame,
 } from "../domain/processCapture.js";
-import { validateProcessCapture } from "../domain/processCapture.js";
+import { parseProcessCapture } from "../domain/processCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProcessCaptureError,
@@ -39,6 +40,7 @@ import {
   prepareProcessCapture,
   releaseProcessResources,
   resolveProcessResult,
+  type PendingProcessCapture,
 } from "./ProcessCaptureLifecycle.js";
 import { assertNotCancelled } from "./ProcessCaptureAuthority.js";
 import {
@@ -240,7 +242,7 @@ const normalizedShimEvents = (
   runtime: StartedCaptureRuntime,
   scenario: ProcessScenario,
   temporaryRoot: string,
-): ProcessCapture["shim_events"] =>
+): UnverifiedProcessCapture["shim_events"] =>
   runtime.shimReplay.events.map((event) =>
     normalizeProcessShimEvent(
       event,
@@ -257,7 +259,7 @@ const finishProcessRun = async (options: {
   readonly temporaryRoot: string;
   readonly samples: readonly ProcessSample[];
   readonly stopSampler: () => Promise<{ readonly partial: boolean }>;
-  readonly capture: ProcessCapture | undefined;
+  readonly capture: PendingProcessCapture | undefined;
   readonly executionFailure: unknown;
 }): Promise<ProcessCapture> => {
   options.runtime?.reactive?.unsubscribe();
@@ -285,27 +287,35 @@ const finishProcessRun = async (options: {
     });
   await options.runtime?.reactive?.coordinator.close();
   let { capture, executionFailure } = options;
-  if (capture !== undefined) {
-    capture = {
+  let verifiedCapture: ProcessCapture | undefined;
+  if (capture !== undefined && cleanupFailure === undefined) {
+    const settlement: UnverifiedProcessCapture["settlement"] =
+      capture.settlement.state === "quiesced"
+        ? { ...capture.settlement, cleanup_outcome: "not_required" }
+        : { ...capture.settlement, cleanup_outcome: "cleaned" };
+    const completedCapture: UnverifiedProcessCapture = {
       ...capture,
       reactive_run: projectProcessReactiveRun(options.runtime?.reactive),
-      settlement: {
-        ...capture.settlement,
-        cleanup_outcome:
-          capture.settlement.state === "quiesced"
-            ? "not_required"
-            : cleanupFailure === undefined
-              ? "cleaned"
-              : "failed",
+      settlement,
+      cleanup: {
+        owned_process_group: "verified",
+        temporary_root: "removed",
       },
     };
-    const issue = validateProcessCapture(capture)[0];
-    if (issue !== undefined)
+    try {
+      verifiedCapture = parseProcessCapture(completedCapture);
+    } catch (cause: unknown) {
       executionFailure = new ProcessCaptureError(
-        `process capture validation failed: ${issue.path}: ${issue.message}`,
+        `process capture validation failed${cause instanceof Error ? `: ${cause.message}` : ""}`,
+        { cause },
       );
+    }
   }
-  return resolveProcessResult(capture, executionFailure, cleanupFailure);
+  return resolveProcessResult(
+    verifiedCapture,
+    executionFailure,
+    cleanupFailure,
+  );
 };
 
 const completeCapture = async (options: {
@@ -322,7 +332,7 @@ const completeCapture = async (options: {
   readonly initiallyTruncated: boolean;
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
   readonly recordEvent: RecordProcessCaptureEvent;
-}): Promise<ProcessCapture> => {
+}): Promise<PendingProcessCapture> => {
   const { runtime, scenario } = options;
   runtime.checkpoints.trigger("root_exit");
   const { reason } = options.exit;
@@ -374,7 +384,6 @@ const completeCapture = async (options: {
     exit: { ...options.exit, reason },
     samples: options.samples,
     replay: runtime.replay,
-    reactiveRun: projectProcessReactiveRun(runtime.reactive),
     before: options.before,
     after,
     truncated,
@@ -385,7 +394,7 @@ const completeCapture = async (options: {
     interactions: options.interactions,
     checkpoints,
     shimEvents: normalizedShimEvents(runtime, scenario, options.temporaryRoot),
-    settlement: { ...settlement, cleanup_outcome: "not_required" },
+    settlement,
     manifest,
     eventJournal: options.eventJournal,
   });
@@ -409,7 +418,7 @@ const runProcessScenario = async (
   const { entries: eventJournal, recordEvent } = journal;
   let runtime: StartedCaptureRuntime | undefined;
   const timers = new Set<NodeJS.Timeout>();
-  let capture: ProcessCapture | undefined;
+  let capture: PendingProcessCapture | undefined;
   let executionFailure: unknown;
   let stopSampler = async () => ({ partial: false });
   const interactions: InteractionEvent[] = [];

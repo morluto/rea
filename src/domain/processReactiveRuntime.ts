@@ -19,17 +19,29 @@ export type ProcessReactiveOutcome =
   | "cancelled"
   | "cleanup_failed";
 
-/** One deterministic scenario transition suitable for later Evidence projection. */
-export interface ProcessReactiveTransitionRecord {
+/** Lifecycle state shared by the reducer snapshot and its durable projection. */
+export type ProcessReactiveStatus =
+  | { readonly status: "running"; readonly outcome: null }
+  | {
+      readonly status: "finished";
+      readonly outcome: ProcessReactiveOutcome;
+    };
+
+interface ProcessReactiveTransitionState {
   readonly sequence: number;
   readonly transition_id: string;
   readonly state_before: string;
-  readonly state_after: string | null;
-  readonly outcome: ProcessReactiveOutcome | null;
   readonly trigger_event_ids: readonly string[];
   readonly action_event_ids: readonly string[];
   readonly action_types: readonly ProcessReactiveAction["type"][];
 }
+
+/** One deterministic scenario transition suitable for later Evidence projection. */
+export type ProcessReactiveTransitionRecord = ProcessReactiveTransitionState &
+  (
+    | { readonly state_after: string; readonly outcome: null }
+    | { readonly state_after: null; readonly outcome: "passed" }
+  );
 
 interface Counter {
   readonly id: string;
@@ -42,10 +54,7 @@ interface ReactiveCheckpoint {
   readonly capture_order: number;
 }
 
-/** Immutable reducer state owned by one validated reactive scenario run. */
-export interface ProcessReactiveSnapshot {
-  readonly status: "running" | "finished";
-  readonly outcome: ProcessReactiveOutcome | null;
+interface ProcessReactiveSnapshotState {
   readonly active_state: string;
   readonly state_entry_capture_order: number;
   readonly observations: readonly ProcessObservation[];
@@ -55,6 +64,10 @@ export interface ProcessReactiveSnapshot {
   readonly checkpoints: readonly ReactiveCheckpoint[];
   readonly transitions: readonly ProcessReactiveTransitionRecord[];
 }
+
+/** Immutable reducer state owned by one validated reactive scenario run. */
+export type ProcessReactiveSnapshot = ProcessReactiveSnapshotState &
+  ProcessReactiveStatus;
 
 /** External fact offered to the pure reducer. */
 export type ProcessReactiveInput =

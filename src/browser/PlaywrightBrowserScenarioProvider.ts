@@ -10,12 +10,14 @@ import type {
 } from "../domain/browserScenario.js";
 import {
   browserScenarioCaptureSchema,
-  browserScenarioCompletenessSchema,
+  classifyBrowserScenarioCompleteness,
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
   type BrowserScenarioCapture,
   type BrowserScenarioCompleteness,
+  type BrowserScenarioCompletenessSection,
   type BrowserScenarioStep,
+  type BrowserScenarioStepOutcome,
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCapture.js";
 import {
@@ -51,6 +53,14 @@ export const PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY: ProviderIdentity =
   });
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
+const SNAPSHOT_KINDS = [
+  "screenshot",
+  "dom",
+  "accessibility",
+  "url",
+  "history",
+  "storage",
+] as const satisfies readonly SnapshotKind[];
 
 const requestedForStep = (
   scenario: BrowserScenario,
@@ -83,40 +93,29 @@ const stepCompleteness = (
   artifacts: BrowserStepArtifacts,
   status: BrowserScenarioStep["status"],
 ): BrowserScenarioCompleteness => {
-  const missing = Object.entries(artifacts)
-    .filter(([, state]) => state.state === "missing")
-    .map(([section]) => section);
-  const truncated = Object.entries(artifacts)
-    .filter(([, state]) => state.state === "truncated")
-    .map(([section]) => section);
+  const missing: BrowserScenarioCompletenessSection[] = SNAPSHOT_KINDS.filter(
+    (section) => artifacts[section].state === "missing",
+  );
+  const truncated = SNAPSHOT_KINDS.filter(
+    (section) => artifacts[section].state === "truncated",
+  );
   if (status !== "completed") missing.push("action");
-  const condition =
-    truncated.length > 0
-      ? "truncated"
-      : missing.length > 0
-        ? "incomplete"
-        : "complete";
-  return browserScenarioCompletenessSchema.parse({
-    status: condition,
-    equality_eligible: condition === "complete",
-    missing_sections: [...new Set(missing)].sort(),
-    truncated_sections: [...new Set(truncated)].sort(),
-  });
+  return classifyBrowserScenarioCompleteness(missing, truncated);
 };
 
-const createStep = (input: {
-  readonly stepIndex: number;
-  readonly stepId: string;
-  readonly action: string;
-  readonly status: BrowserScenarioStep["status"];
-  readonly elapsedMs: number;
-  readonly beforeUrl: string;
-  readonly afterUrl: string;
-  readonly error: string | null;
-  readonly eventStart: number;
-  readonly eventEnd: number;
-  readonly artifacts: BrowserStepArtifacts;
-}): BrowserScenarioStep =>
+const createStep = (
+  input: {
+    readonly stepIndex: number;
+    readonly stepId: string;
+    readonly action: string;
+    readonly elapsedMs: number;
+    readonly beforeUrl: string;
+    readonly afterUrl: string;
+    readonly eventStart: number;
+    readonly eventEnd: number;
+    readonly artifacts: BrowserStepArtifacts;
+  } & BrowserScenarioStepOutcome,
+): BrowserScenarioStep =>
   browserScenarioStepSchema.parse({
     step_index: input.stepIndex,
     step_id: input.stepId,
@@ -207,11 +206,12 @@ const executeStep = async (input: {
   const actionStartedAt = Date.now();
   session.setStep(stepIndex);
   const requestCancelled = (): boolean => signal?.aborted === true;
-  let status: BrowserScenarioStep["status"] = "completed";
-  let error: string | null = null;
+  let outcome: BrowserScenarioStepOutcome = {
+    status: "completed",
+    error: null,
+  };
   if (requestCancelled()) {
-    status = "cancelled";
-    error = "scenario request cancelled";
+    outcome = { status: "cancelled", error: "scenario request cancelled" };
   } else {
     try {
       const elapsed = Date.now() - startedAt;
@@ -219,16 +219,18 @@ const executeStep = async (input: {
       if (remaining <= 0) throw new Error("Scenario duration limit reached");
       await session.perform(action, remaining, signal);
     } catch (cause: unknown) {
-      status = requestCancelled() ? "cancelled" : "failed";
-      error = session.redactError(cause);
+      outcome = {
+        status: requestCancelled() ? "cancelled" : "failed",
+        error: session.redactError(cause),
+      };
     }
   }
   const remaining = scenario.limits.max_duration_ms - (Date.now() - startedAt);
   const artifacts =
-    status === "cancelled" || remaining <= 0
+    outcome.status === "cancelled" || remaining <= 0
       ? unavailableArtifacts(
           requested,
-          status === "cancelled"
+          outcome.status === "cancelled"
             ? "scenario request cancelled"
             : "scenario duration limit reached",
         )
@@ -237,11 +239,10 @@ const executeStep = async (input: {
     stepIndex,
     stepId: action.step_id,
     action: action.action,
-    status,
+    ...outcome,
     elapsedMs: Date.now() - actionStartedAt,
     beforeUrl,
     afterUrl: session.currentUrl(),
-    error,
     eventStart,
     eventEnd: session.lastEventSequence(),
     artifacts,
@@ -261,18 +262,7 @@ const globalCompleteness = (
   );
   truncated.push(...session.eventTruncationSections());
   if (session.mode === "connect") missing.push("events");
-  const status =
-    truncated.length > 0
-      ? "truncated"
-      : missing.length > 0
-        ? "incomplete"
-        : "complete";
-  return browserScenarioCompletenessSchema.parse({
-    status,
-    equality_eligible: status === "complete",
-    missing_sections: [...new Set(missing)].sort(),
-    truncated_sections: [...new Set(truncated)].sort(),
-  });
+  return classifyBrowserScenarioCompleteness(missing, truncated);
 };
 
 const runScenario = async (

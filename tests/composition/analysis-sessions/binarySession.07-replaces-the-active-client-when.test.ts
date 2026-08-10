@@ -1,21 +1,14 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { HopperStartError } from "../../../src/domain/errors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 class TestClient implements AnalysisClient {
   closed = 0;
@@ -38,7 +31,7 @@ class TestClient implements AnalysisClient {
 }
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -64,7 +57,7 @@ const deferred = <T>(): {
 
 describe("binary session", () => {
   it("replaces the active client when a canonical path changes contents", async () => {
-    directory = await createTestTempDirectory("bb-session-");
+    const directory = await createTestTempDirectory("bb-session-");
     const path = join(directory, "mutable.hop");
     await writeFile(path, "one");
     const clients: Array<{
@@ -72,7 +65,7 @@ describe("binary session", () => {
       readonly calls: string[];
       closed: number;
     }> = [];
-    const session = composeBinarySessionFromFactory((target) => {
+    const session = createTestBinarySession((target) => {
       const state = {
         targetSha256: target.sha256,
         calls: [] as string[],
@@ -125,7 +118,7 @@ describe("binary session", () => {
     const [first, second] = await targets();
     const active = deferred<ReturnType<typeof ok>>();
     const clients: TestClient[] = [];
-    const session = composeBinarySessionFromFactory(() => {
+    const session = createTestBinarySession(() => {
       const value = new TestClient(
         undefined,
         false,
@@ -149,7 +142,7 @@ describe("binary session", () => {
     const [first, second] = await targets();
     const health = deferred<ReturnType<typeof ok>>();
     let created = 0;
-    const session = composeBinarySessionFromFactory(() => {
+    const session = createTestBinarySession(() => {
       created += 1;
       return new TestClient(created === 1 ? health.promise : undefined);
     });

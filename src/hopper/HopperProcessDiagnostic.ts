@@ -1,6 +1,6 @@
 import {
   hopperStartupFailure,
-  type HopperStartupDiagnostic,
+  type HopperStartupFailureDiagnostic,
 } from "../domain/errors.js";
 import type { ProviderProcessDiagnostic } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
@@ -8,7 +8,7 @@ import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnos
 /** Extract only a matching, versioned Linux adapter failure record. */
 export const hopperLauncherFailureDiagnostic = (
   event: Extract<ProviderProcessDiagnostic, { readonly type: "exit" }>,
-): HopperStartupDiagnostic | undefined => {
+): HopperStartupFailureDiagnostic | undefined => {
   const parsed = parseLinuxPrivateDisplayDiagnostic(
     event.snapshot.stderr.text,
     event.snapshot.stderr.truncated,

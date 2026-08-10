@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromProvider } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { CompositeProvider } from "../../../src/application/CompositeProvider.js";
 import type {
   AnalysisOperation,
@@ -70,7 +70,7 @@ describe("composite analysis provider", () => {
   it("publishes exact operation provenance and rejects ambiguous routes", () => {
     const hopper = provider("hopper", "address_name", []);
     const native = provider("native", "analyze_function", []);
-    const session = composeBinarySessionFromProvider(
+    const session = createTestBinarySession(
       new CompositeProvider([hopper, native]),
     );
     expect(session.providerIdentity("address_name").id).toBe("hopper");
@@ -92,7 +92,7 @@ describe("composite analysis provider", () => {
     await writeFile(targetPath, "fixture");
     const first = dynamicProvider("first", "address_name", 100);
     const second = dynamicProvider("second", "analyze_function", 200);
-    const session = composeBinarySessionFromProvider(
+    const session = createTestBinarySession(
       new CompositeProvider([second, first]),
     );
 

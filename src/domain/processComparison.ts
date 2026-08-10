@@ -2,7 +2,6 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
-import { validateProcessCapture } from "./processCapture.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import {
   compareProcessTraces,
@@ -244,13 +243,6 @@ const assertComparable = (
   right: ProcessCapture,
   options: { readonly maxCaptureAgeMs?: number; readonly now?: () => number },
 ): void => {
-  const invalid = [
-    ...validateProcessCapture(left),
-    ...validateProcessCapture(right),
-  ];
-  const firstInvalid = invalid.at(0);
-  if (firstInvalid !== undefined)
-    throw new TypeError(`Invalid Process Capture v4: ${firstInvalid.path}`);
   if (
     left.schema_version !== right.schema_version ||
     left.manifest.comparison_contract_sha256 !==

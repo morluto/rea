@@ -47,15 +47,18 @@ export const objectProperty = (
       t.isObjectProperty(property) && propertyName(property.key) === name,
   );
 
-/** Classify a handler argument while retaining its exact source range. */
-export const handlerKind = (
-  node: t.Node | null | undefined,
-):
+type PresentHandlerKind =
   | "inline-function"
   | "identifier"
   | "member-expression"
-  | "dynamic-expression"
-  | "missing" => {
+  | "dynamic-expression";
+
+/** Classify a handler argument while retaining its exact source range. */
+export function handlerKind(node: t.Node): PresentHandlerKind;
+export function handlerKind(node: null | undefined): "missing";
+export function handlerKind(
+  node: t.Node | null | undefined,
+): PresentHandlerKind | "missing" {
   if (node === null || node === undefined) return "missing";
   if (
     t.isArrowFunctionExpression(node) ||
@@ -67,7 +70,7 @@ export const handlerKind = (
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
     return "member-expression";
   return "dynamic-expression";
-};
+}
 
 /** Collect bounded dotted keys from one literal contextBridge API object. */
 export const collectContextBridgeMembers = (

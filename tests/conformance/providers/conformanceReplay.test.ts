@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONFORMANCE_PACKAGE_VERSION,
   createConformancePackage,
-  type ConformancePackage,
+  type ConformancePackageInput,
 } from "../../../src/domain/conformancePackage.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -11,7 +11,7 @@ import {
   type ScenarioReplayResult,
 } from "../../../src/domain/conformanceReplay.js";
 
-const validPackage = createConformancePackage({
+const validPackageInput: ConformancePackageInput = {
   schema_version: CONFORMANCE_PACKAGE_VERSION,
   name: "test-fixture",
   description: "A test conformance fixture",
@@ -56,7 +56,9 @@ const validPackage = createConformancePackage({
       timing_tolerance_ms: 0,
     },
   ],
-});
+};
+
+const validPackage = createConformancePackage(validPackageInput);
 
 async function passingRunner(
   scenarioId: string,
@@ -123,7 +125,7 @@ describe("conformance CI replay", () => {
       { operation: "run", parameters: {}, result: { exit_code: 0 } },
     );
     const pkg = createConformancePackage({
-      ...validPackage,
+      ...validPackageInput,
       expected_evidence: [
         {
           scenario_id: "s1",
@@ -158,11 +160,10 @@ describe("conformance CI replay", () => {
   });
 
   it("counts all result types", async () => {
-    const base: ConformancePackage = validPackage;
     const multiPackage = createConformancePackage({
-      ...base,
+      ...validPackageInput,
       scenarios: [
-        base.scenarios[0]!,
+        ...validPackage.scenarios,
         {
           scenario_id: "s2",
           name: "Second scenario",
@@ -173,7 +174,7 @@ describe("conformance CI replay", () => {
         },
       ],
       replay_plans: [
-        base.replay_plans[0]!,
+        ...validPackage.replay_plans,
         {
           scenario_id: "s2",
           steps: [
@@ -188,7 +189,7 @@ describe("conformance CI replay", () => {
         },
       ],
       expected_evidence: [
-        base.expected_evidence[0]!,
+        ...validPackage.expected_evidence,
         {
           scenario_id: "s2",
           envelopes: [],
@@ -197,7 +198,7 @@ describe("conformance CI replay", () => {
         },
       ],
       verifier_contracts: [
-        base.verifier_contracts[0]!,
+        ...validPackage.verifier_contracts,
         {
           scenario_id: "s2",
           dimensions: [
@@ -222,5 +223,32 @@ describe("conformance CI replay", () => {
     expect(result.total_scenarios).toBe(2);
     expect(result.passed).toBe(1);
     expect(result.failed).toBe(1);
+  });
+});
+
+describe("conformance replay package boundary", () => {
+  it("rejects shape-valid packages with broken scenario relations", async () => {
+    await expect(
+      replayConformancePackage(
+        {
+          ...validPackage,
+          replay_plans: [
+            {
+              scenario_id: "missing",
+              steps: [
+                {
+                  step_id: "step1",
+                  action: "run",
+                  arguments: [],
+                  timeout_ms: 1000,
+                },
+              ],
+              environment: {},
+            },
+          ],
+        },
+        {},
+      ),
+    ).rejects.toThrow(/replay_plans references unknown scenario missing/u);
   });
 });

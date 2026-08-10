@@ -17,19 +17,23 @@ export interface JavaScriptSourceRange {
   readonly end: JavaScriptSourcePoint;
 }
 
-/** A statically visible module, worker, or service-worker reference. */
-export interface JavaScriptStaticReference {
+interface JavaScriptStaticReferenceState {
   readonly kind:
     | "static-import"
     | "dynamic-import"
     | "require"
     | "worker"
     | "service-worker";
-  readonly specifier: string | null;
-  readonly expression: string | null;
   readonly module_key: string | null;
   readonly location: JavaScriptSourceRange;
 }
+
+/** A statically visible module, worker, or service-worker reference. */
+export type JavaScriptStaticReference = JavaScriptStaticReferenceState &
+  (
+    | { readonly specifier: string; readonly expression: null }
+    | { readonly specifier: null; readonly expression: string }
+  );
 
 /** A route or network endpoint literal observed in syntax. */
 export interface JavaScriptStaticEndpoint {
@@ -54,18 +58,29 @@ export interface JavaScriptStaticStorage {
   readonly location: JavaScriptSourceRange;
 }
 
-/** One exact module factory recovered from a Webpack/Rspack registration. */
-export interface JavaScriptBundlerModule {
+interface JavaScriptBundlerModuleState {
   readonly module_key: string;
   readonly factory_require_name: string | null;
   readonly source_sha256: string;
-  readonly structural_fingerprint_sha256: string | null;
-  readonly structural_fingerprint_algorithm: "babel-ast-v1" | null;
-  readonly structural_fingerprint_status: "complete" | "truncated";
   readonly exports: readonly string[];
   readonly exports_truncated: boolean;
   readonly location: JavaScriptSourceRange;
 }
+
+/** One exact module factory recovered from a Webpack/Rspack registration. */
+export type JavaScriptBundlerModule = JavaScriptBundlerModuleState &
+  (
+    | {
+        readonly structural_fingerprint_sha256: string;
+        readonly structural_fingerprint_algorithm: "babel-ast-v1";
+        readonly structural_fingerprint_status: "complete";
+      }
+    | {
+        readonly structural_fingerprint_sha256: null;
+        readonly structural_fingerprint_algorithm: null;
+        readonly structural_fingerprint_status: "truncated";
+      }
+  );
 
 /** One statically recognized bundler chunk or module registration. */
 export interface JavaScriptBundlerRegistration {

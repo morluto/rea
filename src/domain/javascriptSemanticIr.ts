@@ -1,4 +1,15 @@
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type {
+  JavaScriptSemanticCoverage,
+  JavaScriptSemanticReturnCoverage,
+} from "./javascriptSemanticCoverage.js";
+
+export type {
+  JavaScriptSemanticPrimitive,
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "./javascriptSemanticValueTypes.js";
 
 /** Hard bounds for one execution-free JavaScript semantic analysis. */
 export interface JavaScriptSemanticLimits {
@@ -56,42 +67,6 @@ export const DEFAULT_JAVASCRIPT_SEMANTIC_LIMITS: JavaScriptSemanticLimits = {
   maxObjectProperties: 256,
 };
 
-/** Primitive values admitted into the bounded constant lattice. */
-export type JavaScriptSemanticPrimitive = string | number | boolean | null;
-
-/** Bounded, execution-free value lattice for JavaScript expressions. */
-export type JavaScriptSemanticValue =
-  | {
-      readonly status: "literal";
-      readonly value: JavaScriptSemanticPrimitive;
-    }
-  | {
-      readonly status: "union";
-      readonly values: readonly JavaScriptSemanticPrimitive[];
-    }
-  | {
-      readonly status: "object";
-      readonly properties: readonly JavaScriptSemanticProperty[];
-      readonly unknownProperties: boolean;
-      readonly omittedProperties: number | null;
-    }
-  | {
-      readonly status: "array";
-      readonly items: readonly JavaScriptSemanticValue[];
-      readonly unknownItems: boolean;
-      readonly omittedItems: number | null;
-    }
-  | {
-      readonly status: "unknown" | "ambiguous" | "cycle" | "limit-reached";
-      readonly reason: string;
-    };
-
-/** One statically named object-literal property. */
-export interface JavaScriptSemanticProperty {
-  readonly name: string;
-  readonly value: JavaScriptSemanticValue;
-}
-
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
   readonly specifier: string;
@@ -99,17 +74,27 @@ export interface JavaScriptModuleOrigin {
 }
 
 /** Fail-closed provenance classification for one binding. */
-export interface JavaScriptBindingProvenance {
-  readonly status:
-    | "module"
-    | "local"
-    | "unknown"
-    | "ambiguous"
-    | "cycle"
-    | "limit-reached";
-  readonly origins: readonly JavaScriptModuleOrigin[];
-  readonly reason: string | null;
-}
+export type JavaScriptBindingProvenance =
+  | {
+      readonly status: "module";
+      readonly origins: readonly [JavaScriptModuleOrigin];
+      readonly reason: null;
+    }
+  | {
+      readonly status: "local";
+      readonly origins: readonly [];
+      readonly reason: null;
+    }
+  | {
+      readonly status: "ambiguous";
+      readonly origins: readonly JavaScriptModuleOrigin[];
+      readonly reason: string;
+    }
+  | {
+      readonly status: "unknown" | "cycle" | "limit-reached";
+      readonly origins: readonly [];
+      readonly reason: string;
+    };
 
 /** One lexical scope recovered without executing source. */
 export interface JavaScriptSemanticScope {
@@ -446,14 +431,6 @@ export interface JavaScriptSemanticFrontier {
   readonly reason: string;
 }
 
-/** Exact retention state for one callable's direct returns. */
-interface JavaScriptSemanticReturnCoverage {
-  readonly status: "complete" | "partial" | "truncated";
-  readonly retainedCount: number;
-  readonly omittedCount: number | null;
-  readonly limitsReached: readonly (keyof JavaScriptSemanticLimits)[];
-}
-
 /** Static import/export relationship retained for cross-file composition. */
 export interface JavaScriptSemanticModuleLink {
   readonly kind:
@@ -468,13 +445,6 @@ export interface JavaScriptSemanticModuleLink {
   readonly exportedName: string | null;
   readonly callableId: string | null;
   readonly location: JavaScriptSourceRange;
-}
-
-/** Coverage for bounded semantic recovery. */
-interface JavaScriptSemanticCoverage {
-  readonly status: "complete" | "partial" | "truncated" | "failed";
-  readonly omittedCount: number | null;
-  readonly limitsReached: readonly (keyof JavaScriptSemanticLimits)[];
 }
 
 /** Provider-neutral JavaScript semantic IR v4. */

@@ -7,39 +7,56 @@ import {
 
 export const LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX = "REA_X11_DIAGNOSTIC_V1=";
 
-const diagnosticSchema = z
-  .object({
-    schema_version: z.literal(1),
-    component: z.literal("hopper_private_display"),
-    operation: z.enum(["probe", "launch"]),
-    status: z.enum(["ready", "error"]),
-    failure_code: z.string().max(64).nullable(),
-    reason: z
-      .string()
-      .regex(/^[a-z0-9_]+$/u)
-      .max(64),
-    socket_directory: z.literal("/tmp/.X11-unix"),
-    socket_directory_mode: z
-      .string()
-      .regex(/^[0-7]{4}$/u)
-      .nullable(),
-    mount_read_only: z.boolean().nullable(),
-    effective_socket_directory_mode: z
-      .string()
-      .regex(/^[0-7]{4}$/u)
-      .nullable(),
-    effective_mount_read_only: z.boolean().nullable(),
-    wsl: z.boolean(),
-    strategy: z.enum(["direct", "user-mount-namespace", "unavailable"]),
-    fallback_reason: z
-      .string()
-      .regex(/^[a-z0-9_]+$/u)
-      .max(64)
-      .nullable(),
-    xvfb_stderr_bytes: z.number().int().nonnegative().safe(),
-    xvfb_stderr_truncated: z.boolean(),
-  })
-  .strict();
+const diagnosticContextSchema = z.object({
+  schema_version: z.literal(1),
+  component: z.literal("hopper_private_display"),
+  operation: z.enum(["probe", "launch"]),
+  reason: z
+    .string()
+    .regex(/^[a-z0-9_]+$/u)
+    .max(64),
+  socket_directory: z.literal("/tmp/.X11-unix"),
+  socket_directory_mode: z
+    .string()
+    .regex(/^[0-7]{4}$/u)
+    .nullable(),
+  mount_read_only: z.boolean().nullable(),
+  effective_socket_directory_mode: z
+    .string()
+    .regex(/^[0-7]{4}$/u)
+    .nullable(),
+  effective_mount_read_only: z.boolean().nullable(),
+  wsl: z.boolean(),
+  strategy: z.enum(["direct", "user-mount-namespace", "unavailable"]),
+  fallback_reason: z
+    .string()
+    .regex(/^[a-z0-9_]+$/u)
+    .max(64)
+    .nullable(),
+  xvfb_stderr_bytes: z.number().int().nonnegative().safe(),
+  xvfb_stderr_truncated: z.boolean(),
+});
+
+const failureCodeSchema = z
+  .string()
+  .max(64)
+  .transform((value, context) => {
+    if (isHopperStartupFailureCode(value)) return value;
+    context.addIssue({
+      code: "custom",
+      message: "Unknown startup failure code",
+    });
+    return z.NEVER;
+  });
+
+const diagnosticSchema = z.discriminatedUnion("status", [
+  diagnosticContextSchema
+    .extend({ status: z.literal("ready"), failure_code: z.null() })
+    .strict(),
+  diagnosticContextSchema
+    .extend({ status: z.literal("error"), failure_code: failureCodeSchema })
+    .strict(),
+]);
 
 export type LinuxPrivateDisplayDiagnosticParse =
   | { readonly ok: true; readonly value: HopperStartupDiagnostic }
@@ -70,21 +87,7 @@ export const parseLinuxPrivateDisplayDiagnostic = (
       JSON.parse(record.slice(LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX.length)),
     );
     if (!parsed.success) return { ok: false, reason: "diagnostic_malformed" };
-    const code = parsed.data.failure_code;
-    if (code !== null && !isHopperStartupFailureCode(code))
-      return { ok: false, reason: "diagnostic_malformed" };
-    if (
-      (parsed.data.status === "ready" && code !== null) ||
-      (parsed.data.status === "error" && code === null)
-    )
-      return { ok: false, reason: "diagnostic_malformed" };
-    return {
-      ok: true,
-      value: {
-        ...parsed.data,
-        failure_code: code,
-      },
-    };
+    return { ok: true, value: parsed.data };
   } catch {
     return { ok: false, reason: "diagnostic_malformed" };
   }

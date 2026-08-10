@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -37,47 +37,43 @@ const deferred = <Value>() => {
 describe("cross-version inventory", () => {
   it("starts both scans together and preserves left/right result order", async () => {
     const root = await createTestTempDirectory("rea-version-inventory-");
-    try {
-      const artifact = join(root, "artifact.js");
-      await writeFile(artifact, "export const value = 1;\n");
-      const snapshot = await scanArtifactInventory(artifact, LIMITS);
-      const left = deferred<typeof snapshot>();
-      const right = deferred<typeof snapshot>();
-      const calls: string[] = [];
-      const controller = new AbortController();
-      const scanner: VersionInventoryScanner = (...arguments_) => {
-        const [path, roots, limits, options] = arguments_;
-        if (options === undefined) throw new Error("Expected scanner options");
-        calls.push(path);
-        expect(roots).toEqual([root]);
-        expect(limits).toBe(LIMITS);
-        expect(options.signal).toBe(controller.signal);
-        expect(options.integrity).toBe(INTEGRITY);
-        return path === "left" ? left.promise : right.promise;
-      };
+    const artifact = join(root, "artifact.js");
+    await writeFile(artifact, "export const value = 1;\n");
+    const snapshot = await scanArtifactInventory(artifact, LIMITS);
+    const left = deferred<typeof snapshot>();
+    const right = deferred<typeof snapshot>();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const scanner: VersionInventoryScanner = (...arguments_) => {
+      const [path, roots, limits, options] = arguments_;
+      if (options === undefined) throw new Error("Expected scanner options");
+      calls.push(path);
+      expect(roots).toEqual([root]);
+      expect(limits).toBe(LIMITS);
+      expect(options.signal).toBe(controller.signal);
+      expect(options.integrity).toBe(INTEGRITY);
+      return path === "left" ? left.promise : right.promise;
+    };
 
-      const result = scanVersionInventories(
-        {
-          leftPath: "left",
-          rightPath: "right",
-          inputRoots: [root],
-          limits: LIMITS,
-          signal: controller.signal,
-          integrity: INTEGRITY,
-        },
-        scanner,
-      );
+    const result = scanVersionInventories(
+      {
+        leftPath: "left",
+        rightPath: "right",
+        inputRoots: [root],
+        limits: LIMITS,
+        signal: controller.signal,
+        integrity: INTEGRITY,
+      },
+      scanner,
+    );
 
-      expect(calls).toEqual(["left", "right"]);
-      right.resolve(snapshot);
-      left.resolve(snapshot);
-      await expect(result).resolves.toEqual({
-        left: snapshot,
-        right: snapshot,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    expect(calls).toEqual(["left", "right"]);
+    right.resolve(snapshot);
+    left.resolve(snapshot);
+    await expect(result).resolves.toEqual({
+      left: snapshot,
+      right: snapshot,
+    });
   });
 
   it("rejects promptly when either parallel scan fails", async () => {

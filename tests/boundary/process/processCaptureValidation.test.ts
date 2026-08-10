@@ -2,87 +2,18 @@ import { expect, it } from "vitest";
 
 import { createProcessCaptureJournal } from "../../../src/application/ProcessCaptureJournal.js";
 import {
-  compareProcessCaptures,
   digestProcessCommitment,
   LEGACY_PROCESS_CAPTURE_MESSAGE,
   parseProcessCapture,
   processCaptureSchema,
-  validateProcessCapture,
-  type ProcessCapture,
   type ProcessCaptureEventJournalEntry,
+  type UnverifiedProcessCapture,
 } from "../../../src/domain/processCapture.js";
-
-const emptyCapture = (): ProcessCapture => {
-  const normalization = {
-    paths: true,
-    pids: true,
-    ports: true,
-    time_bucket_ms: 10,
-    patterns: [],
-  };
-  const scenario = { executable_sha256: "0".repeat(64) };
-  const comparisonContract = {};
-  const shimPlan: readonly unknown[] = [];
-  const replayPlan = {};
-  return {
-    schema_version: 4,
-    manifest: {
-      rea_version: "test",
-      provider_version: "3",
-      platform: process.platform,
-      architecture: process.arch,
-      pty_backend: "node-pty",
-      started_at: "2026-01-01T00:00:00.000Z",
-      completed_at: "2026-01-01T00:00:00.001Z",
-      scenario,
-      comparison_contract: comparisonContract,
-      shim_plan: shimPlan,
-      replay_plan: replayPlan,
-      full_scenario_sha256: digestProcessCommitment(scenario),
-      comparison_contract_sha256: digestProcessCommitment(comparisonContract),
-      executable_sha256: "0".repeat(64),
-      normalization_sha256: digestProcessCommitment(normalization),
-      shim_plan_sha256: digestProcessCommitment(shimPlan),
-      replay_plan_sha256: digestProcessCommitment(replayPlan),
-    },
-    normalization,
-    frames: [],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" },
-    settlement: {
-      state: "quiesced",
-      elapsed_ms: 50,
-      cleanup_outcome: "not_required",
-    },
-    process_samples: [],
-    filesystem_checkpoints: [
-      { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
-      {
-        name: "after_settlement",
-        at_ms: 50,
-        files: [],
-        effects: [],
-        truncated: false,
-      },
-    ],
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
-    event_journal: [],
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
-    truncated: false,
-    limitations: [],
-    residual_unknowns: [],
-    cleanup: {
-      owned_process_group: "verified",
-      temporary_root: "removed",
-    },
-  };
-};
+import {
+  compareUnverifiedProcessCaptures as compareProcessCaptures,
+  emptyUnverifiedProcessCapture as emptyCapture,
+  processCaptureIssues,
+} from "../../fixtures/processCapture.js";
 
 it("never considers truncated captures equivalent", () => {
   const capture = {
@@ -146,6 +77,30 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
   ).toThrow("executable_sha256");
 });
 
+it("rejects settlement and cleanup combinations that cannot occur", () => {
+  const capture = emptyCapture();
+  expect(() =>
+    parseProcessCapture({
+      ...capture,
+      settlement: {
+        state: "quiesced",
+        elapsed_ms: 0,
+        cleanup_outcome: "cleaned",
+      },
+    }),
+  ).toThrow("cleanup_outcome");
+  expect(() =>
+    parseProcessCapture({
+      ...capture,
+      settlement: {
+        state: "alive_at_deadline",
+        elapsed_ms: 1,
+        cleanup_outcome: "not_required",
+      },
+    }),
+  ).toThrow("cleanup_outcome");
+});
+
 it("accepts old captures without a journal and validates complete journals", () => {
   const journal = createProcessCaptureJournal();
   const observed: ProcessCaptureEventJournalEntry[] = [];
@@ -185,7 +140,7 @@ it("accepts old captures without a journal and validates complete journals", () 
     { capture_order: 3, collection: "filesystem_checkpoints", index: 1 },
   ] as const;
   expect(
-    validateProcessCapture({ ...capture, event_journal: eventJournal }),
+    processCaptureIssues({ ...capture, event_journal: eventJournal }),
   ).toEqual([]);
 
   for (const [candidate, message] of [
@@ -212,7 +167,7 @@ it("accepts old captures without a journal and validates complete journals", () 
     ],
   ] as const) {
     expect(
-      validateProcessCapture({ ...capture, event_journal: candidate }),
+      processCaptureIssues({ ...capture, event_journal: candidate }),
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -267,7 +222,7 @@ it.each([
       },
     };
     const capture = emptyCapture();
-    const candidate: ProcessCapture = {
+    const candidate: UnverifiedProcessCapture = {
       ...capture,
       manifest: {
         ...capture.manifest,
@@ -284,7 +239,7 @@ it.each([
       })),
     };
 
-    expect(validateProcessCapture(candidate)).toEqual(
+    expect(processCaptureIssues(candidate)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.stringContaining("limit"),

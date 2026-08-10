@@ -20,7 +20,7 @@ const JAVA: GhidraJavaObservation = {
   major: SUPPORTED_GHIDRA_JAVA_MAJOR,
   home: "/usr/lib/jvm/jdk-21",
   bits: 64,
-  jdk: true,
+  runtime: "jdk",
 };
 
 const host = (
@@ -66,11 +66,10 @@ describe("Ghidra installation inspection", () => {
         host(),
       ),
     ).toMatchObject({
-      available: true,
+      status: "available",
       providerVersion: SUPPORTED_GHIDRA_VERSION,
       analyzeHeadlessPath: HEADLESS,
       javaVersion: "21.0.11",
-      rejectionCode: null,
     });
   });
 
@@ -104,13 +103,12 @@ describe("Ghidra installation inspection", () => {
         windowsHost,
       ),
     ).toMatchObject({
-      available: true,
+      status: "available",
       platform: "win32",
       architecture: "x64",
       analyzeHeadlessPath: WINDOWS_HEADLESS,
       javaCommand: "C:\\Java\\jdk-21\\bin\\java.exe",
       providerVersion: SUPPORTED_GHIDRA_VERSION,
-      rejectionCode: null,
     });
   });
 });
@@ -208,14 +206,16 @@ describe("Ghidra installation rejection diagnostics", () => {
         platform: "linux" as const,
         architecture: "x64" as const,
       },
-      override: { probeJava: () => ({ ...JAVA, jdk: false }) },
+      override: { probeJava: () => ({ ...JAVA, runtime: "jre" as const }) },
       failed: "java",
       code: "unsupported_version",
     },
   ])("distinguishes $name", ({ options, override, failed, code }) => {
     const result = inspectGhidraInstallation(options, host(override));
-    expect(result.available).toBe(false);
-    expect(result.checks.find(({ ok }) => !ok)).toMatchObject({
+    expect(result.status).toBe("unavailable");
+    expect(
+      result.checks.find(({ status }) => status === "failed"),
+    ).toMatchObject({
       name: failed,
       code,
     });

@@ -5,22 +5,16 @@ import { z } from "zod";
 
 import { evidenceEnvelopeSchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
+import { err, ok, type Result } from "./result.js";
 
 /** Schema version for the conformance package format. */
 export const CONFORMANCE_PACKAGE_VERSION = 1;
 
-/** A stable, path-independent identifier for a conformance package. */
-export const conformancePackageIdSchema = z
-  .string()
-  .regex(/^cp_[a-f0-9]{64}$/u);
+const conformancePackageIdSchema = z.string().regex(/^cp_[a-f0-9]{64}$/u);
 
-/** Identifier for a single scenario within a package. */
-export const scenarioIdSchema = z
-  .string()
-  .regex(/^[A-Za-z][A-Za-z0-9._-]{0,99}$/u);
+const scenarioIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,99}$/u);
 
-/** Deterministic manifest for a scenario fixture. */
-export const scenarioManifestSchema = z.strictObject({
+const scenarioManifestSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   name: z.string().min(1),
   description: z.string().min(1),
@@ -32,8 +26,7 @@ export const scenarioManifestSchema = z.strictObject({
   expected_patterns: z.array(z.string()).default([]),
 });
 
-/** Replay plan describing how a scenario is replayed deterministically. */
-export const replayPlanSchema = z.strictObject({
+const replayPlanSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   /** Ordered steps to execute during replay. */
   steps: z
@@ -51,8 +44,7 @@ export const replayPlanSchema = z.strictObject({
   environment: z.record(z.string(), z.string()).default({}),
 });
 
-/** Shim plan for intercepting observable effects. */
-export const shimPlanSchema = z.strictObject({
+const shimPlanSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   /** Shims to install, each intercepting a named effect. */
   shims: z
@@ -64,23 +56,20 @@ export const shimPlanSchema = z.strictObject({
         policy: z.enum(["observe", "allow", "block", "emulate"]),
       }),
     )
-    .min(0)
     .max(50),
 });
 
-/** Expected evidence for a scenario, checked against the captured run. */
-export const expectedEvidenceSchema = z.strictObject({
+const expectedEvidenceSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   /** Expected evidence envelopes. */
-  envelopes: z.array(evidenceEnvelopeSchema).min(0).max(100),
+  envelopes: z.array(evidenceEnvelopeSchema).max(100),
   /** Expected evidence bundle. */
   bundle: evidenceBundleSchema.nullable(),
   /** Required dimensions that must be present in the evidence. */
   required_dimensions: z.array(z.string().min(1)).default([]),
 });
 
-/** Verifier contract describing how to validate conformance. */
-export const verifierContractSchema = z.strictObject({
+const verifierContractSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   /** Dimensions to verify. */
   dimensions: z
@@ -97,122 +86,261 @@ export const verifierContractSchema = z.strictObject({
   timing_tolerance_ms: z.number().int().nonnegative().default(0),
 });
 
-/** Top-level conformance package manifest. */
-export const conformancePackageSchema = z.strictObject({
+const conformancePackageContentsSchema = z.strictObject({
   schema_version: z.literal(CONFORMANCE_PACKAGE_VERSION),
-  package_id: conformancePackageIdSchema,
   name: z.string().min(1),
   description: z.string().min(1),
   created_at: z.string().datetime(),
   /** Scenario manifests. */
   scenarios: z.array(scenarioManifestSchema).min(1).max(100),
-  /** Replay plans keyed by scenario_id. */
+  /** Exactly one replay plan for each scenario. */
   replay_plans: z.array(replayPlanSchema).min(1).max(100),
-  /** Shim plans keyed by scenario_id. */
+  /** At most one optional shim plan for each scenario. */
   shim_plans: z.array(shimPlanSchema).default([]),
-  /** Expected evidence for each scenario. */
+  /** Exactly one expected-evidence record for each scenario. */
   expected_evidence: z.array(expectedEvidenceSchema).min(1).max(100),
-  /** Verifier contracts for each scenario. */
+  /** Exactly one verifier contract for each scenario. */
   verifier_contracts: z.array(verifierContractSchema).min(1).max(100),
 });
 
-export type ConformancePackage = z.infer<typeof conformancePackageSchema>;
-export type ScenarioManifest = z.infer<typeof scenarioManifestSchema>;
-export type ReplayPlan = z.infer<typeof replayPlanSchema>;
-export type ShimPlan = z.infer<typeof shimPlanSchema>;
-export type ExpectedEvidence = z.infer<typeof expectedEvidenceSchema>;
-export type VerifierContract = z.infer<typeof verifierContractSchema>;
+const conformancePackageRecordSchema = conformancePackageContentsSchema.extend({
+  package_id: conformancePackageIdSchema,
+});
 
-/** Error from validation or package operations. */
+const conformancePackageSchema =
+  conformancePackageRecordSchema.brand<"ConformancePackage">();
+
+type ConformancePackageContents = z.output<
+  typeof conformancePackageContentsSchema
+>;
+type ConformancePackageRecord = z.output<typeof conformancePackageRecordSchema>;
+type DeepReadonly<T> = T extends readonly (infer Item)[]
+  ? readonly DeepReadonly<Item>[]
+  : T extends object
+    ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+    : T;
+
+/** Source fields accepted by the conformance-package smart constructor. */
+export type ConformancePackageInput = DeepReadonly<
+  z.input<typeof conformancePackageContentsSchema>
+>;
+
+/** A shape- and relation-checked, content-addressed conformance package. */
+export type ConformancePackage = DeepReadonly<
+  z.output<typeof conformancePackageSchema>
+>;
+
+/** Deterministic manifest for one conformance scenario. */
+export type ScenarioManifest = DeepReadonly<
+  z.output<typeof scenarioManifestSchema>
+>;
+
+/** Deterministic replay plan for one conformance scenario. */
+export type ReplayPlan = DeepReadonly<z.output<typeof replayPlanSchema>>;
+
+/** Optional effect-shim plan for one conformance scenario. */
+export type ShimPlan = DeepReadonly<z.output<typeof shimPlanSchema>>;
+
+/** Expected evidence for one conformance scenario. */
+export type ExpectedEvidence = DeepReadonly<
+  z.output<typeof expectedEvidenceSchema>
+>;
+
+/** Verification policy for one conformance scenario. */
+export type VerifierContract = DeepReadonly<
+  z.output<typeof verifierContractSchema>
+>;
+
+/** Per-scenario package section participating in relation checks. */
+export type ConformancePackageSection =
+  | "replay_plans"
+  | "shim_plans"
+  | "expected_evidence"
+  | "verifier_contracts";
+
+/** Precise reason an unknown package could not become a domain value. */
 export type ConformancePackageError =
-  | { kind: "invalid_package"; message: string }
-  | { kind: "scenario_not_found"; scenario_id: string }
-  | { kind: "duplicate_scenario"; scenario_id: string };
-
-/** Result type for package operations. */
-export type ConformancePackageResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: ConformancePackageError };
-
-/** Validate a conformance package and cross-check internal references. */
-export function validateConformancePackage(
-  input: unknown,
-): ConformancePackageResult<ConformancePackage> {
-  const parsed = conformancePackageSchema.safeParse(input);
-  if (!parsed.success)
-    return {
-      ok: false,
-      error: {
-        kind: "invalid_package",
-        message: parsed.error.issues[0]?.message ?? "invalid package",
-      },
+  | {
+      readonly kind: "invalid_package";
+      readonly message: string;
+    }
+  | {
+      readonly kind: "duplicate_scenario";
+      readonly scenario_id: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "unknown_scenario_reference";
+      readonly section: ConformancePackageSection;
+      readonly scenario_id: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "duplicate_scenario_reference";
+      readonly section: ConformancePackageSection;
+      readonly scenario_id: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "missing_scenario_reference";
+      readonly section: Exclude<ConformancePackageSection, "shim_plans">;
+      readonly scenario_id: string;
+      readonly message: string;
+    }
+  | {
+      readonly kind: "package_id_mismatch";
+      readonly actual: string;
+      readonly expected: string;
+      readonly message: string;
     };
 
-  const pkg = parsed.data;
+type ScenarioReferenceSection =
+  | {
+      readonly name: Exclude<ConformancePackageSection, "shim_plans">;
+      readonly entries: readonly { readonly scenario_id: string }[];
+      readonly required: true;
+    }
+  | {
+      readonly name: "shim_plans";
+      readonly entries: readonly { readonly scenario_id: string }[];
+      readonly required: false;
+    };
 
-  // Check for duplicate scenario IDs
-  const seen = new Set<string>();
-  for (const s of pkg.scenarios) {
-    if (seen.has(s.scenario_id))
-      return {
-        ok: false,
-        error: { kind: "duplicate_scenario", scenario_id: s.scenario_id },
-      };
-    seen.add(s.scenario_id);
-  }
+/** Parse unknown input once into a package whose aggregate invariants hold. */
+export function parseConformancePackage(
+  input: unknown,
+): Result<ConformancePackage, ConformancePackageError> {
+  const parsed = conformancePackageSchema.safeParse(input);
+  if (!parsed.success)
+    return err({
+      kind: "invalid_package",
+      message: parsed.error.issues[0]?.message ?? "Invalid package",
+    });
 
-  // Check that replay plans reference existing scenarios
-  for (const rp of pkg.replay_plans) {
-    if (!seen.has(rp.scenario_id))
-      return {
-        ok: false,
-        error: {
-          kind: "scenario_not_found",
-          scenario_id: rp.scenario_id,
-        },
-      };
-  }
+  const relationError = parseScenarioRelations(parsed.data);
+  if (relationError !== undefined) return err(relationError);
 
-  // Check that expected evidence references existing scenarios
-  for (const ee of pkg.expected_evidence) {
-    if (!seen.has(ee.scenario_id))
-      return {
-        ok: false,
-        error: {
-          kind: "scenario_not_found",
-          scenario_id: ee.scenario_id,
-        },
-      };
-  }
+  const expectedPackageId = computePackageId(packageContents(parsed.data));
+  if (parsed.data.package_id !== expectedPackageId)
+    return err({
+      kind: "package_id_mismatch",
+      actual: parsed.data.package_id,
+      expected: expectedPackageId,
+      message: "Package identifier does not match its canonical contents",
+    });
 
-  // Check that verifier contracts reference existing scenarios
-  for (const vc of pkg.verifier_contracts) {
-    if (!seen.has(vc.scenario_id))
-      return {
-        ok: false,
-        error: {
-          kind: "scenario_not_found",
-          scenario_id: vc.scenario_id,
-        },
-      };
-  }
-
-  return { ok: true, value: pkg };
+  return ok(parsed.data);
 }
 
-/** Compute a deterministic package ID from the canonical JSON. */
-export function computePackageId(
-  pkg: Omit<ConformancePackage, "package_id">,
-): string {
-  const json = canonicalize(pkg);
-  if (!json) throw new Error("failed to canonicalize package");
-  return `cp_${createHash("sha256").update(json).digest("hex")}`;
-}
-
-/** Create a conformance package with an auto-computed package_id. */
+/** Create a content-addressed package from source-owned typed fields. */
 export function createConformancePackage(
-  pkg: Omit<ConformancePackage, "package_id">,
+  input: ConformancePackageInput,
 ): ConformancePackage {
-  const package_id = computePackageId(pkg);
-  return { package_id, ...pkg };
+  const contents = conformancePackageContentsSchema.safeParse(input);
+  if (!contents.success)
+    throw new TypeError(
+      `Invalid conformance package source: ${contents.error.issues[0]?.message ?? "unknown parse failure"}`,
+    );
+
+  const parsed = parseConformancePackage({
+    ...contents.data,
+    package_id: computePackageId(contents.data),
+  });
+  if (!parsed.ok)
+    throw new TypeError(
+      `Invalid conformance package source: ${parsed.error.message}`,
+    );
+  return parsed.value;
 }
+
+const parseScenarioRelations = (
+  pkg: ConformancePackageRecord,
+): ConformancePackageError | undefined => {
+  const scenarioIds = new Set<string>();
+  for (const scenario of pkg.scenarios) {
+    if (scenarioIds.has(scenario.scenario_id))
+      return {
+        kind: "duplicate_scenario",
+        scenario_id: scenario.scenario_id,
+        message: `Duplicate scenario ${scenario.scenario_id}`,
+      };
+    scenarioIds.add(scenario.scenario_id);
+  }
+
+  const sections: readonly ScenarioReferenceSection[] = [
+    { name: "replay_plans", entries: pkg.replay_plans, required: true },
+    { name: "shim_plans", entries: pkg.shim_plans, required: false },
+    {
+      name: "expected_evidence",
+      entries: pkg.expected_evidence,
+      required: true,
+    },
+    {
+      name: "verifier_contracts",
+      entries: pkg.verifier_contracts,
+      required: true,
+    },
+  ];
+  for (const section of sections) {
+    const error = parseScenarioSection(scenarioIds, section);
+    if (error !== undefined) return error;
+  }
+  return undefined;
+};
+
+const parseScenarioSection = (
+  scenarioIds: ReadonlySet<string>,
+  section: ScenarioReferenceSection,
+): ConformancePackageError | undefined => {
+  const referenced = new Set<string>();
+  for (const entry of section.entries) {
+    if (!scenarioIds.has(entry.scenario_id))
+      return {
+        kind: "unknown_scenario_reference",
+        section: section.name,
+        scenario_id: entry.scenario_id,
+        message: `${section.name} references unknown scenario ${entry.scenario_id}`,
+      };
+    if (referenced.has(entry.scenario_id))
+      return {
+        kind: "duplicate_scenario_reference",
+        section: section.name,
+        scenario_id: entry.scenario_id,
+        message: `${section.name} contains duplicate scenario ${entry.scenario_id}`,
+      };
+    referenced.add(entry.scenario_id);
+  }
+
+  if (!section.required) return undefined;
+  for (const scenarioId of scenarioIds) {
+    if (!referenced.has(scenarioId))
+      return {
+        kind: "missing_scenario_reference",
+        section: section.name,
+        scenario_id: scenarioId,
+        message: `${section.name} is missing scenario ${scenarioId}`,
+      };
+  }
+  return undefined;
+};
+
+const packageContents = (
+  pkg: ConformancePackageRecord,
+): ConformancePackageContents => ({
+  schema_version: pkg.schema_version,
+  name: pkg.name,
+  description: pkg.description,
+  created_at: pkg.created_at,
+  scenarios: pkg.scenarios,
+  replay_plans: pkg.replay_plans,
+  shim_plans: pkg.shim_plans,
+  expected_evidence: pkg.expected_evidence,
+  verifier_contracts: pkg.verifier_contracts,
+});
+
+const computePackageId = (contents: ConformancePackageContents): string => {
+  const json = canonicalize(contents);
+  if (json === undefined)
+    throw new TypeError("Could not canonicalize parsed conformance package");
+  return `cp_${createHash("sha256").update(json).digest("hex")}`;
+};

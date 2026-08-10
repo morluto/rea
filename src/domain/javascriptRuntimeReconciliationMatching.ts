@@ -261,10 +261,12 @@ const matched = (
 
 const unresolved = (
   entity: RuntimeReconciliationEntity,
-  input: Pick<
-    ItemInput,
-    "status" | "basis" | "confidence" | "reason" | "candidates"
-  >,
+  input: Pick<ItemInput, "basis" | "confidence" | "reason" | "candidates"> & {
+    readonly status: Exclude<
+      JavaScriptRuntimeReconciliationItem["status"],
+      "matched"
+    >;
+  },
 ): EvaluatedMatch => ({
   item: createItem(entity, {
     layer: null,
@@ -278,28 +280,49 @@ const unresolved = (
   edge: null,
 });
 
-interface ItemInput {
-  readonly layer: ParsedStaticLayer | null;
-  readonly staticNodeId: string | null;
-  readonly status: JavaScriptRuntimeReconciliationItem["status"];
+type ItemInput = {
   readonly basis: JavaScriptRuntimeReconciliationItem["basis"];
   readonly confidence: JavaScriptRuntimeReconciliationItem["confidence"];
   readonly reason: JavaScriptRuntimeReconciliationItem["reason"];
   readonly candidates: readonly StaticRuntimeCandidate[];
-}
+} & (
+  | {
+      readonly layer: ParsedStaticLayer;
+      readonly staticNodeId: string;
+      readonly status: "matched";
+    }
+  | {
+      readonly layer: null;
+      readonly staticNodeId: null;
+      readonly status: Exclude<
+        JavaScriptRuntimeReconciliationItem["status"],
+        "matched"
+      >;
+    }
+);
 
 const createItem = (
   entity: RuntimeReconciliationEntity,
   input: ItemInput,
 ): JavaScriptRuntimeReconciliationItem => {
   const candidateReferences = uniqueCandidateReferences(input.candidates);
+  const staticMatch =
+    input.status === "matched"
+      ? {
+          static_layer_id: input.layer.layerId,
+          static_node_id: input.staticNodeId,
+          status: input.status,
+        }
+      : {
+          static_layer_id: null,
+          static_node_id: null,
+          status: input.status,
+        };
   const semantic = {
     entity_kind: entity.kind,
     runtime_evidence_id: entity.capture.evidence.evidence_id,
     runtime_node_id: entity.node.node_id,
-    static_layer_id: input.layer?.layerId ?? null,
-    static_node_id: input.staticNodeId,
-    status: input.status,
+    ...staticMatch,
     basis: input.basis,
     confidence: input.confidence,
     reason: input.reason,

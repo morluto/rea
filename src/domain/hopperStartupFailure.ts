@@ -1,40 +1,7 @@
-export type HopperStartupFailureCode =
-  | "private_display_unavailable"
-  | "x11_authorization_failed"
-  | "unsupported_hopper_build"
-  | "invalid_launch_command"
-  | "process_ownership_mismatch"
-  | "hopper_exited_during_startup"
-  | "unsupported_demo_dialog"
-  | "unexpected_display_geometry"
-  | "x11_input_failed"
-  | "runtime_dependency_unavailable"
-  | "x11_socket_directory_unusable";
-
 export type HopperPrivateDisplayStrategy =
   | "direct"
   | "user-mount-namespace"
   | "unavailable";
-
-/** Bounded, non-secret facts emitted by the Linux private-display adapter. */
-export interface HopperStartupDiagnostic {
-  readonly schema_version: 1;
-  readonly component: "hopper_private_display";
-  readonly operation: "probe" | "launch";
-  readonly status: "ready" | "error";
-  readonly failure_code: HopperStartupFailureCode | null;
-  readonly reason: string;
-  readonly socket_directory: "/tmp/.X11-unix";
-  readonly socket_directory_mode: string | null;
-  readonly mount_read_only: boolean | null;
-  readonly effective_socket_directory_mode: string | null;
-  readonly effective_mount_read_only: boolean | null;
-  readonly wsl: boolean;
-  readonly strategy: HopperPrivateDisplayStrategy;
-  readonly fallback_reason: string | null;
-  readonly xvfb_stderr_bytes: number;
-  readonly xvfb_stderr_truncated: boolean;
-}
 
 const failures = [
   [
@@ -93,6 +60,50 @@ const failures = [
     "REA cannot use the host X11 socket directory for a private display. Run rea doctor --provider hopper for exact mount and namespace diagnostics.",
   ],
 ] as const;
+
+export type HopperStartupFailureCode = (typeof failures)[number][1];
+
+interface HopperStartupDiagnosticContext {
+  readonly schema_version: 1;
+  readonly component: "hopper_private_display";
+  readonly operation: "probe" | "launch";
+  readonly reason: string;
+  readonly socket_directory: "/tmp/.X11-unix";
+  readonly socket_directory_mode: string | null;
+  readonly mount_read_only: boolean | null;
+  readonly effective_socket_directory_mode: string | null;
+  readonly effective_mount_read_only: boolean | null;
+  readonly wsl: boolean;
+  readonly strategy: HopperPrivateDisplayStrategy;
+  readonly fallback_reason: string | null;
+  readonly xvfb_stderr_bytes: number;
+  readonly xvfb_stderr_truncated: boolean;
+}
+
+/** Bounded, non-secret facts emitted by the Linux private-display adapter. */
+export type HopperStartupDiagnostic = HopperStartupDiagnosticContext &
+  (
+    | {
+        readonly status: "ready";
+        readonly failure_code: null;
+      }
+    | {
+        readonly status: "error";
+        readonly failure_code: HopperStartupFailureCode;
+      }
+  );
+
+/** A parsed Linux private-display diagnostic that reports startup failure. */
+export type HopperStartupFailureDiagnostic = Extract<
+  HopperStartupDiagnostic,
+  { readonly status: "error" }
+>;
+
+/** A parsed Linux private-display diagnostic that reports readiness. */
+export type HopperStartupReadyDiagnostic = Extract<
+  HopperStartupDiagnostic,
+  { readonly status: "ready" }
+>;
 
 const HOPPER_STARTUP_FAILURES = new Map<
   number,

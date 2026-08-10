@@ -20,37 +20,69 @@ export interface GhidraInstallationOptions {
 }
 
 /** One independently actionable part of the supported-installation contract. */
-export interface GhidraInstallationCheck {
-  readonly name:
-    | "configuration"
-    | "platform"
-    | "architecture"
-    | "installation"
-    | "version"
-    | "headless"
-    | "java";
-  readonly ok: boolean;
-  readonly code: ProviderRejectionCode | null;
-  readonly detail: string;
-  readonly remediation: string | null;
-}
+export type GhidraInstallationCheck =
+  | {
+      readonly status: "passed";
+      readonly name: GhidraInstallationCheckName;
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
+      readonly name: GhidraInstallationCheckName;
+      readonly code: ProviderRejectionCode;
+      readonly detail: string;
+      readonly remediation: string;
+    };
 
-/** Bounded observation of a BYO Ghidra installation and JDK. */
-export interface GhidraInstallationInspection {
-  readonly available: boolean;
+/** Stable identity for one Ghidra installation check. */
+export type GhidraInstallationCheckName =
+  | "configuration"
+  | "platform"
+  | "architecture"
+  | "installation"
+  | "version"
+  | "headless"
+  | "java";
+
+interface GhidraInstallationObservation {
   readonly platform: NodeJS.Platform;
   readonly architecture: NodeJS.Architecture;
+  readonly applicationPropertiesPath: string | null;
+  readonly javaCommand: string;
+  readonly checks: readonly GhidraInstallationCheck[];
+}
+
+/** Bounded observation of a supported BYO Ghidra installation and JDK. */
+export interface AvailableGhidraInstallation
+  extends GhidraInstallationObservation {
+  readonly status: "available";
+  readonly installDir: string;
+  readonly analyzeHeadlessPath: string;
+  readonly applicationPropertiesPath: string;
+  readonly providerVersion: string;
+  readonly javaHome: string;
+  readonly javaVersion: string;
+}
+
+/** Bounded observation explaining why a BYO Ghidra installation is unusable. */
+export interface UnavailableGhidraInstallation
+  extends GhidraInstallationObservation {
+  readonly status: "unavailable";
   readonly installDir: string | null;
   readonly analyzeHeadlessPath: string | null;
-  readonly applicationPropertiesPath: string | null;
   readonly providerVersion: string | null;
-  readonly javaCommand: string;
   readonly javaHome: string | null;
   readonly javaVersion: string | null;
-  readonly checks: readonly GhidraInstallationCheck[];
-  readonly rejectionCode: ProviderRejectionCode | null;
-  readonly reason: string | null;
+  readonly rejection: Readonly<{
+    code: ProviderRejectionCode;
+    reason: string;
+  }>;
 }
+
+/** Parsed available or unavailable state of one BYO Ghidra installation. */
+export type GhidraInstallationInspection =
+  | AvailableGhidraInstallation
+  | UnavailableGhidraInstallation;
 
 /** Parsed identity of the JDK selected for Ghidra. */
 export interface GhidraJavaObservation {
@@ -58,7 +90,7 @@ export interface GhidraJavaObservation {
   readonly major: number;
   readonly home: string;
   readonly bits: number;
-  readonly jdk: boolean;
+  readonly runtime: "jdk" | "jre";
 }
 
 /** Narrow synchronous seam used by provider discovery without launching Ghidra. */
@@ -77,8 +109,7 @@ interface GhidraInstallationCoordinates {
   readonly installDir: string | null;
   readonly applicationPropertiesPath: string | null;
   readonly analyzeHeadlessPath: string | null;
-  readonly propertiesAvailable: boolean;
-  readonly providerVersion: string | null;
+  readonly properties: Readonly<{ providerVersion: string | null }> | undefined;
   readonly javaCommand: string;
   readonly java: GhidraJavaObservation | undefined;
 }
@@ -106,21 +137,56 @@ export const inspectGhidraInstallation = (
     javaHome: options.javaHome,
     host,
   });
-  const failed = checks.find(({ ok }) => !ok);
-  return {
-    available: failed === undefined,
+  const failed = checks.find(
+    (check): check is Extract<GhidraInstallationCheck, { status: "failed" }> =>
+      check.status === "failed",
+  );
+  const observation = {
     platform,
     architecture,
+    applicationPropertiesPath: coordinates.applicationPropertiesPath,
+    javaCommand: coordinates.javaCommand,
+    checks,
+  };
+  if (failed !== undefined)
+    return {
+      status: "unavailable",
+      ...observation,
+      installDir: coordinates.installDir,
+      analyzeHeadlessPath: coordinates.analyzeHeadlessPath,
+      providerVersion: coordinates.properties?.providerVersion ?? null,
+      javaHome: coordinates.java?.home ?? options.javaHome ?? null,
+      javaVersion: coordinates.java?.version ?? null,
+      rejection: { code: failed.code, reason: failed.remediation },
+    };
+  return availableInstallation(coordinates, observation);
+};
+
+const availableInstallation = (
+  coordinates: GhidraInstallationCoordinates,
+  observation: GhidraInstallationObservation,
+): AvailableGhidraInstallation => {
+  const providerVersion = coordinates.properties?.providerVersion;
+  if (
+    coordinates.installDir === null ||
+    coordinates.applicationPropertiesPath === null ||
+    coordinates.analyzeHeadlessPath === null ||
+    providerVersion === null ||
+    providerVersion === undefined ||
+    coordinates.java === undefined
+  )
+    throw new TypeError(
+      "Passing Ghidra installation checks produced incomplete coordinates",
+    );
+  return {
+    status: "available",
+    ...observation,
     installDir: coordinates.installDir,
     analyzeHeadlessPath: coordinates.analyzeHeadlessPath,
     applicationPropertiesPath: coordinates.applicationPropertiesPath,
-    providerVersion: coordinates.providerVersion,
-    javaCommand: coordinates.javaCommand,
-    javaHome: coordinates.java?.home ?? options.javaHome ?? null,
-    javaVersion: coordinates.java?.version ?? null,
-    checks,
-    rejectionCode: failed?.code ?? null,
-    reason: failed?.remediation ?? null,
+    providerVersion,
+    javaHome: coordinates.java.home,
+    javaVersion: coordinates.java.version,
   };
 };
 
@@ -161,11 +227,10 @@ const installationCoordinates = (
     installDir,
     applicationPropertiesPath,
     analyzeHeadlessPath,
-    propertiesAvailable: properties !== undefined,
-    providerVersion:
+    properties:
       properties === undefined
-        ? null
-        : propertyValue(properties, "application.version"),
+        ? undefined
+        : { providerVersion: propertyValue(properties, "application.version") },
     javaCommand,
     java: host.probeJava(
       javaCommand,
@@ -183,7 +248,7 @@ const installationChecks = ({
 }: GhidraInstallationCheckContext): readonly GhidraInstallationCheck[] => [
   installationCheck({
     name: "configuration",
-    ok: coordinates.installDir !== null,
+    passed: coordinates.installDir !== null,
     code: "not_configured",
     detail: coordinates.installDir ?? "GHIDRA_INSTALL_DIR is not set",
     remediation:
@@ -191,7 +256,7 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "platform",
-    ok: platform === "linux" || platform === "win32",
+    passed: platform === "linux" || platform === "win32",
     code: "unsupported_host",
     detail: platform,
     remediation:
@@ -199,7 +264,7 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "architecture",
-    ok: architecture === "x64",
+    passed: architecture === "x64",
     code: "unsupported_host",
     detail: architecture,
     remediation:
@@ -207,7 +272,7 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "installation",
-    ok: coordinates.propertiesAvailable,
+    passed: coordinates.properties !== undefined,
     code: "executable_missing",
     detail:
       coordinates.applicationPropertiesPath ??
@@ -217,17 +282,19 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "version",
-    ok: coordinates.providerVersion === SUPPORTED_GHIDRA_VERSION,
+    passed:
+      coordinates.properties?.providerVersion === SUPPORTED_GHIDRA_VERSION,
     code:
-      coordinates.providerVersion === null
+      coordinates.properties?.providerVersion === null ||
+      coordinates.properties?.providerVersion === undefined
         ? "version_unresolved"
         : "unsupported_version",
-    detail: coordinates.providerVersion ?? "unknown",
+    detail: coordinates.properties?.providerVersion ?? "unknown",
     remediation: `Install Ghidra ${SUPPORTED_GHIDRA_VERSION}, or update REA for a different Ghidra build.`,
   }),
   installationCheck({
     name: "headless",
-    ok:
+    passed:
       coordinates.analyzeHeadlessPath !== null &&
       host.executable(coordinates.analyzeHeadlessPath),
     code: "executable_missing",
@@ -253,8 +320,8 @@ export const ghidraInstallationDiagnostics = (
   architecture: inspection.architecture,
   checks: inspection.checks.map((check) => ({
     name: check.name,
-    ok: check.ok,
-    code: check.code,
+    ok: check.status === "passed",
+    code: check.status === "failed" ? check.code : null,
     detail: check.detail,
   })),
 });
@@ -284,18 +351,26 @@ export const ghidraJavaEnvironment = (
       };
 };
 
-const installationCheck = (
-  options: Omit<GhidraInstallationCheck, "code" | "remediation"> & {
-    readonly code: ProviderRejectionCode;
-    readonly remediation: string;
-  },
-): GhidraInstallationCheck => ({
-  name: options.name,
-  ok: options.ok,
-  code: options.ok ? null : options.code,
-  detail: options.detail,
-  remediation: options.ok ? null : options.remediation,
-});
+const installationCheck = (options: {
+  readonly name: GhidraInstallationCheckName;
+  readonly passed: boolean;
+  readonly detail: string;
+  readonly code: ProviderRejectionCode;
+  readonly remediation: string;
+}): GhidraInstallationCheck =>
+  options.passed
+    ? {
+        status: "passed",
+        name: options.name,
+        detail: options.detail,
+      }
+    : {
+        status: "failed",
+        name: options.name,
+        code: options.code,
+        detail: options.detail,
+        remediation: options.remediation,
+      };
 
 const javaCheck = (
   observation: GhidraJavaObservation | undefined,
@@ -306,14 +381,14 @@ const javaCheck = (
     observation !== undefined &&
     observation.major === SUPPORTED_GHIDRA_JAVA_MAJOR &&
     observation.bits === 64 &&
-    observation.jdk;
+    observation.runtime === "jdk";
   const detail =
     observation === undefined
       ? command
-      : `${observation.version}; ${String(observation.bits)}-bit; ${observation.jdk ? "JDK" : "runtime only"}; ${observation.home}`;
+      : `${observation.version}; ${String(observation.bits)}-bit; ${observation.runtime === "jdk" ? "JDK" : "runtime only"}; ${observation.home}`;
   return installationCheck({
     name: "java",
-    ok: supported,
+    passed: supported,
     code: observation === undefined ? "runtime_missing" : "unsupported_version",
     detail,
     remediation:
@@ -375,13 +450,15 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
       major: javaMajor(version),
       home,
       bits,
-      jdk: executablePath(
+      runtime: executablePath(
         (process.platform === "win32" ? win32 : posix).join(
           home,
           "bin",
           process.platform === "win32" ? "javac.exe" : "javac",
         ),
-      ),
+      )
+        ? "jdk"
+        : "jre",
     };
   },
 });

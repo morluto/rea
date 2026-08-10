@@ -9,9 +9,11 @@ import type {
   FilesystemCheckpoint,
   InteractionEvent,
   ProcessCapture,
+  UnverifiedProcessCapture,
   ProcessExecutionPolicy,
   ProcessPolicyDecision,
   ProcessSample,
+  ProcessSettlement,
   ProcessScenario,
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
@@ -71,25 +73,43 @@ interface CaptureResultOptions {
   };
   readonly samples: readonly ProcessSample[];
   readonly replay: LoopbackReplay;
-  readonly reactiveRun: ProcessCapture["reactive_run"];
   readonly before: SnapshotResult;
   readonly after: SnapshotResult;
   readonly truncated: boolean;
   readonly scenario: ProcessScenario;
   readonly rootPid: number;
   readonly samplingPartial: boolean;
-  readonly renderedFrames: ProcessCapture["rendered_frames"];
+  readonly renderedFrames: UnverifiedProcessCapture["rendered_frames"];
   readonly interactions: readonly InteractionEvent[];
   readonly checkpoints: readonly FilesystemCheckpoint[];
-  readonly shimEvents: ProcessCapture["shim_events"];
-  readonly settlement: ProcessCapture["settlement"];
-  readonly manifest: ProcessCapture["manifest"];
+  readonly shimEvents: UnverifiedProcessCapture["shim_events"];
+  readonly settlement: ObservedProcessSettlement;
+  readonly manifest: UnverifiedProcessCapture["manifest"];
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
 }
 
+/** Settlement observation before process-resource cleanup has completed. */
+export type ObservedProcessSettlement =
+  | Pick<
+      Extract<ProcessSettlement, { readonly state: "quiesced" }>,
+      "state" | "elapsed_ms"
+    >
+  | Pick<
+      Exclude<ProcessSettlement, { readonly state: "quiesced" }>,
+      "state" | "elapsed_ms"
+    >;
+
+/** Capture observations that cannot yet claim final cleanup or reactive state. */
+export type PendingProcessCapture = Omit<
+  UnverifiedProcessCapture,
+  "cleanup" | "reactive_run" | "settlement"
+> & {
+  readonly settlement: ObservedProcessSettlement;
+};
+
 export const buildCaptureResult = (
   options: CaptureResultOptions,
-): ProcessCapture => ({
+): PendingProcessCapture => ({
   schema_version: 4,
   manifest: options.manifest,
   normalization: options.scenario.normalization,
@@ -117,7 +137,6 @@ export const buildCaptureResult = (
     options.scenario,
   ),
   replay_transitions: options.replay.transitions,
-  reactive_run: options.reactiveRun,
   event_journal: options.eventJournal,
   files_before: options.before.files,
   files_after: options.after.files,
@@ -144,10 +163,6 @@ export const buildCaptureResult = (
       reason: "External network isolation is not enforced by this adapter.",
     },
   ],
-  cleanup: {
-    owned_process_group: "verified",
-    temporary_root: "removed",
-  },
 });
 
 const hashFile = async (path: string): Promise<string> => {
@@ -160,7 +175,7 @@ export const createRunManifest = async (
   scenario: ProcessScenario,
   startedAt: Date,
   completedAt: Date,
-): Promise<ProcessCapture["manifest"]> => {
+): Promise<UnverifiedProcessCapture["manifest"]> => {
   const executableSha256 = await hashFile(scenario.executable);
   const scenarioCommitment = processScenarioCommitment(
     scenario,
@@ -193,7 +208,7 @@ export const observeSettlement = async (
   processGroupIds: readonly number[],
   settleMs: number,
   recordEvent: RecordProcessCaptureEvent = () => undefined,
-): Promise<Omit<ProcessCapture["settlement"], "cleanup_outcome">> => {
+): Promise<ObservedProcessSettlement> => {
   if (process.platform === "win32") {
     recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };

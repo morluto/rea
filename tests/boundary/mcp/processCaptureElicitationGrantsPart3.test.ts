@@ -175,7 +175,7 @@ describe("process-capture MCP elicitation grants", () => {
         await mkdir(root);
       }
       const retry = await authority.authorize(scoped, "read", {
-        elicitationSupported: true,
+        remediation: "elicit",
       });
       expect(retry.ok).toBe(false);
     },

@@ -16,88 +16,16 @@ import { TerminalRenderer } from "../../../src/application/TerminalRenderer.js";
 import {
   authorizeProcessScenario,
   compareProcessCaptures,
-  digestProcessCommitment,
   parseProcessCapture,
   parseProcessScenario,
   type ProcessCapture,
 } from "../../../src/domain/processCapture.js";
+import { emptyProcessCapture as emptyCapture } from "../../fixtures/processCapture.js";
 
 const base = {
   approved: true as const,
   executable: "/bin/sh",
   working_directory: "/tmp",
-};
-
-const emptyCapture = (): ProcessCapture => {
-  const normalization = {
-    paths: true,
-    pids: true,
-    ports: true,
-    time_bucket_ms: 10,
-    patterns: [],
-  };
-  const scenario = { executable_sha256: "0".repeat(64) };
-  const comparisonContract = {};
-  const shimPlan: readonly unknown[] = [];
-  const replayPlan = {};
-  return {
-    schema_version: 4,
-    manifest: {
-      rea_version: "test",
-      provider_version: "3",
-      platform: process.platform,
-      architecture: process.arch,
-      pty_backend: "node-pty",
-      started_at: "2026-01-01T00:00:00.000Z",
-      completed_at: "2026-01-01T00:00:00.001Z",
-      scenario,
-      comparison_contract: comparisonContract,
-      shim_plan: shimPlan,
-      replay_plan: replayPlan,
-      full_scenario_sha256: digestProcessCommitment(scenario),
-      comparison_contract_sha256: digestProcessCommitment(comparisonContract),
-      executable_sha256: "0".repeat(64),
-      normalization_sha256: digestProcessCommitment(normalization),
-      shim_plan_sha256: digestProcessCommitment(shimPlan),
-      replay_plan_sha256: digestProcessCommitment(replayPlan),
-    },
-    normalization,
-    frames: [],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" },
-    settlement: {
-      state: "quiesced",
-      elapsed_ms: 50,
-      cleanup_outcome: "not_required",
-    },
-    process_samples: [],
-    filesystem_checkpoints: [
-      { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
-      {
-        name: "after_settlement",
-        at_ms: 50,
-        files: [],
-        effects: [],
-        truncated: false,
-      },
-    ],
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
-    event_journal: [],
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
-    truncated: false,
-    limitations: [],
-    residual_unknowns: [],
-    cleanup: {
-      owned_process_group: "verified",
-      temporary_root: "removed",
-    },
-  };
 };
 
 it("returns detached terminal and filesystem checkpoint observations", async () => {
@@ -163,7 +91,6 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
   ];
   const result = buildCaptureResult({
     frames: [],
-    reactiveRun: null,
     exit: { exitCode: 0, reason: "exited" },
     samples: [],
     replay: {
@@ -184,7 +111,10 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
     interactions: [],
     checkpoints: capture.filesystem_checkpoints,
     shimEvents: [],
-    settlement: capture.settlement,
+    settlement: {
+      state: capture.settlement.state,
+      elapsed_ms: capture.settlement.elapsed_ms,
+    },
     manifest: capture.manifest,
     eventJournal: [],
   });

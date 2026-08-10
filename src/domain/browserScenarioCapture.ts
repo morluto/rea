@@ -7,14 +7,17 @@ import {
 } from "./browserScenarioCaptureValues.js";
 
 export {
+  classifyBrowserScenarioCompleteness,
   browserScenarioCompletenessSchema,
   browserScenarioEventSchema,
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
   captureStateSchema,
   type BrowserScenarioCompleteness,
+  type BrowserScenarioCompletenessSection,
   type BrowserScenarioEvent,
   type BrowserScenarioStep,
+  type BrowserScenarioStepOutcome,
   type BrowserStepArtifacts,
 } from "./browserScenarioCaptureValues.js";
 

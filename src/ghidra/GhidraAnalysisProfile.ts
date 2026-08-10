@@ -28,12 +28,11 @@ export const resolveGhidraAnalysisProfile = (
     return Promise.resolve(err(new AnalysisCancelledError("open_binary")));
   if (target.kind !== "executable")
     return Promise.resolve(ok({ profile: null, compatibility: {} }));
-  const version = installation.providerVersion;
-  if (!installation.available || version === null)
+  if (installation.status === "unavailable")
     return Promise.resolve(
       err(new ProviderAdapterError(identity.id, "resolve_analysis_profile")),
     );
-  const provider = { ...identity, version };
+  const provider = { ...identity, version: installation.providerVersion };
   return Promise.resolve(
     ok({
       profile: createAnalysisProfile(provider, 1, {

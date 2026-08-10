@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -15,173 +15,164 @@ import type {
 describe("CommonJS and ESM module relationships", () => {
   it("composes bindings, re-exports, dynamic imports, and JSON modules", async () => {
     const root = await moduleFixture();
-    try {
-      const first = await reconstructJavaScriptArtifact({ input_path: root });
-      const second = await reconstructJavaScriptArtifact({ input_path: root });
-      const graph = first.graph;
+    const first = await reconstructJavaScriptArtifact({ input_path: root });
+    const second = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = first.graph;
 
-      expect(second.graph).toEqual(graph);
-      expect(sourceModule(graph, "main.cjs")).toBeDefined();
-      expect(sourceModule(graph, "consumer.mjs")).toBeDefined();
-      expect(sourceModule(graph, "dependency.mjs")).toBeDefined();
+    expect(second.graph).toEqual(graph);
+    expect(sourceModule(graph, "main.cjs")).toBeDefined();
+    expect(sourceModule(graph, "consumer.mjs")).toBeDefined();
+    expect(sourceModule(graph, "dependency.mjs")).toBeDefined();
 
-      expect(
-        relationship(graph, {
-          kind: "require",
-          specifier: "./dependency.mjs",
-          resolvedPath: "dependency.mjs",
-          importedName: "value",
-          localName: "importedValue",
+    expect(
+      relationship(graph, {
+        kind: "require",
+        specifier: "./dependency.mjs",
+        resolvedPath: "dependency.mjs",
+        importedName: "value",
+        localName: "importedValue",
+      }),
+    ).toBeDefined();
+    expect(
+      graph.edges.filter(
+        ({ relation, properties }) =>
+          relation === "imports" && properties.specifier === "fixture-package",
+      ),
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({ resolved_path: null }),
         }),
-      ).toBeDefined();
-      expect(
-        graph.edges.filter(
-          ({ relation, properties }) =>
-            relation === "imports" &&
-            properties.specifier === "fixture-package",
-        ),
-      ).not.toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({ resolved_path: null }),
-          }),
-        ]),
-      );
-      expect(
-        relationship(graph, {
-          kind: "require",
-          specifier: "fixture-package",
-          resolvedPath: "node_modules/fixture-package/cjs.cjs",
-          localName: "packageValue",
-        }),
-      ).toBeDefined();
-      expect(
-        relationship(graph, {
-          kind: "import",
-          specifier: "fixture-package",
-          resolvedPath: "node_modules/fixture-package/esm.mjs",
-          importedName: "default",
-          localName: "packageDefault",
-        }),
-      ).toBeDefined();
-      expect(
-        relationship(graph, {
-          kind: "import",
-          specifier: "./values.js",
-          resolvedPath: "values.js",
-          importedName: "value",
-          localName: "alias",
-        }),
-      ).toBeDefined();
-      expect(
-        relationship(graph, {
-          kind: "re-export",
-          specifier: "./star.js",
-          resolvedPath: "star.js",
-          importedName: "*",
-          exportedName: "*",
-        }),
-      ).toBeDefined();
+      ]),
+    );
+    expect(
+      relationship(graph, {
+        kind: "require",
+        specifier: "fixture-package",
+        resolvedPath: "node_modules/fixture-package/cjs.cjs",
+        localName: "packageValue",
+      }),
+    ).toBeDefined();
+    expect(
+      relationship(graph, {
+        kind: "import",
+        specifier: "fixture-package",
+        resolvedPath: "node_modules/fixture-package/esm.mjs",
+        importedName: "default",
+        localName: "packageDefault",
+      }),
+    ).toBeDefined();
+    expect(
+      relationship(graph, {
+        kind: "import",
+        specifier: "./values.js",
+        resolvedPath: "values.js",
+        importedName: "value",
+        localName: "alias",
+      }),
+    ).toBeDefined();
+    expect(
+      relationship(graph, {
+        kind: "re-export",
+        specifier: "./star.js",
+        resolvedPath: "star.js",
+        importedName: "*",
+        exportedName: "*",
+      }),
+    ).toBeDefined();
 
-      const forwarded = exportNode(graph, "main.cjs", "forwarded");
-      expect(forwarded).toBeDefined();
-      expect(
-        graph.edges.some(
-          ({ source_node_id, relation, properties }) =>
-            source_node_id === forwarded?.node_id &&
-            relation === "imports" &&
-            properties.resolved_path === "dependency.mjs" &&
-            properties.imported_name === "value",
-        ),
-      ).toBe(true);
+    const forwarded = exportNode(graph, "main.cjs", "forwarded");
+    expect(forwarded).toBeDefined();
+    expect(
+      graph.edges.some(
+        ({ source_node_id, relation, properties }) =>
+          source_node_id === forwarded?.node_id &&
+          relation === "imports" &&
+          properties.resolved_path === "dependency.mjs" &&
+          properties.imported_name === "value",
+      ),
+    ).toBe(true);
 
-      expect(
-        graph.edges.find(
-          ({ relation, properties }) =>
-            relation === "imports" &&
-            properties.kind === "dynamic-import" &&
-            properties.resolved_path === "lazy.js",
-        ),
-      ).toMatchObject({
-        source_node_id: sourceModule(graph, "consumer.mjs")?.node_id,
-      });
+    expect(
+      graph.edges.find(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "dynamic-import" &&
+          properties.resolved_path === "lazy.js",
+      ),
+    ).toMatchObject({
+      source_node_id: sourceModule(graph, "consumer.mjs")?.node_id,
+    });
 
-      expect(
-        relationship(graph, {
-          kind: "require",
-          specifier: "./data.json",
-          resolvedPath: "data.json",
-        })?.properties,
-      ).toMatchObject({
-        target_file_kind: "json",
-        target_json_status: "included",
-      });
-      expect(
-        relationship(graph, {
-          kind: "require",
-          specifier: "./broken.json",
-          resolvedPath: "broken.json",
-        })?.properties,
-      ).toMatchObject({
-        target_file_kind: "json",
-        target_json_status: "invalid",
-      });
-      expect(
-        relationship(graph, {
-          kind: "require",
-          specifier: "electron",
-        })?.properties,
-      ).toMatchObject({ resolution_status: "external", resolved_path: null });
-      expect(
-        graph.edges.find(
-          ({ relation, properties }) =>
-            relation === "imports" &&
-            properties.kind === "require" &&
-            properties.specifier === null,
-        )?.properties,
-      ).toMatchObject({ resolved_path: null });
+    expect(
+      relationship(graph, {
+        kind: "require",
+        specifier: "./data.json",
+        resolvedPath: "data.json",
+      })?.properties,
+    ).toMatchObject({
+      target_file_kind: "json",
+      target_json_status: "included",
+    });
+    expect(
+      relationship(graph, {
+        kind: "require",
+        specifier: "./broken.json",
+        resolvedPath: "broken.json",
+      })?.properties,
+    ).toMatchObject({
+      target_file_kind: "json",
+      target_json_status: "invalid",
+    });
+    expect(
+      relationship(graph, {
+        kind: "require",
+        specifier: "electron",
+      })?.properties,
+    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    expect(
+      graph.edges.find(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "require" &&
+          properties.specifier === null,
+      )?.properties,
+    ).toMatchObject({ resolved_path: null });
 
-      expect(first.statistics.parse_failures).toBe(1);
-      expect(graph.coverage).toMatchObject({
-        status: "partial",
-        truncated: false,
-      });
-      expect(graph.limitations.join(" ")).toMatch(/incomplete/iu);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    expect(first.statistics.parse_failures).toBe(1);
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: false,
+    });
+    expect(graph.limitations.join(" ")).toMatch(/incomplete/iu);
   });
 });
 
 describe("CommonJS and ESM relationship limits", () => {
   it("retains exact semantic omissions when the relationship budget truncates", async () => {
     const root = await createTestTempDirectory("rea-module-limit-");
-    try {
-      await writeFile(
-        join(root, "exports.mjs"),
-        "export const first = 1; export const second = 2; export const third = 3;",
-      );
-      const result = await reconstructJavaScriptArtifact({
-        input_path: root,
-        limits: { max_findings: 1 },
-      });
+    await writeFile(
+      join(root, "exports.mjs"),
+      "export const first = 1; export const second = 2; export const third = 3;",
+    );
+    const result = await reconstructJavaScriptArtifact({
+      input_path: root,
+      limits: { max_findings: 1 },
+    });
 
-      expect(result.statistics.truncated_scopes).toBeGreaterThan(0);
-      expect(
-        result.graph.nodes.filter((node) =>
-          node.observations.some(
-            ({ properties }) => properties.semantic_role === "export-binding",
-          ),
+    expect(result.statistics.truncated_scopes).toBeGreaterThan(0);
+    expect(
+      result.graph.nodes.filter((node) =>
+        node.observations.some(
+          ({ properties }) => properties.semantic_role === "export-binding",
         ),
-      ).toHaveLength(1);
-      expect(result.graph.coverage).toMatchObject({
-        status: "partial",
-        truncated: true,
-        omitted_count: 2,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      ),
+    ).toHaveLength(1);
+    expect(result.graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: true,
+      omitted_count: 2,
+    });
   });
 });
 

@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
@@ -289,7 +289,7 @@ const connectBrowser = async (browser: FakeCdpBrowser) => {
   if (!config.ok) throw config.error;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) throw authority.error;
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));

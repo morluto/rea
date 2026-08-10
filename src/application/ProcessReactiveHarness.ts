@@ -167,13 +167,17 @@ export const startProcessReactiveHarness = (options: {
 /** Project internal reducer state into the stable Process Capture shape. */
 export const projectProcessReactiveRun = (
   harness: ProcessReactiveHarness | undefined,
-): ProcessCapture["reactive_run"] =>
-  harness === undefined
-    ? null
-    : {
-        status: harness.coordinator.snapshot.status,
-        outcome: harness.coordinator.snapshot.outcome,
-        active_state: harness.coordinator.snapshot.active_state,
-        transitions: harness.coordinator.snapshot.transitions,
-        controls: harness.controls,
-      };
+): ProcessCapture["reactive_run"] => {
+  if (harness === undefined) return null;
+  const snapshot = harness.coordinator.snapshot;
+  const completion =
+    snapshot.status === "running"
+      ? { status: snapshot.status, outcome: null }
+      : { status: snapshot.status, outcome: snapshot.outcome };
+  return {
+    ...completion,
+    active_state: snapshot.active_state,
+    transitions: snapshot.transitions,
+    controls: harness.controls,
+  };
+};

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { PROCESS_CAPTURE_REFERENCE } from "../../../src/contracts/investigationExamples.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -23,7 +23,7 @@ afterEach(async () => {
 describe("guided prompt completion from live analysis", () => {
   it("reads live documents and paged procedures without ambiguous names", async () => {
     const requests: Array<Readonly<Record<string, unknown>>> = [];
-    const session = composeBinarySessionFromFactory(() => client(requests));
+    const session = createTestBinarySession(() => client(requests));
     directory = await createTestTempDirectory("rea-prompt-completion-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
@@ -58,7 +58,7 @@ describe("guided prompt completion from live analysis", () => {
 
 describe("guided prompt completion from investigation records", () => {
   it("projects only validated typed identifiers from the evidence ledger", async () => {
-    const session = composeBinarySessionFromFactory(() => client([]));
+    const session = createTestBinarySession(() => client([]));
     const invalidCapture = createEvidence(undefined, fixtureProvider, {
       operation: "capture_process_scenario",
       parameters: {},
@@ -137,7 +137,7 @@ describe("guided prompt completion from investigation records", () => {
   });
 
   it("deduplicates, case-folds, and returns deterministic live evidence IDs", async () => {
-    const session = composeBinarySessionFromFactory(() => client([]));
+    const session = createTestBinarySession(() => client([]));
     for (let index = 149; index >= 0; index -= 1) {
       const evidence = createEvidence(undefined, fixtureProvider, {
         operation: `fixture-${String(index)}`,

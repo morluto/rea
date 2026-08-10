@@ -11,18 +11,11 @@ import {
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
 
 describe("curl installer scenarios", { timeout: 20_000 }, () => {
   it("installs only a pinned REA CLI with closed stdin", async () => {
@@ -166,7 +159,6 @@ interface InstallerFixture {
 
 const createFixture = async (): Promise<InstallerFixture> => {
   const root = await createTestTempDirectory("rea-install-test-");
-  roots.push(root);
   const home = join(root, "home");
   const bin = join(root, "bin");
   const temporary = join(root, "tmp");

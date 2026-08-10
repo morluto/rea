@@ -13,11 +13,13 @@ import type {
 import {
   hopperStartupFailure,
   type HopperStartupDiagnostic,
+  type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
 } from "./hopperStartupFailure.js";
 export {
   hopperStartupFailure,
   type HopperStartupDiagnostic,
+  type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
 };
 export { projectAnalysisError } from "./analysisErrorProjection.js";
@@ -454,7 +456,7 @@ export class HopperProcessError extends HopperError {
 
   constructor(
     readonly exitCode: number | null,
-    readonly diagnostic?: HopperStartupDiagnostic,
+    readonly diagnostic?: HopperStartupFailureDiagnostic,
   ) {
     super(`Hopper bridge stopped unexpectedly with code ${String(exitCode)}`);
     const failure = hopperStartupFailure(exitCode);
@@ -541,32 +543,31 @@ export interface AnalysisErrorProjection
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
+/** One legal recovery path for a denied permission request. */
+export type PermissionRemediation = "configure" | "elicit" | "restart";
+
+/** Exact denied authority and its legal recovery path. */
+export interface PermissionRequiredContext {
+  readonly requested: PermissionRequest;
+  readonly missing: MissingPermissionScope;
+  readonly ceiling: PermissionScope | null;
+  readonly remediation: PermissionRemediation;
+}
+
 /** Exact denied authority used by both CLI and MCP remediation. */
 export class PermissionRequiredError extends AnalysisError {
   readonly _tag = "PermissionRequiredError" as const;
   readonly requested: PermissionRequest;
   readonly missing: MissingPermissionScope;
   readonly ceiling: PermissionScope | null;
-  readonly elicitationSupported: boolean;
-  readonly restartRequired: boolean;
+  readonly remediation: PermissionRemediation;
 
-  constructor(
-    ...args: readonly [
-      requested: PermissionRequest,
-      missing: MissingPermissionScope,
-      ceiling: PermissionScope | null,
-      elicitationSupported: boolean,
-      restartRequired: boolean,
-    ]
-  ) {
-    const [requested, missing, ceiling, elicitationSupported, restartRequired] =
-      args;
-    super(`Permission required for ${requested.capability}`);
-    this.requested = requested;
-    this.missing = missing;
-    this.ceiling = ceiling;
-    this.elicitationSupported = elicitationSupported;
-    this.restartRequired = restartRequired;
+  constructor(context: PermissionRequiredContext) {
+    super(`Permission required for ${context.requested.capability}`);
+    this.requested = context.requested;
+    this.missing = context.missing;
+    this.ceiling = context.ceiling;
+    this.remediation = context.remediation;
   }
 }
 

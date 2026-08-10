@@ -18,9 +18,11 @@ import {
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   reachSemanticValueLimit,
+  semanticAmbiguousProvenance,
   semanticLimitProvenance,
+  semanticLocalProvenance,
   semanticOriginsProvenance,
-  semanticProvenance,
+  semanticUnresolvedProvenance,
   uniqueSemanticOrigins,
 } from "./javascriptSemanticProvenance.js";
 import {
@@ -196,12 +198,19 @@ const evaluateObject = (
     });
   }
   properties.sort((left, right) => compareCodePoints(left.name, right.name));
-  return {
-    status: "object",
-    properties,
-    unknownProperties,
-    omittedProperties,
-  };
+  return unknownProperties
+    ? {
+        status: "object",
+        properties,
+        unknownProperties: true,
+        omittedProperties,
+      }
+    : {
+        status: "object",
+        properties,
+        unknownProperties: false,
+        omittedProperties: 0,
+      };
 };
 
 const evaluateArray = (
@@ -230,7 +239,9 @@ const evaluateArray = (
     }
     items.push(evaluateExpression(element, nestedContext(context)));
   }
-  return { status: "array", items, unknownItems, omittedItems };
+  return unknownItems
+    ? { status: "array", items, unknownItems: true, omittedItems }
+    : { status: "array", items, unknownItems: false, omittedItems: 0 };
 };
 
 const evaluateMember = (
@@ -337,24 +348,31 @@ const provenanceForBinding = (
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
   if (context.bindings.has(binding.bindingId))
-    return semanticProvenance("cycle", [], `Alias cycle at ${binding.name}.`);
+    return semanticUnresolvedProvenance(
+      "cycle",
+      `Alias cycle at ${binding.name}.`,
+    );
   if (context.depth >= context.state.limits.maxValueDepth)
     return semanticLimitProvenance(context.state, "maxValueDepth");
   if (binding.directOrigins.length > 0)
     return semanticOriginsProvenance(binding.directOrigins, context.state);
-  if (binding.initializers.length === 0)
-    return semanticProvenance("local", [], null);
+  if (binding.initializers.length === 0) return semanticLocalProvenance();
   if (binding.initializers.length > 1)
-    return semanticProvenance(
-      "ambiguous",
+    return semanticAmbiguousProvenance(
       [],
       `Binding ${binding.name} has multiple possible assignments.`,
     );
   const initializer = binding.initializers[0];
   if (initializer === undefined)
-    return semanticProvenance("unknown", [], "Missing binding initializer.");
+    return semanticUnresolvedProvenance(
+      "unknown",
+      "Missing binding initializer.",
+    );
   if (initializer.projection.includes(null))
-    return semanticProvenance("unknown", [], "Dynamic provenance projection.");
+    return semanticUnresolvedProvenance(
+      "unknown",
+      "Dynamic provenance projection.",
+    );
   const resolved = provenanceForExpression(
     initializer.node,
     nestedContext(context, binding.bindingId),
@@ -383,15 +401,24 @@ const provenanceForExpression = (
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     return binding === undefined
-      ? semanticProvenance("unknown", [], `Unbound identifier ${node.name}.`)
+      ? semanticUnresolvedProvenance(
+          "unknown",
+          `Unbound identifier ${node.name}.`,
+        )
       : provenanceForBinding(binding, nestedContext(context));
   }
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     if (!t.isNode(node.object))
-      return semanticProvenance("unknown", [], "Unsupported member base.");
+      return semanticUnresolvedProvenance(
+        "unknown",
+        "Unsupported member base.",
+      );
     const member = memberKey(node);
     if (typeof member !== "string")
-      return semanticProvenance("unknown", [], "Dynamic provenance member.");
+      return semanticUnresolvedProvenance(
+        "unknown",
+        "Dynamic provenance member.",
+      );
     const base = provenanceForExpression(node.object, nestedContext(context));
     return base.status !== "module"
       ? base
@@ -412,18 +439,16 @@ const provenanceForExpression = (
     ];
     const origins = candidates.flatMap((candidate) => candidate.origins);
     return origins.length > 0
-      ? semanticProvenance(
-          "ambiguous",
+      ? semanticAmbiguousProvenance(
           uniqueSemanticOrigins(origins),
           "Multiple module origins.",
         )
-      : semanticProvenance(
+      : semanticUnresolvedProvenance(
           "unknown",
-          [],
           "Conditional provenance is unresolved.",
         );
   }
-  return semanticProvenance("local", [], null);
+  return semanticLocalProvenance();
 };
 
 const requireOrigin = (node: t.Node): JavaScriptModuleOrigin | undefined => {

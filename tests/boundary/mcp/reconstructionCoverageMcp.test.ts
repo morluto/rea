@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
@@ -36,7 +36,7 @@ describe("reconstruction coverage MCP parity", () => {
       ["investigation_workspace_read", "investigation_workspace_write"],
       ["investigation_workspace_read", "investigation_workspace_write"],
     );
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
     }));

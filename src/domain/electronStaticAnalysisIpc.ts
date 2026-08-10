@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import type {
+  ElectronIpcDescriptor,
   ElectronIpcFinding,
   ElectronSenderValidationFinding,
 } from "./electronStaticAnalysisTypes.js";
@@ -17,12 +18,6 @@ import {
   range,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
-
-interface IpcDescriptor {
-  readonly side: ElectronIpcFinding["side"];
-  readonly operation: ElectronIpcFinding["operation"];
-  readonly mode: ElectronIpcFinding["mode"];
-}
 
 /** Inspect Electron IPC operations and validation candidates. */
 export const inspectElectronIpcNode = (
@@ -49,30 +44,56 @@ const inspectIpcCall = (
     channelValue.status === "literal" && typeof channelValue.value === "string"
       ? channelValue.value
       : null;
-  const channelExpression =
+  const channelReference =
     channel === null
-      ? channelValue.status === "dynamic"
-        ? channelValue.expression
-        : boundedExpression(context.source, channelNode)
-      : null;
-  const hasHandler =
-    descriptor.mode === "listen" || descriptor.mode === "handle";
-  const handlerNode = hasHandler ? argumentNode(node.arguments[1]) : undefined;
+      ? {
+          channel: null,
+          channel_expression:
+            channelValue.status === "dynamic"
+              ? channelValue.expression
+              : boundedExpression(context.source, channelNode),
+        }
+      : { channel, channel_expression: null };
+  const handlerNode =
+    descriptor.mode === "listen" || descriptor.mode === "handle"
+      ? argumentNode(node.arguments[1])
+      : undefined;
+  const findingState =
+    descriptor.mode === "send"
+      ? {
+          ...descriptor,
+          handler_kind: null,
+          handler_location: null,
+        }
+      : descriptor.mode === "invoke"
+        ? {
+            ...descriptor,
+            handler_kind: null,
+            handler_location: null,
+          }
+        : handlerNode === undefined
+          ? {
+              ...descriptor,
+              handler_kind: "missing" as const,
+              handler_location: null,
+            }
+          : {
+              ...descriptor,
+              handler_kind: handlerKind(handlerNode),
+              handler_location: range(handlerNode),
+            };
   if (channel === null) context.accumulator.unknownFindings += 1;
-  if (hasHandler && handlerNode === undefined)
+  if (findingState.handler_kind === "missing")
     context.accumulator.unknownFindings += 1;
   const finding: ElectronIpcFinding = {
-    ...descriptor,
-    channel,
-    channel_expression: channelExpression,
-    handler_kind: hasHandler ? handlerKind(handlerNode) : null,
-    handler_location: handlerNode === undefined ? null : range(handlerNode),
+    ...findingState,
+    ...channelReference,
     module_key: null,
     location: range(node),
   };
   addLocatedFinding(context, {
     collection: context.accumulator.ipc,
-    key: `electron-ipc\0${descriptor.side}\0${descriptor.operation}\0${channel ?? channelExpression ?? "[missing]"}`,
+    key: `electron-ipc\0${descriptor.side}\0${descriptor.operation}\0${channelReference.channel ?? channelReference.channel_expression}`,
     node,
     value: finding,
   });
@@ -143,7 +164,7 @@ const addValidation = (
   });
 };
 
-const ipcDescriptor = (name: string): IpcDescriptor | undefined => {
+const ipcDescriptor = (name: string): ElectronIpcDescriptor | undefined => {
   const renderer = suffixOperation(name, "ipcRenderer");
   if (renderer !== undefined) {
     switch (renderer) {

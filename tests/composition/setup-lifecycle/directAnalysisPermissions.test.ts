@@ -1,4 +1,4 @@
-import { chmod, rm, writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,18 +23,13 @@ import {
 import { HOPPER_PROVIDER_IDENTITY } from "../../../src/hopper/HopperProvider.js";
 import { resolveHopperAnalysisProfile } from "../../../src/hopper/HopperAnalysisProfile.js";
 
-let directory: string | undefined;
-
 afterEach(async () => {
   vi.unstubAllEnvs();
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 describe("direct analysis snapshot permissions", () => {
   it("forwards the CLI provider selector ahead of the environment preference", async () => {
-    directory = await createTestTempDirectory("rea-direct-provider-");
+    const directory = await createTestTempDirectory("rea-direct-provider-");
     const targetPath = join(directory, "fixture.hop");
     await writeFile(targetPath, "fixture");
     vi.stubEnv("HOPPER_LAUNCHER_PATH", process.execPath);
@@ -61,7 +56,7 @@ describe("direct analysis snapshot permissions", () => {
   });
 
   it("replays a cache hit with snapshot read authority only", async () => {
-    directory = await createTestTempDirectory("rea-direct-snapshot-");
+    const directory = await createTestTempDirectory("rea-direct-snapshot-");
     const snapshotPath = join(directory, "analysis.json");
     const launcherPath = join(directory, "hopper-launcher");
     await writeFile(launcherPath, "fixture Hopper launcher");

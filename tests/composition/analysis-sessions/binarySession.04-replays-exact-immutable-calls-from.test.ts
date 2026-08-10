@@ -1,6 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -8,17 +8,10 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 const cacheProvider = (
   calls: string[],
@@ -84,7 +77,7 @@ const cacheCapability = (
 });
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -96,9 +89,7 @@ describe("binary session", () => {
   it("replays exact immutable calls from a matching provider-neutral snapshot", async () => {
     const [first, second] = await targets();
     const initialCalls: string[] = [];
-    const initial = composeBinarySessionFromFactory(
-      cacheProvider(initialCalls),
-    );
+    const initial = createTestBinarySession(cacheProvider(initialCalls));
     expect((await initial.open(first)).ok).toBe(true);
     expect(
       (
@@ -115,7 +106,7 @@ describe("binary session", () => {
     await initial.close();
 
     const replayCalls: string[] = [];
-    const replay = composeBinarySessionFromFactory(cacheProvider(replayCalls));
+    const replay = createTestBinarySession(cacheProvider(replayCalls));
     expect(replay.importAnalysisSnapshot(snapshot.value)).toEqual({
       ok: true,
       value: 1,
@@ -156,7 +147,7 @@ describe("binary session", () => {
     });
     await replay.close();
 
-    const mismatch = composeBinarySessionFromFactory(cacheProvider([]));
+    const mismatch = createTestBinarySession(cacheProvider([]));
     expect(mismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
     const opened = await mismatch.open(second);
     expect(opened.ok).toBe(false);
@@ -181,9 +172,7 @@ describe("binary session", () => {
           compatibility: {},
         }),
       );
-    const profileMismatch = composeBinarySessionFromFactory(
-      profileMismatchProvider,
-    );
+    const profileMismatch = createTestBinarySession(profileMismatchProvider);
     expect(profileMismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(
       true,
     );
@@ -196,7 +185,7 @@ describe("binary session", () => {
     expect(profileMismatchCalls).toEqual([]);
     await profileMismatch.close();
 
-    const activeProfileMismatch = composeBinarySessionFromFactory(
+    const activeProfileMismatch = createTestBinarySession(
       profileMismatchProvider,
     );
     expect((await activeProfileMismatch.open(first)).ok).toBe(true);
@@ -212,7 +201,7 @@ describe("binary session", () => {
   it("does not snapshot reads that depend on the provider cursor", async () => {
     const [first] = await targets();
     const calls: string[] = [];
-    const session = composeBinarySessionFromFactory(cacheProvider(calls));
+    const session = createTestBinarySession(cacheProvider(calls));
     expect((await session.open(first)).ok).toBe(true);
     expect((await session.execute("address_name", {})).ok).toBe(true);
     expect((await session.execute("address_name", {})).ok).toBe(true);

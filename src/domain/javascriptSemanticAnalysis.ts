@@ -35,11 +35,8 @@ import {
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemantics } from "./javascriptSemanticDerivedAnalysis.js";
-import {
-  compareCodePoints,
-  propertyName,
-  range,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { propertyName, range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticCoverage } from "./javascriptSemanticCoverage.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -106,16 +103,7 @@ export const analyzeParsedJavaScriptSemantics = (
     references,
     moduleLinks,
     ...derived,
-    coverage: {
-      status:
-        state.limitsReached.size > 0
-          ? "truncated"
-          : parserPartial
-            ? "partial"
-            : "complete",
-      omittedCount: state.limitsReached.size > 0 ? state.omittedCount : 0,
-      limitsReached: [...state.limitsReached].sort(compareCodePoints),
-    },
+    coverage: semanticCoverage(state, parserPartial),
     limitations: [
       ...(parserPartial
         ? [

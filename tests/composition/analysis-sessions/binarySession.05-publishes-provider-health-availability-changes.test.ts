@@ -1,6 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -8,18 +8,11 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/errors.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 const cacheProvider = (
   calls: string[],
@@ -85,7 +78,7 @@ const cacheCapability = (
 });
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -106,7 +99,7 @@ describe("binary session", () => {
         ),
       close: () => Promise.resolve(),
     });
-    const session = composeBinarySessionFromFactory(provider);
+    const session = createTestBinarySession(provider);
     let changes = 0;
     session.onAvailabilityChanged(() => {
       changes += 1;
@@ -152,7 +145,7 @@ describe("binary session", () => {
       },
       close: () => Promise.resolve(),
     });
-    const session = composeBinarySessionFromFactory(provider);
+    const session = createTestBinarySession(provider);
     expect((await session.open(first)).ok).toBe(true);
     const input = { address: "0x1000", document: "first" };
     expect((await session.execute("address_name", input)).ok).toBe(false);
@@ -188,7 +181,7 @@ describe("binary session", () => {
   it("does not replay operations with filesystem side effects", async () => {
     const [first] = await targets();
     const calls: string[] = [];
-    const session = composeBinarySessionFromFactory(cacheProvider(calls, true));
+    const session = createTestBinarySession(cacheProvider(calls, true));
     expect((await session.open(first)).ok).toBe(true);
     const input = { address: "0x1000", document: "first" };
     expect((await session.execute("address_name", input)).ok).toBe(true);

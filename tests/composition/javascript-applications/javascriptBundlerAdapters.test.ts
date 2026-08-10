@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -15,128 +15,118 @@ import type {
 describe("Webpack and Rspack runtime adapters", () => {
   it("recovers runtime entry modules, async chunks, and factory require aliases", async () => {
     const root = await bundlerFixture();
-    try {
-      const result = await reconstructJavaScriptArtifact({ input_path: root });
-      const graph = result.graph;
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = result.graph;
 
-      const webpackEntry = chunk(graph, "webpackChunkcustomPortal", "main");
-      const webpackLazy = chunk(graph, "webpackChunkcustomPortal", "lazy");
-      const webpackModule = moduleNode(graph, "10");
-      const rspackEntry = chunk(graph, "rspackChunkcustomPortal", "editor");
-      const rspackModel = chunk(graph, "rspackChunkcustomPortal", "model");
-      const rspackModule = moduleNode(graph, "src/entry.ts");
+    const webpackEntry = chunk(graph, "webpackChunkcustomPortal", "main");
+    const webpackLazy = chunk(graph, "webpackChunkcustomPortal", "lazy");
+    const webpackModule = moduleNode(graph, "10");
+    const rspackEntry = chunk(graph, "rspackChunkcustomPortal", "editor");
+    const rspackModel = chunk(graph, "rspackChunkcustomPortal", "model");
+    const rspackModule = moduleNode(graph, "src/entry.ts");
 
-      expect(webpackEntry?.observations[0]?.properties).toMatchObject({
-        bundler: "webpack",
-        runtime_require_name: "__webpack_require__",
-        runtime_module_cache_status: "observed",
-        entry_module_keys: ["10"],
-        async_chunk_keys: ["lazy", "missing"],
-        unknown_async_chunk_keys: 1,
-      });
-      expect(webpackModule?.observations[0]?.properties).toMatchObject({
-        factory_require_name: "__webpack_require__",
-        runtime_entry: true,
-        chunk_keys: ["main"],
-      });
-      expect(rspackEntry?.observations[0]?.properties).toMatchObject({
-        bundler: "rspack",
-        runtime_require_name: "r",
-        entry_module_keys: ["src/entry.ts"],
-        async_chunk_keys: ["model"],
-      });
-      expect(rspackModule?.observations[0]?.properties).toMatchObject({
-        factory_require_name: "r",
-        runtime_entry: true,
-      });
+    expect(webpackEntry?.observations[0]?.properties).toMatchObject({
+      bundler: "webpack",
+      runtime_require_name: "__webpack_require__",
+      runtime_module_cache_status: "observed",
+      entry_module_keys: ["10"],
+      async_chunk_keys: ["lazy", "missing"],
+      unknown_async_chunk_keys: 1,
+    });
+    expect(webpackModule?.observations[0]?.properties).toMatchObject({
+      factory_require_name: "__webpack_require__",
+      runtime_entry: true,
+      chunk_keys: ["main"],
+    });
+    expect(rspackEntry?.observations[0]?.properties).toMatchObject({
+      bundler: "rspack",
+      runtime_require_name: "r",
+      entry_module_keys: ["src/entry.ts"],
+      async_chunk_keys: ["model"],
+    });
+    expect(rspackModule?.observations[0]?.properties).toMatchObject({
+      factory_require_name: "r",
+      runtime_entry: true,
+    });
 
-      expect(edge(graph, webpackEntry, webpackModule, "loads")).toMatchObject({
-        properties: expect.objectContaining({
-          kind: "bundler-entry-module",
-          resolution_status: "resolved",
-        }),
-      });
-      expect(edge(graph, webpackEntry, webpackLazy, "imports")).toMatchObject({
-        properties: expect.objectContaining({
-          kind: "bundler-async-chunk",
-          resolution_status: "resolved",
-        }),
-      });
-      expect(edge(graph, webpackModule, webpackLazy, "imports")).toMatchObject({
-        properties: expect.objectContaining({
-          kind: "dynamic-import",
-          specifier: "chunk:lazy",
-          resolved_path: "renderer/chunks/runtime.js#chunk:lazy",
-        }),
-      });
-      expect(edge(graph, rspackEntry, rspackModel, "imports")).toMatchObject({
-        properties: expect.objectContaining({
-          kind: "bundler-async-chunk",
-          resolution_status: "resolved",
-        }),
-      });
-      expect(edge(graph, rspackModule, rspackModel, "imports")).toMatchObject({
-        properties: expect.objectContaining({
-          kind: "dynamic-import",
-          specifier: "chunk:model",
-        }),
-      });
+    expect(edge(graph, webpackEntry, webpackModule, "loads")).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "bundler-entry-module",
+        resolution_status: "resolved",
+      }),
+    });
+    expect(edge(graph, webpackEntry, webpackLazy, "imports")).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "bundler-async-chunk",
+        resolution_status: "resolved",
+      }),
+    });
+    expect(edge(graph, webpackModule, webpackLazy, "imports")).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "dynamic-import",
+        specifier: "chunk:lazy",
+        resolved_path: "renderer/chunks/runtime.js#chunk:lazy",
+      }),
+    });
+    expect(edge(graph, rspackEntry, rspackModel, "imports")).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "bundler-async-chunk",
+        resolution_status: "resolved",
+      }),
+    });
+    expect(edge(graph, rspackModule, rspackModel, "imports")).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "dynamic-import",
+        specifier: "chunk:model",
+      }),
+    });
 
-      expect(
-        graph.nodes.find((node) =>
-          node.observations.some(
-            ({ properties }) =>
-              properties.semantic_role === "bundler-chunk-reference" &&
-              properties.chunk_key === "missing" &&
-              properties.resolution_status === "not-found",
-          ),
+    expect(
+      graph.nodes.find((node) =>
+        node.observations.some(
+          ({ properties }) =>
+            properties.semantic_role === "bundler-chunk-reference" &&
+            properties.chunk_key === "missing" &&
+            properties.resolution_status === "not-found",
         ),
-      ).toBeDefined();
-      expect(
-        graph.edges.some(
-          ({ relation, properties }) =>
-            relation === "imports" &&
-            properties.kind === "require" &&
-            properties.specifier === "lazy",
-        ),
-      ).toBe(false);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      ),
+    ).toBeDefined();
+    expect(
+      graph.edges.some(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "require" &&
+          properties.specifier === "lazy",
+      ),
+    ).toBe(false);
   });
 
   it("recovers esbuild wrapper modules and Vite preload dependencies", async () => {
     const root = await esmRuntimeFixture();
-    try {
-      const { graph } = await reconstructJavaScriptArtifact({
-        input_path: root,
-      });
-      const commonJsModule = moduleNode(graph, "src/dep.js");
-      const esmModule = moduleNode(graph, "src/core.js");
+    const { graph } = await reconstructJavaScriptArtifact({
+      input_path: root,
+    });
+    const commonJsModule = moduleNode(graph, "src/dep.js");
+    const esmModule = moduleNode(graph, "src/core.js");
 
-      expect(commonJsModule?.observations[0]?.properties).toMatchObject({
-        bundler: "esbuild",
-        runtime: "esbuild-commonjs",
-        module_key: "src/dep.js",
-      });
-      expect(esmModule?.observations[0]?.properties).toMatchObject({
-        bundler: "esbuild",
-        runtime: "esbuild-esm",
-        module_key: "src/core.js",
-      });
-      expect(
-        graph.edges.filter(
-          ({ relation, properties }) =>
-            relation === "imports" &&
-            properties.kind === "dynamic-import" &&
-            ["./feature.js", "./main.css"].includes(
-              String(properties.specifier),
-            ),
-        ),
-      ).toHaveLength(2);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    expect(commonJsModule?.observations[0]?.properties).toMatchObject({
+      bundler: "esbuild",
+      runtime: "esbuild-commonjs",
+      module_key: "src/dep.js",
+    });
+    expect(esmModule?.observations[0]?.properties).toMatchObject({
+      bundler: "esbuild",
+      runtime: "esbuild-esm",
+      module_key: "src/core.js",
+    });
+    expect(
+      graph.edges.filter(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "dynamic-import" &&
+          ["./feature.js", "./main.css"].includes(String(properties.specifier)),
+      ),
+    ).toHaveLength(2);
   });
 });
 

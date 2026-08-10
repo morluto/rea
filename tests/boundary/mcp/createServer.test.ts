@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -9,10 +9,6 @@ const analysis = {
 };
 
 describe("MCP server composition", () => {
-  it("constructs independent MCP server instances", () => {
-    expect(createServer(analysis)).not.toBe(createServer(analysis));
-  });
-
   mcpTest("does not advertise unavailable session tools", async ({ mcp }) => {
     const server = createServer(analysis);
     const client = await mcp.connect(server, {

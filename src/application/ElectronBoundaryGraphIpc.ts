@@ -162,7 +162,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-ipc-handler",
-      `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression ?? "[missing]"}:${electronRangeKey(handlerRange)}`,
+      `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression}:${electronRangeKey(handlerRange)}`,
     ),
     observations: [
       {

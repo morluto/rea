@@ -106,7 +106,7 @@ const installationHost = (): GhidraInstallationHost => ({
     major: 21,
     home: "/usr/lib/jvm/jdk-21",
     bits: 64,
-    jdk: true,
+    runtime: "jdk",
   }),
 });
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
-import type { ProcessCapture } from "./processCapture.js";
+import type { UnverifiedProcessCapture } from "./processCapture.js";
 
 /** Process-capture observation families shared by live drivers and trace assertions. */
 export const processObservationSourceSchema = z.enum([
@@ -136,7 +136,7 @@ export const processObservationSubject = (
 };
 
 const projectedRecord = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   location: ProcessObservationLocation,
 ): ProjectedRecord | null => {
   const projected = (() => {
@@ -208,7 +208,7 @@ const projectedRecord = (
 
 /** Project one validated capture-journal reference into the shared observation shape. */
 export const projectProcessObservation = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   location: ProcessObservationLocation,
 ): ProcessObservation | null => {
   const projected = projectedRecord(capture, location);

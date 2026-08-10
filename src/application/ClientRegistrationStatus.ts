@@ -8,13 +8,36 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { supportedClients } from "./SupportedClients.js";
 
-export interface ClientRegistrationStatus {
+interface ClientRegistrationStatusBase {
   readonly client: string;
   readonly config_path: string;
-  readonly command: readonly string[];
-  readonly state: "aligned" | "stale" | "missing" | "invalid";
-  readonly remediation: string | null;
 }
+
+type RegistrationCommand = readonly [string, ...string[]];
+
+export type ClientRegistrationStatus = ClientRegistrationStatusBase &
+  (
+    | {
+        readonly command: RegistrationCommand;
+        readonly state: "aligned";
+        readonly remediation: null;
+      }
+    | {
+        readonly command: RegistrationCommand;
+        readonly state: "stale";
+        readonly remediation: string;
+      }
+    | {
+        readonly command: readonly [];
+        readonly state: "missing" | "invalid";
+        readonly remediation: string;
+      }
+  );
+
+export type UnhealthyClientRegistrationStatus = Exclude<
+  ClientRegistrationStatus,
+  { readonly state: "aligned" }
+>;
 
 const objectSchema = z.record(z.string(), z.unknown());
 const registrationSchema = z
@@ -44,13 +67,18 @@ export const readClientRegistrationStatuses = async (
       );
       const raw = servers[PRODUCT_IDENTITY.mcpServerKey];
       if (raw === undefined) {
-        statuses.push(status(client.name, client.configPath, [], "missing"));
+        statuses.push(
+          unavailableStatus(client.name, client.configPath, "missing"),
+        );
         continue;
       }
       const registration = registrationSchema.parse(raw);
-      const command = [registration.command, ...registration.args];
+      const command: RegistrationCommand = [
+        registration.command,
+        ...registration.args,
+      ];
       statuses.push(
-        status(
+        configuredStatus(
           client.name,
           client.configPath,
           command,
@@ -61,10 +89,9 @@ export const readClientRegistrationStatuses = async (
       );
     } catch (cause: unknown) {
       statuses.push(
-        status(
+        unavailableStatus(
           client.name,
           client.configPath,
-          [],
           isMissing(cause) ? "missing" : "invalid",
         ),
       );
@@ -102,20 +129,29 @@ const registrationAligned = (
   );
 };
 
-const status = (
+const remediation =
+  "Run rea setup to refresh this registration, then restart the client.";
+
+const configuredStatus = (
   client: string,
   configPath: string,
-  command: readonly string[],
-  state: ClientRegistrationStatus["state"],
+  command: RegistrationCommand,
+  state: "aligned" | "stale",
+): ClientRegistrationStatus =>
+  state === "aligned"
+    ? { client, config_path: configPath, command, state, remediation: null }
+    : { client, config_path: configPath, command, state, remediation };
+
+const unavailableStatus = (
+  client: string,
+  configPath: string,
+  state: "missing" | "invalid",
 ): ClientRegistrationStatus => ({
   client,
   config_path: configPath,
-  command,
+  command: [],
   state,
-  remediation:
-    state === "aligned"
-      ? null
-      : "Run rea setup to refresh this registration, then restart the client.",
+  remediation,
 });
 
 const exists = async (path: string | undefined): Promise<boolean> => {

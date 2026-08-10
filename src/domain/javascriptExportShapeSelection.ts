@@ -11,6 +11,17 @@ import {
 
 type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
+type SelectorBase = Omit<SelectorResult, "status" | "selected_node_id">;
+type ReturnShapeSelection =
+  | {
+      readonly projection: ProjectedExportReturnShapes;
+      readonly observationComplete: boolean;
+    }
+  | {
+      readonly projection: null;
+      readonly observationComplete: false;
+      readonly reason: string;
+    };
 
 /** One authenticated graph and exact export selector. */
 export interface JavaScriptExportShapeSideInput {
@@ -28,12 +39,19 @@ interface ExportCandidate {
 }
 
 /** Exact selector result plus any admitted static return-shape projection. */
-export interface SelectedJavaScriptExport {
-  readonly selection: SelectorResult;
-  readonly projection: ProjectedExportReturnShapes | null;
-  readonly observationComplete: boolean;
-  readonly limitations: readonly string[];
-}
+export type SelectedJavaScriptExport =
+  | {
+      readonly selection: Extract<SelectorResult, { status: "selected" }>;
+      readonly projection: ProjectedExportReturnShapes;
+      readonly observationComplete: boolean;
+      readonly limitations: readonly [];
+    }
+  | {
+      readonly selection: Exclude<SelectorResult, { status: "selected" }>;
+      readonly projection: null;
+      readonly observationComplete: false;
+      readonly limitations: readonly string[];
+    };
 
 /** Caller-retained return shapes and their exact caller-limit omission count. */
 export interface RetainedJavaScriptExportShapes {
@@ -64,28 +82,40 @@ export const selectJavaScriptExport = (
   const retainedCandidates = diagnosticPool.slice(0, maxCandidates);
   const base = selectorBase(side, diagnosticPool, retainedCandidates);
   if (exact.length === 0)
-    return unresolvedSelection(base, "missing", null, [
-      `No exact export binding matched ${side.modulePath}:${side.exportName}.`,
-    ]);
+    return unresolvedSelection(
+      base,
+      { status: "missing", selected_node_id: null },
+      [
+        `No exact export binding matched ${side.modulePath}:${side.exportName}.`,
+      ],
+    );
   if (exact.length > 1)
-    return unresolvedSelection(base, "ambiguous", null, [
-      `Multiple exact export bindings matched ${side.modulePath}:${side.exportName}; none was selected.`,
-    ]);
+    return unresolvedSelection(
+      base,
+      { status: "ambiguous", selected_node_id: null },
+      [
+        `Multiple exact export bindings matched ${side.modulePath}:${side.exportName}; none was selected.`,
+      ],
+    );
   const selected = exact[0];
   if (selected === undefined || !selected.trusted)
     return unresolvedSelection(
       base,
-      "unavailable",
-      selected?.node.node_id ?? null,
+      {
+        status: "unavailable",
+        selected_node_id: selected?.node.node_id ?? null,
+      },
       [
         "The exact export binding lacks the expected static-analysis authority.",
       ],
     );
   const returnShape = returnShapeFor(selected.node, side);
   if (returnShape.projection === null)
-    return unresolvedSelection(base, "unavailable", selected.node.node_id, [
-      returnShape.reason,
-    ]);
+    return unresolvedSelection(
+      base,
+      { status: "unavailable", selected_node_id: selected.node.node_id },
+      [returnShape.reason],
+    );
   return {
     selection: {
       ...base,
@@ -112,7 +142,7 @@ const selectorBase = (
   side: JavaScriptExportShapeSideInput,
   candidates: readonly ExportCandidate[],
   retained: readonly ExportCandidate[],
-): Omit<SelectorResult, "status" | "selected_node_id"> => ({
+): SelectorBase => ({
   evidence_id: side.evidenceId,
   graph_id: side.graph.graph_id,
   requested_module_path: side.modulePath,
@@ -128,12 +158,19 @@ const selectorBase = (
 });
 
 const unresolvedSelection = (
-  base: Omit<SelectorResult, "status" | "selected_node_id">,
-  status: "missing" | "ambiguous" | "unavailable",
-  nodeId: string | null,
+  base: SelectorBase,
+  resolution:
+    | {
+        readonly status: "missing" | "ambiguous";
+        readonly selected_node_id: null;
+      }
+    | {
+        readonly status: "unavailable";
+        readonly selected_node_id: string | null;
+      },
   limitations: readonly string[],
 ): SelectedJavaScriptExport => ({
-  selection: { ...base, status, selected_node_id: nodeId },
+  selection: { ...base, ...resolution },
   projection: null,
   observationComplete: false,
   limitations,
@@ -176,11 +213,7 @@ const candidateKey = (candidate: ExportCandidate): string =>
 const returnShapeFor = (
   node: ApplicationNode,
   side: JavaScriptExportShapeSideInput,
-): {
-  readonly projection: ProjectedExportReturnShapes | null;
-  readonly observationComplete: boolean;
-  readonly reason: string;
-} => {
+): ReturnShapeSelection => {
   const roleObservations = node.observations.filter(
     ({ properties }) => properties.semantic_role === "export-return-shapes",
   );
@@ -223,11 +256,12 @@ const returnShapeFor = (
     observationComplete:
       observation.evidence.coverage.status === "complete" &&
       !observation.evidence.coverage.truncated,
-    reason: "",
   };
 };
 
-const unavailableReturnShape = (reason: string) => ({
+const unavailableReturnShape = (
+  reason: string,
+): Extract<ReturnShapeSelection, { readonly projection: null }> => ({
   projection: null,
   observationComplete: false,
   reason,

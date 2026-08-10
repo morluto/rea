@@ -59,8 +59,7 @@ export const verifyManagedNativeBoundaries = (
     verifyPinvoke({
       item,
       managedEvidenceId: managedEvidence.evidence_id,
-      symbols: native.symbols,
-      hasSupportedNativeEvidence: native.accepted > 0,
+      native,
       input,
     }),
   );

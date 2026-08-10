@@ -1,4 +1,4 @@
-import type { ProcessCapture } from "./processCapture.js";
+import type { UnverifiedProcessCapture } from "./processCapture.js";
 import { validateProcessCaptureReactiveRun } from "./processCaptureReactiveValidation.js";
 import { replayMachineSchema, type ReplayMachine } from "./replayMachine.js";
 import { digestProcessCommitment } from "./processScenario.js";
@@ -24,13 +24,13 @@ const orderedTimestamps = (
   });
 
 const transitionsAreContiguous = (
-  previous: ProcessCapture["replay_transitions"][number] | undefined,
-  current: ProcessCapture["replay_transitions"][number],
+  previous: UnverifiedProcessCapture["replay_transitions"][number] | undefined,
+  current: UnverifiedProcessCapture["replay_transitions"][number],
 ): boolean =>
   previous !== undefined && previous.state_after === current.state_before;
 
 const validateCommitments = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const { manifest } = capture;
@@ -54,7 +54,7 @@ const validateCommitments = (
 };
 
 const validateOrdering = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   for (const [name, values] of [
@@ -81,10 +81,12 @@ const validateOrdering = (
 };
 
 const journalCollectionSizes = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
 ): Readonly<
   Record<
-    NonNullable<ProcessCapture["event_journal"]>[number]["collection"],
+    NonNullable<
+      UnverifiedProcessCapture["event_journal"]
+    >[number]["collection"],
     number
   >
 > => ({
@@ -100,7 +102,7 @@ const journalCollectionSizes = (
 });
 
 const validateEventJournal = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const journal = capture.event_journal ?? [];
@@ -129,7 +131,7 @@ const validateEventJournal = (
 };
 
 const validateLifecycle = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const checkpointNames = capture.filesystem_checkpoints.map(
@@ -146,15 +148,9 @@ const validateLifecycle = (
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");
-  require(capture.settlement.state !== "quiesced" ||
-    capture.settlement.cleanup_outcome ===
-      "not_required", "settlement.cleanup_outcome", "quiesced settlement cannot require cleanup");
-  require(capture.settlement.state === "quiesced" ||
-    capture.settlement.cleanup_outcome !==
-      "not_required", "settlement.cleanup_outcome", "non-quiesced settlement must report cleanup");
 };
 
-const shimPlans = (capture: ProcessCapture) =>
+const shimPlans = (capture: UnverifiedProcessCapture) =>
   capture.manifest.shim_plan.flatMap((shim) =>
     typeof shim === "object" &&
     shim !== null &&
@@ -171,7 +167,7 @@ const shimPlans = (capture: ProcessCapture) =>
   );
 
 const validateShimEvents = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const plans = shimPlans(capture);
@@ -215,7 +211,7 @@ const machinePlan = (
 
 const matchesHttpPlan = (
   value: unknown,
-  event: ProcessCapture["protocol_events"][number],
+  event: UnverifiedProcessCapture["protocol_events"][number],
 ): boolean => {
   if (!isRecord(value)) return false;
   const route = isRecord(value["trigger"]) ? value["trigger"] : value;
@@ -227,7 +223,7 @@ const matchesHttpPlan = (
 };
 
 const validateMatchedHttpEvents = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   plans: readonly unknown[],
   require: RequireInvariant,
 ): void => {
@@ -245,7 +241,7 @@ const validateMatchedHttpEvents = (
 };
 
 const validateReplayEvents = (
-  capture: ProcessCapture,
+  capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
   const replayPlan = capture.manifest.replay_plan;
@@ -312,8 +308,8 @@ const validateReplayEvents = (
 };
 
 /** Recompute v4 commitments and cross-field invariants without side effects. */
-export const validateProcessCapture = (
-  capture: ProcessCapture,
+export const collectProcessCaptureIssues = (
+  capture: UnverifiedProcessCapture,
 ): readonly ProcessCaptureValidationIssue[] => {
   const issues: ProcessCaptureValidationIssue[] = [];
   const require: RequireInvariant = (condition, path, message) => {

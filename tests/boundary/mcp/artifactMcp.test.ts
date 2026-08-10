@@ -9,10 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import {
-  composeBinarySessionFromFactory,
-  composeBinarySessionFromProvider,
-} from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
@@ -47,7 +44,7 @@ it.each([
       await writeFile(archive, bytes);
     }
 
-    const session = composeBinarySessionFromProvider(new ArtifactProvider());
+    const session = createTestBinarySession(new ArtifactProvider());
     const server = createServer(session, session);
     const client = new Client({ name: "asar-integrity-test", version: "1" });
     const [clientTransport, serverTransport] =
@@ -135,9 +132,7 @@ it("records an approved mismatch, preserves verified siblings, and never reports
   bytes.write(secondChanged, secondOffset, "utf8");
   await writeFile(archive, bytes);
 
-  const session = composeBinarySessionFromProvider(
-    new ArtifactProvider(false, true),
-  );
+  const session = createTestBinarySession(new ArtifactProvider(false, true));
   const server = createServer(session, session);
   const client = new Client({ name: "asar-continue-test", version: "1" });
   const [clientTransport, serverTransport] =
@@ -252,7 +247,7 @@ it("records an approved mismatch, preserves verified siblings, and never reports
 });
 
 it("rejects altered payloads that reuse session Evidence IDs", async () => {
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
@@ -287,7 +282,7 @@ it("rejects altered payloads that reuse session Evidence IDs", async () => {
 });
 
 it("rejects comparison Evidence that is not owned by the session", async () => {
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
@@ -326,7 +321,7 @@ it("opens archives without Hopper, compares them, and exports linked evidence", 
     new TextReader("changed();"),
   );
   await writeFile(changedArchive, await changedWriter.close());
-  const session = composeBinarySessionFromProvider(new ArtifactProvider());
+  const session = createTestBinarySession(new ArtifactProvider());
   const server = createServer(session, session);
   const client = new Client({ name: "artifact-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =

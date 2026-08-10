@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -137,7 +137,7 @@ describe("bundle comparison MCP integration", () => {
 });
 
 const connect = async (root: string, maxBytes = 1024 * 1024) => {
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),

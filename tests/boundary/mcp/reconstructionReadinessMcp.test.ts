@@ -1,14 +1,14 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { RECONSTRUCTION_READINESS_EXAMPLE } from "../../../src/contracts/reconstructionReadinessExample.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
 describe("reconstruction readiness MCP parity", () => {
   it("returns a passing compact result and retains the full report resource", async () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
     }));

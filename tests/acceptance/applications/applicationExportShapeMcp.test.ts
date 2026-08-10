@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
@@ -45,7 +45,7 @@ describe("application workflow MCP parity", () => {
     ]);
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
     }));

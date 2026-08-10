@@ -64,13 +64,23 @@ export const linuxHopperInstallDisclosure = (
   };
 };
 
-/** Parsed Linux distribution information used for support and package selection. */
-export interface LinuxDistribution {
+interface LinuxDistributionIdentity {
   readonly id: string;
   readonly versionId?: string;
-  readonly packageFamily: LinuxPackageFamily | undefined;
-  readonly supported: boolean;
 }
+
+/** Parsed Linux distribution information used for support and package selection. */
+export type LinuxDistribution = LinuxDistributionIdentity &
+  (
+    | {
+        readonly packageFamily: LinuxPackageFamily;
+        readonly supported: true;
+      }
+    | {
+        readonly packageFamily: LinuxPackageFamily | undefined;
+        readonly supported: false;
+      }
+  );
 
 /** Download response kept independent of Node's global fetch implementation. */
 export interface LinuxHopperDownload {
@@ -134,15 +144,17 @@ export const parseLinuxDistribution = (text: string): LinuxDistribution => {
   const versionId = fields.get("VERSION_ID");
   const packageFamily = packageFamilyFor(id, fields.get("ID_LIKE"));
   const supported =
-    id === "arch" ||
-    (id === "ubuntu" && versionAtLeast(versionId, 24)) ||
-    (id === "fedora" && versionAtLeast(versionId, 41));
-  return {
+    packageFamily !== undefined &&
+    (id === "arch" ||
+      (id === "ubuntu" && versionAtLeast(versionId, 24)) ||
+      (id === "fedora" && versionAtLeast(versionId, 41)));
+  const identity = {
     id,
     ...(versionId === undefined ? {} : { versionId }),
-    packageFamily,
-    supported,
   };
+  return supported
+    ? { ...identity, packageFamily, supported: true }
+    : { ...identity, packageFamily, supported: false };
 };
 
 /** Read and classify the current Linux distribution. */
@@ -169,10 +181,7 @@ export const installLinuxHopper = async (
   if (options.signal?.aborted === true)
     return { status: "failed", reason: "cancelled" };
   const distribution = await host.distribution();
-  if (
-    distribution?.supported !== true ||
-    distribution.packageFamily === undefined
-  )
+  if (distribution?.supported !== true)
     return { status: "failed", reason: "unsupported_host" };
   let temporary: string | undefined;
   try {

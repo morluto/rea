@@ -3,33 +3,42 @@ import { posix } from "node:path";
 
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 
-/** Explicit outcome of bounded, artifact-confined path resolution. */
-export interface ArtifactPathResolution {
+type ArtifactPathResolutionContext =
+  | "package-entrypoint"
+  | "filesystem-expression"
+  | "module-specifier"
+  | "html-reference";
+
+type UnresolvedArtifactPathStatus =
+  | "not-found"
+  | "unavailable"
+  | "external"
+  | "rejected";
+
+interface ArtifactPathResolutionBase {
   readonly declared_path: string;
-  readonly resolution_context:
-    | "package-entrypoint"
-    | "filesystem-expression"
-    | "module-specifier"
-    | "html-reference";
-  readonly resolved_path: string | null;
-  readonly resolution_status:
-    | "resolved"
-    | "not-found"
-    | "unavailable"
-    | "external"
-    | "rejected";
+  readonly resolution_context: ArtifactPathResolutionContext;
   readonly limitations: readonly string[];
 }
+
+/** Explicit outcome of bounded, artifact-confined path resolution. */
+export type ArtifactPathResolution = ArtifactPathResolutionBase &
+  (
+    | {
+        readonly resolved_path: string;
+        readonly resolution_status: "resolved";
+      }
+    | {
+        readonly resolved_path: null;
+        readonly resolution_status: UnresolvedArtifactPathStatus;
+      }
+  );
 
 /** Values needed to resolve a declaration without filesystem access. */
 export interface ResolveArtifactPathInput {
   readonly declaredPath: string;
   readonly sourcePath: string;
-  readonly context:
-    | "package-entrypoint"
-    | "filesystem-expression"
-    | "module-specifier"
-    | "html-reference";
+  readonly context: ArtifactPathResolutionContext;
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly htmlBaseHref?: string | null;
   readonly moduleKind?: "import" | "require";
@@ -50,11 +59,17 @@ const NODE_BUILTINS = new Set(
   builtinModules.map((name) => name.replace(/^node:/u, "")),
 );
 
-interface CandidateResolution {
-  readonly resolvedPath: string | null;
-  readonly status: ArtifactPathResolution["resolution_status"];
-  readonly limitations: readonly string[];
-}
+type CandidateResolution =
+  | {
+      readonly resolvedPath: string;
+      readonly status: "resolved";
+      readonly limitations: readonly string[];
+    }
+  | {
+      readonly resolvedPath: null;
+      readonly status: UnresolvedArtifactPathStatus;
+      readonly limitations: readonly string[];
+    };
 
 /** Resolve one declaration under its exact syntax/metadata context. */
 export const resolveArtifactPathByContext = (
@@ -72,12 +87,7 @@ const resolveAtDepth = (
   const confined = confineCandidate(input, candidate);
   if (typeof confined !== "string") return confined;
   const resolved = resolveCandidate(input, confined, packageDepth);
-  return outcome(
-    input,
-    resolved.status,
-    resolved.resolvedPath,
-    resolved.limitations,
-  );
+  return outcome(input, resolved);
 };
 
 const rejectDeclaration = (
@@ -85,17 +95,19 @@ const rejectDeclaration = (
 ): ArtifactPathResolution | null => {
   const declared = input.declaredPath;
   if (declared.length === 0)
-    return outcome(input, "rejected", null, ["The declared path is empty."]);
+    return unresolvedOutcome(input, "rejected", [
+      "The declared path is empty.",
+    ]);
   if (declared.length > 4_096)
-    return outcome(input, "rejected", null, [
+    return unresolvedOutcome(input, "rejected", [
       "The declared path exceeds the 4096-character resolution bound.",
     ]);
   if (declared.includes("\0") || declared.includes("\\"))
-    return outcome(input, "rejected", null, [
+    return unresolvedOutcome(input, "rejected", [
       "NUL and backslash path syntax are not admitted for canonical artifact paths.",
     ]);
   if (/%(?:2e|2f|5c)/iu.test(declared))
-    return outcome(input, "rejected", null, [
+    return unresolvedOutcome(input, "rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
   return null;
@@ -114,13 +126,13 @@ const contextualCandidate = (
     const fileUrl = fileUrlPath(declared);
     if (fileUrl !== undefined) return fileUrl;
     if (hasScheme(declared))
-      return outcome(input, "external", null, [
+      return unresolvedOutcome(input, "external", [
         "URL and Node builtin schemes are outside static artifact module resolution.",
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
       return bareModuleCandidate(input, declared);
   } else if (hasScheme(declared))
-    return outcome(input, "external", null, [
+    return unresolvedOutcome(input, "external", [
       "URL schemes are outside this local artifact path context.",
     ]);
   const relative = declared.startsWith("/") ? declared.slice(1) : declared;
@@ -139,11 +151,11 @@ const bareModuleCandidate = (
     NODE_BUILTINS.has(packageName) ||
     declared.startsWith("#")
   )
-    return outcome(input, "external", null, [
+    return unresolvedOutcome(input, "external", [
       "The bare specifier is a Node builtin, package import map, or invalid package name.",
     ]);
   if (declared !== packageName)
-    return outcome(input, "external", null, [
+    return unresolvedOutcome(input, "external", [
       "Bare package subpaths remain unresolved unless an exact package-exports subpath model is available.",
     ]);
   const source = input.files.get(input.sourcePath);
@@ -155,7 +167,7 @@ const bareModuleCandidate = (
     if (directory === "." || directory === "") break;
     directory = posix.dirname(directory);
   }
-  return outcome(input, "external", null, [
+  return unresolvedOutcome(input, "external", [
     "No matching bare package was inventoried in an enclosing node_modules directory.",
   ]);
 };
@@ -190,7 +202,7 @@ const htmlCandidate = (
 ): string | ArtifactPathResolution => {
   const declared = stripQueryAndFragment(input.declaredPath);
   if (hasScheme(declared))
-    return outcome(input, "external", null, [
+    return unresolvedOutcome(input, "external", [
       "External HTML references are not mapped to local artifact assets.",
     ]);
   if (declared.startsWith("/")) return declared.slice(1);
@@ -198,7 +210,7 @@ const htmlCandidate = (
   if (base === undefined || base === null || base === "")
     return posix.join(posix.dirname(input.sourcePath), declared);
   if (hasScheme(base))
-    return outcome(input, "external", null, [
+    return unresolvedOutcome(input, "external", [
       "The document base href is external, so its script reference is not a local artifact path.",
     ]);
   const basePath = base.startsWith("/")
@@ -218,7 +230,7 @@ const confineCandidate = (
     normalized.startsWith("../") ||
     normalized.startsWith("/")
   )
-    return outcome(input, "rejected", null, [
+    return unresolvedOutcome(input, "rejected", [
       "The resolved candidate escapes the canonical artifact root.",
     ]);
   return normalized === "." ? "" : normalized;
@@ -282,11 +294,17 @@ const resolveCandidate = (
     },
     packageDepth + 1,
   );
-  return {
-    resolvedPath: nested.resolved_path,
-    status: nested.resolution_status,
-    limitations: nested.limitations,
-  };
+  return nested.resolution_status === "resolved"
+    ? {
+        resolvedPath: nested.resolved_path,
+        status: nested.resolution_status,
+        limitations: nested.limitations,
+      }
+    : {
+        resolvedPath: null,
+        status: nested.resolution_status,
+        limitations: nested.limitations,
+      };
 };
 
 const directCandidates = (candidate: string): readonly string[] => [
@@ -374,13 +392,27 @@ const stripQueryAndFragment = (value: string): string =>
 
 const outcome = (
   input: ResolveArtifactPathInput,
-  status: ArtifactPathResolution["resolution_status"],
-  resolvedPath: string | null,
+  resolution: CandidateResolution,
+): ArtifactPathResolution =>
+  resolution.status === "resolved"
+    ? {
+        declared_path: input.declaredPath,
+        resolution_context: input.context,
+        resolved_path: resolution.resolvedPath,
+        resolution_status: resolution.status,
+        limitations: resolution.limitations,
+      }
+    : {
+        declared_path: input.declaredPath,
+        resolution_context: input.context,
+        resolved_path: null,
+        resolution_status: resolution.status,
+        limitations: resolution.limitations,
+      };
+
+const unresolvedOutcome = (
+  input: ResolveArtifactPathInput,
+  status: UnresolvedArtifactPathStatus,
   limitations: readonly string[],
-): ArtifactPathResolution => ({
-  declared_path: input.declaredPath,
-  resolution_context: input.context,
-  resolved_path: resolvedPath,
-  resolution_status: status,
-  limitations,
-});
+): ArtifactPathResolution =>
+  outcome(input, { resolvedPath: null, status, limitations });

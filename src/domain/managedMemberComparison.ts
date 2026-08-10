@@ -16,9 +16,8 @@ import {
 import {
   buildFieldItems,
   buildMethodItems,
-  keyMembers,
-  sha256,
-} from "./managedMemberComparisonMatch.js";
+} from "./managedMemberComparisonItems.js";
+import { keyMembers, sha256 } from "./managedMemberComparisonMatch.js";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
@@ -52,22 +51,33 @@ export const compareManagedMembersInputSchema = z
       });
   });
 
-const matchBasisSchema = z.enum([
+const concreteMatchBasisSchema = z.enum([
   "exact-il-signature",
   "structural-method-shape",
   "field-signature",
-  "none",
 ]);
-
-const matchStatusSchema = z.enum(["matched", "unmatched", "ambiguous"]);
-const itemStatusSchema = z.enum([
-  "unchanged",
-  "changed",
-  "added",
-  "removed",
-  "unknown",
-]);
-
+const candidateTokensSchema = z.array(tokenSchema).min(1).max(500);
+const matchedComparisonSchema = z.strictObject({
+  status: z.literal("matched"),
+  basis: concreteMatchBasisSchema,
+  confidence: z.enum(["exact", "high"]),
+  candidate_left_tokens: z.tuple([]),
+  candidate_right_tokens: z.tuple([]),
+});
+const unmatchedComparisonSchema = z.strictObject({
+  status: z.literal("unmatched"),
+  basis: z.literal("none"),
+  confidence: z.literal("unknown"),
+  candidate_left_tokens: z.tuple([]),
+  candidate_right_tokens: z.tuple([]),
+});
+const ambiguousComparisonSchema = z.strictObject({
+  status: z.literal("ambiguous"),
+  basis: concreteMatchBasisSchema,
+  confidence: z.literal("unknown"),
+  candidate_left_tokens: candidateTokensSchema,
+  candidate_right_tokens: candidateTokensSchema,
+});
 const memberIdentitySchema = z.strictObject({
   token: tokenSchema,
   declaring_type: z.string().nullable(),
@@ -76,50 +86,77 @@ const memberIdentitySchema = z.strictObject({
   normalized_il_sha256: digestSchema.nullable(),
 });
 
-const methodComparisonItemSchema = z.strictObject({
-  item_id: z.string().regex(/^mmc_method_[a-f0-9]{64}$/u),
-  status: itemStatusSchema,
-  left: memberIdentitySchema.nullable(),
-  right: memberIdentitySchema.nullable(),
-  match: z.strictObject({
-    status: matchStatusSchema,
-    basis: matchBasisSchema,
-    confidence: z.enum(["exact", "high", "unknown"]),
-    candidate_left_tokens: z.array(tokenSchema).max(500),
-    candidate_right_tokens: z.array(tokenSchema).max(500),
-  }),
-  dimensions: z
-    .array(
-      z.enum([
-        "signature",
-        "cil",
-        "opcode-shape",
-        "call-shape",
-        "field-shape",
-        "exception-shape",
-        "availability",
-      ]),
-    )
-    .max(7),
-  evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema).max(100),
-});
+const comparisonItemSchema = <
+  Identity extends z.ZodType,
+  Base extends Record<string, z.ZodType>,
+>(
+  base: Base,
+  identity: Identity,
+) =>
+  z.union([
+    z.strictObject({
+      ...base,
+      status: z.enum(["unchanged", "changed"]),
+      left: identity,
+      right: identity,
+      match: matchedComparisonSchema,
+    }),
+    z.strictObject({
+      ...base,
+      status: z.enum(["removed", "unknown"]),
+      left: identity,
+      right: z.null(),
+      match: unmatchedComparisonSchema,
+    }),
+    z.strictObject({
+      ...base,
+      status: z.enum(["added", "unknown"]),
+      left: z.null(),
+      right: identity,
+      match: unmatchedComparisonSchema,
+    }),
+    z.strictObject({
+      ...base,
+      status: z.literal("unknown"),
+      left: z.null(),
+      right: z.null(),
+      match: ambiguousComparisonSchema,
+    }),
+  ]);
 
-const fieldComparisonItemSchema = z.strictObject({
-  item_id: z.string().regex(/^mmc_field_[a-f0-9]{64}$/u),
-  status: itemStatusSchema,
-  left: memberIdentitySchema.omit({ normalized_il_sha256: true }).nullable(),
-  right: memberIdentitySchema.omit({ normalized_il_sha256: true }).nullable(),
-  match: z.strictObject({
-    status: matchStatusSchema,
-    basis: matchBasisSchema,
-    confidence: z.enum(["exact", "high", "unknown"]),
-    candidate_left_tokens: z.array(tokenSchema).max(500),
-    candidate_right_tokens: z.array(tokenSchema).max(500),
-  }),
+const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(boundedTextSchema).max(100),
-});
+};
+
+const methodComparisonItemSchema = comparisonItemSchema(
+  {
+    ...comparisonItemContextShape,
+    item_id: z.string().regex(/^mmc_method_[a-f0-9]{64}$/u),
+    dimensions: z
+      .array(
+        z.enum([
+          "signature",
+          "cil",
+          "opcode-shape",
+          "call-shape",
+          "field-shape",
+          "exception-shape",
+          "availability",
+        ]),
+      )
+      .max(7),
+  },
+  memberIdentitySchema,
+);
+
+const fieldComparisonItemSchema = comparisonItemSchema(
+  {
+    ...comparisonItemContextShape,
+    item_id: z.string().regex(/^mmc_field_[a-f0-9]{64}$/u),
+  },
+  memberIdentitySchema.omit({ normalized_il_sha256: true }),
+);
 
 /** Obfuscation-resistant, execution-free managed member comparison. */
 export const managedMemberComparisonResultSchema = z.strictObject({

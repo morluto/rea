@@ -27,17 +27,28 @@ interface RuntimeProbeFailure {
   readonly stderr: string;
 }
 
-/** One lexical PATH candidate and its canonical executable probe result. */
-interface RuntimeExecutableDiagnostic {
+interface RuntimeExecutableIdentity {
   readonly tool: RuntimeToolName;
   readonly lexical_path: string;
   readonly canonical_path: string;
   readonly path_index: number | null;
   readonly selection: "rea-launcher" | "path-primary" | "path-shadowed";
-  readonly version: string | null;
-  readonly healthy: boolean;
-  readonly failure: RuntimeProbeFailure | null;
 }
+
+/** One lexical PATH candidate and its canonical executable probe result. */
+type RuntimeExecutableDiagnostic = RuntimeExecutableIdentity &
+  (
+    | {
+        readonly version: string;
+        readonly healthy: true;
+        readonly failure: null;
+      }
+    | {
+        readonly version: null;
+        readonly healthy: false;
+        readonly failure: RuntimeProbeFailure;
+      }
+  );
 
 /** Runtime identities observed under one exact effective environment. */
 export interface RuntimeExecutableInventory {
@@ -148,16 +159,21 @@ const probeCandidate = async (
 ): Promise<RuntimeExecutableDiagnostic> => {
   const canonical = await canonicalPath(candidate.path);
   const result = await executeVersion(candidate.path, timeoutMs, effectivePath);
-  return {
+  const identity = {
     tool: candidate.tool,
     lexical_path: candidate.path,
     canonical_path: canonical,
     path_index: candidate.pathIndex,
     selection: candidate.selection,
-    version: result.ok ? result.version : null,
-    healthy: result.ok,
-    failure: result.ok ? null : result.failure,
   };
+  return result.ok
+    ? { ...identity, version: result.version, healthy: true, failure: null }
+    : {
+        ...identity,
+        version: null,
+        healthy: false,
+        failure: result.failure,
+      };
 };
 
 type VersionResult =

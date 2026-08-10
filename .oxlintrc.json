@@ -18,7 +18,27 @@
   },
   "overrides": [
     {
-      "files": ["tests/**/*.ts", "src/**/*.test.ts"],
+      "files": [
+        "src/{contracts,domain,server}/**/*.ts",
+        "src/application/**/*.ts"
+      ],
+      "excludeFiles": ["src/application/runtime.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/ghidra/**", "**/hopper/**"],
+                "message": "Deep-provider imports belong behind adapters or in the application composition root."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
       "rules": {
         "max-lines": [
           "error",
@@ -31,7 +51,7 @@
       }
     },
     {
-      "files": ["src/domain/**/*.test.ts"],
+      "files": ["src/domain/**/*.{fixture,test}.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",

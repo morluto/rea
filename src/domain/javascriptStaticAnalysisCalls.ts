@@ -237,18 +237,20 @@ export const addReference = (
   input: ReferenceInput,
 ): void => {
   const boundedSpecifier = input.specifier?.slice(0, 4_096) ?? null;
-  const expression =
+  const reference =
     boundedSpecifier === null
-      ? sourceSlice(context.source, input.node).slice(0, 4_096)
-      : null;
+      ? {
+          specifier: null,
+          expression: sourceSlice(context.source, input.node).slice(0, 4_096),
+        }
+      : { specifier: boundedSpecifier, expression: null };
   addLocatedFinding(context, {
     collection: context.accumulator.references,
-    key: `reference\0${input.kind}\0${boundedSpecifier ?? expression}`,
+    key: `reference\0${input.kind}\0${reference.specifier ?? reference.expression}`,
     node: input.node,
     value: {
       kind: input.kind,
-      specifier: boundedSpecifier,
-      expression,
+      ...reference,
       module_key: null,
       location: range(input.node),
     },

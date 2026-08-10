@@ -10,9 +10,9 @@ import {
 } from "../../../src/application/ProcessHarness.js";
 import {
   parseProcessScenario,
-  validateProcessCapture,
   type ProcessCapture,
 } from "../../../src/domain/processCapture.js";
+import { processCaptureIssues } from "../../fixtures/processCapture.js";
 
 type EventSource = "process" | "filesystem" | "http" | "websocket" | "shim";
 
@@ -257,7 +257,7 @@ it("runs the committed multi-source reactive fixture deterministically", async (
         },
       };
       expect(
-        validateProcessCapture(failedActionCapture).filter(({ path }) =>
+        processCaptureIssues(failedActionCapture).filter(({ path }) =>
           path.startsWith("reactive_run"),
         ),
       ).toEqual([]);

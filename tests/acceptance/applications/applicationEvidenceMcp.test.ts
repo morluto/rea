@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -22,7 +22,7 @@ interface TestHarness {
 }
 
 async function createTestHarness(): Promise<TestHarness> {
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));

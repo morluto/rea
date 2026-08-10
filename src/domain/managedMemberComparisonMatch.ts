@@ -8,7 +8,6 @@ import {
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import type {
-  CompareManagedMembersInput,
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
@@ -23,9 +22,9 @@ export const sha256 = (value: JsonValue): string => {
 
 type Method = ManagedMemberInspection["methods"]["items"][number];
 type Field = ManagedMemberInspection["fields"]["items"][number];
-type MethodItem = ManagedMemberComparisonResult["methods"][number];
-type FieldItem = ManagedMemberComparisonResult["fields"][number];
-type MatchBasis = MethodItem["match"]["basis"];
+type MatchBasis =
+  ManagedMemberComparisonResult["methods"][number]["match"]["basis"];
+type ConcreteMatchBasis = Exclude<MatchBasis, "none">;
 
 interface Keyed<Item> {
   readonly item: Item;
@@ -36,22 +35,14 @@ interface Keyed<Item> {
 interface MatchedPair<Item> {
   readonly left: Keyed<Item>;
   readonly right: Keyed<Item>;
-  readonly basis: MatchBasis;
+  readonly basis: ConcreteMatchBasis;
   readonly confidence: "exact" | "high";
 }
 
 interface Ambiguous<Item> {
   readonly left: readonly Keyed<Item>[];
   readonly right: readonly Keyed<Item>[];
-  readonly basis: MatchBasis;
-}
-
-export interface ComparisonItemContext {
-  readonly leftEvidenceId: string;
-  readonly rightEvidenceId: string;
-  readonly leftComplete: boolean;
-  readonly rightComplete: boolean;
-  readonly limits: CompareManagedMembersInput["limits"];
+  readonly basis: ConcreteMatchBasis;
 }
 
 const keyMethod = (item: Method): Keyed<Method> => ({
@@ -139,12 +130,15 @@ const matchFields = (
     fallbackBases: [],
   });
 
+export type ManagedMethodMatches = ReturnType<typeof matchMethods>;
+export type ManagedFieldMatches = ReturnType<typeof matchFields>;
+
 interface MatchByKeysInput<Item> {
   readonly left: readonly Keyed<Item>[];
   readonly right: readonly Keyed<Item>[];
   readonly maxCandidates: number;
-  readonly exactBasis: MatchBasis;
-  readonly fallbackBases: readonly MatchBasis[];
+  readonly exactBasis: ConcreteMatchBasis;
+  readonly fallbackBases: readonly ConcreteMatchBasis[];
 }
 
 const matchByKeys = <Item>({
@@ -166,7 +160,7 @@ const matchByKeys = <Item>({
   const ambiguous: Ambiguous<Item>[] = [];
   let omittedCandidates = 0;
   const rounds: readonly {
-    readonly basis: MatchBasis;
+    readonly basis: ConcreteMatchBasis;
     readonly key: (item: Keyed<Item>) => string | null;
   }[] = [
     { basis: exactBasis, key: ({ exactKey }) => exactKey },
@@ -241,241 +235,6 @@ const groupBy = <Item>(
   }
   return grouped;
 };
-
-const changedMethodDimensions = (
-  left: Method,
-  right: Method,
-): MethodItem["dimensions"] => {
-  const dimensions: MethodItem["dimensions"] = [];
-  if (left.signature.raw_sha256 !== right.signature.raw_sha256)
-    dimensions.push("signature");
-  if (left.body.normalized_il_sha256 !== right.body.normalized_il_sha256)
-    dimensions.push("cil");
-  if (
-    canonicalize(left.body.opcode_counts) !==
-    canonicalize(right.body.opcode_counts)
-  )
-    dimensions.push("opcode-shape");
-  if (callShape(left.body.anchors) !== callShape(right.body.anchors))
-    dimensions.push("call-shape");
-  if (fieldShape(left.body.anchors) !== fieldShape(right.body.anchors))
-    dimensions.push("field-shape");
-  if (
-    canonicalize(left.body.exception_regions) !==
-    canonicalize(right.body.exception_regions)
-  )
-    dimensions.push("exception-shape");
-  if (left.body.status !== right.body.status) dimensions.push("availability");
-  return dimensions;
-};
-
-const callShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(({ operand_kind }) => operand_kind === "method")
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
-
-const fieldShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(({ operand_kind }) => operand_kind === "field")
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
-
-const methodIdentity = (item: Method): NonNullable<MethodItem["left"]> => ({
-  token: item.token,
-  declaring_type: item.declaring_type,
-  name: item.name,
-  signature_sha256: item.signature.raw_sha256,
-  normalized_il_sha256: item.body.normalized_il_sha256,
-});
-
-const fieldIdentity = (item: Field): NonNullable<FieldItem["left"]> => ({
-  token: item.token,
-  declaring_type: item.declaring_type,
-  name: item.name,
-  signature_sha256: item.signature.raw_sha256,
-});
-
-const methodOnlyItem = (
-  item: Method,
-  context: ComparisonItemContext,
-  left: boolean,
-): MethodItem => {
-  const absenceObserved = left ? context.rightComplete : context.leftComplete;
-  return {
-    item_id: `mmc_method_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
-    status: absenceObserved ? (left ? "removed" : "added") : "unknown",
-    left: left ? methodIdentity(item) : null,
-    right: left ? null : methodIdentity(item),
-    match: {
-      status: "unmatched",
-      basis: "none",
-      confidence: "unknown",
-      candidate_left_tokens: [],
-      candidate_right_tokens: [],
-    },
-    dimensions: ["availability"],
-    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    limitations: absenceObserved
-      ? []
-      : [
-          `unknown-within-unobserved-page: The ${left ? "right" : "left"} method page is incomplete, so absence was not observed.`,
-        ],
-  };
-};
-
-const fieldOnlyItem = (
-  item: Field,
-  context: ComparisonItemContext,
-  left: boolean,
-): FieldItem => {
-  const absenceObserved = left ? context.rightComplete : context.leftComplete;
-  return {
-    item_id: `mmc_field_${sha256({ token: item.token, side: left ? "left" : "right" })}`,
-    status: absenceObserved ? (left ? "removed" : "added") : "unknown",
-    left: left ? fieldIdentity(item) : null,
-    right: left ? null : fieldIdentity(item),
-    match: {
-      status: "unmatched",
-      basis: "none",
-      confidence: "unknown",
-      candidate_left_tokens: [],
-      candidate_right_tokens: [],
-    },
-    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    limitations: absenceObserved
-      ? []
-      : [
-          `unknown-within-unobserved-page: The ${left ? "right" : "left"} field page is incomplete, so absence was not observed.`,
-        ],
-  };
-};
-
-export const buildMethodItems = (
-  matches: ReturnType<typeof matchMethods>,
-  context: ComparisonItemContext,
-): { readonly items: MethodItem[]; readonly omitted: number } => {
-  const items: MethodItem[] = [];
-  for (const pair of matches.pairs) {
-    const dimensions = changedMethodDimensions(pair.left.item, pair.right.item);
-    items.push({
-      item_id: `mmc_method_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-        basis: pair.basis,
-      })}`,
-      status: dimensions.length === 0 ? "unchanged" : "changed",
-      left: methodIdentity(pair.left.item),
-      right: methodIdentity(pair.right.item),
-      match: {
-        status: "matched",
-        basis: pair.basis,
-        confidence: pair.confidence,
-        candidate_left_tokens: [],
-        candidate_right_tokens: [],
-      },
-      dimensions,
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [],
-    });
-  }
-  for (const ambiguous of matches.ambiguous) {
-    items.push({
-      item_id: `mmc_method_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-        basis: ambiguous.basis,
-      })}`,
-      status: "unknown",
-      left: null,
-      right: null,
-      match: {
-        status: "ambiguous",
-        basis: ambiguous.basis,
-        confidence: "unknown",
-        candidate_left_tokens: ambiguous.left.map(({ item }) => item.token),
-        candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
-      },
-      dimensions: ["availability"],
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [
-        "Multiple managed methods share the same non-name identity key; REA did not guess a token remap.",
-      ],
-    });
-  }
-  for (const item of matches.leftOnly)
-    items.push(methodOnlyItem(item.item, context, true));
-  for (const item of matches.rightOnly)
-    items.push(methodOnlyItem(item.item, context, false));
-  return limitItems(items, context.limits.max_method_matches);
-};
-
-export const buildFieldItems = (
-  matches: ReturnType<typeof matchFields>,
-  context: ComparisonItemContext,
-): { readonly items: FieldItem[]; readonly omitted: number } => {
-  const items: FieldItem[] = [];
-  for (const pair of matches.pairs) {
-    const changed =
-      pair.left.item.signature.raw_sha256 !==
-        pair.right.item.signature.raw_sha256 ||
-      pair.left.item.flags !== pair.right.item.flags;
-    items.push({
-      item_id: `mmc_field_${sha256({
-        left: pair.left.item.token,
-        right: pair.right.item.token,
-      })}`,
-      status: changed ? "changed" : "unchanged",
-      left: fieldIdentity(pair.left.item),
-      right: fieldIdentity(pair.right.item),
-      match: {
-        status: "matched",
-        basis: pair.basis,
-        confidence: pair.confidence,
-        candidate_left_tokens: [],
-        candidate_right_tokens: [],
-      },
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [],
-    });
-  }
-  for (const ambiguous of matches.ambiguous)
-    items.push({
-      item_id: `mmc_field_${sha256({
-        left: ambiguous.left.map(({ item }) => item.token),
-        right: ambiguous.right.map(({ item }) => item.token),
-      })}`,
-      status: "unknown",
-      left: null,
-      right: null,
-      match: {
-        status: "ambiguous",
-        basis: ambiguous.basis,
-        confidence: "unknown",
-        candidate_left_tokens: ambiguous.left.map(({ item }) => item.token),
-        candidate_right_tokens: ambiguous.right.map(({ item }) => item.token),
-      },
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [
-        "Multiple managed fields share the same signature; REA did not guess a token remap from names.",
-      ],
-    });
-  for (const item of matches.leftOnly)
-    items.push(fieldOnlyItem(item.item, context, true));
-  for (const item of matches.rightOnly)
-    items.push(fieldOnlyItem(item.item, context, false));
-  return limitItems(items, context.limits.max_field_matches);
-};
-
-const limitItems = <Item>(
-  items: readonly Item[],
-  limit: number,
-): { readonly items: Item[]; readonly omitted: number } => ({
-  items: items.slice(0, limit),
-  omitted: Math.max(0, items.length - limit),
-});
 
 export const keyMembers = (
   left: ManagedMemberComparisonSide,

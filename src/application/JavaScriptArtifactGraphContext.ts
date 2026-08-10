@@ -1,5 +1,10 @@
 import type { ArtifactInventorySnapshot } from "./ArtifactInventory.js";
-import type { ApplicationGraphEvidence } from "../domain/javascriptApplicationEvidenceSchemas.js";
+import {
+  completeApplicationCoverage,
+  partialApplicationCoverage,
+  truncatedApplicationCoverage,
+  type ApplicationGraphEvidence,
+} from "../domain/javascriptApplicationEvidenceSchemas.js";
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
 import type { JavaScriptSourceRange } from "../domain/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -12,8 +17,6 @@ import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAcc
 import {
   artifactObservationEvidence,
   astObservationEvidence,
-  completeReconstructionCoverage,
-  partialReconstructionCoverage,
   staticInferenceEvidence,
   unavailableAstEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
@@ -117,7 +120,7 @@ export const addArtifactContainsEdge = (
           : input.file.sha256,
       path: input.file.path,
       operation: input.operation,
-      coverage: completeReconstructionCoverage(),
+      coverage: completeApplicationCoverage(),
     }),
   });
 };
@@ -186,7 +189,7 @@ export const addUnavailableStaticParseScope = (
           sha256: input.file.sha256,
           path: input.file.path,
           operation: input.operation,
-          coverage: partialReconstructionCoverage([], null, false),
+          coverage: partialApplicationCoverage([], null),
           limitation: input.limitation,
         }),
       },
@@ -201,7 +204,7 @@ export const addUnavailableStaticParseScope = (
       sha256: input.file.sha256,
       path: input.file.path,
       operation: "associate-unavailable-parse-scope",
-      coverage: completeReconstructionCoverage(),
+      coverage: completeApplicationCoverage(),
     }),
   });
 };
@@ -214,13 +217,10 @@ export const javascriptAnalysisCoverage = (
   input: JavaScriptArtifactReconstructionInput,
 ): JavaScriptArtifactGraphCoverage =>
   analysis.parse_status === "complete"
-    ? completeReconstructionCoverage(javaScriptAnalysisLimits(input))
-    : {
-        status: "partial",
-        truncated: analysis.parse_status === "truncated",
-        omitted_count: null,
-        limits: javaScriptAnalysisLimits(input),
-      };
+    ? completeApplicationCoverage(javaScriptAnalysisLimits(input))
+    : analysis.parse_status === "truncated"
+      ? truncatedApplicationCoverage(javaScriptAnalysisLimits(input), null)
+      : partialApplicationCoverage(javaScriptAnalysisLimits(input), null);
 
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (
@@ -274,7 +274,7 @@ export const createElectronRoleNode = (
           sha256: input.anchor.sha256,
           path: input.anchor.path,
           operation: "discover-electron-entrypoint",
-          coverage: input.coverage ?? completeReconstructionCoverage(),
+          coverage: input.coverage ?? completeApplicationCoverage(),
           limitations: input.resolution.limitations,
           ...(input.range === undefined ? {} : { range: input.range }),
         }),
@@ -305,7 +305,7 @@ export const linkElectronRoleToAsset = (
       sha256: input.anchor.sha256,
       path: input.anchor.path,
       operation: "resolve-electron-entrypoint",
-      coverage: input.coverage ?? completeReconstructionCoverage(),
+      coverage: input.coverage ?? completeApplicationCoverage(),
       limitations: input.resolution.limitations,
       ...(input.range === undefined ? {} : { range: input.range }),
     }),

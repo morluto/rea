@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { compareProcessEvidenceFiles } from "../../../src/application/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/application/ProcessEvidence.js";
@@ -117,7 +117,7 @@ describe("declared trace adapter parity", () => {
     const cliEvidence = parseEvidence(
       await compareProcessEvidenceFiles(leftPath, rightPath, specificationPath),
     );
-    const session = composeBinarySessionFromFactory(
+    const session = createTestBinarySession(
       (_path) =>
         ({
           execute: () => Promise.resolve(ok(null)),

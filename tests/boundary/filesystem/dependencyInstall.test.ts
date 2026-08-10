@@ -1,26 +1,18 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
 const script = join(process.cwd(), "scripts", "check-dependency-install.mjs");
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true })),
-  );
-});
 
 const fixture = async (
   installedVersion?: string,
   omitDevDependency = false,
 ) => {
   const root = await createTestTempDirectory("rea-deps-");
-  roots.push(root);
   await mkdir(join(root, "node_modules"));
   await writeFile(
     join(root, "package-lock.json"),

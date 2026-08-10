@@ -5,6 +5,7 @@ import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/m
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import {
   managedNativeVerificationInputSchema,
+  managedNativeVerificationResultSchema,
   verifyManagedNativeBoundaries,
 } from "../../../../src/domain/managedNativeVerification.js";
 import { inspectMachoSchema } from "../../../../src/domain/nativeInspection.js";
@@ -204,5 +205,50 @@ describe("managed/native boundary verification", () => {
       },
     });
     expect(evidence.value.evidence_links).toHaveLength(2);
+  });
+});
+
+describe("managed/native verification result algebra", () => {
+  it("rejects states without their required native match", () => {
+    const result = verifyManagedNativeBoundaries(exampleInput());
+    const verification = result.pinvoke_imports[0];
+    expect(verification).toBeDefined();
+    if (verification === undefined) return;
+
+    expect(
+      managedNativeVerificationResultSchema.safeParse({
+        ...result,
+        pinvoke_imports: [
+          {
+            ...verification,
+            matched_native: null,
+            candidates: [],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      managedNativeVerificationResultSchema.safeParse({
+        ...result,
+        pinvoke_imports: [
+          {
+            ...verification,
+            status: "unresolved",
+            basis: "no-native-candidate",
+            confidence: "unknown",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      managedNativeVerificationResultSchema.safeParse({
+        ...result,
+        coverage: {
+          status: "complete-within-inputs",
+          omitted_native_observations: 0,
+          omitted_candidates: 1,
+        },
+      }).success,
+    ).toBe(false);
   });
 });

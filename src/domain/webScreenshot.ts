@@ -96,9 +96,8 @@ export type CompareWebScreenshotsInput = z.infer<
 >;
 
 /** Value-only visual difference metrics; no OCR or image mutation. */
-export const webScreenshotDiffSchema = z.object({
+const webScreenshotDiffContextShape = {
   schema_version: z.literal(1),
-  status: z.enum(["identical", "different", "dimension_mismatch"]),
   before: z.object({
     width: z.number().int().min(1),
     height: z.number().int().min(1),
@@ -108,13 +107,59 @@ export const webScreenshotDiffSchema = z.object({
     height: z.number().int().min(1),
   }),
   channel_threshold: z.number().int().min(0).max(255),
-  compared_pixels: z.number().int().min(0),
-  changed_pixels: z.number().int().min(0).nullable(),
-  changed_ratio: z.number().min(0).max(1).nullable(),
-  maximum_channel_delta: z.number().int().min(0).max(255).nullable(),
-  mean_absolute_channel_delta: z.number().min(0).max(255).nullable(),
   limitations: z.array(z.string()),
-});
+};
+
+export const webScreenshotDiffSchema = z
+  .discriminatedUnion("status", [
+    z.object({
+      ...webScreenshotDiffContextShape,
+      status: z.literal("identical"),
+      compared_pixels: z.number().int().positive(),
+      changed_pixels: z.literal(0),
+      changed_ratio: z.literal(0),
+      maximum_channel_delta: z.number().int().min(0).max(255),
+      mean_absolute_channel_delta: z.number().min(0).max(255),
+    }),
+    z.object({
+      ...webScreenshotDiffContextShape,
+      status: z.literal("different"),
+      compared_pixels: z.number().int().positive(),
+      changed_pixels: z.number().int().positive(),
+      changed_ratio: z.number().positive().max(1),
+      maximum_channel_delta: z.number().int().positive().max(255),
+      mean_absolute_channel_delta: z.number().positive().max(255),
+    }),
+    z.object({
+      ...webScreenshotDiffContextShape,
+      status: z.literal("dimension_mismatch"),
+      compared_pixels: z.literal(0),
+      changed_pixels: z.null(),
+      changed_ratio: z.null(),
+      maximum_channel_delta: z.null(),
+      mean_absolute_channel_delta: z.null(),
+    }),
+  ])
+  .superRefine((diff, context) => {
+    const sameDimensions =
+      diff.before.width === diff.after.width &&
+      diff.before.height === diff.after.height;
+    if (sameDimensions !== (diff.status !== "dimension_mismatch"))
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Screenshot comparison status must match viewport dimensions",
+      });
+    if (
+      diff.status !== "dimension_mismatch" &&
+      diff.compared_pixels !== diff.before.width * diff.before.height
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["compared_pixels"],
+        message: "Compared pixel count must match the shared dimensions",
+      });
+  });
 export type WebScreenshotDiff = z.infer<typeof webScreenshotDiffSchema>;
 
 /** Create a content-addressed PNG artifact from already bounded bytes. */

@@ -15,7 +15,7 @@ import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascr
 import {
   APPLICATION_GRAPH_DIGESTS,
   buildSyntheticJavaScriptApplicationGraph,
-} from "../../fixtures/javascriptApplicationGraph.js";
+} from "../../../src/domain/javascriptApplicationGraph.fixture.js";
 import { writeVersionedJavaScriptApplicationFixtures } from "../../fixtures/javascriptArtifactApplication.js";
 import { permissionAuthorityForRoot } from "../../fixtures/permissionAuthority.js";
 

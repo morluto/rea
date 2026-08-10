@@ -26,8 +26,7 @@ export interface ProcessCapturePort {
   ): Promise<Result<ProcessCapture, ProcessCaptureError>>;
 }
 
-/** Repeatability evidence and an optional stable cross-side comparison. */
-export interface PairedProcessExperimentResult {
+interface PairedProcessExperimentEvidence {
   readonly authority_runs: readonly ProcessCapture[];
   readonly candidate_runs: readonly ProcessCapture[];
   readonly authority_repeatability: ReturnType<
@@ -36,9 +35,20 @@ export interface PairedProcessExperimentResult {
   readonly candidate_repeatability: ReturnType<
     typeof analyzeProcessRepeatability
   >;
-  readonly cross_side: ReturnType<typeof compareProcessCaptures> | null;
-  readonly cross_side_blocked_reason: string | null;
 }
+
+/** Repeatability evidence and either a stable comparison or its blocking reason. */
+export type PairedProcessExperimentResult = PairedProcessExperimentEvidence &
+  (
+    | {
+        readonly cross_side: ReturnType<typeof compareProcessCaptures>;
+        readonly cross_side_blocked_reason: null;
+      }
+    | {
+        readonly cross_side: null;
+        readonly cross_side_blocked_reason: string;
+      }
+  );
 
 const productionCapturePort: ProcessCapturePort = {
   capture: captureProcessScenario,
@@ -114,27 +124,29 @@ export const runPairedProcessExperiment = async (
   );
   const authorityLatest = authorityRuns.value.at(-1);
   const candidateLatest = candidateRuns.value.at(-1);
-  const crossSide =
+  const crossSideOutcome =
     stable &&
     allDimensionsRequired &&
     authorityLatest !== undefined &&
     candidateLatest !== undefined
-      ? compareProcessCaptures(authorityLatest, candidateLatest, {
-          maxCaptureAgeMs: experiment.freshness_policy.max_capture_age_ms,
-          ...(options.now === undefined ? {} : { now: options.now }),
-        })
-      : null;
+      ? {
+          cross_side: compareProcessCaptures(authorityLatest, candidateLatest, {
+            maxCaptureAgeMs: experiment.freshness_policy.max_capture_age_ms,
+            ...(options.now === undefined ? {} : { now: options.now }),
+          }),
+          cross_side_blocked_reason: null,
+        }
+      : {
+          cross_side: null,
+          cross_side_blocked_reason: !allDimensionsRequired
+            ? "Cross-side comparison is blocked until every returned dimension is required and repeatable."
+            : "Cross-side comparison is blocked because a required same-side dimension is unstable.",
+        };
   return ok({
     authority_runs: authorityRuns.value,
     candidate_runs: candidateRuns.value,
     authority_repeatability: authorityRepeatability,
     candidate_repeatability: candidateRepeatability,
-    cross_side: crossSide,
-    cross_side_blocked_reason:
-      crossSide !== null
-        ? null
-        : !allDimensionsRequired
-          ? "Cross-side comparison is blocked until every returned dimension is required and repeatable."
-          : "Cross-side comparison is blocked because a required same-side dimension is unstable.",
+    ...crossSideOutcome,
   });
 };

@@ -15,7 +15,7 @@ import {
   HopperStartError,
   hopperStartupFailure,
   HopperTimeoutError,
-  type HopperStartupDiagnostic,
+  type HopperStartupFailureDiagnostic,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -90,7 +90,7 @@ export class HopperClient {
   #nextId = 1;
   #closing = false;
   #launcherExitCode: number | null | undefined;
-  #launcherFailureDiagnostic: HopperStartupDiagnostic | undefined;
+  #launcherFailureDiagnostic: HopperStartupFailureDiagnostic | undefined;
   #startupController: AbortController | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;

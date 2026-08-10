@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -161,7 +161,7 @@ async function verifyResourceProtocol(
 
 describe("evidence MCP resources", () => {
   it("publishes mutable snapshot changes for every Evidence mutation", () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -229,7 +229,7 @@ describe("evidence MCP resources", () => {
   });
 
   it("contains observer failures after committing a mutation", () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -251,7 +251,7 @@ describe("evidence MCP resources", () => {
 
 describe("evidence bundle resources", () => {
   it("retains bundles without eviction and rejects a seventeenth digest", () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -294,7 +294,7 @@ describe("evidence bundle resources", () => {
   });
 
   it("lists and reads only evidence owned by the current session", async () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),

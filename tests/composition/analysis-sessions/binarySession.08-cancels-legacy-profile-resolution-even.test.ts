@@ -1,6 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -9,19 +9,12 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { HopperStartError } from "../../../src/domain/errors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 const cacheProvider = (
   calls: string[],
@@ -107,7 +100,7 @@ class TestClient implements AnalysisClient {
 }
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -145,7 +138,7 @@ describe("binary session", () => {
       created += 1;
       return new TestClient();
     };
-    const session = composeBinarySessionFromFactory(provider);
+    const session = createTestBinarySession(provider);
     const controller = new AbortController();
     const opening = session.open(first, { signal: controller.signal });
     while (observedSignal === undefined)
@@ -164,7 +157,7 @@ describe("binary session", () => {
   it("cancels a call while it waits for a transition", async () => {
     const [first] = await targets();
     const health = deferred<ReturnType<typeof ok>>();
-    const session = composeBinarySessionFromFactory(
+    const session = createTestBinarySession(
       () => new TestClient(health.promise),
     );
     const opening = session.open(first);
@@ -187,7 +180,7 @@ describe("binary session", () => {
   it("closes a failed candidate and reopens the previous target", async () => {
     const [first, second] = await targets();
     const clients: TestClient[] = [];
-    const session = composeBinarySessionFromFactory(() => {
+    const session = createTestBinarySession(() => {
       const value = new TestClient(undefined, clients.length === 1);
       clients.push(value);
       return value;
@@ -207,7 +200,7 @@ describe("binary session", () => {
     const [first, second] = await targets();
     let liveClients = 0;
     let overlapped = false;
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => {
         if (liveClients > 0) overlapped = true;
         liveClients += 1;
@@ -231,7 +224,7 @@ describe("binary session", () => {
       ["fixture-document"],
       { reason: "shutdown acknowledgement missing" },
     );
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(ok(null)),
       closeWithOutcome: () => Promise.resolve(err(cleanupError)),
       close: () => Promise.resolve(),

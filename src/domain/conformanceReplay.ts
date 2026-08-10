@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  conformancePackageSchema,
-  type ConformancePackage,
-} from "./conformancePackage.js";
+import { parseConformancePackage } from "./conformancePackage.js";
 import {
   evaluatePackageTrustGates,
   trustGateResultSchema,
@@ -74,12 +71,10 @@ export async function replayConformancePackage(
   runner: ScenarioRunner = defaultRunner,
   options: { truncated?: boolean } = {},
 ): Promise<PackageReplayResult> {
-  const parsed = conformancePackageSchema.safeParse(packageInput);
-  if (!parsed.success)
-    throw new TypeError(
-      `invalid conformance package: ${parsed.error.issues[0]?.message ?? "unknown"}`,
-    );
-  const pkg: ConformancePackage = parsed.data;
+  const parsed = parseConformancePackage(packageInput);
+  if (!parsed.ok)
+    throw new TypeError(`invalid conformance package: ${parsed.error.message}`);
+  const pkg = parsed.value;
 
   const scenarioResults: ScenarioReplayResult[] = [];
   let passed = 0;

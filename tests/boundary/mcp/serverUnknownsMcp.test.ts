@@ -2,10 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 
-import {
-  composeBinarySessionFromFactory,
-  composeBinarySessionFromProvider,
-} from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
@@ -94,7 +91,7 @@ it("records approved trace truncation as a deduplicated residual unknown", async
         }),
       ),
   };
-  const session = composeBinarySessionFromProvider(
+  const session = createTestBinarySession(
     providerWithCapabilities([
       "list_strings",
       "list_procedures",
@@ -159,7 +156,7 @@ it("records approved typed capability unavailability without forwarding the flag
       );
     },
   };
-  const session = composeBinarySessionFromProvider(
+  const session = createTestBinarySession(
     providerWithCapabilities(["procedure_pseudo_code"]),
   );
   const server = createServer(analysis, session);
@@ -212,7 +209,7 @@ it("records approved typed capability unavailability without forwarding the flag
 });
 
 it("records approved capture disagreement as a contradicted unknown", async () => {
-  const session = composeBinarySessionFromFactory(
+  const session = createTestBinarySession(
     () =>
       ({
         execute: () => Promise.resolve(ok(null)),

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromProvider } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
   CATALOG_IDENTITY,
   CLI_COMMAND_NAMES,
@@ -217,7 +217,7 @@ describe("server and catalog identity", () => {
 
 describe("live server identity over MCP", () => {
   it("exposes live identity, a stable catalog, and changing availability", async () => {
-    const session = composeBinarySessionFromProvider(availabilityProvider());
+    const session = createTestBinarySession(availabilityProvider());
     const server = createServer(session, session);
     const client = new Client(
       { name: "identity-test", version: "9" },

@@ -6,12 +6,24 @@ import type {
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { compareCodePoints } from "./javascriptStaticAnalysisHelpers.js";
 
-/** Construct one immutable semantic provenance value. */
-export const semanticProvenance = (
-  status: JavaScriptBindingProvenance["status"],
+/** Construct exact local provenance without inventing module origins. */
+export const semanticLocalProvenance = (): JavaScriptBindingProvenance => ({
+  status: "local",
+  origins: [],
+  reason: null,
+});
+
+/** Construct an unresolved provenance outcome with an actionable reason. */
+export const semanticUnresolvedProvenance = (
+  status: "unknown" | "cycle" | "limit-reached",
+  reason: string,
+): JavaScriptBindingProvenance => ({ status, origins: [], reason });
+
+/** Construct ambiguous provenance while retaining every bounded origin. */
+export const semanticAmbiguousProvenance = (
   origins: readonly JavaScriptModuleOrigin[],
-  reason: string | null,
-): JavaScriptBindingProvenance => ({ status, origins, reason });
+  reason: string,
+): JavaScriptBindingProvenance => ({ status: "ambiguous", origins, reason });
 
 /** Normalize bounded exact module origins into one provenance classification. */
 export const semanticOriginsProvenance = (
@@ -21,9 +33,10 @@ export const semanticOriginsProvenance = (
   const unique = uniqueSemanticOrigins(origins);
   if (unique.length > state.limits.maxUnionValues)
     return semanticLimitProvenance(state, "maxUnionValues");
-  return unique.length === 1
-    ? semanticProvenance("module", unique, null)
-    : semanticProvenance("ambiguous", unique, "Multiple module origins.");
+  const origin = unique[0];
+  return unique.length === 1 && origin !== undefined
+    ? { status: "module", origins: [origin], reason: null }
+    : semanticAmbiguousProvenance(unique, "Multiple module origins.");
 };
 
 /** Deduplicate and canonically order module origins. */
@@ -44,7 +57,7 @@ export const semanticLimitProvenance = (
   limit: "maxValueDepth" | "maxUnionValues",
 ): JavaScriptBindingProvenance => {
   reachSemanticValueLimit(state, limit);
-  return semanticProvenance("limit-reached", [], `${limit} reached.`);
+  return semanticUnresolvedProvenance("limit-reached", `${limit} reached.`);
 };
 
 /** Record one value-lattice limit against the shared semantic analysis state. */

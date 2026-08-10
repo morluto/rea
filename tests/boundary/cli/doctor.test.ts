@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ClientRegistrationStatus } from "../../../src/application/ClientRegistrationStatus.js";
 import { runDoctor, type DoctorHost } from "../../../src/application/Doctor.js";
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -248,19 +249,19 @@ describe("doctor installation identity", () => {
 
 describe("doctor scoped readiness", () => {
   it("scopes effective readiness to selected clients without hiding drift", async () => {
-    const registrations = [
+    const registrations: readonly ClientRegistrationStatus[] = [
       {
         client: "codex",
         config_path: "/home/user/.codex/config.toml",
         command: ["/current/rea", "mcp"],
-        state: "aligned" as const,
+        state: "aligned",
         remediation: null,
       },
       {
         client: "cursor",
         config_path: "/home/user/.cursor/mcp.json",
         command: ["/old/rea", "mcp"],
-        state: "stale" as const,
+        state: "stale",
         remediation: "Run rea setup to refresh this registration.",
       },
     ];

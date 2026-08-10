@@ -6,11 +6,12 @@ import {
   normalizationSchema,
 } from "./processScenario.js";
 import type {
-  ProcessReactiveOutcome,
+  ProcessReactiveStatus,
   ProcessReactiveTransitionRecord,
 } from "./processReactiveRuntime.js";
-import { PROCESS_REACTIVE_LIMITS } from "./processReactiveScenario.js";
+import { processReactiveRunSchema } from "./processCaptureReactiveSchema.js";
 import type { ReplayTransitionRecord } from "./replayMachineRuntime.js";
+import { collectProcessCaptureIssues } from "./processCaptureValidation.js";
 
 export * from "./processScenario.js";
 
@@ -45,21 +46,53 @@ export interface InteractionEvent {
 }
 
 /** One filesystem state used for before/after comparison. */
-export interface FileState {
+interface FileStateIdentity {
   readonly path: string;
-  readonly type: "file" | "directory" | "symlink" | "other";
   readonly mode: number;
   readonly size: number;
-  readonly sha256: string | null;
-  readonly symlink_target: string | null;
 }
 
-interface FileEffect {
+export type FileState = FileStateIdentity &
+  (
+    | {
+        readonly type: "file";
+        readonly sha256: string | null;
+        readonly symlink_target: null;
+      }
+    | {
+        readonly type: "symlink";
+        readonly sha256: null;
+        readonly symlink_target: string;
+      }
+    | {
+        readonly type: "directory" | "other";
+        readonly sha256: null;
+        readonly symlink_target: null;
+      }
+  );
+
+interface FileEffectIdentity {
   readonly path: string;
-  readonly status: "created" | "modified" | "deleted" | "unchanged";
-  readonly before: FileState | null;
-  readonly after: FileState | null;
 }
+
+type FileEffect = FileEffectIdentity &
+  (
+    | {
+        readonly status: "created";
+        readonly before: null;
+        readonly after: FileState;
+      }
+    | {
+        readonly status: "deleted";
+        readonly before: FileState;
+        readonly after: null;
+      }
+    | {
+        readonly status: "modified" | "unchanged";
+        readonly before: FileState;
+        readonly after: FileState;
+      }
+  );
 
 /** A sampled owned-process observation; sampling cannot prove syscall completeness. */
 export interface ProcessSample {
@@ -156,13 +189,26 @@ export type RecordProcessCaptureEvent = (
   index: number,
 ) => void;
 
+/** Observed process-tree settlement and the cleanup required by that state. */
+export type ProcessSettlement =
+  | {
+      readonly state: "quiesced";
+      readonly elapsed_ms: number;
+      readonly cleanup_outcome: "not_required";
+    }
+  | {
+      readonly state: "alive_at_deadline" | "unverifiable";
+      readonly elapsed_ms: number;
+      readonly cleanup_outcome: "cleaned" | "failed";
+    };
+
 /**
  * Process Capture v4 observation set.
  *
  * `truncated` and `residual_unknowns` are semantic evidence: consumers must not
  * infer equivalence from matching bounded observations when either is present.
  */
-export interface ProcessCapture {
+export interface UnverifiedProcessCapture {
   readonly schema_version: 4;
   readonly manifest: {
     readonly rea_version: string;
@@ -192,23 +238,19 @@ export interface ProcessCapture {
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
-  readonly settlement: {
-    readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
-    readonly elapsed_ms: number;
-    readonly cleanup_outcome: "not_required" | "cleaned" | "failed";
-  };
+  readonly settlement: ProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
   readonly shim_events: readonly ShimEvent[];
   readonly protocol_events: readonly ProtocolEvent[];
   readonly replay_transitions: readonly ReplayTransitionRecord[];
-  readonly reactive_run: {
-    readonly status: "running" | "finished";
-    readonly outcome: ProcessReactiveOutcome | null;
-    readonly active_state: string;
-    readonly transitions: readonly ProcessReactiveTransitionRecord[];
-    readonly controls: readonly ProcessReactiveControlRecord[];
-  } | null;
+  readonly reactive_run:
+    | ({
+        readonly active_state: string;
+        readonly transitions: readonly ProcessReactiveTransitionRecord[];
+        readonly controls: readonly ProcessReactiveControlRecord[];
+      } & ProcessReactiveStatus)
+    | null;
   /**
    * Global observation order across independently recorded collections.
    *
@@ -239,285 +281,244 @@ export interface ProcessCapture {
   };
 }
 
-const fileStateSchema = z.object({
+const fileStateShape = {
   path: z.string(),
-  type: z.enum(["file", "directory", "symlink", "other"]),
   mode: z.number().int().nonnegative(),
   size: z.number().int().nonnegative(),
-  sha256: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/u)
-    .nullable(),
-  symlink_target: z.string().nullable(),
-});
-const fileEffectSchema = z.object({
-  path: z.string(),
-  status: z.enum(["created", "modified", "deleted", "unchanged"]),
-  before: fileStateSchema.nullable(),
-  after: fileStateSchema.nullable(),
-});
-
+};
+const fileStateSchema = z.discriminatedUnion("type", [
+  z.object({
+    ...fileStateShape,
+    type: z.literal("file"),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    symlink_target: z.null(),
+  }),
+  z.object({
+    ...fileStateShape,
+    type: z.literal("symlink"),
+    sha256: z.null(),
+    symlink_target: z.string(),
+  }),
+  z.object({
+    ...fileStateShape,
+    type: z.enum(["directory", "other"]),
+    sha256: z.null(),
+    symlink_target: z.null(),
+  }),
+]);
+const fileEffectSchema = z.discriminatedUnion("status", [
+  z.object({
+    path: z.string(),
+    status: z.literal("created"),
+    before: z.null(),
+    after: fileStateSchema,
+  }),
+  z.object({
+    path: z.string(),
+    status: z.literal("deleted"),
+    before: fileStateSchema,
+    after: z.null(),
+  }),
+  z.object({
+    path: z.string(),
+    status: z.enum(["modified", "unchanged"]),
+    before: fileStateSchema,
+    after: fileStateSchema,
+  }),
+]);
 /** Exact serialized shape of a bounded process capture. */
-export const processCaptureSchema: z.ZodType<ProcessCapture> = z.object({
-  schema_version: z.literal(4, {
-    error: LEGACY_PROCESS_CAPTURE_MESSAGE,
-  }),
-  manifest: z.object({
-    rea_version: z.string().min(1),
-    provider_version: z.string().min(1),
-    platform: z.string().min(1),
-    architecture: z.string().min(1),
-    pty_backend: z.literal("node-pty"),
-    started_at: z.iso.datetime(),
-    completed_at: z.iso.datetime(),
-    scenario: z.record(z.string(), jsonValueSchema),
-    comparison_contract: z.record(z.string(), jsonValueSchema),
-    shim_plan: z.array(jsonValueSchema),
-    replay_plan: z.record(z.string(), jsonValueSchema),
-    full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    shim_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    replay_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  }),
-  normalization: normalizationSchema,
-  frames: z.array(
-    z.object({
-      sequence: z.number().int().nonnegative(),
-      at_ms: z.number().int().nonnegative(),
-      data: z.string(),
+const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
+  {
+    schema_version: z.literal(4, {
+      error: LEGACY_PROCESS_CAPTURE_MESSAGE,
     }),
-  ),
-  rendered_frames: z.array(
-    z.object({
-      sequence: z.number().int().nonnegative(),
-      at_ms: z.number().int().nonnegative(),
-      columns: z.number().int().positive(),
-      rows: z.number().int().positive(),
-      cursor_x: z.number().int().nonnegative(),
-      cursor_y: z.number().int().nonnegative(),
-      active_buffer: z.enum(["normal", "alternate"]),
-      lines: z.array(z.string()),
-      serialized_state: z.string(),
+    manifest: z.object({
+      rea_version: z.string().min(1),
+      provider_version: z.string().min(1),
+      platform: z.string().min(1),
+      architecture: z.string().min(1),
+      pty_backend: z.literal("node-pty"),
+      started_at: z.iso.datetime(),
+      completed_at: z.iso.datetime(),
+      scenario: z.record(z.string(), jsonValueSchema),
+      comparison_contract: z.record(z.string(), jsonValueSchema),
+      shim_plan: z.array(jsonValueSchema),
+      replay_plan: z.record(z.string(), jsonValueSchema),
+      full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      shim_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      replay_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
-  ),
-  interaction_events: z.array(
-    z.object({
-      sequence: z.number().int().nonnegative(),
-      scheduled_at_ms: z.number().int().nonnegative(),
-      dispatched_at_ms: z.number().int().nonnegative(),
-      type: z.enum(["input", "resize", "stdin_close", "signal"]),
-      data: z.string(),
-      outcome: z.enum(["dispatched", "target_exited", "failed"]),
-    }),
-  ),
-  exit: z.object({
-    code: z.number().int().nullable(),
-    signal: z.number().int().nullable(),
-    reason: z.enum(["exited", "timeout", "idle_timeout"]),
-  }),
-  settlement: z.object({
-    state: z.enum(["quiesced", "alive_at_deadline", "unverifiable"]),
-    elapsed_ms: z.number().int().nonnegative(),
-    cleanup_outcome: z.enum(["not_required", "cleaned", "failed"]),
-  }),
-  process_samples: z.array(
-    z.object({
-      at_ms: z.number().int().nonnegative(),
-      pid: z.number().int().positive(),
-      parent_pid: z.number().int().nonnegative(),
-      command: z.string(),
-      process_group_id: z.number().int().positive().nullable(),
-      session_id: z.number().int().nonnegative().nullable(),
-    }),
-  ),
-  filesystem_checkpoints: z.array(
-    z.object({
-      name: z.string(),
-      at_ms: z.number().int().nonnegative(),
-      files: z.array(fileStateSchema),
-      effects: z.array(fileEffectSchema),
-      truncated: z.boolean(),
-    }),
-  ),
-  shim_events: z.array(
-    z.object({
-      sequence: z.number().int().nonnegative(),
-      at_ms: z.number().int().nonnegative(),
-      command: z.string(),
-      route_index: z.number().int().nonnegative().nullable(),
-      arguments: z.array(z.string()),
-      working_directory: z.string(),
-      outcome: z.enum(["matched", "unmatched", "exhausted"]),
-    }),
-  ),
-  protocol_events: z.array(
-    z.object({
-      sequence: z.number().int().nonnegative(),
-      at_ms: z.number().int().nonnegative(),
-      protocol: z.enum(["http", "websocket"]),
-      direction: z.enum(["request", "response", "received", "sent"]),
-      method: z.string().nullable(),
-      path: z.string().nullable(),
-      data: z.string(),
-      outcome: z.enum([
-        "matched",
-        "unmatched",
-        "script_exhausted",
-        "disconnected",
-        "invalid_state",
-        "guard_failed",
-        "transition_exhausted",
-        "invalid_capture",
-        "unexpected_reconnect",
-        "limit_exhausted",
-      ]),
-    }),
-  ),
-  replay_transitions: z
-    .array(
+    normalization: normalizationSchema,
+    frames: z.array(
       z.object({
         sequence: z.number().int().nonnegative(),
         at_ms: z.number().int().nonnegative(),
-        transition_id: z.string().min(1).max(64),
-        state_before: z.string().min(1).max(64),
-        state_after: z.string().min(1).max(64),
-        sensitive_aliases: z.array(z.string().min(1).max(64)).max(32),
+        data: z.string(),
       }),
-    )
-    .default([]),
-  reactive_run: z
-    .object({
-      status: z.enum(["running", "finished"]),
-      outcome: z
-        .enum([
-          "passed",
-          "predicate_timeout",
-          "scenario_deadline",
-          "ambiguous_match",
-          "action_rejected",
-          "target_lost",
-          "capture_incomplete",
-          "cancelled",
-          "cleanup_failed",
-        ])
-        .nullable(),
-      active_state: z.string().min(1).max(64),
-      controls: z
-        .array(
-          z.object({
-            sequence: z.number().int().nonnegative(),
-            kind: z.enum([
-              "state_deadline",
-              "scenario_deadline",
-              "target_lost",
-              "cancelled",
-              "cleanup_failed",
-            ]),
-            after_capture_order: z.number().int().min(-1),
-          }),
-        )
-        .default([]),
-      transitions: z
-        .array(
-          z.object({
-            sequence: z.number().int().nonnegative(),
-            transition_id: z.string().min(1).max(64),
-            state_before: z.string().min(1).max(64),
-            state_after: z.string().min(1).max(64).nullable(),
-            outcome: z
-              .enum([
-                "passed",
-                "predicate_timeout",
-                "scenario_deadline",
-                "ambiguous_match",
-                "action_rejected",
-                "target_lost",
-                "capture_incomplete",
-                "cancelled",
-                "cleanup_failed",
-              ])
-              .nullable(),
-            trigger_event_ids: z
-              .array(z.string().min(1))
-              .max(PROCESS_REACTIVE_LIMITS.predicates),
-            action_event_ids: z
-              .array(z.string().min(1))
-              .max(PROCESS_REACTIVE_LIMITS.actionsPerTransition),
-            action_types: z
-              .array(
-                z.enum([
-                  "send_input",
-                  "resize",
-                  "close_stdin",
-                  "send_signal",
-                  "checkpoint",
-                ]),
-              )
-              .max(PROCESS_REACTIVE_LIMITS.actionsPerTransition),
-          }),
-        )
-        .max(PROCESS_REACTIVE_LIMITS.transitions),
-    })
-    .nullable()
-    .default(null),
-  event_journal: z
-    .array(
+    ),
+    rendered_frames: z.array(
       z.object({
-        capture_order: z.number().int().nonnegative(),
-        collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
-        index: z.number().int().nonnegative(),
+        sequence: z.number().int().nonnegative(),
+        at_ms: z.number().int().nonnegative(),
+        columns: z.number().int().positive(),
+        rows: z.number().int().positive(),
+        cursor_x: z.number().int().nonnegative(),
+        cursor_y: z.number().int().nonnegative(),
+        active_buffer: z.enum(["normal", "alternate"]),
+        lines: z.array(z.string()),
+        serialized_state: z.string(),
       }),
-    )
-    .default([]),
-  files_before: z.array(fileStateSchema),
-  files_after: z.array(fileStateSchema),
-  filesystem_effects: z.array(fileEffectSchema),
-  truncated: z.boolean(),
-  limitations: z.array(z.string()),
-  residual_unknowns: z.array(
-    z.object({
-      scope: z.enum([
-        "terminal",
-        "interaction",
-        "exit",
-        "process",
-        "filesystem",
-        "protocol",
-        "shim",
-        "cleanup",
-        "network",
-      ]),
-      reason: z.string(),
+    ),
+    interaction_events: z.array(
+      z.object({
+        sequence: z.number().int().nonnegative(),
+        scheduled_at_ms: z.number().int().nonnegative(),
+        dispatched_at_ms: z.number().int().nonnegative(),
+        type: z.enum(["input", "resize", "stdin_close", "signal"]),
+        data: z.string(),
+        outcome: z.enum(["dispatched", "target_exited", "failed"]),
+      }),
+    ),
+    exit: z.object({
+      code: z.number().int().nullable(),
+      signal: z.number().int().nullable(),
+      reason: z.enum(["exited", "timeout", "idle_timeout"]),
     }),
-  ),
-  cleanup: z.object({
-    owned_process_group: z.literal("verified"),
-    temporary_root: z.literal("removed"),
-  }),
-});
+    settlement: z.discriminatedUnion("state", [
+      z.object({
+        state: z.literal("quiesced"),
+        elapsed_ms: z.number().int().nonnegative(),
+        cleanup_outcome: z.literal("not_required"),
+      }),
+      z.object({
+        state: z.enum(["alive_at_deadline", "unverifiable"]),
+        elapsed_ms: z.number().int().nonnegative(),
+        cleanup_outcome: z.enum(["cleaned", "failed"]),
+      }),
+    ]),
+    process_samples: z.array(
+      z.object({
+        at_ms: z.number().int().nonnegative(),
+        pid: z.number().int().positive(),
+        parent_pid: z.number().int().nonnegative(),
+        command: z.string(),
+        process_group_id: z.number().int().positive().nullable(),
+        session_id: z.number().int().nonnegative().nullable(),
+      }),
+    ),
+    filesystem_checkpoints: z.array(
+      z.object({
+        name: z.string(),
+        at_ms: z.number().int().nonnegative(),
+        files: z.array(fileStateSchema),
+        effects: z.array(fileEffectSchema),
+        truncated: z.boolean(),
+      }),
+    ),
+    shim_events: z.array(
+      z.object({
+        sequence: z.number().int().nonnegative(),
+        at_ms: z.number().int().nonnegative(),
+        command: z.string(),
+        route_index: z.number().int().nonnegative().nullable(),
+        arguments: z.array(z.string()),
+        working_directory: z.string(),
+        outcome: z.enum(["matched", "unmatched", "exhausted"]),
+      }),
+    ),
+    protocol_events: z.array(
+      z.object({
+        sequence: z.number().int().nonnegative(),
+        at_ms: z.number().int().nonnegative(),
+        protocol: z.enum(["http", "websocket"]),
+        direction: z.enum(["request", "response", "received", "sent"]),
+        method: z.string().nullable(),
+        path: z.string().nullable(),
+        data: z.string(),
+        outcome: z.enum([
+          "matched",
+          "unmatched",
+          "script_exhausted",
+          "disconnected",
+          "invalid_state",
+          "guard_failed",
+          "transition_exhausted",
+          "invalid_capture",
+          "unexpected_reconnect",
+          "limit_exhausted",
+        ]),
+      }),
+    ),
+    replay_transitions: z
+      .array(
+        z.object({
+          sequence: z.number().int().nonnegative(),
+          at_ms: z.number().int().nonnegative(),
+          transition_id: z.string().min(1).max(64),
+          state_before: z.string().min(1).max(64),
+          state_after: z.string().min(1).max(64),
+          sensitive_aliases: z.array(z.string().min(1).max(64)).max(32),
+        }),
+      )
+      .default([]),
+    reactive_run: processReactiveRunSchema.nullable().default(null),
+    event_journal: z
+      .array(
+        z.object({
+          capture_order: z.number().int().nonnegative(),
+          collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
+          index: z.number().int().nonnegative(),
+        }),
+      )
+      .default([]),
+    files_before: z.array(fileStateSchema),
+    files_after: z.array(fileStateSchema),
+    filesystem_effects: z.array(fileEffectSchema),
+    truncated: z.boolean(),
+    limitations: z.array(z.string()),
+    residual_unknowns: z.array(
+      z.object({
+        scope: z.enum([
+          "terminal",
+          "interaction",
+          "exit",
+          "process",
+          "filesystem",
+          "protocol",
+          "shim",
+          "cleanup",
+          "network",
+        ]),
+        reason: z.string(),
+      }),
+    ),
+    cleanup: z.object({
+      owned_process_group: z.literal("verified"),
+      temporary_root: z.literal("removed"),
+    }),
+  },
+);
 
-export { validateProcessCapture } from "./processCaptureValidation.js";
-import { validateProcessCapture } from "./processCaptureValidation.js";
+/** Exact serialized shape plus all Process Capture v4 semantic invariants. */
+export const processCaptureSchema = processCaptureShapeSchema.superRefine(
+  (capture, context) => {
+    for (const issue of collectProcessCaptureIssues(capture))
+      context.addIssue({
+        code: "custom",
+        path: issue.path.split("."),
+        message: issue.message,
+      });
+  },
+);
 
-/** Parse unknown input as v4 and reject invalid commitments or semantics. */
-export const parseProcessCapture = (input: unknown): ProcessCapture => {
-  if (
-    typeof input === "object" &&
-    input !== null &&
-    "schema_version" in input &&
-    input.schema_version === 3
-  )
-    throw new TypeError(LEGACY_PROCESS_CAPTURE_MESSAGE);
-  const capture = processCaptureSchema.parse(input);
-  const issues = validateProcessCapture(capture);
-  if (issues.length > 0)
-    throw new TypeError(
-      `Invalid Process Capture v4: ${issues.map(({ path, message }) => `${path}: ${message}`).join("; ")}`,
-    );
-  return capture;
-};
+export { parseProcessCapture } from "./processCaptureParsing.js";
+export type { ProcessCapture } from "./processCaptureParsing.js";
 
 export {
   compareProcessCaptures,

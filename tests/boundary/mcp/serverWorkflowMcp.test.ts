@@ -3,7 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
@@ -107,7 +107,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
 });
 
 it("advertises the complete currently available inventory with a session", async () => {
-  const session = composeBinarySessionFromFactory(
+  const session = createTestBinarySession(
     (_path) =>
       ({
         execute: () => Promise.resolve(ok(null)),

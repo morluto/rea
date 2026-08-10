@@ -22,6 +22,31 @@ const observationSchema = z.strictObject({
   sha256: digestSchema,
   format: z.string().min(1).max(100),
 });
+const runtimeObservationShape = {
+  family: runtimeFamilySchema,
+  observations: z.array(observationSchema),
+  omitted_observations: z.number().int().min(0),
+};
+const identifiedRuntimeSchema = z.discriminatedUnion("inspection", [
+  z.strictObject({
+    ...runtimeObservationShape,
+    inspection: z.literal("available"),
+    provider_id: z.string().min(1).max(200),
+    reason: z.null(),
+  }),
+  z.strictObject({
+    ...runtimeObservationShape,
+    inspection: z.literal("provider-missing"),
+    provider_id: z.null(),
+    reason: z.string().min(1).max(1_000),
+  }),
+  z.strictObject({
+    ...runtimeObservationShape,
+    inspection: z.literal("provider-selection-required"),
+    provider_id: z.null(),
+    reason: z.string().min(1).max(1_000),
+  }),
+]);
 
 /** Authenticated artifact inventory pages to classify by runtime family. */
 const runtimeIdentificationInputSchema = z.strictObject({
@@ -40,20 +65,7 @@ export const runtimeIdentificationResultSchema = z.strictObject({
   root_sha256: digestSchema,
   root_format: z.string().min(1).max(100),
   source_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
-  runtimes: z.array(
-    z.strictObject({
-      family: runtimeFamilySchema,
-      inspection: z.enum([
-        "available",
-        "provider-missing",
-        "provider-selection-required",
-      ]),
-      provider_id: z.string().min(1).max(200).nullable(),
-      reason: z.string().min(1).max(1_000).nullable(),
-      observations: z.array(observationSchema),
-      omitted_observations: z.number().int().min(0),
-    }),
-  ),
+  runtimes: z.array(identifiedRuntimeSchema),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial", "truncated"]),
     inventory_complete: z.boolean(),
@@ -70,14 +82,17 @@ export type RuntimeIdentificationResult = z.infer<
 >;
 type RuntimeFamily = z.infer<typeof runtimeFamilySchema>;
 type Observation = z.infer<typeof observationSchema>;
-type RuntimeProvider = {
-  readonly inspection:
-    | "available"
-    | "provider-missing"
-    | "provider-selection-required";
-  readonly id: string | null;
-  readonly reason: string | null;
-};
+type RuntimeProvider =
+  | {
+      readonly inspection: "available";
+      readonly id: string;
+      readonly reason: null;
+    }
+  | {
+      readonly inspection: "provider-missing" | "provider-selection-required";
+      readonly id: null;
+      readonly reason: string;
+    };
 
 const PROVIDERS: Readonly<Record<RuntimeFamily, RuntimeProvider>> = {
   android: {
@@ -164,9 +179,7 @@ export const identifyRuntimes = (
       const provider = providerFor(family, inventory.manifest.root_format);
       return {
         family,
-        inspection: provider.inspection,
-        provider_id: provider.id,
-        reason: provider.reason,
+        ...runtimeInspection(provider),
         observations,
         omitted_observations: omittedObservations,
       };
@@ -220,6 +233,19 @@ const providerFor = (
           "Extract or select an APK root before using the Android application provider.",
       }
     : PROVIDERS[family];
+
+const runtimeInspection = (provider: RuntimeProvider) =>
+  provider.inspection === "available"
+    ? {
+        inspection: provider.inspection,
+        provider_id: provider.id,
+        reason: null,
+      }
+    : {
+        inspection: provider.inspection,
+        provider_id: null,
+        reason: provider.reason,
+      };
 
 const familiesFor = (format: string, path: string): RuntimeFamily[] => {
   const families = new Set<RuntimeFamily>();

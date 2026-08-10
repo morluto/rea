@@ -9,9 +9,9 @@ import {
 } from "../../../src/application/ProcessHarness.js";
 import {
   parseProcessScenario,
-  validateProcessCapture,
   type ProcessCapture,
 } from "../../../src/domain/processCapture.js";
+import { processCaptureIssues } from "../../fixtures/processCapture.js";
 
 function createInteractiveScenario(root: string, script: string) {
   return parseProcessScenario({
@@ -129,7 +129,7 @@ function assertControlAndTransitionValidation(capture: ProcessCapture): void {
   if (lastOrder === undefined)
     throw new Error("reactive observation order missing");
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: {
         ...reactiveRun,
@@ -150,7 +150,7 @@ function assertControlAndTransitionValidation(capture: ProcessCapture): void {
     }),
   );
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: {
         ...reactiveRun,
@@ -169,7 +169,7 @@ function assertControlAndTransitionValidation(capture: ProcessCapture): void {
     }),
   );
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: {
         status: "finished",
@@ -192,7 +192,7 @@ function assertControlAndTransitionValidation(capture: ProcessCapture): void {
       sequence,
     }));
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: { ...reactiveRun, transitions: suffix },
     }),
@@ -209,7 +209,7 @@ function assertReplayValidation(capture: ProcessCapture): void {
   const reactiveRun = capture.reactive_run;
   if (reactiveRun === null) throw new Error("reactive result missing");
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: {
         ...reactiveRun,
@@ -237,7 +237,7 @@ function assertReplayValidation(capture: ProcessCapture): void {
     ]),
   );
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: { ...reactiveRun, status: "running", outcome: null },
     }),
@@ -247,7 +247,7 @@ function assertReplayValidation(capture: ProcessCapture): void {
     }),
   );
   expect(
-    validateProcessCapture({
+    processCaptureIssues({
       ...capture,
       reactive_run: {
         ...reactiveRun,
@@ -397,12 +397,12 @@ it("records target loss before post-exit settlement can win the deadline race", 
       ],
     };
     expect(
-      validateProcessCapture(withLaterMatch).filter(({ path }) =>
+      processCaptureIssues(withLaterMatch).filter(({ path }) =>
         path.startsWith("reactive_run"),
       ),
     ).toEqual([]);
     expect(
-      validateProcessCapture({
+      processCaptureIssues({
         ...withLaterMatch,
         reactive_run: {
           ...reactiveRun,

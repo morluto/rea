@@ -235,7 +235,7 @@ const coverageSchema = z.strictObject({
   pre_capture_activity: z.literal("unavailable"),
 });
 
-const actionResultSchema = z.strictObject({
+const actionResultContextShape = {
   step_id: z.string().min(1).max(128),
   kind: z.enum([
     "click",
@@ -246,10 +246,21 @@ const actionResultSchema = z.strictObject({
   ]),
   window_index: windowIndexSchema.nullable(),
   target: z.string().max(256).nullable(),
-  status: z.enum(["completed", "failed", "cancelled"]),
   elapsed_ms: z.number().int().min(0),
-  error: z.string().nullable(),
-});
+};
+
+const actionResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    ...actionResultContextShape,
+    status: z.literal("completed"),
+    error: z.null(),
+  }),
+  z.strictObject({
+    ...actionResultContextShape,
+    status: z.enum(["failed", "cancelled"]),
+    error: z.string(),
+  }),
+]);
 
 /** Bounded result of a provider-owned Electron runtime experiment. */
 export const electronActiveObservationResultSchema = z.strictObject({

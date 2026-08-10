@@ -8,10 +8,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import {
-  composeBinarySessionFromFactory,
-  composeBinarySessionFromProvider,
-} from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
@@ -52,7 +49,7 @@ describe("target-free MCP lifecycle", () => {
     const targetPath = join(directory, "mutable.hop");
     await writeFile(targetPath, "first");
     const closed: string[] = [];
-    const session = composeBinarySessionFromProvider(provider(closed), {
+    const session = createTestBinarySession(provider(closed), {
       resolveAnalysisProfile: () =>
         Promise.resolve(
           resultOk({ profile: SNAPSHOT_PROFILE, compatibility: {} }),
@@ -230,9 +227,7 @@ describe("target-free MCP workflow", () => {
 describe("process residuals over MCP", () => {
   it("records approved process residuals in the unknown registry", async () => {
     if (!(await probeProcessCaptureCapability()).available) return;
-    const session = composeBinarySessionFromFactory(() =>
-      client("fixture", []),
-    );
+    const session = createTestBinarySession(() => client("fixture", []));
     const server = createServer(session, session, {
       logger: silentLogger,
       processPolicy: () => ({

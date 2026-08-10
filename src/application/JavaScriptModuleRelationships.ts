@@ -1,6 +1,11 @@
 import { posix } from "node:path";
 
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
+import {
+  completeApplicationCoverage,
+  partialApplicationCoverage,
+  truncatedApplicationCoverage,
+} from "../domain/javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticIr,
@@ -16,11 +21,12 @@ import {
 } from "./JavaScriptArtifactGraphContext.js";
 import {
   astObservationEvidence,
-  completeReconstructionCoverage,
-  partialReconstructionCoverage,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
-import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import {
+  resolveArtifactPathByContext,
+  type ArtifactPathResolution,
+} from "./JavaScriptArtifactPathResolution.js";
 import { projectJavaScriptExportReturnShapes } from "./JavaScriptReturnShapeProjection.js";
 
 interface SemanticAnalysis {
@@ -36,18 +42,24 @@ interface RelationshipInput {
   readonly link: JavaScriptSemanticModuleLink;
 }
 
-interface ResolvedModuleTarget {
+type ResolvedModuleTarget = {
   readonly node: ApplicationNode;
-  readonly path: string | null;
-  readonly file: JavaScriptArtifactFile | null;
-  readonly status:
-    | "resolved"
-    | "not-found"
-    | "unavailable"
-    | "external"
-    | "rejected";
   readonly limitations: readonly string[];
-}
+} & (
+  | {
+      readonly path: string;
+      readonly file: JavaScriptArtifactFile;
+      readonly status: "resolved";
+    }
+  | {
+      readonly path: null;
+      readonly file: null;
+      readonly status: Exclude<
+        ArtifactPathResolution["resolution_status"],
+        "resolved"
+      >;
+    }
+);
 
 /** Create one path-scoped source-module identity for every analyzed source file. */
 export const addJavaScriptSourceModules = (
@@ -239,26 +251,32 @@ const resolveModuleTarget = (
         ? "require"
         : "import",
   });
-  const path = resolution.resolved_path;
-  const file = path === null ? undefined : input.context.filesByPath.get(path);
-  const node =
-    path === null
-      ? undefined
-      : (input.context.sourceModuleNodes.get(path) ??
-        input.context.fileNodes.get(path));
-  if (path !== null && file !== undefined && node !== undefined)
+  if (resolution.resolution_status !== "resolved")
     return {
-      node,
-      path,
-      file,
-      status: "resolved",
+      node: unresolvedModuleNode(
+        input,
+        specifier,
+        resolution.resolution_status,
+      ),
+      path: null,
+      file: null,
+      status: resolution.resolution_status,
       limitations: resolution.limitations,
     };
+  const path = resolution.resolved_path;
+  const file = input.context.filesByPath.get(path);
+  const node =
+    input.context.sourceModuleNodes.get(path) ??
+    input.context.fileNodes.get(path);
+  if (file === undefined || node === undefined)
+    throw new TypeError(
+      `Resolved artifact path ${path} is absent from its graph context.`,
+    );
   return {
-    node: unresolvedModuleNode(input, specifier, resolution.resolution_status),
-    path: null,
-    file: null,
-    status: resolution.resolution_status,
+    node,
+    path,
+    file,
+    status: "resolved",
     limitations: resolution.limitations,
   };
 };
@@ -266,7 +284,7 @@ const resolveModuleTarget = (
 const unresolvedModuleNode = (
   input: RelationshipInput,
   specifier: string,
-  status: ResolvedModuleTarget["status"],
+  status: Exclude<ResolvedModuleTarget["status"], "resolved">,
 ): ApplicationNode =>
   input.context.accumulator.addNode({
     kind: "javascript-module",
@@ -360,12 +378,10 @@ const semanticCoverage = (
     unit: "items" as const,
   }));
   if (semantic.ir.coverage.status === "complete")
-    return completeReconstructionCoverage(limits);
-  return partialReconstructionCoverage(
-    limits,
-    semantic.ir.coverage.omittedCount,
-    semantic.ir.coverage.status === "truncated",
-  );
+    return completeApplicationCoverage(limits);
+  return semantic.ir.coverage.status === "truncated"
+    ? truncatedApplicationCoverage(limits, semantic.ir.coverage.omittedCount)
+    : partialApplicationCoverage(limits, semantic.ir.coverage.omittedCount);
 };
 
 const moduleFormat = (

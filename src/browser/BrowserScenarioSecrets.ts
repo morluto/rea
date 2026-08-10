@@ -5,6 +5,7 @@ import type {
   BrowserScenarioUrl,
   BrowserScenarioValue,
 } from "../domain/browserScenario.js";
+import type { BrowserStorageValueFingerprint } from "../domain/browserScenarioCaptureValues.js";
 
 const REDACTION_PREFIX = "[REDACTED:";
 
@@ -53,10 +54,7 @@ export class BrowserScenarioSecrets {
     return output;
   }
 
-  fingerprint(value: string): {
-    readonly value_state: "hashed" | "redacted-secret";
-    readonly value_sha256: string | null;
-  } {
+  fingerprint(value: string): BrowserStorageValueFingerprint {
     for (const secret of this.values.values())
       if (secret !== "" && value.includes(secret))
         return { value_state: "redacted-secret", value_sha256: null };

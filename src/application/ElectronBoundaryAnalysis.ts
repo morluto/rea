@@ -151,13 +151,15 @@ export const summarizeElectronBoundaries = (
     },
     sender_validation_observations: validations.length,
     utility_processes: utilities.length,
-    resolved_utility_entrypoints: utilities.filter(({ file, finding }) =>
-      resolvesToFile({
-        file,
-        specifier: finding.module_path,
-        context: finding.module_resolution_context ?? "module-specifier",
-        files,
-      }),
+    resolved_utility_entrypoints: utilities.filter(
+      ({ file, finding }) =>
+        finding.module_path !== null &&
+        resolvesToFile({
+          file,
+          specifier: finding.module_path,
+          context: finding.module_resolution_context,
+          files,
+        }),
     ).length,
     native_addon_bindings: nativeBindings.length,
     resolved_native_addon_bindings: nativeBindings.filter(({ file, finding }) =>
@@ -195,14 +197,13 @@ const isMainHandler = ({ finding }: ElectronIpcRecord): boolean =>
 
 interface ResolveToFileInput {
   readonly file: JavaScriptArtifactFile;
-  readonly specifier: string | null;
+  readonly specifier: string;
   readonly context: "module-specifier" | "filesystem-expression";
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly kind?: JavaScriptArtifactFile["kind"];
 }
 
 const resolvesToFile = (input: ResolveToFileInput): boolean => {
-  if (input.specifier === null) return false;
   const resolved = resolveArtifactPathByContext({
     declaredPath: input.specifier,
     sourcePath: input.file.path,

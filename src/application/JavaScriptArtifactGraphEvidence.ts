@@ -111,28 +111,6 @@ export const unavailableAstEvidence = (
   evidence_ids: [],
 });
 
-/** Complete local projection coverage under named hard limits. */
-export const completeReconstructionCoverage = (
-  limits: ReconstructionEvidenceCoverage["limits"] = [],
-): ReconstructionEvidenceCoverage => ({
-  status: "complete",
-  truncated: false,
-  omitted_count: 0,
-  limits: [...limits],
-});
-
-/** Partial reconstruction coverage with either exact truncation or a policy gap. */
-export const partialReconstructionCoverage = (
-  limits: ReconstructionEvidenceCoverage["limits"],
-  omitted: number | null,
-  truncated: boolean,
-): ReconstructionEvidenceCoverage => ({
-  status: "partial",
-  truncated,
-  omitted_count: omitted,
-  limits: [...limits],
-});
-
 const artifactReference = (sha256: string) => ({
   available: true as const,
   artifact_id: `art_${sha256}`,

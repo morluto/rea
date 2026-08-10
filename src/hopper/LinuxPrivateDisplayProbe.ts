@@ -4,7 +4,9 @@ import {
   hopperStartupExitCode,
   type HopperPrivateDisplayStrategy,
   type HopperStartupDiagnostic,
+  type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
+  type HopperStartupReadyDiagnostic,
 } from "../domain/hopperStartupFailure.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -46,13 +48,13 @@ export type LinuxPrivateDisplaySelection =
   | {
       readonly ok: true;
       readonly strategy: LinuxPrivateDisplayRunnableStrategy;
-      readonly diagnostic: HopperStartupDiagnostic;
+      readonly diagnostic: HopperStartupReadyDiagnostic;
     }
   | {
       readonly ok: false;
       readonly strategy: "unavailable";
       readonly exitCode: number;
-      readonly diagnostic: HopperStartupDiagnostic;
+      readonly diagnostic: HopperStartupFailureDiagnostic;
     };
 
 /** Probe the exact Xvfb boundary and select the least-privileged viable strategy. */
@@ -188,11 +190,11 @@ const evaluatedProbe = async (
   | {
       readonly ok: true;
       readonly strategy: LinuxPrivateDisplayRunnableStrategy;
-      readonly diagnostic: HopperStartupDiagnostic;
+      readonly diagnostic: HopperStartupReadyDiagnostic;
     }
   | {
       readonly ok: false;
-      readonly diagnostic: HopperStartupDiagnostic;
+      readonly diagnostic: HopperStartupFailureDiagnostic;
     }
 > => {
   let processResult: LinuxPrivateDisplayProbeProcessResult;
@@ -258,14 +260,13 @@ const exitMatchesDiagnostic = (
 ): boolean =>
   diagnostic.status === "ready"
     ? exitCode === 0
-    : diagnostic.failure_code !== null &&
-      hopperStartupExitCode(diagnostic.failure_code) === exitCode;
+    : hopperStartupExitCode(diagnostic.failure_code) === exitCode;
 
 const syntheticDiagnostic = (
   strategy: LinuxPrivateDisplayRunnableStrategy,
   reason: string,
   failureCode: HopperStartupFailureCode = "private_display_unavailable",
-): HopperStartupDiagnostic => ({
+): HopperStartupFailureDiagnostic => ({
   schema_version: 1,
   component: "hopper_private_display",
   operation: "probe",
@@ -285,14 +286,11 @@ const syntheticDiagnostic = (
 });
 
 const unavailable = (
-  diagnostic: HopperStartupDiagnostic,
+  diagnostic: HopperStartupFailureDiagnostic,
 ): LinuxPrivateDisplaySelection => ({
   ok: false,
   strategy: "unavailable",
-  exitCode:
-    diagnostic.failure_code === null
-      ? 70
-      : (hopperStartupExitCode(diagnostic.failure_code) ?? 70),
+  exitCode: hopperStartupExitCode(diagnostic.failure_code) ?? 70,
   diagnostic: { ...diagnostic, strategy: "unavailable" },
 });
 

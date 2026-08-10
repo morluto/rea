@@ -6,6 +6,10 @@ import type {
   JavaScriptSemanticReturnSite,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticIr.js";
+import type {
+  ProjectedPropertyCoverage,
+  ProjectedReturnField,
+} from "./javascriptExportShapeComparisonSchemas.js";
 import {
   reachSemanticLimit,
   semanticCallableIdForNode,
@@ -17,6 +21,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticReturnCoverage } from "./javascriptSemanticCoverage.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 interface ReturnExpression {
@@ -73,13 +78,11 @@ export const collectSemanticReturns = (
     return {
       ...callable,
       returnSites: sites,
-      returnCoverage: {
-        status:
-          omitted > 0 ? "truncated" : parserPartial ? "partial" : "complete",
-        retainedCount: sites.length,
-        omittedCount: omitted,
-        limitsReached: omitted > 0 ? ["maxReturnSites"] : [],
-      },
+      returnCoverage: semanticReturnCoverage(
+        sites.length,
+        omitted,
+        parserPartial,
+      ),
     };
   });
 };
@@ -205,29 +208,11 @@ const callableIdsForNode = (
 export const flattenSemanticReturnValue = (
   value: JavaScriptSemanticValue,
 ): {
-  readonly fields: readonly {
-    readonly path: string;
-    readonly state: "literal" | "union" | "unknown";
-    readonly value: unknown;
-    readonly reason: string | null;
-  }[];
-  readonly propertyCoverage: readonly {
-    readonly path: string;
-    readonly status: "complete" | "partial";
-    readonly omitted: number | null;
-  }[];
+  readonly fields: readonly ProjectedReturnField[];
+  readonly propertyCoverage: readonly ProjectedPropertyCoverage[];
 } => {
-  const fields: {
-    path: string;
-    state: "literal" | "union" | "unknown";
-    value: unknown;
-    reason: string | null;
-  }[] = [];
-  const propertyCoverage: {
-    path: string;
-    status: "complete" | "partial";
-    omitted: number | null;
-  }[] = [];
+  const fields: ProjectedReturnField[] = [];
+  const propertyCoverage: ProjectedPropertyCoverage[] = [];
   flattenValue(value, "", fields, propertyCoverage);
   fields.sort((left, right) => compareCodePoints(left.path, right.path));
   propertyCoverage.sort((left, right) =>
@@ -239,17 +224,8 @@ export const flattenSemanticReturnValue = (
 const flattenValue = (
   value: JavaScriptSemanticValue,
   path: string,
-  fields: {
-    path: string;
-    state: "literal" | "union" | "unknown";
-    value: unknown;
-    reason: string | null;
-  }[],
-  coverage: {
-    path: string;
-    status: "complete" | "partial";
-    omitted: number | null;
-  }[],
+  fields: ProjectedReturnField[],
+  coverage: ProjectedPropertyCoverage[],
 ): void => {
   if (value.status === "literal") {
     fields.push({ path, state: "literal", value: value.value, reason: null });
@@ -265,11 +241,11 @@ const flattenValue = (
     return;
   }
   if (value.status === "object") {
-    coverage.push({
-      path,
-      status: value.unknownProperties ? "partial" : "complete",
-      omitted: value.omittedProperties,
-    });
+    coverage.push(
+      value.unknownProperties
+        ? { path, status: "partial", omitted: value.omittedProperties }
+        : { path, status: "complete", omitted: 0 },
+    );
     for (const property of value.properties)
       flattenValue(
         property.value,
@@ -280,11 +256,11 @@ const flattenValue = (
     return;
   }
   if (value.status === "array") {
-    coverage.push({
-      path,
-      status: value.unknownItems ? "partial" : "complete",
-      omitted: value.omittedItems,
-    });
+    coverage.push(
+      value.unknownItems
+        ? { path, status: "partial", omitted: value.omittedItems }
+        : { path, status: "complete", omitted: 0 },
+    );
     value.items.forEach((item, index) =>
       flattenValue(item, `${path}/${String(index)}`, fields, coverage),
     );

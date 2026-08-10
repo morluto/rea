@@ -1,5 +1,6 @@
 import type { ArtifactInventorySnapshot } from "./ArtifactInventory.js";
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
+import { completeApplicationCoverage } from "../domain/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type {
   JavaScriptArtifactContainer,
@@ -17,7 +18,6 @@ import {
 } from "./JavaScriptArtifactGraphContext.js";
 import {
   artifactObservationEvidence,
-  completeReconstructionCoverage,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
@@ -61,7 +61,7 @@ export const createJavaScriptArtifactRootNode = (
           sha256: root.sha256,
           path: "artifact-root",
           operation: "inventory-root",
-          coverage: completeReconstructionCoverage(),
+          coverage: completeApplicationCoverage(),
           limitations: [
             "artifact-root is a path-independent alias; the application result retains the canonical local input path.",
           ],
@@ -91,7 +91,7 @@ export const addJavaScriptArtifactContainers = (
             sha256: container.sha256,
             path: container.path,
             operation: "inventory-nested-asar",
-            coverage: completeReconstructionCoverage(),
+            coverage: completeApplicationCoverage(),
           }),
         },
       ],
@@ -106,7 +106,7 @@ export const addJavaScriptArtifactContainers = (
         sha256: context.snapshot.manifest.root_sha256,
         path: container.path,
         operation: "inventory-nested-asar",
-        coverage: completeReconstructionCoverage(),
+        coverage: completeApplicationCoverage(),
       }),
     });
   }
@@ -147,7 +147,7 @@ export const addJavaScriptArtifactFiles = (
           sha256: file.container_sha256,
           path: file.path,
           operation: "map-entry-content",
-          coverage: completeReconstructionCoverage(),
+          coverage: completeApplicationCoverage(),
         }),
       });
     }
@@ -167,16 +167,12 @@ export const addJavaScriptArtifactFiles = (
     const packageValue = context.analysis.packages.find(
       ({ path }) => path === file.path,
     );
-    if (
-      packageValue?.status !== undefined &&
-      packageValue.status !== "included"
-    )
+    if (packageValue !== undefined && packageValue.status !== "included")
       addUnavailableStaticParseScope(context, {
         file,
         asset: target,
         operation: "parse-package-json",
-        limitation:
-          packageValue.limitation ?? "Package metadata could not be parsed.",
+        limitation: packageValue.limitation,
       });
     const jsonValue = context.analysis.json_modules.find(
       ({ path }) => path === file.path,
@@ -186,8 +182,7 @@ export const addJavaScriptArtifactFiles = (
         file,
         asset: target,
         operation: "parse-json-module",
-        limitation:
-          jsonValue.limitation ?? "JSON module content could not be parsed.",
+        limitation: jsonValue.limitation,
       });
     const sourceMap = context.analysis.source_maps.find(
       ({ path }) => path === file.path,
@@ -200,8 +195,7 @@ export const addJavaScriptArtifactFiles = (
         file,
         asset: target,
         operation: "parse-local-source-map",
-        limitation:
-          sourceMap.limitation ?? "Source-map content could not be parsed.",
+        limitation: sourceMap.limitation,
       });
   }
 };
@@ -232,7 +226,7 @@ export const addJavaScriptPackageNodes = (
             sha256: file.sha256,
             path: file.path,
             operation: "parse-package-json",
-            coverage: completeReconstructionCoverage(),
+            coverage: completeApplicationCoverage(),
             limitations:
               packageValue.limitation === null ? [] : [packageValue.limitation],
           }),
@@ -250,7 +244,7 @@ export const addJavaScriptPackageNodes = (
           sha256: file.sha256,
           path: file.path,
           operation: "associate-package-artifact",
-          coverage: completeReconstructionCoverage(),
+          coverage: completeApplicationCoverage(),
         }),
       });
     } else
@@ -312,7 +306,7 @@ const createFileTarget = (
           sha256: file.sha256,
           path: file.path,
           operation: "inventory-relevant-file",
-          coverage: completeReconstructionCoverage(),
+          coverage: completeApplicationCoverage(),
         }),
       },
     ],
@@ -348,7 +342,7 @@ const createAsarEntry = (
           sha256: file.container_sha256,
           path: file.path,
           operation: "inventory-asar-entry",
-          coverage: completeReconstructionCoverage(),
+          coverage: completeApplicationCoverage(),
         }),
       },
     ],
@@ -390,7 +384,7 @@ const addPackageRole = (
       sha256: input.packageFile.sha256,
       path: input.packageFile.path,
       operation: "discover-package-entrypoint",
-      coverage: completeReconstructionCoverage(),
+      coverage: completeApplicationCoverage(),
       limitations: resolution.limitations,
     }),
   });

@@ -19,6 +19,7 @@ import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
   type ClientRegistrationStatus,
+  type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import {
   inspectRuntimeExecutables,
@@ -214,7 +215,10 @@ const collectDoctorIdentity = async (
     checks: [
       ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
       ...registrations
-        .filter(({ state }) => state !== "aligned")
+        .filter(
+          (registration): registration is UnhealthyClientRegistrationStatus =>
+            registration.state !== "aligned",
+        )
         .map(registrationCheck),
     ],
     value: {
@@ -283,15 +287,13 @@ const skillIdentityCheck = (
 });
 
 const registrationCheck = (
-  registration: ClientRegistrationStatus,
+  registration: UnhealthyClientRegistrationStatus,
 ): DoctorCheck => ({
   name: `registration:${registration.client}`,
   ok: false,
   classification: "config_drift",
   detail: registration.config_path,
-  remediation:
-    registration.remediation ??
-    "Run rea setup, then restart the affected client.",
+  remediation: registration.remediation,
 });
 
 const installationState = (

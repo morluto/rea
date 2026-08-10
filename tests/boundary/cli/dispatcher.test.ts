@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { fixtureTest } from "../../support/fixtures.js";
+import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 describe("executable dispatcher", () => {
-  fixtureTest(
+  workspaceCliTest(
     "reserves production MCP routing for bare mode arguments",
     async ({ processes, workspace }) => {
       const scripts = await workspace.mkdir("scripts");
@@ -62,7 +62,7 @@ describe("executable dispatcher", () => {
     },
   );
 
-  fixtureTest(
+  workspaceCliTest(
     "explains how to restore a missing compiled runtime",
     async ({ processes, workspace }) => {
       const scripts = await workspace.mkdir("scripts");

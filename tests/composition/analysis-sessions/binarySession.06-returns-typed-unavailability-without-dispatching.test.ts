@@ -1,6 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -8,17 +8,10 @@ import type {
   AnalysisClient,
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { HopperStartError } from "../../../src/domain/errors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -46,7 +39,7 @@ class TestClient implements AnalysisClient {
 }
 
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -95,7 +88,7 @@ describe("binary session", () => {
         close: () => Promise.resolve(),
       }),
     };
-    const session = composeBinarySessionFromFactory(provider);
+    const session = createTestBinarySession(provider);
     expect((await session.open(first)).ok).toBe(true);
     const result = await session.execute("address_name", {});
     expect(result.ok).toBe(false);
@@ -112,21 +105,19 @@ describe("binary session", () => {
   });
 
   it("requires an open binary and closes idempotently", async () => {
-    const session = composeBinarySessionFromFactory(() => client());
+    const session = createTestBinarySession(() => client());
     expect((await session.execute("binary_overview", {})).ok).toBe(false);
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
   it("keeps the active client when a switch fails", async () => {
-    directory = await createTestTempDirectory("bb-session-");
+    const directory = await createTestTempDirectory("bb-session-");
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await writeFile(first, "one");
     await writeFile(second, "two");
     let created = 0;
-    const session = composeBinarySessionFromFactory(() =>
-      client(created++ === 1),
-    );
+    const session = createTestBinarySession(() => client(created++ === 1));
     expect((await session.open(first)).ok).toBe(true);
     expect((await session.open(second)).ok).toBe(false);
     expect(session.status()).toMatchObject({
@@ -142,7 +133,7 @@ describe("binary session", () => {
   it("serializes concurrent opens and leaves the last target active", async () => {
     const [first, second] = await targets();
     const clients: TestClient[] = [];
-    const session = composeBinarySessionFromFactory(() => {
+    const session = createTestBinarySession(() => {
       const value = new TestClient();
       clients.push(value);
       return value;

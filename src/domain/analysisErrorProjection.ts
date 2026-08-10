@@ -50,9 +50,10 @@ export const projectAnalysisError = (
     remediation: {
       action: analysisErrorRemediationAction(error),
       restart_required:
-        error instanceof PermissionRequiredError && error.restartRequired,
+        error instanceof PermissionRequiredError &&
+        error.remediation === "restart",
       ...(error instanceof PermissionRequiredError
-        ? { elicitation_supported: error.elicitationSupported }
+        ? { elicitation_supported: error.remediation === "elicit" }
         : {}),
     },
     ...(details === undefined ? {} : { details }),

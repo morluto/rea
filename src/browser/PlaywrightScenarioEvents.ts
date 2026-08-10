@@ -241,22 +241,31 @@ export class PlaywrightScenarioEvents {
   }
 
   private request(kind: "request" | "request-failed", request: Request): void {
-    this.push({
-      kind,
+    const observation = {
       method: this.secrets.redact(request.method()).slice(0, 32),
       url: this.safeUrl(request.url()),
       resource_type: this.secrets.redact(request.resourceType()).slice(0, 64),
-      status: null,
       header_names: Object.keys(request.headers())
         .map((name) => this.secrets.redact(name).slice(0, 256))
         .sort()
         .slice(0, 256),
-      failure:
-        kind === "request-failed"
-          ? this.secrets
-              .redact(request.failure()?.errorText ?? "unknown")
-              .slice(0, 1_024)
-          : null,
+    };
+    if (kind === "request-failed") {
+      this.push({
+        ...observation,
+        kind,
+        status: null,
+        failure: this.secrets
+          .redact(request.failure()?.errorText ?? "unknown")
+          .slice(0, 1_024),
+      });
+      return;
+    }
+    this.push({
+      ...observation,
+      kind,
+      status: null,
+      failure: null,
     });
   }
 
@@ -300,14 +309,25 @@ export class PlaywrightScenarioEvents {
   ): void {
     const bytes = Buffer.byteLength(payload);
     const isText = typeof payload === "string";
-    const text = isText ? this.secrets.redact(payload).slice(0, 65_536) : null;
+    if (!isText) {
+      this.push({
+        kind,
+        url,
+        payload_type: "binary",
+        payload_bytes: bytes,
+        payload_text: null,
+        truncated: false,
+      });
+      return;
+    }
+    const text = this.secrets.redact(payload).slice(0, 65_536);
     this.push({
       kind,
       url,
-      payload_type: isText ? "text" : "binary",
+      payload_type: "text",
       payload_bytes: bytes,
       payload_text: text,
-      truncated: isText && text !== null && text.length < payload.length,
+      truncated: text.length < payload.length,
     });
   }
 

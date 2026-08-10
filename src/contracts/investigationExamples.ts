@@ -3,7 +3,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   compareProcessCaptures,
-  processCaptureSchema,
+  parseProcessCapture,
 } from "../domain/processCapture.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
@@ -46,7 +46,7 @@ const PROCESS_PROVIDER = {
   name: "REA deterministic process harness",
   version: "3",
 } as const;
-const capture = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
+const capture = parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 const captureEvidence = (scenario: string) =>
   createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture/v4",

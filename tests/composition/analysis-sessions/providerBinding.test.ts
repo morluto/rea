@@ -1,7 +1,7 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -24,13 +24,6 @@ import {
   ProviderAdapterError,
 } from "../../../src/domain/errors.js";
 import { err, ok } from "../../../src/domain/result.js";
-
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 describe("target-bound provider routing", () => {
   it("rejects provider identity and operation-family collisions at composition", () => {
@@ -322,7 +315,7 @@ const capability = (
 });
 
 const databaseTarget = async (): Promise<string> => {
-  directory = await createTestTempDirectory("rea-provider-binding-");
+  const directory = await createTestTempDirectory("rea-provider-binding-");
   const path = join(directory, "fixture.hop");
   await writeFile(path, "fixture");
   return path;

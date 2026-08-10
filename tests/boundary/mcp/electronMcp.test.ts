@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import type { ElectronActiveObservationPort } from "../../../src/application/ElectronActiveObservationPort.js";
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
@@ -63,7 +63,7 @@ it("exposes root-confined Electron discovery and inspection as Evidence v2", asy
   if (!config.ok) throw config.error;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) throw authority.error;
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
@@ -218,7 +218,7 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
   if (!config.ok) throw config.error;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) throw authority.error;
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
@@ -298,7 +298,7 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   if (!config.ok) throw config.error;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) throw authority.error;
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
@@ -391,7 +391,7 @@ it("reports an unconfigured investigation ceiling before static analysis", async
   if (!config.ok) throw config.error;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok) throw authority.error;
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));

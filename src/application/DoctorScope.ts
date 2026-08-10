@@ -1,4 +1,7 @@
-import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
+import type {
+  ClientRegistrationStatus,
+  UnhealthyClientRegistrationStatus,
+} from "./ClientRegistrationStatus.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -174,13 +177,14 @@ const selectedRegistrationCheck = (
         }
       : registrationCheck(status);
 
-const registrationCheck = (status: ClientRegistrationStatus): DoctorCheck => ({
+const registrationCheck = (
+  status: UnhealthyClientRegistrationStatus,
+): DoctorCheck => ({
   name: `registration:${status.client}`,
   ok: false,
   classification: "config_drift",
   detail: status.config_path,
-  remediation:
-    status.remediation ?? "Run rea setup, then restart the affected client.",
+  remediation: status.remediation,
 });
 
 const selectedSkillCheck = (

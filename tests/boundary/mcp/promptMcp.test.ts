@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -284,7 +284,7 @@ describe("guided prompt completion lifecycle", () => {
     const second = join(directory, "second.hop");
     await Promise.all([writeFile(first, "first"), writeFile(second, "second")]);
     const procedureRequests: Array<Readonly<Record<string, unknown>>> = [];
-    const session = composeBinarySessionFromFactory((target) =>
+    const session = createTestBinarySession((target) =>
       lifecycleClient(basename(target.path, ".hop"), procedureRequests),
     );
     const client = await connect(createServer(session, session));
@@ -340,7 +340,7 @@ const fixtureProvider = { id: "fixture", name: "Fixture", version: "1" };
 const fixtureSession = (
   onExecute: () => void = () => undefined,
 ): BinarySession =>
-  composeBinarySessionFromFactory(() => ({
+  createTestBinarySession(() => ({
     execute: () => {
       onExecute();
       return Promise.resolve(observed(null));

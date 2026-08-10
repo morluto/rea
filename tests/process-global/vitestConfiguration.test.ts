@@ -53,6 +53,14 @@ describe("Vitest project configuration", () => {
     expect(TEST_PROJECTS.map(({ name }) => name).sort()).toEqual(
       EXPECTED_PROJECTS,
     );
+    const sharedModuleProjects = new Set(["domain", "services"]);
+    expect(
+      TEST_PROJECTS.every(({ name, isolate }) =>
+        sharedModuleProjects.has(name)
+          ? isolate === false
+          : isolate === undefined,
+      ),
+    ).toBe(true);
   });
 
   it("classifies every deterministic test in exactly one project", async () => {

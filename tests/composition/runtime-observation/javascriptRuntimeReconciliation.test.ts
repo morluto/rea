@@ -1,7 +1,7 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -18,19 +18,8 @@ import { createElectronActiveObservationFixtureResult } from "../../fixtures/ele
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
 it("matches renderer, frame, script bytes, and worker without claiming execution", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const staticEvidence = await analyzeFixture(fixture);
   const runtimeEvidence = electronRuntimeEvidence(fixture, SOURCE);
 
@@ -70,6 +59,17 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
       }),
     ]),
   );
+  const matched = result.reconciliations.find(
+    ({ status }) => status === "matched",
+  );
+  if (matched === undefined)
+    throw new TypeError("Expected one matched runtime reconciliation");
+  expect(
+    javascriptRuntimeReconciliationResultSchema.safeParse({
+      ...result,
+      reconciliations: [{ ...matched, static_node_id: null }],
+    }).success,
+  ).toBe(false);
   expect(result.static_load_states).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -107,7 +107,6 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
 
 it("reports a captured digest disagreement instead of accepting a path match", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const staticEvidence = await analyzeFixture(fixture);
   const runtimeEvidence = electronRuntimeEvidence(
     fixture,
@@ -131,7 +130,6 @@ it("reports a captured digest disagreement instead of accepting a path match", a
 
 it("keeps source-map declarations outside primary matching authority", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const staticEvidence = await analyzeFixture(fixture);
   const runtimeEvidence = electronRuntimeEvidence(fixture, SOURCE);
   const result = reconcileJavaScriptRuntime({
@@ -148,7 +146,6 @@ it("keeps source-map declarations outside primary matching authority", async () 
 
 it("reconciles active Electron as a partial target-only runtime capture", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const staticEvidence = await analyzeFixture(fixture);
   const applicationPath = join(fixture, "main.js");
   const input = electronActiveObservationInputSchema.parse({
@@ -191,7 +188,6 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
 
 it("hashes the retained Electron scenario projection, not raw selectors or secrets", async () => {
   const fixture = await applicationFixture();
-  temporary.push(fixture);
   const applicationPath = join(fixture, "main.js");
   const makeInput = (secret: string, selector: string) =>
     electronActiveObservationInputSchema.parse({
@@ -231,7 +227,6 @@ it("imports an operator-provided cache layer through an explicit file mapping", 
   const application = await applicationFixture();
   const cache = await createTestTempDirectory("rea-runtime-cache-static-");
   const runtimeCache = await createTestTempDirectory("rea-runtime-cache-live-");
-  temporary.push(application, cache, runtimeCache);
   const cacheSource = "export const cachedFeature = 'fixture';\n";
   await mkdir(join(cache, "mapped"));
   await Promise.all([

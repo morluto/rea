@@ -104,7 +104,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     const installation = this.#inspectInstallation();
     const diagnostics = ghidraInstallationDiagnostics(installation);
     if (
-      installation.available &&
+      installation.status === "available" &&
       installation.platform === "win32" &&
       !hasWindowsNativeAuthority(installation.platform)
     )
@@ -119,7 +119,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           ),
         },
       };
-    return installation.available
+    return installation.status === "available"
       ? {
           status: "available",
           code: null,
@@ -128,9 +128,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         }
       : {
           status: "unavailable",
-          code: installation.rejectionCode ?? "not_configured",
-          reason:
-            installation.reason ?? "Ghidra installation is not available.",
+          code: installation.rejection.code,
+          reason: installation.rejection.reason,
           diagnostics,
         };
   }
@@ -363,11 +362,7 @@ const ghidraClientPrerequisites = (
         `Ghidra cannot import ${target.kind} targets through this adapter.`,
       ),
     );
-  if (
-    !installation.available ||
-    installation.analyzeHeadlessPath === null ||
-    installation.providerVersion === null
-  )
+  if (installation.status === "unavailable")
     return err(
       new ProviderAdapterError("ghidra", "health", {
         diagnostics: ghidraInstallationDiagnostics(installation),

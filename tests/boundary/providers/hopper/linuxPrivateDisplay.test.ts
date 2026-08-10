@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import type { HopperStartupDiagnostic } from "../../../../src/domain/hopperStartupFailure.js";
+import type {
+  HopperStartupDiagnostic,
+  HopperStartupFailureCode,
+} from "../../../../src/domain/hopperStartupFailure.js";
 import {
   runLinuxPrivateDisplayProbe,
   selectLinuxPrivateDisplayStrategy,
@@ -23,27 +26,43 @@ const hangingHelperPath = fileURLToPath(
   new URL("../../../fixtures/x11ProbeHang.py", import.meta.url),
 );
 
-const diagnostic = (
-  overrides: Partial<HopperStartupDiagnostic> = {},
-): HopperStartupDiagnostic => ({
-  schema_version: 1,
-  component: "hopper_private_display",
-  operation: "probe",
-  status: "ready",
-  failure_code: null,
-  reason: "ready",
-  socket_directory: "/tmp/.X11-unix",
-  socket_directory_mode: "1777",
-  mount_read_only: false,
-  effective_socket_directory_mode: "1777",
-  effective_mount_read_only: false,
-  wsl: false,
-  strategy: "direct",
-  fallback_reason: null,
-  xvfb_stderr_bytes: 0,
-  xvfb_stderr_truncated: false,
-  ...overrides,
-});
+type DiagnosticOverrides = Partial<
+  Omit<HopperStartupDiagnostic, "failure_code" | "status">
+> &
+  (
+    | { readonly status?: "ready"; readonly failure_code?: null }
+    | {
+        readonly status: "error";
+        readonly failure_code: HopperStartupFailureCode;
+      }
+  );
+
+const diagnostic = (overrides: DiagnosticOverrides = {}) => {
+  const common = {
+    schema_version: 1,
+    component: "hopper_private_display",
+    operation: "probe",
+    reason: "ready",
+    socket_directory: "/tmp/.X11-unix",
+    socket_directory_mode: "1777",
+    mount_read_only: false,
+    effective_socket_directory_mode: "1777",
+    effective_mount_read_only: false,
+    wsl: false,
+    strategy: "direct",
+    fallback_reason: null,
+    xvfb_stderr_bytes: 0,
+    xvfb_stderr_truncated: false,
+  } as const;
+  return overrides.status === "error"
+    ? ({ ...common, ...overrides } satisfies HopperStartupDiagnostic)
+    : ({
+        ...common,
+        ...overrides,
+        status: "ready",
+        failure_code: null,
+      } satisfies HopperStartupDiagnostic);
+};
 
 const processResult = (
   value: HopperStartupDiagnostic,
@@ -58,7 +77,7 @@ const processResult = (
   ...overrides,
 });
 
-const failureExit = (code: HopperStartupDiagnostic["failure_code"]): number =>
+const failureExit = (code: HopperStartupFailureCode): number =>
   code === "x11_socket_directory_unusable"
     ? 80
     : code === "runtime_dependency_unavailable"

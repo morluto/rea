@@ -10,6 +10,40 @@ import type { ProcessReactiveScenario } from "./processReactiveScenario.js";
 
 type ReactiveTransition =
   ProcessReactiveScenario["states"][number]["on"][number];
+type SuccessfulEffectResult = Extract<
+  ProcessReactiveEffectResult,
+  { readonly status: "succeeded" }
+>;
+
+const createTransitionRecord = (input: {
+  readonly sequence: number;
+  readonly stateBefore: string;
+  readonly transition: ReactiveTransition;
+  readonly triggerEventIds: readonly string[];
+  readonly effectResults: readonly SuccessfulEffectResult[];
+}): ProcessReactiveTransitionRecord => {
+  const state = {
+    sequence: input.sequence,
+    transition_id: input.transition.id,
+    state_before: input.stateBefore,
+    trigger_event_ids: input.triggerEventIds,
+    action_event_ids: input.effectResults.map(
+      ({ observation }) => observation.event_id,
+    ),
+    action_types: input.transition.actions.map(({ type }) => type),
+  };
+  return input.transition.target.kind === "finish"
+    ? {
+        ...state,
+        state_after: null,
+        outcome: input.transition.target.outcome,
+      }
+    : {
+        ...state,
+        state_after: input.transition.target.state,
+        outcome: null,
+      };
+};
 
 const counterValue = (
   counters: readonly { readonly id: string; readonly count: number }[],
@@ -37,36 +71,22 @@ const applyProcessReactiveTransition = (input: {
   readonly transition: ReactiveTransition;
   readonly triggerEventIds: readonly string[];
   readonly consumeEventIds: readonly string[];
-  readonly effectResults: readonly Extract<
-    ProcessReactiveEffectResult,
-    { readonly status: "succeeded" }
-  >[];
+  readonly effectResults: readonly SuccessfulEffectResult[];
   readonly evaluations: readonly ProcessReactiveEvaluation[];
 }): ProcessReactiveDecision => {
   if (input.effectResults.length !== input.transition.actions.length)
     throw new TypeError(
       "Reactive transition effects do not match the admitted actions",
     );
-  const outcome =
-    input.transition.target.kind === "finish"
-      ? input.transition.target.outcome
-      : null;
-  const stateAfter =
-    input.transition.target.kind === "goto"
-      ? input.transition.target.state
-      : null;
-  const record: ProcessReactiveTransitionRecord = {
+  const record = createTransitionRecord({
     sequence: input.snapshot.transitions.length,
-    transition_id: input.transition.id,
-    state_before: input.snapshot.active_state,
-    state_after: stateAfter,
-    outcome,
-    trigger_event_ids: input.triggerEventIds,
-    action_event_ids: input.effectResults.map(
-      ({ observation }) => observation.event_id,
-    ),
-    action_types: input.transition.actions.map(({ type }) => type),
-  };
+    stateBefore: input.snapshot.active_state,
+    transition: input.transition,
+    triggerEventIds: input.triggerEventIds,
+    effectResults: input.effectResults,
+  });
+  const outcome = record.outcome;
+  const stateAfter = record.state_after;
   const consumed = new Set(input.snapshot.consumed_event_ids);
   for (const eventId of input.consumeEventIds) consumed.add(eventId);
   const checkpoints = [...input.snapshot.checkpoints];
@@ -85,10 +105,8 @@ const applyProcessReactiveTransition = (input: {
     input.observation.capture_order,
     ...input.effectResults.map(({ observation }) => observation.capture_order),
   );
-  let next: ProcessReactiveSnapshot = {
+  const nextState = {
     ...input.snapshot,
-    status: outcome === null ? "running" : "finished",
-    outcome,
     active_state: stateAfter ?? input.snapshot.active_state,
     state_entry_capture_order:
       stateAfter === null
@@ -106,6 +124,10 @@ const applyProcessReactiveTransition = (input: {
     checkpoints,
     transitions: [...input.snapshot.transitions, record],
   };
+  let next: ProcessReactiveSnapshot =
+    outcome === null
+      ? { ...nextState, status: "running", outcome: null }
+      : { ...nextState, status: "finished", outcome };
   if (stateAfter !== null) {
     const nextState = input.scenario.states.find(({ id }) => id === stateAfter);
     if (

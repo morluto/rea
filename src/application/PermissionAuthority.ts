@@ -18,7 +18,10 @@ import {
   reloadPermissionCeilings,
   revokePermission,
 } from "../domain/permissionPolicy.js";
-import { PermissionRequiredError } from "../domain/errors.js";
+import {
+  PermissionRequiredError,
+  type PermissionRemediation,
+} from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Failure to establish a filesystem object's canonical authorization identity. */
@@ -108,8 +111,7 @@ const errorReason = (error: unknown): PermissionPathError["reason"] =>
   isNotFound(error) ? "not_found" : "io";
 
 interface PermissionEvaluationOptions {
-  readonly elicitationSupported?: boolean;
-  readonly restartRequired?: boolean;
+  readonly remediation?: PermissionRemediation;
 }
 
 interface CanonicalPermissionDecision {
@@ -131,16 +133,22 @@ type PermissionAuthorizationResult = Promise<
 export class PermissionAuthority {
   private policy: PermissionPolicy;
   private readonly configuredAuthority: PermissionAuthority | undefined;
-  private readonly outsideCeilingRestartRequired: boolean;
+  private readonly outsideCeilingRemediation: Exclude<
+    PermissionRemediation,
+    "elicit"
+  >;
 
   constructor(
     policy: PermissionPolicy,
     configuredAuthority?: PermissionAuthority,
-    outsideCeilingRestartRequired = false,
+    outsideCeilingRemediation: Exclude<
+      PermissionRemediation,
+      "elicit"
+    > = "configure",
   ) {
     this.policy = policy;
     this.configuredAuthority = configuredAuthority;
-    this.outsideCeilingRestartRequired = outsideCeilingRestartRequired;
+    this.outsideCeilingRemediation = outsideCeilingRemediation;
   }
 
   /** Create a connection-owned overlay for once and session grants. */
@@ -148,7 +156,7 @@ export class PermissionAuthority {
     return new PermissionAuthority(
       createPermissionPolicy([]),
       this.configuredAuthority ?? this,
-      true,
+      "restart",
     );
   }
 
@@ -273,15 +281,18 @@ export class PermissionAuthority {
     if (denied.allowed) return ok({ decision: denied, owner: this });
     const outsideAdministratorCeiling =
       denied.reason === "outside_administrator_ceiling";
+    const requestedRemediation = options.remediation ?? "configure";
+    const remediation =
+      outsideAdministratorCeiling && requestedRemediation !== "restart"
+        ? this.outsideCeilingRemediation
+        : requestedRemediation;
     return err(
-      new PermissionRequiredError(
-        request,
-        denied.missing,
-        ceilingFor(effective, request.capability),
-        !outsideAdministratorCeiling && (options.elicitationSupported ?? false),
-        options.restartRequired ??
-          (outsideAdministratorCeiling && this.outsideCeilingRestartRequired),
-      ),
+      new PermissionRequiredError({
+        requested: request,
+        missing: denied.missing,
+        ceiling: ceilingFor(effective, request.capability),
+        remediation,
+      }),
     );
   }
 

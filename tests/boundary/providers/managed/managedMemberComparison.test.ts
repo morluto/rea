@@ -112,6 +112,41 @@ describe("managed member comparison", () => {
     });
   });
 
+  it("rejects member states that disagree with their observed sides or match", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/left.dll");
+    const right = inspect(buildManagedPeFixture(), "/tmp/right.dll");
+    const result = compareManagedMembers(
+      { evidenceId: left.evidence.evidence_id, result: left.result },
+      { evidenceId: right.evidence.evidence_id, result: right.result },
+      comparisonLimits,
+    );
+    const method = result.methods[0];
+    expect(method).toBeDefined();
+    if (method === undefined) return;
+
+    expect(
+      managedMemberComparisonResultSchema.safeParse({
+        ...result,
+        methods: [{ ...method, status: "unchanged", right: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      managedMemberComparisonResultSchema.safeParse({
+        ...result,
+        methods: [
+          {
+            ...method,
+            match: {
+              ...method.match,
+              basis: "none",
+              confidence: "unknown",
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("does not match identical instruction-limited method prefixes", () => {
     const limited = { ...memberLimits, maxMethodInstructions: 1 };
     const left = inspect(

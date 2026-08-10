@@ -1,8 +1,16 @@
 import {
   type BrowserScenarioCapture,
   type BrowserScenarioStep,
-  type BrowserStepArtifacts,
 } from "./browserScenarioCapture.js";
+import {
+  actionState,
+  artifactEvidenceState,
+  captured,
+  eventEvidenceState,
+  eventsFor,
+  screenshotProjection,
+  type CaptureState,
+} from "./browserScenarioDiffEvidence.js";
 import {
   browserScenarioDiffSchema,
   type BrowserScenarioAlignmentFailure,
@@ -26,22 +34,18 @@ export {
   type CompareBrowserScenariosInput,
 } from "./browserScenarioDiffValues.js";
 
-type CaptureState<T> =
-  | { readonly state: "captured"; readonly value: T }
-  | { readonly state: "not_requested" }
-  | { readonly state: "missing"; readonly reason: string }
-  | {
-      readonly state: "truncated";
-      readonly observed: number;
-      readonly retained: number;
-      readonly reason: string;
-    };
-
-interface ComparableArtifact {
+type ComparableArtifact = {
   readonly artifact: BrowserScenarioArtifactKind;
-  readonly status: "changed" | "unchanged" | "unknown" | "not_compared";
-  readonly diff: BrowserScenarioArtifactDiff | null;
-}
+} & (
+  | {
+      readonly status: "unchanged" | "not_compared";
+      readonly diff: null;
+    }
+  | {
+      readonly status: "changed" | "unknown";
+      readonly diff: BrowserScenarioArtifactDiff;
+    }
+);
 
 interface ScenarioAlignment {
   readonly before: ReadonlyMap<string, BrowserScenarioStep>;
@@ -434,80 +438,3 @@ const compareCapturedValues = <Value>(
     },
   };
 };
-
-const artifactEvidenceState = <Value>(
-  artifact: BrowserScenarioArtifactKind,
-  state: CaptureState<Value>,
-  step: BrowserScenarioStep,
-): BrowserScenarioEvidenceState => {
-  if (state.state !== "captured") return state.state;
-  const section = artifact === "action_state" ? "action" : artifact;
-  if (step.completeness.truncated_sections.includes(section))
-    return "truncated";
-  if (step.completeness.missing_sections.includes(section)) return "missing";
-  return "captured";
-};
-
-const eventEvidenceState = (
-  capture: BrowserScenarioCapture,
-  step: BrowserScenarioStep,
-): BrowserScenarioEvidenceState => {
-  const sections = [
-    "events",
-    "frames",
-    "workers",
-    "popups",
-    "websockets",
-  ] as const;
-  if (
-    capture.events.dropped > 0 ||
-    sections.some(
-      (section) =>
-        capture.completeness.truncated_sections.includes(section) ||
-        step.completeness.truncated_sections.includes(section),
-    )
-  )
-    return "truncated";
-  if (
-    sections.some(
-      (section) =>
-        capture.completeness.missing_sections.includes(section) ||
-        step.completeness.missing_sections.includes(section),
-    )
-  )
-    return "missing";
-  return "captured";
-};
-
-const actionState = (step: BrowserScenarioStep) => ({
-  action: step.action,
-  status: step.status,
-  before_url: step.before_url,
-  after_url: step.after_url,
-  error: step.error,
-});
-
-const eventsFor = (
-  capture: BrowserScenarioCapture,
-  stepIndex: number,
-): readonly unknown[] =>
-  capture.events.items.flatMap(
-    ({ sequence: _sequence, step_index: eventStepIndex, ...event }) =>
-      eventStepIndex === stepIndex ? [event] : [],
-  );
-
-const captured = <Value>(value: Value): CaptureState<Value> => ({
-  state: "captured",
-  value,
-});
-
-const screenshotProjection = (
-  screenshot: Extract<
-    BrowserStepArtifacts["screenshot"],
-    { state: "captured" }
-  >["value"],
-) => ({
-  sha256: screenshot.sha256,
-  bytes: screenshot.bytes,
-  media_type: screenshot.media_type,
-});

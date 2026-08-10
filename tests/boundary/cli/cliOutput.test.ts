@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
-import { fixtureTest } from "../../support/fixtures.js";
+import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
   renderCliOutputArgumentError,
@@ -58,7 +58,7 @@ describe("CLI output argument and sanitization boundary", () => {
     ).toEqual({ ok: true });
   });
 
-  fixtureTest(
+  workspaceCliTest(
     "fails before emitting a truncated JSON document",
     async ({ cli }) => {
       const result = await cli.run({
@@ -125,7 +125,7 @@ describe("CLI output argument and sanitization boundary", () => {
 });
 
 describe("compiled CLI output boundary", () => {
-  fixtureTest(
+  workspaceCliTest(
     "sanitizes a real missing-argument dispatcher failure",
     async ({ cli }) => {
       const ordinary = await cli.run({ arguments: ["analyze"] });
@@ -153,7 +153,7 @@ describe("compiled CLI output boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 
-  fixtureTest(
+  workspaceCliTest(
     "preserves artifact diagnostics in ordinary and full JSON output",
     async ({ cli, workspace }) => {
       const source = workspace.path("source");
@@ -178,7 +178,7 @@ describe("compiled CLI output boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 
-  fixtureTest(
+  workspaceCliTest(
     "keeps operation failure status independent of output controls",
     async ({ cli }) => {
       const variants = [
@@ -212,7 +212,7 @@ describe("compiled CLI output boundary", () => {
     CLI_VARIANT_TIMEOUT_MS,
   );
 
-  fixtureTest(
+  workspaceCliTest(
     "keeps failure logs out of structured stdout",
     async ({ cli }) => {
       const result = await cli.run({

@@ -192,47 +192,70 @@ const applicationLimitSchema = z.strictObject({
 });
 
 /** Bounded collection coverage without treating omission as absence. */
-export const applicationCoverageSchema = z
-  .strictObject({
-    status: z.enum(["complete", "partial", "unknown", "unavailable"]),
-    truncated: z.boolean(),
-    omitted_count: z
-      .number()
-      .int()
-      .min(0)
-      .max(Number.MAX_SAFE_INTEGER)
-      .nullable(),
-    limits: z.array(applicationLimitSchema).max(32),
-  })
-  .superRefine((coverage, context) => {
-    if (
-      coverage.status === "complete" &&
-      (coverage.truncated || coverage.omitted_count !== 0)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Complete coverage cannot be truncated or omit items",
-      });
-    if (
-      coverage.truncated &&
-      (coverage.status !== "partial" ||
-        coverage.limits.length === 0 ||
-        coverage.omitted_count === 0)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Truncated coverage must be partial, name a limit, and not claim zero omissions",
-      });
-    if (
-      ["unknown", "unavailable"].includes(coverage.status) &&
-      (coverage.truncated || coverage.omitted_count !== null)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Unknown or unavailable coverage cannot invent truncation counts",
-      });
+const coverageLimitsSchema = z.array(applicationLimitSchema).max(32);
+const omittedCountSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+export const applicationCoverageSchema = z.union([
+  z.strictObject({
+    status: z.literal("complete"),
+    truncated: z.literal(false),
+    omitted_count: z.literal(0),
+    limits: coverageLimitsSchema,
+  }),
+  z.strictObject({
+    status: z.literal("partial"),
+    truncated: z.literal(false),
+    omitted_count: omittedCountSchema.nullable(),
+    limits: coverageLimitsSchema,
+  }),
+  z.strictObject({
+    status: z.literal("partial"),
+    truncated: z.literal(true),
+    omitted_count: z.union([omittedCountSchema.positive(), z.null()]),
+    limits: z.array(applicationLimitSchema).min(1).max(32),
+  }),
+  z.strictObject({
+    status: z.enum(["unknown", "unavailable"]),
+    truncated: z.literal(false),
+    omitted_count: z.null(),
+    limits: coverageLimitsSchema,
+  }),
+]);
+export type ApplicationCoverage = z.infer<typeof applicationCoverageSchema>;
+
+/** Construct complete bounded coverage under the stated configured limits. */
+export const completeApplicationCoverage = (
+  limits: ApplicationCoverage["limits"] = [],
+): ApplicationCoverage =>
+  applicationCoverageSchema.parse({
+    status: "complete",
+    truncated: false,
+    omitted_count: 0,
+    limits,
+  });
+
+/** Construct partial non-truncated coverage without inventing omissions. */
+export const partialApplicationCoverage = (
+  limits: ApplicationCoverage["limits"],
+  omittedCount: number | null,
+): ApplicationCoverage =>
+  applicationCoverageSchema.parse({
+    status: "partial",
+    truncated: false,
+    omitted_count: omittedCount,
+    limits,
+  });
+
+/** Construct limit-truncated coverage with a named bound. */
+export const truncatedApplicationCoverage = (
+  limits: ApplicationCoverage["limits"],
+  omittedCount: number | null,
+): ApplicationCoverage =>
+  applicationCoverageSchema.parse({
+    status: "partial",
+    truncated: true,
+    omitted_count: omittedCount,
+    limits,
   });
 
 const applicationGraphEvidenceBaseSchema = z.strictObject({

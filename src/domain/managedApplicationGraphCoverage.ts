@@ -135,12 +135,21 @@ export const managedGraphEvidenceCoverage = (
       omitted_count: null,
       limits: [],
     };
-  return {
-    status: omitted === 0 && !omissions.partialInput ? "complete" : "partial",
-    truncated: omitted > 0,
-    omitted_count: omitted > 0 ? omitted : omissions.partialInput ? null : 0,
-    limits: omitted > 0 ? projectionLimits(omissions) : [],
-  };
+  if (omitted > 0)
+    return {
+      status: "partial",
+      truncated: true,
+      omitted_count: omitted,
+      limits: projectionLimits(omissions),
+    };
+  return omissions.partialInput
+    ? {
+        status: "partial",
+        truncated: false,
+        omitted_count: null,
+        limits: [],
+      }
+    : completeManagedGraphCoverage();
 };
 
 /** Project aggregate omissions into the managed workflow result contract. */

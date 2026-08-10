@@ -144,24 +144,50 @@ const candidateNames = (
   return [...names];
 };
 
-interface CandidateSelection {
+type PinvokeMatchField =
+  | "status"
+  | "basis"
+  | "confidence"
+  | "matched_native"
+  | "candidates";
+type PinvokeMatch<
+  Verification extends PinvokeVerification = PinvokeVerification,
+> = Verification extends PinvokeVerification
+  ? Pick<Verification, PinvokeMatchField>
+  : never;
+
+interface PinvokeCandidateMatch {
   readonly allCandidates: readonly NativeSymbol[];
-  readonly candidates: readonly NativeSymbol[];
-  readonly selected: NativeSymbol | null;
-  readonly exact: NativeSymbol | undefined;
-  readonly decorated: NativeSymbol | undefined;
+  readonly match: PinvokeMatch;
 }
 
-const selectCandidates = (
+const matchPinvoke = (
   managed: PinvokeImport,
   symbols: readonly NativeSymbol[],
   maxCandidates: number,
-): CandidateSelection => {
+  supportedNativeEvidence: number,
+): PinvokeCandidateMatch => {
   const names = candidateNames(managed);
   const allCandidates = symbols.filter((symbol) =>
     names.some((name) => sameSymbolName(name, symbol.name)),
   );
-  const candidates = allCandidates.slice(0, maxCandidates);
+  const [first, ...remaining] = allCandidates.slice(0, maxCandidates);
+  if (first === undefined)
+    return {
+      allCandidates,
+      match: {
+        status: "unresolved",
+        basis:
+          supportedNativeEvidence > 0
+            ? "no-native-candidate"
+            : "unsupported-native-evidence",
+        confidence: "unknown",
+        matched_native: null,
+        candidates: [],
+      },
+    };
+
+  const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
   const exact = candidates.find(
     (symbol) =>
       sameSymbolName(managed.import_name, symbol.name) &&
@@ -170,49 +196,41 @@ const selectCandidates = (
   const decorated = candidates.find((symbol) =>
     moduleCompatible(managed.import_scope_name, symbol),
   );
-  const selected = exact ?? decorated ?? candidates[0] ?? null;
-  return { allCandidates, candidates, selected, exact, decorated };
-};
-
-interface BasisAndStatus {
-  readonly basis: PinvokeVerification["basis"];
-  readonly status: PinvokeVerification["status"];
-  readonly confidence: PinvokeVerification["confidence"];
-}
-
-const basisAndStatus = (
-  managed: PinvokeImport,
-  selection: CandidateSelection,
-  hasSupportedNativeEvidence: boolean,
-): BasisAndStatus => {
-  const { selected, exact } = selection;
-  if (selected === null)
-    return {
-      basis: hasSupportedNativeEvidence
-        ? "no-native-candidate"
-        : "unsupported-native-evidence",
-      status: "unresolved",
-      confidence: "unknown",
-    };
+  const selected = exact ?? decorated ?? first;
   if (!moduleCompatible(managed.import_scope_name, selected))
     return {
-      basis: "module-mismatch",
-      status: "contradicted",
-      confidence: "unknown",
+      allCandidates,
+      match: {
+        status: "contradicted",
+        basis: "module-mismatch",
+        confidence: "unknown",
+        matched_native: selected,
+        candidates,
+      },
     };
   if (exact !== undefined)
     return {
-      basis:
-        selected.source === "macho-export"
-          ? "exact-export-name"
-          : "exact-function-name",
-      status: "verified",
-      confidence: "observed",
+      allCandidates,
+      match: {
+        status: "verified",
+        basis:
+          selected.source === "macho-export"
+            ? "exact-export-name"
+            : "exact-function-name",
+        confidence: "observed",
+        matched_native: selected,
+        candidates,
+      },
     };
   return {
-    basis: "decorated-name-candidate",
-    status: "inferred",
-    confidence: "inferred",
+    allCandidates,
+    match: {
+      basis: "decorated-name-candidate",
+      status: "inferred",
+      confidence: "inferred",
+      matched_native: selected,
+      candidates,
+    },
   };
 };
 
@@ -243,16 +261,17 @@ const pinvokeLimitations = (
 interface VerifyPinvokeContext {
   readonly item: PinvokeImport;
   readonly managedEvidenceId: string;
-  readonly symbols: readonly NativeSymbol[];
-  readonly hasSupportedNativeEvidence: boolean;
+  readonly native: {
+    readonly symbols: readonly NativeSymbol[];
+    readonly accepted: number;
+  };
   readonly input: ManagedNativeVerificationInput;
 }
 
 export const verifyPinvoke = ({
   item,
   managedEvidenceId,
-  symbols,
-  hasSupportedNativeEvidence,
+  native,
   input,
 }: VerifyPinvokeContext): VerifiedPinvoke => {
   const managed = {
@@ -266,17 +285,13 @@ export const verifyPinvoke = ({
     call_convention: item.call_convention,
     declaration_verification: item.verification,
   };
-  const selection = selectCandidates(
+  const selection = matchPinvoke(
     item,
-    symbols,
+    native.symbols,
     input.limits.max_candidates_per_import,
+    native.accepted,
   );
-  const { status, basis, confidence } = basisAndStatus(
-    item,
-    selection,
-    hasSupportedNativeEvidence,
-  );
-  const limitations = pinvokeLimitations(status, item);
+  const limitations = pinvokeLimitations(selection.match.status, item);
   return {
     verification: pinvokeVerificationSchema.parse({
       item_id: `mnv_pinvoke_${digest({
@@ -284,23 +299,19 @@ export const verifyPinvoke = ({
         token: item.token,
         importName: item.import_name,
         importScope: item.import_scope_name,
-        candidates: [...selection.candidates],
+        candidates: selection.match.candidates,
       })}`,
       managed,
-      status,
-      basis,
-      confidence,
-      matched_native: selection.selected,
-      candidates: selection.candidates,
+      ...selection.match,
       evidence_links: [
         managedEvidenceId,
-        ...new Set(selection.candidates.map(({ evidence_id: id }) => id)),
+        ...new Set(selection.match.candidates.map(({ evidence_id: id }) => id)),
       ],
       limitations,
     }),
     omittedCandidates: Math.max(
       0,
-      selection.allCandidates.length - selection.candidates.length,
+      selection.allCandidates.length - selection.match.candidates.length,
     ),
   };
 };
@@ -353,12 +364,24 @@ export const buildVerificationResult = ({
   const nativeBodyUnresolved = managed.native_implementations.items.filter(
     ({ boundary_kind: kind }) => kind !== "pinvoke",
   ).length;
-  const coverageStatus =
+  const coverage: ManagedNativeVerificationResult["coverage"] =
     omittedNativeObservations > 0 || omittedCandidates > 0
-      ? "truncated"
+      ? {
+          status: "truncated",
+          omitted_native_observations: omittedNativeObservations,
+          omitted_candidates: omittedCandidates,
+        }
       : managed.coverage.state === "complete" && native.unsupported === 0
-        ? "complete-within-inputs"
-        : "partial";
+        ? {
+            status: "complete-within-inputs",
+            omitted_native_observations: 0,
+            omitted_candidates: 0,
+          }
+        : {
+            status: "partial",
+            omitted_native_observations: 0,
+            omitted_candidates: 0,
+          };
   return {
     schema_version: 1 as const,
     algorithm: {
@@ -394,11 +417,7 @@ export const buildVerificationResult = ({
       reason:
         "Managed metadata tokens and RVAs are not translated to native provider addresses by this workflow; C++/CLI, ReadyToRun, and native-body mappings require explicit provider-supported bridge evidence.",
     },
-    coverage: {
-      status: coverageStatus,
-      omitted_native_observations: omittedNativeObservations,
-      omitted_candidates: omittedCandidates,
-    },
+    coverage,
     evidence_links: [
       managedEvidence.evidence_id,
       ...input.native_observations

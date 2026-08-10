@@ -5,7 +5,6 @@ import type {
   ProcessCapture,
   ProcessScenario,
 } from "../domain/processCapture.js";
-import { parseProcessCapture } from "../domain/processCapture.js";
 
 /** Provider identity for controlled Process Capture v4 evidence. */
 export const PROCESS_PROVIDER = {
@@ -32,12 +31,11 @@ export const createProcessCaptureEvidence = (
   scenario: ProcessScenario,
   capture: ProcessCapture,
 ) => {
-  const validatedCapture = parseProcessCapture(capture);
   return createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture/v4",
     operation: "capture_process_scenario",
     parameters: processEvidenceParameters(scenario),
-    result: jsonValueSchema.parse(validatedCapture),
+    result: jsonValueSchema.parse(capture),
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -46,6 +44,6 @@ export const createProcessCaptureEvidence = (
       architecture: process.arch,
       isolation: "process",
     },
-    limitations: validatedCapture.limitations,
+    limitations: capture.limitations,
   });
 };

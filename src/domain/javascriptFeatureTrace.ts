@@ -206,12 +206,7 @@ const traceGraphCoverage = (
     };
   return source.coverage.status === "complete"
     ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
-    : {
-        status: source.coverage.status,
-        truncated: source.coverage.truncated,
-        omitted_count: source.coverage.omitted_count,
-        limits: source.coverage.limits,
-      };
+    : source.coverage;
 };
 
 const terminalPaths = (

@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import type {
   ExecutionOptions,
@@ -189,7 +189,7 @@ describe("browser scenario MCP tool", () => {
     const authority = await loadConfiguredPermissionAuthority(configured.value);
     if (!authority.ok) throw authority.error;
     const provider = new FakeBrowserScenarioProvider();
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
     }));

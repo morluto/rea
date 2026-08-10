@@ -1,5 +1,4 @@
 import type { ProcessCapture } from "./processCapture.js";
-import { validateProcessCapture } from "./processCaptureValidation.js";
 import {
   evaluateProcessTraceSide,
   processTraceComparisonResultSchema,
@@ -28,15 +27,6 @@ export const compareProcessTraces = (
   right: ProcessCapture,
   specificationInput: ProcessTraceSpecification,
 ): ProcessTraceComparisonResult => {
-  const captureIssues = [
-    ...validateProcessCapture(left),
-    ...validateProcessCapture(right),
-  ];
-  const firstCaptureIssue = captureIssues.at(0);
-  if (firstCaptureIssue !== undefined)
-    throw new TypeError(
-      `Invalid Process Capture v4: ${firstCaptureIssue.path}`,
-    );
   const specification =
     processTraceSpecificationSchema.parse(specificationInput);
   const leftEvaluation = evaluateProcessTraceSide(left, specification);

@@ -85,48 +85,44 @@ export const compareJavaScriptExportShapesInputSchema = z
       });
   });
 
-const projectedReturnFieldSchema = z
-  .strictObject({
-    path: jsonPointerSchema,
-    state: z.enum(["literal", "union", "unknown"]),
-    value: z.union([
-      semanticPrimitiveSchema,
-      z.array(semanticPrimitiveSchema).min(1).max(32),
-    ]),
-    reason: boundedTextSchema.nullable(),
-  })
-  .superRefine((field, context) => {
-    if (field.state === "union" && !Array.isArray(field.value))
-      context.addIssue({
-        code: "custom",
-        path: ["value"],
-        message: "Union return fields require a primitive value array",
-      });
-    if (field.state !== "union" && Array.isArray(field.value))
-      context.addIssue({
-        code: "custom",
-        path: ["value"],
-        message: "Only union return fields may contain a value array",
-      });
-    if (field.state === "unknown" && field.reason === null)
-      context.addIssue({
-        code: "custom",
-        path: ["reason"],
-        message: "Unknown return fields require a reason",
-      });
-    if (field.state !== "unknown" && field.reason !== null)
-      context.addIssue({
-        code: "custom",
-        path: ["reason"],
-        message: "Known return fields cannot carry an unknown reason",
-      });
-  });
+const projectedReturnFieldShape = { path: jsonPointerSchema };
+const projectedReturnFieldSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    ...projectedReturnFieldShape,
+    state: z.literal("literal"),
+    value: semanticPrimitiveSchema,
+    reason: z.null(),
+  }),
+  z.strictObject({
+    ...projectedReturnFieldShape,
+    state: z.literal("union"),
+    value: z.array(semanticPrimitiveSchema).min(1).max(32),
+    reason: z.null(),
+  }),
+  z.strictObject({
+    ...projectedReturnFieldShape,
+    state: z.literal("unknown"),
+    value: z.null(),
+    reason: boundedTextSchema,
+  }),
+]);
+export type ProjectedReturnField = z.infer<typeof projectedReturnFieldSchema>;
 
-const projectedPropertyCoverageSchema = z.strictObject({
-  path: jsonPointerSchema,
-  status: z.enum(["complete", "partial"]),
-  omitted: z.number().int().min(0).nullable(),
-});
+const projectedPropertyCoverageSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    path: jsonPointerSchema,
+    status: z.literal("complete"),
+    omitted: z.literal(0),
+  }),
+  z.strictObject({
+    path: jsonPointerSchema,
+    status: z.literal("partial"),
+    omitted: z.union([z.number().int().positive(), z.null()]),
+  }),
+]);
+export type ProjectedPropertyCoverage = z.infer<
+  typeof projectedPropertyCoverageSchema
+>;
 
 const projectedReturnShapeSchema = z
   .strictObject({
@@ -199,16 +195,31 @@ const exportCandidateSchema = z.strictObject({
   matches_requested_export: z.boolean(),
 });
 
-const selectorResultSchema = z.strictObject({
+const selectorResultShape = {
   evidence_id: evidenceIdSchema,
   graph_id: graphIdSchema,
   requested_module_path: selectorTextSchema,
   requested_export_name: selectorTextSchema,
-  status: z.enum(["selected", "missing", "ambiguous", "unavailable"]),
-  selected_node_id: nodeIdSchema.nullable(),
   candidates: z.array(exportCandidateSchema).max(1_000),
   omitted_candidates: z.number().int().min(0),
-});
+};
+const selectorResultSchema = z.union([
+  z.strictObject({
+    ...selectorResultShape,
+    status: z.literal("selected"),
+    selected_node_id: nodeIdSchema,
+  }),
+  z.strictObject({
+    ...selectorResultShape,
+    status: z.enum(["missing", "ambiguous"]),
+    selected_node_id: z.null(),
+  }),
+  z.strictObject({
+    ...selectorResultShape,
+    status: z.literal("unavailable"),
+    selected_node_id: nodeIdSchema.nullable(),
+  }),
+]);
 
 const valueAvailabilitySchema = z.discriminatedUnion("availability", [
   z.strictObject({ availability: z.literal("absent") }),

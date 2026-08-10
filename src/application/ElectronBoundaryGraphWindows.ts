@@ -110,12 +110,15 @@ const addWindowPreload = (
   input: FindingInput<ElectronBrowserWindowFinding>,
   window: ApplicationNode,
 ): void => {
-  const declared = input.value.preload_path;
-  if (declared === null) return;
+  if (input.value.preload_path === null) return;
+  const {
+    preload_path: declared,
+    preload_resolution_context: resolutionContext,
+  } = input.value;
   const resolution = resolveArtifactPathByContext({
     declaredPath: declared,
     sourcePath: input.file.path,
-    context: input.value.preload_resolution_context ?? "module-specifier",
+    context: resolutionContext,
     files: input.context.filesByPath,
   });
   const role = createElectronRoleNode(input.context, {
@@ -210,7 +213,7 @@ const addUtilityProcess = (
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-utility-process",
-      `${value.module_path ?? value.module_expression ?? "[missing]"}:${electronRangeKey(value.location)}`,
+      `${value.module_path ?? value.module_expression}:${electronRangeKey(value.location)}`,
     ),
     observations: [
       {
@@ -248,7 +251,7 @@ const addUtilityProcess = (
   const resolution = resolveArtifactPathByContext({
     declaredPath: value.module_path,
     sourcePath: file.path,
-    context: value.module_resolution_context ?? "module-specifier",
+    context: value.module_resolution_context,
     files: context.filesByPath,
   });
   const resolved = resolution.resolved_path;

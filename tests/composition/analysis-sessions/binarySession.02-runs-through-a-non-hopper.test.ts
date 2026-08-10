@@ -1,22 +1,15 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
-let directory: string | undefined;
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
-
 const targets = async (): Promise<readonly [string, string]> => {
-  directory ??= await createTestTempDirectory("bb-session-");
+  const directory = await createTestTempDirectory("bb-session-");
   const first = join(directory, "first.hop");
   const second = join(directory, "second.hop");
   await writeFile(first, "one");
@@ -106,7 +99,7 @@ describe("binary session", () => {
     const [first] = await targets();
     const operations: string[] = [];
     const provider = nonHopperProvider(operations);
-    const session = composeBinarySessionFromFactory(provider);
+    const session = createTestBinarySession(provider);
     expect((await session.open(first)).ok).toBe(true);
     expect(await session.execute("address_name", {})).toEqual({
       ok: true,

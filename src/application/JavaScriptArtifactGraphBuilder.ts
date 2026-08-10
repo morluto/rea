@@ -20,9 +20,10 @@ import {
   addJavaScriptSourceModules,
 } from "./JavaScriptModuleRelationships.js";
 import {
-  completeReconstructionCoverage,
-  partialReconstructionCoverage,
-} from "./JavaScriptArtifactGraphEvidence.js";
+  completeApplicationCoverage,
+  partialApplicationCoverage,
+  truncatedApplicationCoverage,
+} from "../domain/javascriptApplicationEvidenceSchemas.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,
@@ -108,24 +109,21 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     malformedStructuredData ||
     partialJavaScript;
   if (context.analysis.truncated_scopes > 0)
-    return partialReconstructionCoverage(
+    return truncatedApplicationCoverage(
       reconstructionLimits(context.input),
       truncationOmittedCount(context),
-      true,
     );
   if (exactLimitOmissions > 0)
-    return partialReconstructionCoverage(
+    return truncatedApplicationCoverage(
       reconstructionLimits(context.input),
       exactLimitOmissions,
-      true,
     );
   if (unknownGap)
-    return partialReconstructionCoverage(
+    return partialApplicationCoverage(
       reconstructionLimits(context.input),
       null,
-      false,
     );
-  return completeReconstructionCoverage(reconstructionLimits(context.input));
+  return completeApplicationCoverage(reconstructionLimits(context.input));
 };
 
 const truncationOmittedCount = (

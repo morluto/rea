@@ -237,20 +237,23 @@ const recoverBundlerModule = (
       key,
       requireName,
     });
+  const structuralFingerprint = fingerprint.truncated
+    ? {
+        structural_fingerprint_sha256: null,
+        structural_fingerprint_algorithm: null,
+        structural_fingerprint_status: "truncated" as const,
+      }
+    : {
+        structural_fingerprint_sha256: fingerprint.sha256,
+        structural_fingerprint_algorithm: "babel-ast-v1" as const,
+        structural_fingerprint_status: "complete" as const,
+      };
   return {
     module: {
       module_key: key,
       factory_require_name: requireName,
       source_sha256: sha256Text(sourceSlice(source, factory)),
-      structural_fingerprint_sha256: fingerprint.truncated
-        ? null
-        : fingerprint.sha256,
-      structural_fingerprint_algorithm: fingerprint.truncated
-        ? null
-        : ("babel-ast-v1" as const),
-      structural_fingerprint_status: fingerprint.truncated
-        ? ("truncated" as const)
-        : ("complete" as const),
+      ...structuralFingerprint,
       exports: exportsValue.values,
       exports_truncated: exportsValue.truncated,
       location: range(factory),

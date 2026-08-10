@@ -5,11 +5,11 @@ import {
   linkElectronRoleToAsset,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
+import { artifactObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
 import {
-  artifactObservationEvidence,
-  completeReconstructionCoverage,
-  partialReconstructionCoverage,
-} from "./JavaScriptArtifactGraphEvidence.js";
+  completeApplicationCoverage,
+  truncatedApplicationCoverage,
+} from "../domain/javascriptApplicationEvidenceSchemas.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 /** Project HTML renderer entrypoints and their local script assets. */
@@ -68,7 +68,7 @@ export const addJavaScriptHtmlRoles = (
         target: resolved,
         file: html,
         range: script.location,
-        coverage: completeReconstructionCoverage(),
+        coverage: completeApplicationCoverage(),
         relation: "loads",
         properties: {
           script_path: script.script_path,
@@ -93,7 +93,7 @@ export const addJavaScriptSourceMapOriginals = (
     if (mapFile === undefined || mapNode === undefined) continue;
     const coverage =
       sourceMap.status === "truncated"
-        ? partialReconstructionCoverage(
+        ? truncatedApplicationCoverage(
             [
               {
                 name: "max-source-map-sources",
@@ -102,9 +102,8 @@ export const addJavaScriptSourceMapOriginals = (
               },
             ],
             sourceMap.omitted_sources,
-            true,
           )
-        : completeReconstructionCoverage();
+        : completeApplicationCoverage();
     for (const original of sourceMap.sources) {
       const node = context.accumulator.addNode({
         kind: "source-module",

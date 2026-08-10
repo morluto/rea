@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createPermissionPolicy } from "../../../src/domain/permissionPolicy.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -16,7 +16,7 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
 };
 
 const createSession = () =>
-  composeBinarySessionFromFactory(() => ({
+  createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),

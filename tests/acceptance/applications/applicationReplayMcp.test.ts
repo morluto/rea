@@ -4,7 +4,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
 import type { EnabledJavaScriptReplayPolicy } from "../../../src/application/JavaScriptReplayPlanning.js";
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
@@ -59,7 +59,7 @@ function createReplayAuthority(policy: ReturnType<typeof createReplayPolicy>) {
 
 function createReplayScenario(root: string) {
   const policy = createReplayPolicy(root);
-  const session = composeBinarySessionFromFactory(() => ({
+  const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));

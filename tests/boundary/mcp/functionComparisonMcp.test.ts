@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { composeBinarySessionFromFactory } from "../../../src/application/BinarySessionComposition.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -9,7 +9,7 @@ import { observed } from "../../fixtures/analysisExecution.js";
 
 describe("function comparison MCP integration", () => {
   it("records linked comparison Evidence and an approved residual unknown", async () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -75,7 +75,7 @@ describe("function comparison MCP integration", () => {
   });
 
   it("rejects dangling Evidence links before recording output", async () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -106,7 +106,7 @@ describe("function comparison MCP integration", () => {
   });
 
   it("rejects Evidence IDs with the wrong operation", async () => {
-    const session = composeBinarySessionFromFactory(() => ({
+    const session = createTestBinarySession(() => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),

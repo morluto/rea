@@ -78,7 +78,7 @@ const addReference = (
       identity: artifactLocalIdentity(
         input.file.sha256,
         input.value.kind,
-        input.value.specifier ?? input.value.expression ?? "[dynamic]",
+        input.value.specifier ?? input.value.expression,
       ),
       observations: [
         {
@@ -406,7 +406,7 @@ const unresolvedReferenceNode = (
     identity: artifactLocalIdentity(
       file.sha256,
       "unresolved-reference",
-      `${reference.kind}:${reference.specifier ?? reference.expression ?? "[dynamic]"}`,
+      `${reference.kind}:${reference.specifier ?? reference.expression}`,
     ),
     observations: [
       {

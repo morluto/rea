@@ -389,7 +389,10 @@ export function evaluatePackageTrustGates(
     const expected = pkg.expected_evidence.find(
       (e) => e.scenario_id === contract.scenario_id,
     );
-    if (!expected) continue;
+    if (expected === undefined)
+      throw new TypeError(
+        `Parsed conformance package is missing expected evidence for ${contract.scenario_id}`,
+      );
     const expectedEvidence = expected.envelopes[0] ?? {};
     const actual = actualEvidence[contract.scenario_id] ?? {};
     const result = evaluateTrustGate(
