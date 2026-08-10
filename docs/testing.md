@@ -109,6 +109,6 @@ for another.
 
 The PR acceptance target is a median `npm run check:pr` wall time below three
 minutes across three warm-build runs on the benchmark host. Keep Vitest caches
-cold unless separately identified. The final cutover also requires three
-consecutive deterministic passes without retries, `npm run verify:package`, and
-the applicable real-system lanes.
+cold unless separately identified. A PR that touches packaging or real-system
+behavior also requires `npm run verify:package` and the applicable
+`verify:*` lanes.
