@@ -4,6 +4,8 @@ const valuesAt = (node, path) => {
   if (typeof node !== "object" || node === null) return [];
   if ("anyOf" in node && Array.isArray(node.anyOf))
     return node.anyOf.flatMap((alternative) => valuesAt(alternative, path));
+  if ("oneOf" in node && Array.isArray(node.oneOf))
+    return node.oneOf.flatMap((alternative) => valuesAt(alternative, path));
   if (path.length === 0)
     return "const" in node &&
       (typeof node.const === "number" || typeof node.const === "string")

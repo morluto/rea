@@ -130,22 +130,6 @@ export type ConformancePackage = DeepReadonly<
   z.output<typeof conformancePackageSchema>
 >;
 
-/** Deterministic manifest for one conformance scenario. */
-export type ScenarioManifest = DeepReadonly<
-  z.output<typeof scenarioManifestSchema>
->;
-
-/** Deterministic replay plan for one conformance scenario. */
-export type ReplayPlan = DeepReadonly<z.output<typeof replayPlanSchema>>;
-
-/** Optional effect-shim plan for one conformance scenario. */
-export type ShimPlan = DeepReadonly<z.output<typeof shimPlanSchema>>;
-
-/** Expected evidence for one conformance scenario. */
-export type ExpectedEvidence = DeepReadonly<
-  z.output<typeof expectedEvidenceSchema>
->;
-
 /** Verification policy for one conformance scenario. */
 export type VerifierContract = DeepReadonly<
   z.output<typeof verifierContractSchema>
