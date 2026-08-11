@@ -114,37 +114,68 @@ export const reconstructionClaimResultSchema = z.object({
 });
 
 /** Evidence-cited result over every declared claim, independently paged. */
-export const reconstructionVerificationResultSchema = z.object({
-  status: verificationStatusSchema,
-  specification_sha256: digestSchema,
-  summary: z.object({
-    total: z.number().int().min(1).max(100),
-    passed: z.number().int().min(0),
-    failed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
-    behavioral: z.number().int().min(0),
-    structural: z.number().int().min(0),
-  }),
-  claims: z.object({
-    items: z.array(reconstructionClaimResultSchema).max(100),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1).max(100),
-    total: z.number().int().min(1).max(100),
-    next_offset: z.number().int().min(0).nullable(),
-  }),
-  recommended_probes: z
-    .array(
-      z.object({
-        operation: z.string().min(1).max(200),
-        rationale: z.string().min(1).max(1_000),
-        claim_ids: z.array(claimIdSchema).min(1).max(100),
-        unknown_ids: z.array(unknownIdSchema).max(100),
-      }),
-    )
-    .max(2_000),
-  evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
-  limitations: z.array(z.string()),
-});
+export const reconstructionVerificationResultSchema = z
+  .object({
+    status: verificationStatusSchema,
+    specification_sha256: digestSchema,
+    summary: z.object({
+      total: z.number().int().min(1).max(100),
+      passed: z.number().int().min(0),
+      failed: z.number().int().min(0),
+      unknown: z.number().int().min(0),
+      behavioral: z.number().int().min(0),
+      structural: z.number().int().min(0),
+    }),
+    claims: z.object({
+      items: z.array(reconstructionClaimResultSchema).max(100),
+      offset: z.number().int().min(0),
+      limit: z.number().int().min(1).max(100),
+      total: z.number().int().min(1).max(100),
+      next_offset: z.number().int().min(0).nullable(),
+    }),
+    recommended_probes: z
+      .array(
+        z.object({
+          operation: z.string().min(1).max(200),
+          rationale: z.string().min(1).max(1_000),
+          claim_ids: z.array(claimIdSchema).min(1).max(100),
+          unknown_ids: z.array(unknownIdSchema).max(100),
+        }),
+      )
+      .max(2_000),
+    evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    const { summary } = result;
+    const expectedStatus =
+      summary.failed > 0 ? "fail" : summary.unknown > 0 ? "unknown" : "pass";
+    const issues = [
+      [
+        summary.total !== summary.passed + summary.failed + summary.unknown,
+        "Claim status counts must equal the summary total",
+        ["summary", "total"],
+      ],
+      [
+        summary.total !== summary.behavioral + summary.structural,
+        "Claim kind counts must equal the summary total",
+        ["summary", "total"],
+      ],
+      [
+        result.claims.total !== summary.total,
+        "Paged claim total must equal the summary total",
+        ["claims", "total"],
+      ],
+      [
+        result.status !== expectedStatus,
+        "Verification status must summarize claim statuses",
+        ["status"],
+      ],
+    ] as const;
+    for (const [invalid, message, path] of issues)
+      if (invalid)
+        context.addIssue({ code: "custom", message, path: [...path] });
+  });
 
 export type ReconstructionClaim = z.infer<typeof reconstructionClaimSchema>;
 export type ReconstructionClaimResult = z.infer<

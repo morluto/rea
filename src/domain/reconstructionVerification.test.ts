@@ -232,6 +232,18 @@ describe("reconstruction verification", () => {
       summary: { total: 1, passed: 1, failed: 0, unknown: 0 },
       claims: { total: 1, next_offset: null },
     });
+    expect(
+      reconstructionVerificationResultSchema.safeParse({
+        ...result,
+        summary: { ...result.summary, passed: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      reconstructionVerificationResultSchema.safeParse({
+        ...result,
+        status: "unknown",
+      }).success,
+    ).toBe(false);
     expect(result.claims.items[0]?.evidence_links).toEqual(
       expect.arrayContaining([
         comparison.evidence_id,

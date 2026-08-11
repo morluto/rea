@@ -16,6 +16,8 @@ const HASH_B = "b".repeat(64);
 type Entry = HistoricalSourceGraphInput["entries"][number];
 type DirectoryEntry = Extract<Entry, { kind: "directory" }>;
 type FileEntry = Extract<Entry, { kind: "file" }>;
+type HashedFileEntry = Extract<FileEntry, { content_state: "hashed" }>;
+type UnavailableFileEntry = Exclude<FileEntry, HashedFileEntry>;
 type SymlinkEntry = Extract<Entry, { kind: "symlink" }>;
 
 const directoryEntry = (
@@ -28,7 +30,9 @@ const directoryEntry = (
   limitations: [],
 });
 
-const fileEntry = (overrides: Partial<FileEntry> = {}): FileEntry => ({
+const fileEntry = (
+  overrides: Partial<HashedFileEntry> = {},
+): HashedFileEntry => ({
   path: "src/main.ts",
   kind: "file",
   sha256: HASH_B,
@@ -37,6 +41,20 @@ const fileEntry = (overrides: Partial<FileEntry> = {}): FileEntry => ({
   classifications: ["source"],
   content_state: "hashed",
   limitations: [],
+  ...overrides,
+});
+
+const unavailableFileEntry = (
+  overrides: Partial<UnavailableFileEntry> = {},
+): UnavailableFileEntry => ({
+  path: "src/main.ts",
+  kind: "file",
+  sha256: null,
+  size: null,
+  language: "TypeScript",
+  classifications: ["source"],
+  content_state: "unreadable",
+  limitations: ["Permission denied"],
   ...overrides,
 });
 
@@ -91,6 +109,16 @@ describe("historical source graph", () => {
     expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
     expect(parseHistoricalSourceManifest(first)).toEqual(first);
     expect(first.graph_sha256).toBe(computeHistoricalSourceGraphSha256(graph));
+    expect(() =>
+      createHistoricalSourceGraph({
+        ...graphInput(),
+        entries: [
+          directoryEntry(),
+          { ...fileEntry(), content_state: "unreadable" },
+          symlinkEntry(),
+        ],
+      }),
+    ).toThrow();
   });
 
   it("rejects stale roots and commits file, directory, and symlink semantics", () => {
@@ -161,12 +189,7 @@ describe("partial historical source graphs", () => {
   it("preserves partial observations but rejects every partial complete graph", () => {
     const partial = graphInput();
     partial.inventory_state = "partial";
-    partial.entries[1] = fileEntry({
-      sha256: null,
-      size: null,
-      content_state: "unreadable",
-      limitations: ["Permission denied"],
-    });
+    partial.entries[1] = unavailableFileEntry();
     partial.parse_failures = [
       { path: "src/main.ts", parser: "typescript", reason: "Malformed input" },
     ];

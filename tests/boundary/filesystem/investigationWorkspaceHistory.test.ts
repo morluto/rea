@@ -82,6 +82,9 @@ describe("persistent cross-version investigation workspace", () => {
     const run = completed.value.workspace.runs[0];
     if (run === undefined || run.comparison_evidence_id === null)
       throw new Error("missing completed run");
+    expect(
+      investigationRunSchema.safeParse({ ...run, status: "running" }).success,
+    ).toBe(false);
     const partialRun = investigationRunSchema.parse({
       ...run,
       status: "running",

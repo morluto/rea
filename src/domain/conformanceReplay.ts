@@ -17,25 +17,59 @@ export const scenarioReplayResultSchema = z.strictObject({
 });
 
 /** Result of replaying an entire conformance package. */
-export const packageReplayResultSchema = z.strictObject({
-  package_id: z.string().min(1),
-  total_scenarios: z.number().int().positive(),
-  passed: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  errored: z.number().int().nonnegative(),
-  skipped: z.number().int().nonnegative(),
-  scenario_results: z.array(scenarioReplayResultSchema),
-  trust_gate_results: z.array(trustGateResultSchema),
-  drift_detected: z.boolean(),
-  first_drift: z
-    .strictObject({
-      scenario_id: z.string().min(1),
-      dimension: z.string().min(1),
-      evidence_id: z.string().min(1),
-      message: z.string(),
-    })
-    .nullable(),
-});
+export const packageReplayResultSchema = z
+  .strictObject({
+    package_id: z.string().min(1),
+    total_scenarios: z.number().int().positive(),
+    passed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    errored: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    scenario_results: z.array(scenarioReplayResultSchema),
+    trust_gate_results: z.array(trustGateResultSchema),
+    drift_detected: z.boolean(),
+    first_drift: z
+      .strictObject({
+        scenario_id: z.string().min(1),
+        dimension: z.string().min(1),
+        evidence_id: z.string().min(1),
+        message: z.string(),
+      })
+      .nullable(),
+  })
+  .superRefine((result, context) => {
+    const count = (status: ScenarioReplayResult["status"]): number =>
+      result.scenario_results.filter((item) => item.status === status).length;
+    const countMismatch =
+      result.passed !== count("pass") ||
+      result.failed !== count("fail") ||
+      result.errored !== count("error") ||
+      result.skipped !== count("skipped");
+    const driftDetected = result.trust_gate_results.some(
+      ({ verdict }) => verdict === "fail",
+    );
+    if (
+      result.total_scenarios !== result.scenario_results.length ||
+      countMismatch
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Scenario totals must summarize scenario results",
+        path: ["total_scenarios"],
+      });
+    if (result.drift_detected !== driftDetected)
+      context.addIssue({
+        code: "custom",
+        message: "Drift status must summarize trust-gate failures",
+        path: ["drift_detected"],
+      });
+    if (!driftDetected && result.first_drift !== null)
+      context.addIssue({
+        code: "custom",
+        message: "A drift witness requires a failed trust gate",
+        path: ["first_drift"],
+      });
+  });
 
 export type ScenarioReplayResult = z.infer<typeof scenarioReplayResultSchema>;
 export type PackageReplayResult = z.infer<typeof packageReplayResultSchema>;
@@ -120,7 +154,7 @@ export async function replayConformancePackage(
       }
     : null;
 
-  return {
+  return packageReplayResultSchema.parse({
     package_id: pkg.package_id,
     total_scenarios: pkg.scenarios.length,
     passed,
@@ -131,5 +165,5 @@ export async function replayConformancePackage(
     trust_gate_results: trustGateResults,
     drift_detected,
     first_drift,
-  };
+  });
 }

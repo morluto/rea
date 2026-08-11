@@ -96,38 +96,80 @@ const targetSchema = z.object({
 
 export type InvestigationRunTarget = z.infer<typeof targetSchema>;
 
-const stageSchema = z.enum([
-  "inventory_left",
-  "inventory_right",
-  "compare_artifacts",
-  "find_changed_behavior",
-]);
-
-const investigationRunBaseSchema = z.object({
+const investigationRunIdentityShape = {
   schema_version: z.literal(1),
   run_id: z.string().regex(/^run_[a-f0-9]{64}$/u),
   request_sha256: digestSchema,
   left: targetSchema,
   right: targetSchema,
   options: investigationRunOptionsSchema,
+  left_inventory_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
+  right_inventory_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
+  limitations: z.array(z.string().max(4_096)).max(100),
+};
+const investigationRunContextShape = {
+  ...investigationRunIdentityShape,
   integrity_policy: z.enum(["fail", "record-and-continue"]),
   integrity_continue_approved: z.boolean(),
   max_integrity_mismatches: z.number().int().min(1).max(100),
-  status: z.enum(["running", "complete"]),
-  completed_stages: z.array(stageSchema).max(4),
-  left_inventory_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
-  right_inventory_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
-  comparison_evidence_id: evidenceIdSchema.nullable(),
-  result_evidence_id: evidenceIdSchema.nullable(),
-  limitations: z.array(z.string().max(4_096)).max(100),
-});
+};
+const inventoryRunStateShape = {
+  status: z.literal("running"),
+  completed_stages: z.tuple([
+    z.literal("inventory_left"),
+    z.literal("inventory_right"),
+  ]),
+  comparison_evidence_id: z.null(),
+  result_evidence_id: z.null(),
+};
+const comparisonRunStateShape = {
+  status: z.literal("running"),
+  completed_stages: z.tuple([
+    z.literal("inventory_left"),
+    z.literal("inventory_right"),
+    z.literal("compare_artifacts"),
+  ]),
+  comparison_evidence_id: evidenceIdSchema,
+  result_evidence_id: z.null(),
+};
+const completedRunStateShape = {
+  status: z.literal("complete"),
+  completed_stages: z.tuple([
+    z.literal("inventory_left"),
+    z.literal("inventory_right"),
+    z.literal("compare_artifacts"),
+    z.literal("find_changed_behavior"),
+  ]),
+  comparison_evidence_id: evidenceIdSchema,
+  result_evidence_id: evidenceIdSchema,
+};
+const investigationRunStateSchemas = [
+  z.object({ ...investigationRunContextShape, ...inventoryRunStateShape }),
+  z.object({ ...investigationRunContextShape, ...comparisonRunStateShape }),
+  z.object({ ...investigationRunContextShape, ...completedRunStateShape }),
+] as const;
+const legacyIdentityRunStateSchemas = [
+  z.object({
+    ...investigationRunContextShape,
+    ...inventoryRunStateShape,
+    legacy_request_identity: z.literal(true),
+  }),
+  z.object({
+    ...investigationRunContextShape,
+    ...comparisonRunStateShape,
+    legacy_request_identity: z.literal(true),
+  }),
+  z.object({
+    ...investigationRunContextShape,
+    ...completedRunStateShape,
+    legacy_request_identity: z.literal(true),
+  }),
+] as const;
 
 export const investigationRunSchema = z
   .union([
-    investigationRunBaseSchema.extend({
-      legacy_request_identity: z.literal(true),
-    }),
-    investigationRunBaseSchema,
+    z.union(legacyIdentityRunStateSchemas),
+    z.union(investigationRunStateSchemas),
   ])
   .superRefine((run, context) => {
     if (!("legacy_request_identity" in run)) return;
@@ -175,13 +217,20 @@ export const investigationWorkspaceSchema = z.object({
   runs: z.array(investigationRunSchema).max(1_000),
 });
 
-const legacyInvestigationRunSchema = investigationRunBaseSchema
-  .omit({
-    integrity_policy: true,
-    integrity_continue_approved: true,
-    max_integrity_mismatches: true,
-  })
-  .strict();
+const legacyInvestigationRunSchema = z.union([
+  z.strictObject({
+    ...investigationRunIdentityShape,
+    ...inventoryRunStateShape,
+  }),
+  z.strictObject({
+    ...investigationRunIdentityShape,
+    ...comparisonRunStateShape,
+  }),
+  z.strictObject({
+    ...investigationRunIdentityShape,
+    ...completedRunStateShape,
+  }),
+]);
 
 const legacyInvestigationWorkspaceSchema = investigationWorkspaceSchema
   .extend({
@@ -324,7 +373,6 @@ const validateRunReferences = (workspace: InvestigationWorkspace): void => {
         run.request_sha256 !== legacyIdentity.requestSha256)
     )
       throw new TypeError("Investigation run identity is invalid");
-    validateRunStages(run);
     const references = [
       ...run.left_inventory_evidence_ids,
       ...run.right_inventory_evidence_ids,
@@ -415,21 +463,6 @@ const migrateLegacyWorkspace = (input: unknown): InvestigationWorkspace => {
   });
   validateRunReferences(migrated);
   return migrated;
-};
-
-const validateRunStages = (run: InvestigationRun): void => {
-  const expected = [
-    "inventory_left",
-    "inventory_right",
-    ...(run.comparison_evidence_id === null ? [] : ["compare_artifacts"]),
-    ...(run.result_evidence_id === null ? [] : ["find_changed_behavior"]),
-  ];
-  if (JSON.stringify(run.completed_stages) !== JSON.stringify(expected))
-    throw new TypeError("Investigation run stages are inconsistent");
-  if (run.status === "complete" && run.result_evidence_id === null)
-    throw new TypeError("Completed investigation run has no result Evidence");
-  if (run.status === "running" && run.result_evidence_id !== null)
-    throw new TypeError("Running investigation run has final result Evidence");
 };
 
 const workspaceIdFor = (name: string): string =>

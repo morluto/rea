@@ -26,12 +26,23 @@ const matchedEventSchema = z.strictObject({
   location: locationSchema,
 });
 
-const sideResultSchema = z.strictObject({
-  status: z.enum(["pass", "fail", "unknown"]),
-  matched_variant: identifierSchema.nullable(),
+const sideResultShape = {
   satisfied_constraints: z.array(z.string()),
   raw_trace: z.array(matchedEventSchema),
-});
+};
+
+const sideResultSchema = z.union([
+  z.strictObject({
+    ...sideResultShape,
+    status: z.literal("pass"),
+    matched_variant: identifierSchema.nullable(),
+  }),
+  z.strictObject({
+    ...sideResultShape,
+    status: z.enum(["fail", "unknown"]),
+    matched_variant: z.null(),
+  }),
+]);
 
 const diagnosticSchema = z.strictObject({
   kind: z.enum([

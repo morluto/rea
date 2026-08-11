@@ -3,6 +3,7 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../contracts/processCaptureExampl
 import { parseProcessCapture, type ProcessCapture } from "./processCapture.js";
 import {
   compareProcessTraces,
+  processTraceComparisonResultSchema,
   type ProcessTraceSpecification,
 } from "./processTraceComparison.js";
 const emptyCapture = parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
@@ -195,6 +196,12 @@ describe("process trace comparison", () => {
         locations: [{ capture_order: 2 }, { capture_order: 1 }],
       },
     });
+    expect(
+      processTraceComparisonResultSchema.safeParse({
+        ...comparison,
+        right: { ...comparison.right, matched_variant: "invented" },
+      }).success,
+    ).toBe(false);
   });
   it("enforces explicit negative not-before constraints", () => {
     const specification: ProcessTraceSpecification = {

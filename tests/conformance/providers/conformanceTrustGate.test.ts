@@ -6,6 +6,7 @@ import {
   evaluateTrustGate,
   isSemanticDimension,
   isVolatileDimension,
+  trustGateResultSchema,
 } from "../../../src/domain/conformanceTrustGate.js";
 
 const contract: VerifierContract = {
@@ -16,6 +17,21 @@ const contract: VerifierContract = {
     { name: "timing", required: true, comparison: "fuzzy" },
   ],
   timing_tolerance_ms: 100,
+};
+
+const expectDivergenceRejected = (
+  result: ReturnType<typeof evaluateTrustGate>,
+): void => {
+  expect(
+    trustGateResultSchema.safeParse({
+      ...result,
+      first_divergence: {
+        dimension: "exit_code",
+        evidence_id: "invented",
+        message: "invented",
+      },
+    }).success,
+  ).toBe(false);
 };
 
 describe("conformance trust gates", () => {
@@ -143,6 +159,7 @@ describe("conformance trust gates", () => {
       { exit_code: 0, stdout: "hello" },
     );
     expect(result.verdict).toBe("pass");
+    expectDivergenceRejected(result);
   });
 
   it("fails when a required dimension mismatches", () => {

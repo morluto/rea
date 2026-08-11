@@ -13,19 +13,29 @@ export const dimensionResultSchema = z.strictObject({
   evidence_ids: z.array(z.string()).default([]),
 });
 
-/** Result of evaluating a trust gate for one scenario. */
-export const trustGateResultSchema = z.strictObject({
+const trustGateResultShape = {
   scenario_id: z.string().min(1),
-  verdict: z.enum(["pass", "fail", "unknown"]),
   dimension_results: z.array(dimensionResultSchema),
-  first_divergence: z
-    .strictObject({
-      dimension: z.string().min(1),
-      evidence_id: z.string().min(1),
-      message: z.string(),
-    })
-    .nullable(),
+};
+const divergenceSchema = z.strictObject({
+  dimension: z.string().min(1),
+  evidence_id: z.string().min(1),
+  message: z.string(),
 });
+
+/** Result of evaluating a trust gate for one scenario. */
+export const trustGateResultSchema = z.union([
+  z.strictObject({
+    ...trustGateResultShape,
+    verdict: z.enum(["pass", "unknown"]),
+    first_divergence: z.null(),
+  }),
+  z.strictObject({
+    ...trustGateResultShape,
+    verdict: z.literal("fail"),
+    first_divergence: divergenceSchema.nullable(),
+  }),
+]);
 
 export type DimensionResult = z.infer<typeof dimensionResultSchema>;
 export type TrustGateResult = z.infer<typeof trustGateResultSchema>;
@@ -366,12 +376,12 @@ export function evaluateTrustGate(
       ? "unknown"
       : "pass";
 
-  return {
+  return trustGateResultSchema.parse({
     scenario_id: contract.scenario_id,
     verdict,
     dimension_results: dimensionResults,
     first_divergence: firstDivergence,
-  };
+  });
 }
 
 /**

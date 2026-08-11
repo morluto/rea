@@ -38,37 +38,32 @@ const entryBaseShape = {
   limitations: z.array(boundedTextSchema).max(100),
 };
 
-const sourceFileSchema = z
-  .strictObject({
-    ...entryBaseShape,
-    kind: z.literal("file"),
-    sha256: digestSchema.nullable(),
+const sourceFileBaseShape = {
+  ...entryBaseShape,
+  kind: z.literal("file"),
+  language: z.string().min(1).max(100).nullable(),
+};
+
+const sourceFileSchema = z.union([
+  z.strictObject({
+    ...sourceFileBaseShape,
+    sha256: digestSchema,
+    size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    content_state: z.literal("hashed"),
+  }),
+  z.strictObject({
+    ...sourceFileBaseShape,
+    sha256: z.null(),
     size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
-    language: z.string().min(1).max(100).nullable(),
     content_state: z.enum([
-      "hashed",
       "redacted-secret",
       "excluded",
       "unreadable",
       "too-large",
       "unknown",
     ]),
-  })
-  .superRefine((file, context) => {
-    checkSortedUnique(file.classifications, "classifications", context);
-    if ((file.content_state === "hashed") !== (file.sha256 !== null))
-      context.addIssue({
-        code: "custom",
-        message: "Only hashed files have a content digest",
-        path: ["sha256"],
-      });
-    if (file.content_state === "hashed" && file.size === null)
-      context.addIssue({
-        code: "custom",
-        message: "Hashed files require a byte size",
-        path: ["size"],
-      });
-  });
+  }),
+]);
 
 const sourceDirectorySchema = z.strictObject({
   ...entryBaseShape,
@@ -108,7 +103,7 @@ const sourceSymlinkSchema = z.strictObject({
   ]),
 });
 
-const sourceEntrySchema = z.discriminatedUnion("kind", [
+const sourceEntrySchema = z.union([
   sourceFileSchema,
   sourceDirectorySchema,
   sourceSymlinkSchema,
