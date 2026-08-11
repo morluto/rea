@@ -81,43 +81,58 @@ const findingSchema = z.object({
   location: sourceLocationSchema,
 });
 
-const sourceMapSchema = z.object({
+const originalSourceSchema = z.object({
+  source: z.string(),
+  artifact: webTextArtifactSchema.nullable(),
+});
+const originalModuleEdgeSchema = z.object({
+  from_source: z.string(),
+  kind: z.enum(["static_import", "dynamic_import", "require"]),
+  specifier: z.string(),
+  resolved_source: z.string().nullable(),
+});
+const sourceMapMappingSchema = z.object({
+  generated_line: z.number().int().min(1),
+  generated_column: z.number().int().min(0),
+  source: z.string(),
+  original_line: z.number().int().min(1),
+  original_column: z.number().int().min(0),
+  name: z.string().nullable(),
+});
+const sourceMapContextShape = {
   script_key: z.string(),
   declared_url: z.string(),
-  status: z.enum([
-    "included",
-    "fetch_failed",
-    "invalid",
-    "policy_filtered",
-    "truncated",
-  ]),
-  artifact: webTextArtifactSchema.nullable(),
-  original_sources: z.array(
-    z.object({
-      source: z.string(),
-      artifact: webTextArtifactSchema.nullable(),
-    }),
-  ),
-  original_module_edges: z.array(
-    z.object({
-      from_source: z.string(),
-      kind: z.enum(["static_import", "dynamic_import", "require"]),
-      specifier: z.string(),
-      resolved_source: z.string().nullable(),
-    }),
-  ),
-  mappings: z.array(
-    z.object({
-      generated_line: z.number().int().min(1),
-      generated_column: z.number().int().min(0),
-      source: z.string(),
-      original_line: z.number().int().min(1),
-      original_column: z.number().int().min(0),
-      name: z.string().nullable(),
-    }),
-  ),
-  limitation: z.string().nullable(),
-});
+};
+const parsedSourceMapShape = {
+  artifact: webTextArtifactSchema,
+  original_sources: z.array(originalSourceSchema),
+  original_module_edges: z.array(originalModuleEdgeSchema),
+  mappings: z.array(sourceMapMappingSchema),
+};
+
+const sourceMapSchema = z.union([
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    status: z.literal("included"),
+    limitation: z.null(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    status: z.literal("truncated"),
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    status: z.enum(["fetch_failed", "invalid", "policy_filtered", "truncated"]),
+    artifact: z.null(),
+    original_sources: z.tuple([]),
+    original_module_edges: z.tuple([]),
+    mappings: z.tuple([]),
+    limitation: z.string(),
+  }),
+]);
 
 const webTextArtifactSummarySchema = z.object({
   uri: z.string().regex(/^rea:\/\/web-content\/sha256\/[a-f0-9]{64}$/u),
@@ -128,7 +143,7 @@ const webTextArtifactSummarySchema = z.object({
   text_available: z.literal(true),
 });
 
-const sourceMapsSchema = z
+export const webSourceMapsSchema = z
   .object({
     status: z.enum([
       "not_requested",
@@ -153,7 +168,29 @@ const sourceMapsSchema = z
         code: "custom",
         message: "Source-map coverage counts are inconsistent",
       });
+    const statuses = sourceMaps.items.map(({ status }) => status);
+    const included = statuses.filter((status) => status === "included").length;
+    const hasTruncated = statuses.includes("truncated");
+    const allowedStatuses =
+      sourceMaps.dropped > 0 || hasTruncated
+        ? ["truncated"]
+        : sourceMaps.items.length === 0
+          ? ["not_requested", "unavailable"]
+          : included === sourceMaps.items.length
+            ? ["included"]
+            : included > 0
+              ? ["partial"]
+              : ["unavailable"];
+    if (!allowedStatuses.includes(sourceMaps.status))
+      context.addIssue({
+        code: "custom",
+        message: "Source-map status contradicts retained coverage",
+        path: ["status"],
+      });
   });
+
+export type WebSourceMapItem = z.infer<typeof sourceMapSchema>;
+export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
 
 /** Provider-neutral result of bounded JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({
@@ -200,7 +237,7 @@ export const webBundleAnalysisSchema = z.object({
         location: sourceLocationSchema,
       }),
     ),
-    source_maps: sourceMapsSchema,
+    source_maps: webSourceMapsSchema,
   }),
   inferences: z.array(
     z.object({

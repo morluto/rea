@@ -13,6 +13,9 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
+const expectInvalidDiff = (input: unknown): void => {
+  expect(webCaptureDiffSchema.safeParse(input).success).toBe(false);
+};
 
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
@@ -57,6 +60,21 @@ describe("web capture diff", () => {
     expect(result.dimensions.webmcp).toMatchObject({
       status: "unknown",
       total_changes: 0,
+    });
+    expectInvalidDiff({ ...result, overall_status: "unchanged" });
+    expectInvalidDiff({
+      ...result,
+      dimensions: {
+        ...result.dimensions,
+        webmcp: { ...result.dimensions.webmcp, reason: null },
+      },
+    });
+    expectInvalidDiff({
+      ...result,
+      dimensions: {
+        ...result.dimensions,
+        scripts: { ...result.dimensions.scripts, total_changes: 2 },
+      },
     });
     const {
       accessibility: _accessibility,

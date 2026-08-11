@@ -1,74 +1,26 @@
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
-import { z } from "zod";
 
+import type { WebPageInspection } from "./browserObservation.js";
 import {
-  webPageInspectionSchema,
-  type WebPageInspection,
-} from "./browserObservation.js";
-import {
-  webMcpDiscoverySchema,
-  type WebMcpDiscovery,
-} from "./webMcpDiscovery.js";
+  webCaptureDiffSchema,
+  type CompareWebCapturesInput,
+  type WebCaptureChange,
+  type WebCaptureDiff,
+  type WebCaptureDimension,
+} from "./webCaptureDiffSchemas.js";
+import type { WebMcpDiscovery } from "./webMcpDiscovery.js";
 
-/** One normalized passive page snapshot accepted by capture comparison. */
-export const captureSnapshotSchema = z.object({
-  inspection: webPageInspectionSchema,
-  webmcp: webMcpDiscoverySchema.nullable().default(null),
-});
+export {
+  captureSnapshotSchema,
+  compareWebCapturesInputSchema,
+  webCaptureDiffSchema,
+} from "./webCaptureDiffSchemas.js";
+export type { CompareWebCapturesInput, WebCaptureDiff };
 
-/** Input for deterministic comparison of two normalized web captures. */
-export const compareWebCapturesInputSchema = z.object({
-  before: captureSnapshotSchema,
-  after: captureSnapshotSchema,
-  max_changes: z.number().int().min(1).max(20_000).default(2_000),
-});
-export type CompareWebCapturesInput = z.infer<
-  typeof compareWebCapturesInputSchema
->;
-
-const changeSchema = z.object({
-  identity: z.string(),
-  change: z.enum(["added", "removed", "modified"]),
-});
-const dimensionSchema = z.object({
-  status: z.enum(["changed", "unchanged", "unknown"]),
-  total_changes: z.number().int().min(0),
-  changes: z.array(changeSchema),
-  omitted_changes: z.number().int().min(0),
-  reason: z.string().nullable(),
-});
-const legacyUnknownDimension = {
-  status: "unknown" as const,
-  total_changes: 0,
-  changes: [],
-  omitted_changes: 0,
-  reason: "Dimension was not recorded by this version 1 capture diff.",
-};
-
-/** Completeness-aware changes across stable browser evidence dimensions. */
-export const webCaptureDiffSchema = z.object({
-  schema_version: z.literal(1),
-  overall_status: z.enum(["changed", "unchanged", "unknown"]),
-  before_target: z.object({ target_id: z.string(), url: z.string() }),
-  after_target: z.object({ target_id: z.string(), url: z.string() }),
-  dimensions: z.object({
-    dom_structure: dimensionSchema,
-    scripts: dimensionSchema,
-    resources: dimensionSchema,
-    network: dimensionSchema,
-    metadata: dimensionSchema,
-    webmcp: dimensionSchema,
-    accessibility: dimensionSchema.default(legacyUnknownDimension),
-    storage: dimensionSchema.default(legacyUnknownDimension),
-  }),
-  limitations: z.array(z.string()),
-});
-export type WebCaptureDiff = z.infer<typeof webCaptureDiffSchema>;
-type Dimension =
-  WebCaptureDiff["dimensions"][keyof WebCaptureDiff["dimensions"]];
-type Change = Dimension["changes"][number];
+type Dimension = WebCaptureDimension;
+type Change = WebCaptureChange;
 
 /** Compare normalized observations without treating incomplete absence as proof. */
 export const compareWebCaptures = (
@@ -135,13 +87,29 @@ const compareDimension =
     const all = compareIdentities(before, after);
     const retained = all.slice(0, remaining.value);
     remaining.value -= retained.length;
-    return {
-      status: all.length > 0 ? "changed" : complete ? "unchanged" : "unknown",
-      total_changes: all.length,
-      changes: retained,
-      omitted_changes: all.length - retained.length,
-      reason: all.length === 0 && !complete ? reason : null,
-    };
+    if (all.length > 0)
+      return {
+        status: "changed",
+        total_changes: all.length,
+        changes: retained,
+        omitted_changes: all.length - retained.length,
+        reason: null,
+      };
+    return complete
+      ? {
+          status: "unchanged",
+          total_changes: 0,
+          changes: [],
+          omitted_changes: 0,
+          reason: null,
+        }
+      : {
+          status: "unknown",
+          total_changes: 0,
+          changes: [],
+          omitted_changes: 0,
+          reason,
+        };
   };
 
 const accessibilityDimension = (

@@ -1,13 +1,29 @@
 import { describe, expect, it } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
-import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import {
+  analyzeWebBundleInputSchema,
+  webSourceMapsSchema,
+  type WebSourceMaps,
+} from "../../../src/domain/webBundleAnalysis.js";
 
 const origin = "https://app.example.test";
 const request = {
   scriptKey: `scr_${"1".repeat(64)}`,
   declaredUrl: `${origin}/assets/app.js.map?token=%5BREDACTED%5D`,
   fetchUrl: `${origin}/assets/app.js.map?token=secret`,
+};
+
+const expectInvalidSourceMaps = (value: unknown): void => {
+  expect(webSourceMapsSchema.safeParse(value).success).toBe(false);
+};
+
+const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
+  expectInvalidSourceMaps({
+    ...result,
+    items: [{ ...result.items[0], artifact: null }],
+  });
+  expectInvalidSourceMaps({ ...result, status: "unavailable" });
 };
 
 describe("web source-map fetching and validation", () => {
@@ -77,6 +93,7 @@ describe("web source-map fetching and validation", () => {
         },
       ],
     });
+    expectInvalidIncludedSourceMaps(result);
   });
 
   it("validates sectioned maps and reports bounded mapping truncation", async () => {
@@ -135,6 +152,10 @@ describe("web source-map fetching and validation", () => {
     expect(result).toMatchObject({
       status: "unavailable",
       items: [{ status: "policy_filtered" }],
+    });
+    expectInvalidSourceMaps({
+      ...result,
+      items: [{ ...result.items[0], limitation: null }],
     });
   });
 
