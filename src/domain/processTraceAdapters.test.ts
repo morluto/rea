@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../contracts/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCapture.fixture.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,

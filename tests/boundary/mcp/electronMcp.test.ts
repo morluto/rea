@@ -21,7 +21,7 @@ import {
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
-import { createElectronActiveObservationFixtureResult } from "../../fixtures/electronActiveObservationResult.js";
+import { createElectronActiveObservationFixtureResult } from "../../../src/domain/electronActiveObservation.fixture.js";
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];

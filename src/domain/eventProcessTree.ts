@@ -11,7 +11,6 @@ export const processEventTypeSchema = z.enum([
   "thread_create",
   "thread_exit",
 ]);
-export type ProcessEventType = z.infer<typeof processEventTypeSchema>;
 
 /** A single event-backed process-tree event. */
 export const processTreeEventSchema = z.strictObject({

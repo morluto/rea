@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -15,29 +14,13 @@ import { MANAGED_STATIC_PROVIDER } from "../../../src/application/InvestigationP
 import { createPermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { managedRuntimeCorrelationResultSchema } from "../../../src/domain/managedRuntimeCorrelation.js";
-import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
 import type { PermissionCeiling } from "../../../src/domain/permissionPolicy.js";
 import { inspectManagedMembersBytes } from "../../../src/dotnet/ManagedMemberInspector.js";
-import { buildManagedPeFixture } from "../../fixtures/managedPe.js";
-
-const memberLimits = {
-  typeOffset: 0,
-  typeLimit: 100,
-  methodOffset: 0,
-  methodLimit: 100,
-  fieldOffset: 0,
-  fieldLimit: 100,
-  memberRefOffset: 0,
-  memberRefLimit: 100,
-  edgeOffset: 0,
-  edgeLimit: 100,
-  instructionAnchorLimit: 100,
-  maxMetadataBytes: 1024 * 1024,
-  maxTableRows: 1_000,
-  maxHeapItemBytes: 1024 * 1024,
-  maxMethodBodyBytes: 1024 * 1024,
-  maxMethodInstructions: 1_000,
-};
+import {
+  buildManagedPeFixture,
+  managedPeFixtureTarget,
+  MANAGED_MEMBER_FIXTURE_LIMITS,
+} from "../../../src/dotnet/ManagedPe.fixture.js";
 
 describe("managed runtime correlation planning", () => {
   it("fails closed while the managed runtime authority is disabled", async () => {
@@ -157,7 +140,7 @@ describe("managed runtime correlation planning", () => {
     await writeFile(artifactPath, bytes);
     await writeFile(executablePath, "#!/bin/sh\n");
     const fixture = inspect(bytes, artifactPath, {
-      ...memberLimits,
+      ...MANAGED_MEMBER_FIXTURE_LIMITS,
       maxMethodInstructions: 1,
     });
     const authority = await authorityFor(directory, executablePath, true);
@@ -247,18 +230,9 @@ const inputFor = (
 const inspect = (
   bytes: Buffer,
   path: string,
-  limits: typeof memberLimits = memberLimits,
+  limits: typeof MANAGED_MEMBER_FIXTURE_LIMITS = MANAGED_MEMBER_FIXTURE_LIMITS,
 ) => {
-  const target: BinaryTarget = {
-    path,
-    sha256: hash(bytes),
-    kind: "executable",
-    format: "pe",
-    architecture: "x86",
-    availableArchitectures: ["x86"],
-    executableRole: "application",
-    managed: true,
-  };
+  const target = managedPeFixtureTarget(bytes, path);
   const result = inspectManagedMembersBytes(bytes, target, limits);
   const method = result.methods.items[0];
   if (method === undefined) throw new Error("fixture has no method");
@@ -274,6 +248,3 @@ const inspect = (
     }),
   };
 };
-
-const hash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");

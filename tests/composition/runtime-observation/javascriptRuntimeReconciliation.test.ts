@@ -14,7 +14,7 @@ import { electronActiveObservationInputSchema } from "../../../src/domain/electr
 import { inspectElectronPageInputSchema } from "../../../src/domain/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { permissionAuthorityForRoot } from "../../fixtures/permissionAuthority.js";
-import { createElectronActiveObservationFixtureResult } from "../../fixtures/electronActiveObservationResult.js";
+import { createElectronActiveObservationFixtureResult } from "../../../src/domain/electronActiveObservation.fixture.js";
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 

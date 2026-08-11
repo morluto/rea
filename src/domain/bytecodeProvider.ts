@@ -37,7 +37,6 @@ export const bytecodeSymbolSchema = z.strictObject({
   /** Whether the symbol is accessible (public). */
   is_public: z.boolean().default(false),
 });
-export type BytecodeSymbol = z.infer<typeof bytecodeSymbolSchema>;
 
 /** A discovered bytecode artifact (class file, wheel, etc). */
 export const bytecodeArtifactSchema = z.strictObject({

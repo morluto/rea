@@ -17,7 +17,7 @@ import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/mana
 import type { PermissionCeiling } from "../../../src/domain/permissionPolicy.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { buildManagedPeFixture } from "../../fixtures/managedPe.js";
+import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 
 it("opens a managed PE and executes the managed static provider through MCP", async () => {
   const directory = await createTestTempDirectory("rea-managed-mcp-");

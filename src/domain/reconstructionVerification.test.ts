@@ -7,7 +7,7 @@ import {
   verifyReconstruction,
 } from "./reconstructionVerification.js";
 import type { JsonValue } from "./jsonValue.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../contracts/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCapture.fixture.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 

@@ -1,14 +1,14 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type {
   AnalysisClient,
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  ControllableAnalysisClient,
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { HopperStartError } from "../../../src/domain/errors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -18,38 +18,9 @@ const client = (fail = false): AnalysisClient => ({
   close: () => Promise.resolve(),
 });
 
-class TestClient implements AnalysisClient {
-  closed = 0;
-  constructor(
-    readonly pendingHealth?: Promise<ReturnType<typeof ok>>,
-    readonly failHealth = false,
-    readonly pendingCall?: Promise<ReturnType<typeof ok>>,
-  ) {}
-  execute(name: string) {
-    if (name === "health")
-      return this.failHealth
-        ? Promise.resolve(err(new HopperStartError()))
-        : (this.pendingHealth ?? Promise.resolve(ok(null)));
-    return this.pendingCall ?? Promise.resolve(ok(null));
-  }
-  close(): Promise<void> {
-    this.closed += 1;
-    return Promise.resolve();
-  }
-}
-
-const targets = async (): Promise<readonly [string, string]> => {
-  const directory = await createTestTempDirectory("bb-session-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  await writeFile(first, "one");
-  await writeFile(second, "two");
-  return [first, second];
-};
-
 describe("binary session", () => {
   it("returns typed unavailability without dispatching a partial provider", async () => {
-    const [first] = await targets();
+    const [first] = await createBinarySessionTargets();
     const operations: string[] = [];
     const provider: AnalysisProvider = {
       identity: () => ({ id: "partial", name: "Partial", version: "1" }),
@@ -111,11 +82,7 @@ describe("binary session", () => {
   });
 
   it("keeps the active client when a switch fails", async () => {
-    const directory = await createTestTempDirectory("bb-session-");
-    const first = join(directory, "first.hop");
-    const second = join(directory, "second.hop");
-    await writeFile(first, "one");
-    await writeFile(second, "two");
+    const [first, second] = await createBinarySessionTargets();
     let created = 0;
     const session = createTestBinarySession(() => client(created++ === 1));
     expect((await session.open(first)).ok).toBe(true);
@@ -131,10 +98,10 @@ describe("binary session", () => {
   });
 
   it("serializes concurrent opens and leaves the last target active", async () => {
-    const [first, second] = await targets();
-    const clients: TestClient[] = [];
+    const [first, second] = await createBinarySessionTargets();
+    const clients: ControllableAnalysisClient[] = [];
     const session = createTestBinarySession(() => {
-      const value = new TestClient();
+      const value = new ControllableAnalysisClient();
       clients.push(value);
       return value;
     });

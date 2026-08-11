@@ -4,7 +4,7 @@ import {
   runPairedProcessExperiment,
   type ProcessCapturePort,
 } from "./ProcessPairedExperiment.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../contracts/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/processCapture.fixture.js";
 import {
   parseProcessCapture,
   type EnabledProcessExecutionPolicy,

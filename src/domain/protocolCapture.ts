@@ -77,7 +77,6 @@ export const protocolCaptureSchema = z.strictObject({
   /** Whether credentials were detected and redacted. */
   credentials_detected: z.boolean().default(false),
 });
-export type ProtocolCapture = z.infer<typeof protocolCaptureSchema>;
 
 /** Classification of a byte sequence as a known protocol family. */
 export function classifyProtocolFamily(

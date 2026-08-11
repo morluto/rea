@@ -1,95 +1,18 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-import type {
-  AnalysisProvider,
-  CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/errors.js";
-import { err, ok as resultOk } from "../../../src/domain/result.js";
+import { err } from "../../../src/domain/result.js";
+import {
+  createBinarySessionTargets,
+  createCacheProvider,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-const cacheProvider = (
-  calls: string[],
-  mayWriteFilesystem = false,
-): AnalysisProvider => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  } as const;
-  return {
-    identity: () => identity,
-    resolveAnalysisProfile: () =>
-      Promise.resolve(
-        resultOk({
-          profile: createAnalysisProfile(identity, 1, { fixture: true }),
-          compatibility: {},
-        }),
-      ),
-    capabilities: () => [
-      cacheCapability(identity, "address_name", false, mayWriteFilesystem),
-      cacheCapability(identity, "set_address_name", true),
-    ],
-    createClient: () => ({
-      execute: (operation) => {
-        calls.push(operation);
-        return Promise.resolve(ok(operation));
-      },
-      close: () => Promise.resolve(),
-    }),
-  };
-};
-
-const cacheCapability = (
-  provider: CapabilityDescriptor["provider"],
-  operation: "address_name" | "set_address_name",
-  mutatesArtifact: boolean,
-  mayWriteFilesystem = false,
-): CapabilityDescriptor => ({
-  provider,
-  operation,
-  inputContractVersion: 1,
-  outputContractVersion: 1,
-  available: true,
-  reason: null,
-  pagination: "none",
-  exhaustive: true,
-  effects: {
-    mutatesArtifact,
-    launchesProcess: false,
-    mayShowUi: false,
-    mayAccessNetwork: false,
-    mayWriteFilesystem,
-    changesPermissions: false,
-    requiresRoot: false,
-  },
-  limits: {
-    maxResults: null,
-    maxPayloadBytes: null,
-    timeoutMs: null,
-  },
-  limitations: [],
-});
-
-const targets = async (): Promise<readonly [string, string]> => {
-  const directory = await createTestTempDirectory("bb-session-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  await writeFile(first, "one");
-  await writeFile(second, "two");
-  return [first, second];
-};
 
 describe("binary session", () => {
   it("publishes provider-health availability changes and resets on target switch", async () => {
-    const [first, second] = await targets();
-    const provider = cacheProvider([]);
+    const [first, second] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
     provider.createClient = () => ({
       execute: (operation) =>
         Promise.resolve(
@@ -130,8 +53,8 @@ describe("binary session", () => {
   });
 
   it("isolates availability observers from execution results and session state", async () => {
-    const [first] = await targets();
-    const provider = cacheProvider([]);
+    const [first] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
     let providerCalls = 0;
     provider.createClient = () => ({
       execute: (operation) => {
@@ -179,9 +102,9 @@ describe("binary session", () => {
   });
 
   it("does not replay operations with filesystem side effects", async () => {
-    const [first] = await targets();
+    const [first] = await createBinarySessionTargets();
     const calls: string[] = [];
-    const session = createTestBinarySession(cacheProvider(calls, true));
+    const session = createTestBinarySession(createCacheProvider(calls, true));
     expect((await session.open(first)).ok).toBe(true);
     const input = { address: "0x1000", document: "first" };
     expect((await session.execute("address_name", input)).ok).toBe(true);

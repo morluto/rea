@@ -15,7 +15,6 @@ export type TransportType = z.infer<typeof transportTypeSchema>;
 
 /** Direction of a protocol frame. */
 export const frameDirectionSchema = z.enum(["sent", "received", "intercepted"]);
-export type FrameDirection = z.infer<typeof frameDirectionSchema>;
 
 /** A captured protocol frame. */
 export const protocolFrameSchema = z.strictObject({
@@ -57,7 +56,6 @@ export const authStageSchema = z.enum([
   "failure",
   "success",
 ]);
-export type AuthStage = z.infer<typeof authStageSchema>;
 
 /** Token lifecycle event. */
 export const tokenLifecycleEventSchema = z.enum([
@@ -67,7 +65,6 @@ export const tokenLifecycleEventSchema = z.enum([
   "revoked",
   "renewed",
 ]);
-export type TokenLifecycleEvent = z.infer<typeof tokenLifecycleEventSchema>;
 
 /** A captured authentication flow event. */
 export const authFlowEventSchema = z.strictObject({
@@ -107,7 +104,6 @@ export const customProtocolCaptureSchema = z.strictObject({
   /** Whether credentials were detected. */
   credentials_detected: z.boolean().default(false),
 });
-export type CustomProtocolCapture = z.infer<typeof customProtocolCaptureSchema>;
 
 /** Correlate a frame with process identity. */
 export function correlateProcessIdentity(

@@ -4,56 +4,13 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { HopperStartError } from "../../../src/domain/errors.js";
-import { err } from "../../../src/domain/result.js";
+import {
+  ControllableAnalysisClient,
+  createBinarySessionTargets,
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-class TestClient implements AnalysisClient {
-  closed = 0;
-  constructor(
-    readonly pendingHealth?: Promise<ReturnType<typeof ok>>,
-    readonly failHealth = false,
-    readonly pendingCall?: Promise<ReturnType<typeof ok>>,
-  ) {}
-  execute(name: string) {
-    if (name === "health")
-      return this.failHealth
-        ? Promise.resolve(err(new HopperStartError()))
-        : (this.pendingHealth ?? Promise.resolve(ok(null)));
-    return this.pendingCall ?? Promise.resolve(ok(null));
-  }
-  close(): Promise<void> {
-    this.closed += 1;
-    return Promise.resolve();
-  }
-}
-
-const targets = async (): Promise<readonly [string, string]> => {
-  const directory = await createTestTempDirectory("bb-session-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  await writeFile(first, "one");
-  await writeFile(second, "two");
-  return [first, second];
-};
-
-const deferred = <T>(): {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-} => {
-  let resolvePromise: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
-    resolvePromise = resolve;
-  });
-  return {
-    promise,
-    resolve(value) {
-      resolvePromise?.(value);
-    },
-  };
-};
 
 describe("binary session", () => {
   it("replaces the active client when a canonical path changes contents", async () => {
@@ -115,11 +72,11 @@ describe("binary session", () => {
   });
 
   it("waits for an active call before closing its client during a switch", async () => {
-    const [first, second] = await targets();
-    const active = deferred<ReturnType<typeof ok>>();
-    const clients: TestClient[] = [];
+    const [first, second] = await createBinarySessionTargets();
+    const active = createDeferred<ReturnType<typeof ok>>();
+    const clients: ControllableAnalysisClient[] = [];
     const session = createTestBinarySession(() => {
-      const value = new TestClient(
+      const value = new ControllableAnalysisClient(
         undefined,
         false,
         clients.length === 0 ? active.promise : undefined,
@@ -139,12 +96,14 @@ describe("binary session", () => {
   });
 
   it("cancels an open queued behind another transition without creating a client", async () => {
-    const [first, second] = await targets();
-    const health = deferred<ReturnType<typeof ok>>();
+    const [first, second] = await createBinarySessionTargets();
+    const health = createDeferred<ReturnType<typeof ok>>();
     let created = 0;
     const session = createTestBinarySession(() => {
       created += 1;
-      return new TestClient(created === 1 ? health.promise : undefined);
+      return new ControllableAnalysisClient(
+        created === 1 ? health.promise : undefined,
+      );
     });
     const opening = session.open(first);
     const controller = new AbortController();

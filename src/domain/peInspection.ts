@@ -25,7 +25,6 @@ export const peSectionSchema = z.strictObject({
   raw_offset: z.number().int().nonnegative(),
   characteristics: sectionCharacteristicsSchema,
 });
-export type PeSection = z.infer<typeof peSectionSchema>;
 
 /** PE import entry. */
 export const peImportSchema = z.strictObject({
@@ -34,7 +33,6 @@ export const peImportSchema = z.strictObject({
   ordinal: z.number().int().nullable(),
   is_delay_import: z.boolean().default(false),
 });
-export type PeImport = z.infer<typeof peImportSchema>;
 
 /** PE export entry. */
 export const peExportSchema = z.strictObject({
@@ -43,7 +41,6 @@ export const peExportSchema = z.strictObject({
   rva: z.number().int().nonnegative(),
   forwarder: z.string().nullable(),
 });
-export type PeExport = z.infer<typeof peExportSchema>;
 
 /** PE/COFF resource entry. */
 export const peResourceSchema = z.strictObject({
@@ -53,7 +50,6 @@ export const peResourceSchema = z.strictObject({
   rva: z.number().int().nonnegative(),
   size: z.number().int().nonnegative(),
 });
-export type PeResource = z.infer<typeof peResourceSchema>;
 
 /** PE debug directory entry. */
 export const peDebugEntrySchema = z.strictObject({
@@ -67,14 +63,12 @@ export const peDebugEntrySchema = z.strictObject({
   /** PDB path if this is a CodeView entry. */
   pdb_path: z.string().nullable(),
 });
-export type PeDebugEntry = z.infer<typeof peDebugEntrySchema>;
 
 /** TLS callback entry. */
 export const peTlsCallbackSchema = z.strictObject({
   callback_rva: z.number().int().nonnegative(),
   index: z.number().int().nonnegative(),
 });
-export type PeTlsCallback = z.infer<typeof peTlsCallbackSchema>;
 
 /** Architecture/machine type. */
 export const peMachineTypeSchema = z.enum([

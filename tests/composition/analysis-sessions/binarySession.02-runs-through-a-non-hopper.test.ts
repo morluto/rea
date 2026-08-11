@@ -1,21 +1,11 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
 import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-const targets = async (): Promise<readonly [string, string]> => {
-  const directory = await createTestTempDirectory("bb-session-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  await writeFile(first, "one");
-  await writeFile(second, "two");
-  return [first, second];
-};
 
 const nonHopperProvider = (operations: string[]): AnalysisProvider => {
   const provider: AnalysisProvider = {
@@ -96,7 +86,7 @@ const nonHopperProvider = (operations: string[]): AnalysisProvider => {
 
 describe("binary session", () => {
   it("runs through a non-Hopper analysis provider", async () => {
-    const [first] = await targets();
+    const [first] = await createBinarySessionTargets();
     const operations: string[] = [];
     const provider = nonHopperProvider(operations);
     const session = createTestBinarySession(provider);

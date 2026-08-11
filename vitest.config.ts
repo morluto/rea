@@ -41,8 +41,8 @@ export const TEST_PROJECTS = [
   {
     name: "adapters",
     include: [
-      "src/config*.test.ts",
-      "src/{artifacts,browser,dotnet,ghidra,hopper,native,process,reference,replay}/**/*.test.ts",
+      "src/*.test.ts",
+      "src/{artifacts,browser,dotnet,ghidra,hopper,native,process,reference,replay,server}/**/*.test.ts",
     ],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
@@ -65,6 +65,9 @@ export const TEST_PROJECTS = [
     include: ["tests/boundary/mcp/**/*.test.ts"],
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
+    // Each file creates and closes an explicit in-memory MCP session. Reuse the
+    // immutable server graph so module startup does not outweigh transport work.
+    isolate: false,
   },
   {
     name: "acceptance",

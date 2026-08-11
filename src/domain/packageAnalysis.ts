@@ -44,7 +44,6 @@ export const digitalSignatureSchema = z.strictObject({
   /** Timestamp signer if present. */
   timestamp_signer: z.string().nullable(),
 });
-export type DigitalSignature = z.infer<typeof digitalSignatureSchema>;
 
 /** A Windows package manifest for static analysis. */
 export const packageManifestSchema = z.strictObject({

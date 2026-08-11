@@ -11,7 +11,7 @@ import {
   parseProcessScenario,
   type ProcessCapture,
 } from "../../../src/domain/processCapture.js";
-import { processCaptureIssues } from "../../fixtures/processCapture.js";
+import { processCaptureIssues } from "../../../src/domain/processCapture.fixture.js";
 
 function createInteractiveScenario(root: string, script: string) {
   return parseProcessScenario({

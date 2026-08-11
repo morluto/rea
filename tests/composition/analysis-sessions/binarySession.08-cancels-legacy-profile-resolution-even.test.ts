@@ -1,133 +1,20 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-import type {
-  AnalysisClient,
-  AnalysisProvider,
-  CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { HopperStartError } from "../../../src/domain/errors.js";
+import {
+  ControllableAnalysisClient,
+  createBinarySessionTargets,
+  createCacheProvider,
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { err, ok as resultOk } from "../../../src/domain/result.js";
+import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-
-const cacheProvider = (
-  calls: string[],
-  mayWriteFilesystem = false,
-): AnalysisProvider => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  } as const;
-  return {
-    identity: () => identity,
-    resolveAnalysisProfile: () =>
-      Promise.resolve(
-        resultOk({
-          profile: createAnalysisProfile(identity, 1, { fixture: true }),
-          compatibility: {},
-        }),
-      ),
-    capabilities: () => [
-      cacheCapability(identity, "address_name", false, mayWriteFilesystem),
-      cacheCapability(identity, "set_address_name", true),
-    ],
-    createClient: () => ({
-      execute: (operation) => {
-        calls.push(operation);
-        return Promise.resolve(ok(operation));
-      },
-      close: () => Promise.resolve(),
-    }),
-  };
-};
-
-const cacheCapability = (
-  provider: CapabilityDescriptor["provider"],
-  operation: "address_name" | "set_address_name",
-  mutatesArtifact: boolean,
-  mayWriteFilesystem = false,
-): CapabilityDescriptor => ({
-  provider,
-  operation,
-  inputContractVersion: 1,
-  outputContractVersion: 1,
-  available: true,
-  reason: null,
-  pagination: "none",
-  exhaustive: true,
-  effects: {
-    mutatesArtifact,
-    launchesProcess: false,
-    mayShowUi: false,
-    mayAccessNetwork: false,
-    mayWriteFilesystem,
-    changesPermissions: false,
-    requiresRoot: false,
-  },
-  limits: {
-    maxResults: null,
-    maxPayloadBytes: null,
-    timeoutMs: null,
-  },
-  limitations: [],
-});
-
-class TestClient implements AnalysisClient {
-  closed = 0;
-  constructor(
-    readonly pendingHealth?: Promise<ReturnType<typeof ok>>,
-    readonly failHealth = false,
-    readonly pendingCall?: Promise<ReturnType<typeof ok>>,
-  ) {}
-  execute(name: string) {
-    if (name === "health")
-      return this.failHealth
-        ? Promise.resolve(err(new HopperStartError()))
-        : (this.pendingHealth ?? Promise.resolve(ok(null)));
-    return this.pendingCall ?? Promise.resolve(ok(null));
-  }
-  close(): Promise<void> {
-    this.closed += 1;
-    return Promise.resolve();
-  }
-}
-
-const targets = async (): Promise<readonly [string, string]> => {
-  const directory = await createTestTempDirectory("bb-session-");
-  const first = join(directory, "first.hop");
-  const second = join(directory, "second.hop");
-  await writeFile(first, "one");
-  await writeFile(second, "two");
-  return [first, second];
-};
-
-const deferred = <T>(): {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-} => {
-  let resolvePromise: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
-    resolvePromise = resolve;
-  });
-  return {
-    promise,
-    resolve(value) {
-      resolvePromise?.(value);
-    },
-  };
-};
 
 describe("binary session", () => {
   it("cancels legacy profile resolution even when the provider ignores its signal", async () => {
-    const [first] = await targets();
-    const provider = cacheProvider([]);
+    const [first] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
     let observedSignal: AbortSignal | undefined;
     let created = 0;
     provider.resolveAnalysisProfile = (_target, options) => {
@@ -136,7 +23,7 @@ describe("binary session", () => {
     };
     provider.createClient = () => {
       created += 1;
-      return new TestClient();
+      return new ControllableAnalysisClient();
     };
     const session = createTestBinarySession(provider);
     const controller = new AbortController();
@@ -155,10 +42,10 @@ describe("binary session", () => {
   });
 
   it("cancels a call while it waits for a transition", async () => {
-    const [first] = await targets();
-    const health = deferred<ReturnType<typeof ok>>();
+    const [first] = await createBinarySessionTargets();
+    const health = createDeferred<ReturnType<typeof ok>>();
     const session = createTestBinarySession(
-      () => new TestClient(health.promise),
+      () => new ControllableAnalysisClient(health.promise),
     );
     const opening = session.open(first);
     const controller = new AbortController();
@@ -178,10 +65,13 @@ describe("binary session", () => {
   });
 
   it("closes a failed candidate and reopens the previous target", async () => {
-    const [first, second] = await targets();
-    const clients: TestClient[] = [];
+    const [first, second] = await createBinarySessionTargets();
+    const clients: ControllableAnalysisClient[] = [];
     const session = createTestBinarySession(() => {
-      const value = new TestClient(undefined, clients.length === 1);
+      const value = new ControllableAnalysisClient(
+        undefined,
+        clients.length === 1,
+      );
       clients.push(value);
       return value;
     });
@@ -197,7 +87,7 @@ describe("binary session", () => {
   });
 
   it("closes the active bridge before starting a replacement", async () => {
-    const [first, second] = await targets();
+    const [first, second] = await createBinarySessionTargets();
     let liveClients = 0;
     let overlapped = false;
     const session = createTestBinarySession(() => ({
@@ -218,7 +108,7 @@ describe("binary session", () => {
   });
 
   it("clears session state while preserving a typed provider cleanup failure", async () => {
-    const [first] = await targets();
+    const [first] = await createBinarySessionTargets();
     const cleanupError = new ProviderCleanupError(
       "fixture",
       ["fixture-document"],

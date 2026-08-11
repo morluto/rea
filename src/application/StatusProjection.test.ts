@@ -1,35 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { runCapabilityStatus, runProviderStatus } from "./DirectAnalysis.js";
+import { createDoctorHostFixture } from "./Doctor.fixture.js";
 import { projectDoctorReport } from "./DoctorProjection.js";
-import { runDoctor, type DoctorHost } from "./Doctor.js";
-import { CATALOG_IDENTITY } from "../catalogIdentity.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
-
-const doctorHost = (): DoctorHost => ({
-  platform: "darwin",
-  architecture: "x64",
-  nodeVersion: "24.18.0",
-  macosVersion: () => Promise.resolve("14.0"),
-  linuxDistribution: () => Promise.resolve(undefined),
-  validTarget: () => Promise.resolve(true),
-  executable: (path) => Promise.resolve(path.includes("Hopper")),
-  supportedLinuxHopper: () => Promise.resolve(true),
-  linuxDemoRuntimeCheck: () =>
-    Promise.resolve({
-      name: "hopper-demo-runtime",
-      ok: true,
-      classification: "healthy",
-    }),
-  brewHopperPath: () => Promise.resolve(undefined),
-  manualHopperPaths: () => Promise.resolve([]),
-  installedSkillIdentity: () =>
-    Promise.resolve({
-      version: PRODUCT_IDENTITY.skillVersion,
-      toolCount: CATALOG_IDENTITY.counts.mcp_tools,
-      catalogDigest: CATALOG_IDENTITY.digests.combined_sha256,
-    }),
-});
+import { runDoctor } from "./Doctor.js";
 
 describe("purpose-specific CLI projections", () => {
   it("keeps provider and capability summaries concise with explicit full detail", async () => {
@@ -59,7 +33,10 @@ describe("purpose-specific CLI projections", () => {
   });
 
   it("omits the catalog tool array only from the default doctor projection", async () => {
-    const report = await runDoctor(undefined, doctorHost());
+    const report = await runDoctor(
+      undefined,
+      createDoctorHostFixture({ validTarget: () => Promise.resolve(true) }),
+    );
     const summary = projectDoctorReport(report, "summary");
     const full = projectDoctorReport(report, "full");
 

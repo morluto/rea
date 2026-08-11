@@ -1,9 +1,6 @@
-import { createHash } from "node:crypto";
-
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
-import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
 import {
   assessManagedGraphOmissions,
   managedGraphEvidenceCoverage,
@@ -16,38 +13,12 @@ import {
 } from "../../../src/domain/knownPageCoverage.js";
 import { inspectManagedMembersBytes } from "../../../src/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../src/dotnet/ManagedNativeBoundaryInspector.js";
-import { buildManagedPeFixture } from "../../fixtures/managedPe.js";
-
-const MEMBER_LIMITS = {
-  typeOffset: 0,
-  typeLimit: 100,
-  methodOffset: 0,
-  methodLimit: 100,
-  fieldOffset: 0,
-  fieldLimit: 100,
-  memberRefOffset: 0,
-  memberRefLimit: 100,
-  edgeOffset: 0,
-  edgeLimit: 100,
-  instructionAnchorLimit: 100,
-  maxMetadataBytes: 1024 * 1024,
-  maxTableRows: 1_000,
-  maxHeapItemBytes: 1024 * 1024,
-  maxMethodBodyBytes: 1024 * 1024,
-  maxMethodInstructions: 1_000,
-};
-
-const BOUNDARY_LIMITS = {
-  moduleRefOffset: 0,
-  moduleRefLimit: 100,
-  importOffset: 0,
-  importLimit: 100,
-  implementationOffset: 0,
-  implementationLimit: 100,
-  maxMetadataBytes: 1024 * 1024,
-  maxTableRows: 1_000,
-  maxHeapItemBytes: 1024 * 1024,
-};
+import {
+  buildManagedPeFixture,
+  managedPeFixtureTarget,
+  MANAGED_MEMBER_FIXTURE_LIMITS,
+  MANAGED_NATIVE_BOUNDARY_FIXTURE_LIMITS,
+} from "../../../src/dotnet/ManagedPe.fixture.js";
 
 const limitPair = fc
   .tuple(fc.integer({ min: 1, max: 12 }), fc.integer({ min: 1, max: 12 }))
@@ -182,25 +153,19 @@ const fixtureBytes = buildManagedPeFixture({
   },
   readyToRun: true,
 });
-const fixtureTarget: BinaryTarget = {
-  path: "/fixture/ManagedCoverage.exe",
-  sha256: createHash("sha256").update(fixtureBytes).digest("hex"),
-  kind: "executable",
-  format: "pe",
-  architecture: "x86",
-  availableArchitectures: ["x86"],
-  executableRole: "application",
-  managed: true,
-};
+const fixtureTarget = managedPeFixtureTarget(
+  fixtureBytes,
+  "/fixture/ManagedCoverage.exe",
+);
 const fixtureMembers = inspectManagedMembersBytes(
   fixtureBytes,
   fixtureTarget,
-  MEMBER_LIMITS,
+  MANAGED_MEMBER_FIXTURE_LIMITS,
 );
 const fixtureBoundaries = inspectManagedNativeBoundariesBytes(
   fixtureBytes,
   fixtureTarget,
-  BOUNDARY_LIMITS,
+  MANAGED_NATIVE_BOUNDARY_FIXTURE_LIMITS,
 );
 
 const managedSources = (totals: readonly number[]) => ({

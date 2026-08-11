@@ -26,7 +26,7 @@ const EXPECTED_PROJECTS = [
 ];
 const ALLOWED_DIRECT_TEMPORARY_ROOTS = new Set([
   "tests/support/workspace/workspaceFixture.ts",
-  "tests/acceptance/setup/packageInstallWorkflow.test.ts",
+  "tests/conformance/packageInstallWorkflow.test.ts",
   "tests/boundary/filesystem/temporaryDirectory.test.ts",
   "tests/boundary/filesystem/referenceSourceReader.test.ts",
   "tests/boundary/process/providerProcess.test.ts",
@@ -53,7 +53,11 @@ describe("Vitest project configuration", () => {
     expect(TEST_PROJECTS.map(({ name }) => name).sort()).toEqual(
       EXPECTED_PROJECTS,
     );
-    const sharedModuleProjects = new Set(["domain", "services"]);
+    const sharedModuleProjects = new Set([
+      "domain",
+      "mcp-boundary",
+      "services",
+    ]);
     expect(
       TEST_PROJECTS.every(({ name, isolate }) =>
         sharedModuleProjects.has(name)
