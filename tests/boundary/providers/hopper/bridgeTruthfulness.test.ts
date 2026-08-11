@@ -100,6 +100,12 @@ describe("Hopper bridge truthfulness", () => {
     );
   });
 
+  it("invalidates cached search inventories after renames", () => {
+    expect(bridgeSource).toContain("_search_inventory_cache");
+    expect(bridgeSource).toContain("tuple(sorted(values.items()");
+    expect(bridgeSource).toContain("_invalidate_search_inventory(document)");
+  });
+
   it("returns deterministic addresses for direct procedure relationships", () => {
     expect(bridgeSource).toContain(
       "_hex(item.getEntryPoint()) for item in procedure.getAllCallerProcedures()",
