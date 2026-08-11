@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   changedBehaviorResultSchema,
   findChangedBehavior,
+  type ChangedBehaviorResult,
 } from "./changedBehavior.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -123,6 +124,15 @@ const artifactResult = (
   limitations: [],
 });
 
+const expectInvalidSummary = (result: ChangedBehaviorResult): void => {
+  expect(
+    changedBehaviorResultSchema.safeParse({
+      ...result,
+      summary: { ...result.summary, observed_changes: 0 },
+    }).success,
+  ).toBe(false);
+};
+
 describe("changed behavior", () => {
   it("accepts declared-trace process comparison Evidence v4", () => {
     const result = findChangedBehavior(
@@ -169,6 +179,7 @@ describe("changed behavior", () => {
       summary: { observed_changes: 1, static_candidates: 0 },
       findings: { total: 1, next_offset: null },
     });
+    expectInvalidSummary(result);
     expect(result.findings.items[0]).toMatchObject({
       scope: "runtime",
       dimension: "terminal",

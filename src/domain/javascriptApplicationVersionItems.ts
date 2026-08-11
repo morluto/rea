@@ -36,6 +36,27 @@ interface ItemContext {
   readonly maxCandidates: number;
 }
 
+type OneSidedNode =
+  | {
+      readonly left: ApplicationNode;
+      readonly right?: never;
+      readonly candidateRightNodeIds: readonly string[];
+      readonly candidateLeftNodeIds?: never;
+    }
+  | {
+      readonly left?: never;
+      readonly right: ApplicationNode;
+      readonly candidateRightNodeIds?: never;
+      readonly candidateLeftNodeIds: readonly string[];
+    };
+
+type ComparisonItemSemantic<
+  Item extends
+    ApplicationVersionComparisonItem = ApplicationVersionComparisonItem,
+> = Item extends ApplicationVersionComparisonItem
+  ? Omit<Item, "item_id">
+  : never;
+
 /** Classify matched, unmatched, and ambiguous nodes without inventing absence. */
 export const classifyJavaScriptApplicationVersions = (
   matching: ApplicationVersionMatchingProjection,
@@ -64,9 +85,10 @@ export const classifyJavaScriptApplicationVersions = (
       candidates.length - context.maxCandidates,
     );
     return unmatchedItem(
-      node,
-      "left",
-      candidates.slice(0, context.maxCandidates),
+      {
+        left: node,
+        candidateRightNodeIds: candidates.slice(0, context.maxCandidates),
+      },
       fullContext,
     );
   });
@@ -77,9 +99,10 @@ export const classifyJavaScriptApplicationVersions = (
       candidates.length - context.maxCandidates,
     );
     return unmatchedItem(
-      node,
-      "right",
-      candidates.slice(0, context.maxCandidates),
+      {
+        right: node,
+        candidateLeftNodeIds: candidates.slice(0, context.maxCandidates),
+      },
       fullContext,
     );
   });
@@ -112,18 +135,12 @@ const matchedItem = (
     status === "unknown" && !dimensions.includes("coverage")
       ? [...dimensions, "coverage" as const]
       : dimensions;
-  const semantic = {
+  const semantic: ComparisonItemSemantic = {
     status,
     node_kind: pair.left.kind,
     left_node_id: pair.left.node_id,
     right_node_id: pair.right.node_id,
-    match: {
-      status: "matched" as const,
-      basis: pair.basis,
-      confidence: pair.confidence,
-      candidate_left_node_ids: [],
-      candidate_right_node_ids: [],
-    },
+    match: matchedMatch(pair),
     dimensions: finalDimensions,
     evidence_links: itemEvidenceLinks(pair.left, pair.right, context),
     limitations: pairLimitations(pair, status),
@@ -132,58 +149,149 @@ const matchedItem = (
 };
 
 const unmatchedItem = (
+  member: OneSidedNode,
+  context: ItemContext,
+): ApplicationVersionComparisonItem =>
+  member.left === undefined
+    ? rightOnlyItem(member.right, member.candidateLeftNodeIds, context)
+    : leftOnlyItem(member.left, member.candidateRightNodeIds, context);
+
+const leftOnlyItem = (
   node: ApplicationNode,
-  side: "left" | "right",
-  candidates: readonly string[],
+  candidateNodeIds: readonly string[],
   context: ItemContext,
 ): ApplicationVersionComparisonItem => {
-  const ambiguous = candidates.length > 0;
-  const oppositeComplete =
-    (side === "left" ? context.rightGraph : context.leftGraph).coverage
-      .status === "complete";
-  const status: ApplicationVersionComparisonItem["status"] = ambiguous
-    ? "unknown"
-    : oppositeComplete
-      ? side === "left"
-        ? "removed"
-        : "added"
-      : "unknown";
-  const semantic = {
-    status,
+  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
+  const common = {
     node_kind: node.kind,
-    left_node_id: side === "left" ? node.node_id : null,
-    right_node_id: side === "right" ? node.node_id : null,
-    match: {
-      status: ambiguous ? ("ambiguous" as const) : ("unmatched" as const),
-      basis: "none" as const,
-      confidence: "unknown" as const,
-      candidate_left_node_ids: side === "right" ? [...candidates] : [],
-      candidate_right_node_ids: side === "left" ? [...candidates] : [],
-    },
-    dimensions: [
-      "availability" as const,
-      ...(status === "unknown" && !ambiguous ? (["coverage"] as const) : []),
-    ],
-    evidence_links: itemEvidenceLinks(
-      side === "left" ? node : undefined,
-      side === "right" ? node : undefined,
-      context,
-    ),
-    limitations: [
-      ...(ambiguous
-        ? [
-            "Multiple nodes share the same permitted match key; no cross-version pair was selected.",
-          ]
-        : []),
-      ...(status === "unknown" && !ambiguous
-        ? [
-            "The opposite graph is incomplete, so an unmatched node cannot be classified as added or removed.",
-          ]
-        : []),
-    ],
+    evidence_links: itemEvidenceLinks(node, undefined, context),
   };
-  return itemWithId(semantic);
+  if (firstCandidate !== undefined)
+    return itemWithId({
+      ...common,
+      status: "unknown",
+      left_node_id: node.node_id,
+      right_node_id: null,
+      match: {
+        status: "ambiguous",
+        basis: "none",
+        confidence: "unknown",
+        candidate_left_node_ids: [],
+        candidate_right_node_ids: [firstCandidate, ...remainingCandidates],
+      },
+      dimensions: ["availability"],
+      limitations: [AMBIGUOUS_MATCH_LIMITATION],
+    });
+  const absenceObserved = context.rightGraph.coverage.status === "complete";
+  return itemWithId({
+    ...common,
+    status: absenceObserved ? "removed" : "unknown",
+    left_node_id: node.node_id,
+    right_node_id: null,
+    match: unmatchedMatch(),
+    dimensions: absenceObserved
+      ? ["availability"]
+      : ["availability", "coverage"],
+    limitations: absenceObserved ? [] : [INCOMPLETE_GRAPH_LIMITATION],
+  });
 };
+
+const rightOnlyItem = (
+  node: ApplicationNode,
+  candidateNodeIds: readonly string[],
+  context: ItemContext,
+): ApplicationVersionComparisonItem => {
+  const [firstCandidate, ...remainingCandidates] = candidateNodeIds;
+  const common = {
+    node_kind: node.kind,
+    evidence_links: itemEvidenceLinks(undefined, node, context),
+  };
+  if (firstCandidate !== undefined)
+    return itemWithId({
+      ...common,
+      status: "unknown",
+      left_node_id: null,
+      right_node_id: node.node_id,
+      match: {
+        status: "ambiguous",
+        basis: "none",
+        confidence: "unknown",
+        candidate_left_node_ids: [firstCandidate, ...remainingCandidates],
+        candidate_right_node_ids: [],
+      },
+      dimensions: ["availability"],
+      limitations: [AMBIGUOUS_MATCH_LIMITATION],
+    });
+  const absenceObserved = context.leftGraph.coverage.status === "complete";
+  return itemWithId({
+    ...common,
+    status: absenceObserved ? "added" : "unknown",
+    left_node_id: null,
+    right_node_id: node.node_id,
+    match: unmatchedMatch(),
+    dimensions: absenceObserved
+      ? ["availability"]
+      : ["availability", "coverage"],
+    limitations: absenceObserved ? [] : [INCOMPLETE_GRAPH_LIMITATION],
+  });
+};
+
+const matchedMatch = (
+  pair: ApplicationVersionNodePair,
+): Extract<
+  ApplicationVersionComparisonItem["match"],
+  { readonly status: "matched" }
+> => {
+  const candidates: {
+    readonly candidate_left_node_ids: [];
+    readonly candidate_right_node_ids: [];
+  } = {
+    candidate_left_node_ids: [],
+    candidate_right_node_ids: [],
+  };
+  switch (pair.basis) {
+    case "exact-node-identity":
+    case "exact-content-digest":
+    case "exact-module-source-digest":
+      return {
+        status: "matched",
+        basis: pair.basis,
+        confidence: "exact",
+        ...candidates,
+      };
+    case "source-map-identity":
+      return {
+        status: "matched",
+        basis: pair.basis,
+        confidence: "high",
+        ...candidates,
+      };
+    case "structural-fingerprint":
+    case "semantic-key":
+      return {
+        status: "matched",
+        basis: pair.basis,
+        confidence: "medium",
+        ...candidates,
+      };
+  }
+};
+
+const unmatchedMatch = (): Extract<
+  ApplicationVersionComparisonItem["match"],
+  { readonly status: "unmatched" }
+> => ({
+  status: "unmatched",
+  basis: "none",
+  confidence: "unknown",
+  candidate_left_node_ids: [],
+  candidate_right_node_ids: [],
+});
+
+const AMBIGUOUS_MATCH_LIMITATION =
+  "Multiple nodes share the same permitted match key; no cross-version pair was selected.";
+const INCOMPLETE_GRAPH_LIMITATION =
+  "The opposite graph is incomplete, so an unmatched node cannot be classified as added or removed.";
 
 const changedDimensions = (
   pair: ApplicationVersionNodePair,
@@ -340,9 +448,9 @@ const pairLimitations = (
     : []),
 ];
 
-const itemWithId = (
-  semantic: Omit<ApplicationVersionComparisonItem, "item_id">,
-): ApplicationVersionComparisonItem => ({
+const itemWithId = <Semantic extends ComparisonItemSemantic>(
+  semantic: Semantic,
+): Semantic & { readonly item_id: string } => ({
   ...semantic,
   item_id: `javc_item_${digestCanonical(semantic)}`,
 });

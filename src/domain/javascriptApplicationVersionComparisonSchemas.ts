@@ -51,29 +51,66 @@ export const compareApplicationVersionsInputSchema = z
     }
   });
 
-const applicationVersionMatchBasisSchema = z.enum([
-  "exact-node-identity",
-  "exact-content-digest",
-  "exact-module-source-digest",
-  "source-map-identity",
-  "structural-fingerprint",
-  "semantic-key",
-  "none",
+const emptyCandidateNodesSchema = z.tuple([]);
+const candidateNodesSchema = z
+  .tuple([nodeIdSchema])
+  .rest(nodeIdSchema)
+  .check(z.maxLength(1_000));
+const exactMatchSchema = z.strictObject({
+  status: z.literal("matched"),
+  basis: z.enum([
+    "exact-node-identity",
+    "exact-content-digest",
+    "exact-module-source-digest",
+  ]),
+  confidence: z.literal("exact"),
+  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: emptyCandidateNodesSchema,
+});
+const sourceMapMatchSchema = z.strictObject({
+  status: z.literal("matched"),
+  basis: z.literal("source-map-identity"),
+  confidence: z.literal("high"),
+  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: emptyCandidateNodesSchema,
+});
+const inferredMatchSchema = z.strictObject({
+  status: z.literal("matched"),
+  basis: z.enum(["structural-fingerprint", "semantic-key"]),
+  confidence: z.literal("medium"),
+  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: emptyCandidateNodesSchema,
+});
+const matchedItemMatchSchema = z.union([
+  exactMatchSchema,
+  sourceMapMatchSchema,
+  inferredMatchSchema,
 ]);
+const unmatchedItemMatchSchema = z.strictObject({
+  status: z.literal("unmatched"),
+  basis: z.literal("none"),
+  confidence: z.literal("unknown"),
+  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: emptyCandidateNodesSchema,
+});
+const leftAmbiguousMatchSchema = z.strictObject({
+  status: z.literal("ambiguous"),
+  basis: z.literal("none"),
+  confidence: z.literal("unknown"),
+  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: candidateNodesSchema,
+});
+const rightAmbiguousMatchSchema = z.strictObject({
+  status: z.literal("ambiguous"),
+  basis: z.literal("none"),
+  confidence: z.literal("unknown"),
+  candidate_left_node_ids: candidateNodesSchema,
+  candidate_right_node_ids: emptyCandidateNodesSchema,
+});
 
-const comparisonItemSchema = z.strictObject({
+const comparisonItemContextShape = {
   item_id: z.string().regex(/^javc_item_[a-f0-9]{64}$/u),
-  status: z.enum(["unchanged", "added", "removed", "changed", "unknown"]),
   node_kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
-  left_node_id: nodeIdSchema.nullable(),
-  right_node_id: nodeIdSchema.nullable(),
-  match: z.strictObject({
-    status: z.enum(["matched", "unmatched", "ambiguous"]),
-    basis: applicationVersionMatchBasisSchema,
-    confidence: z.enum(["exact", "high", "medium", "unknown"]),
-    candidate_left_node_ids: z.array(nodeIdSchema).max(1_000),
-    candidate_right_node_ids: z.array(nodeIdSchema).max(1_000),
-  }),
   dimensions: z
     .array(
       z.enum([
@@ -88,64 +125,147 @@ const comparisonItemSchema = z.strictObject({
     .max(6),
   evidence_links: z.array(evidenceIdSchema).min(2).max(130),
   limitations: z.array(boundedTextSchema).max(100),
-});
+};
+
+const comparisonItemSchema = z.union([
+  z.strictObject({
+    ...comparisonItemContextShape,
+    status: z.enum(["unchanged", "changed", "unknown"]),
+    left_node_id: nodeIdSchema,
+    right_node_id: nodeIdSchema,
+    match: matchedItemMatchSchema,
+  }),
+  z.strictObject({
+    ...comparisonItemContextShape,
+    status: z.enum(["removed", "unknown"]),
+    left_node_id: nodeIdSchema,
+    right_node_id: z.null(),
+    match: unmatchedItemMatchSchema,
+  }),
+  z.strictObject({
+    ...comparisonItemContextShape,
+    status: z.enum(["added", "unknown"]),
+    left_node_id: z.null(),
+    right_node_id: nodeIdSchema,
+    match: unmatchedItemMatchSchema,
+  }),
+  z.strictObject({
+    ...comparisonItemContextShape,
+    status: z.literal("unknown"),
+    left_node_id: nodeIdSchema,
+    right_node_id: z.null(),
+    match: leftAmbiguousMatchSchema,
+  }),
+  z.strictObject({
+    ...comparisonItemContextShape,
+    status: z.literal("unknown"),
+    left_node_id: z.null(),
+    right_node_id: nodeIdSchema,
+    match: rightAmbiguousMatchSchema,
+  }),
+]);
+
+const comparisonCoverageContextShape = {
+  left_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
+  right_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
+};
+const zeroComparisonOmissionsShape = {
+  omitted_comparison_items: z.literal(0),
+  omitted_candidate_references: z.literal(0),
+  omitted_graph_nodes: z.literal(0),
+  omitted_graph_edges: z.literal(0),
+  omitted_graph_observations: z.literal(0),
+};
+const comparisonOmissionsShape = {
+  omitted_comparison_items: z.number().int().min(0),
+  omitted_candidate_references: z.number().int().min(0),
+  omitted_graph_nodes: z.number().int().min(0),
+  omitted_graph_edges: z.number().int().min(0),
+  omitted_graph_observations: z.number().int().min(0),
+};
+const comparisonCoverageSchema = z.union([
+  z.strictObject({
+    ...comparisonCoverageContextShape,
+    ...zeroComparisonOmissionsShape,
+    status: z.literal("complete-within-inputs"),
+  }),
+  z.strictObject({
+    ...comparisonCoverageContextShape,
+    ...zeroComparisonOmissionsShape,
+    status: z.literal("partial"),
+  }),
+  z
+    .strictObject({
+      ...comparisonCoverageContextShape,
+      ...comparisonOmissionsShape,
+      status: z.literal("truncated"),
+    })
+    .refine(
+      (coverage) =>
+        [
+          coverage.omitted_comparison_items,
+          coverage.omitted_candidate_references,
+          coverage.omitted_graph_nodes,
+          coverage.omitted_graph_edges,
+          coverage.omitted_graph_observations,
+        ].some((value) => value > 0),
+      { message: "Truncated comparison coverage must name an omission" },
+    ),
+]);
 
 /** Tiered module/entity matching plus a bounded cross-version change graph. */
-export const applicationVersionComparisonResultSchema = z.strictObject({
-  schema_version: z.literal(1),
-  comparison_id: z.string().regex(/^javc_[a-f0-9]{64}$/u),
-  left: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
-    root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  }),
-  right: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
-    root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  }),
-  summary: z.strictObject({
-    unchanged: z.number().int().min(0),
-    added: z.number().int().min(0),
-    removed: z.number().int().min(0),
-    changed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
-  }),
-  matching: z.strictObject({
-    exact_node_identity: z.number().int().min(0),
-    exact_content_digest: z.number().int().min(0),
-    exact_module_source_digest: z.number().int().min(0),
-    source_map_identity: z.number().int().min(0),
-    structural_fingerprint: z.number().int().min(0),
-    semantic_key: z.number().int().min(0),
-    ambiguous: z.number().int().min(0),
-    unmatched: z.number().int().min(0),
-  }),
-  items: z.array(comparisonItemSchema).max(50_000),
-  graph: javascriptApplicationGraphSchema,
-  coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
-    left_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
-      "unavailable",
-    ]),
-    right_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
-      "unavailable",
-    ]),
-    omitted_comparison_items: z.number().int().min(0),
-    omitted_candidate_references: z.number().int().min(0),
-    omitted_graph_nodes: z.number().int().min(0),
-    omitted_graph_edges: z.number().int().min(0),
-    omitted_graph_observations: z.number().int().min(0),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(2).max(130),
-  limitations: z.array(boundedTextSchema).max(1_000),
-});
+export const applicationVersionComparisonResultSchema = z
+  .strictObject({
+    schema_version: z.literal(1),
+    comparison_id: z.string().regex(/^javc_[a-f0-9]{64}$/u),
+    left: z.strictObject({
+      evidence_id: evidenceIdSchema,
+      graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+      root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    }),
+    right: z.strictObject({
+      evidence_id: evidenceIdSchema,
+      graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+      root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    }),
+    summary: z.strictObject({
+      unchanged: z.number().int().min(0),
+      added: z.number().int().min(0),
+      removed: z.number().int().min(0),
+      changed: z.number().int().min(0),
+      unknown: z.number().int().min(0),
+    }),
+    matching: z.strictObject({
+      exact_node_identity: z.number().int().min(0),
+      exact_content_digest: z.number().int().min(0),
+      exact_module_source_digest: z.number().int().min(0),
+      source_map_identity: z.number().int().min(0),
+      structural_fingerprint: z.number().int().min(0),
+      semantic_key: z.number().int().min(0),
+      ambiguous: z.number().int().min(0),
+      unmatched: z.number().int().min(0),
+    }),
+    items: z.array(comparisonItemSchema).max(50_000),
+    graph: javascriptApplicationGraphSchema,
+    coverage: comparisonCoverageSchema,
+    evidence_links: z.array(evidenceIdSchema).min(2).max(130),
+    limitations: z.array(boundedTextSchema).max(1_000),
+  })
+  .superRefine((result, context) => {
+    const sourceGraphsComplete =
+      result.coverage.left_graph_status === "complete" &&
+      result.coverage.right_graph_status === "complete";
+    if (
+      result.coverage.status !== "truncated" &&
+      (result.coverage.status === "complete-within-inputs") !==
+        sourceGraphsComplete
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "status"],
+        message: "Comparison coverage must match source graph completeness",
+      });
+  });
 
 export type CompareApplicationVersionsInput = z.infer<
   typeof compareApplicationVersionsInputSchema
@@ -155,7 +275,4 @@ export type ApplicationVersionComparisonItem = z.infer<
 >;
 export type ApplicationVersionComparisonResult = z.infer<
   typeof applicationVersionComparisonResultSchema
->;
-export type ApplicationVersionMatchBasis = z.infer<
-  typeof applicationVersionMatchBasisSchema
 >;

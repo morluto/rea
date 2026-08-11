@@ -69,6 +69,7 @@ export const compareJavaScriptApplicationVersions = (
     omitted_graph_edges: changeGraph.omittedEdges,
     omitted_graph_observations: changeGraph.omittedObservations,
   };
+  const coverage = comparisonCoverage(input, omissions);
   const semantic = {
     schema_version: 1 as const,
     left: {
@@ -85,12 +86,7 @@ export const compareJavaScriptApplicationVersions = (
     matching: matchingSummary(projection.items),
     items,
     graph: changeGraph.graph,
-    coverage: {
-      status: comparisonCoverageStatus(input, omissions),
-      left_graph_status: input.left.graph.coverage.status,
-      right_graph_status: input.right.graph.coverage.status,
-      ...omissions,
-    },
+    coverage,
     evidence_links: evidenceLinks,
     limitations: comparisonLimitations(input, omissions),
   };
@@ -134,27 +130,52 @@ const countBasis = (
 ): number => items.filter(({ match }) => match.basis === basis).length;
 
 type ComparisonOmissions = ApplicationVersionComparisonResult["coverage"];
+type ComparisonOmissionCounts = Pick<
+  ComparisonOmissions,
+  | "omitted_comparison_items"
+  | "omitted_candidate_references"
+  | "omitted_graph_nodes"
+  | "omitted_graph_edges"
+  | "omitted_graph_observations"
+>;
 
-const comparisonCoverageStatus = (
+const comparisonCoverage = (
   input: ApplicationVersionComparisonProjectionInput,
-  omissions: Omit<
-    ComparisonOmissions,
-    "status" | "left_graph_status" | "right_graph_status"
-  >,
-): ApplicationVersionComparisonResult["coverage"]["status"] =>
-  Object.values(omissions).some((value) => value > 0)
-    ? "truncated"
-    : input.left.graph.coverage.status === "complete" &&
-        input.right.graph.coverage.status === "complete"
-      ? "complete-within-inputs"
-      : "partial";
+  omissions: ComparisonOmissionCounts,
+): ApplicationVersionComparisonResult["coverage"] => {
+  const context = {
+    left_graph_status: input.left.graph.coverage.status,
+    right_graph_status: input.right.graph.coverage.status,
+  };
+  if (Object.values(omissions).some((value) => value > 0))
+    return { ...context, ...omissions, status: "truncated" };
+  if (
+    input.left.graph.coverage.status === "complete" &&
+    input.right.graph.coverage.status === "complete"
+  )
+    return {
+      ...context,
+      status: "complete-within-inputs",
+      omitted_comparison_items: 0,
+      omitted_candidate_references: 0,
+      omitted_graph_nodes: 0,
+      omitted_graph_edges: 0,
+      omitted_graph_observations: 0,
+    };
+  return {
+    ...context,
+    status: "partial",
+    omitted_comparison_items: 0,
+    omitted_candidate_references: 0,
+    omitted_graph_nodes: 0,
+    omitted_graph_edges: 0,
+    omitted_graph_observations: 0,
+  };
+};
 
 const comparisonLimitations = (
   input: ApplicationVersionComparisonProjectionInput,
-  omissions: Omit<
-    ComparisonOmissions,
-    "status" | "left_graph_status" | "right_graph_status"
-  >,
+  omissions: ComparisonOmissionCounts,
 ): string[] =>
   uniqueSorted([
     "Application comparison never uses bundler module ordinals as persistent identity and performs no fuzzy pairing.",

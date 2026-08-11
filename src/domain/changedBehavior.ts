@@ -53,30 +53,74 @@ const findingSchema = z.object({
 });
 
 /** Truthful aggregate: runtime observations remain separate from static candidates. */
-export const changedBehaviorResultSchema = z.object({
-  behavior_status: z.enum([
-    "observed_changed",
-    "observed_unchanged",
-    "unknown",
-    "truncated",
-  ]),
-  summary: z.object({
-    observed_changes: z.number().int().min(0),
-    static_candidates: z.number().int().min(0),
-    contradictions: z.number().int().min(0),
-    unresolved: z.number().int().min(0),
-  }),
-  findings: z.object({
-    items: z.array(findingSchema).max(100),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1).max(100),
-    total: z.number().int().min(0),
-    next_offset: z.number().int().min(0).nullable(),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
-  limitations: z.array(z.string()),
-  investigation_run: investigationRunSummarySchema.optional(),
-});
+export const changedBehaviorResultSchema = z
+  .object({
+    behavior_status: z.enum([
+      "observed_changed",
+      "observed_unchanged",
+      "unknown",
+      "truncated",
+    ]),
+    summary: z.object({
+      observed_changes: z.number().int().min(0),
+      static_candidates: z.number().int().min(0),
+      contradictions: z.number().int().min(0),
+      unresolved: z.number().int().min(0),
+    }),
+    findings: z.object({
+      items: z.array(findingSchema).max(100),
+      offset: z.number().int().min(0),
+      limit: z.number().int().min(1).max(100),
+      total: z.number().int().min(0),
+      next_offset: z.number().int().min(0).nullable(),
+    }),
+    evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
+    limitations: z.array(z.string()),
+    investigation_run: investigationRunSummarySchema.optional(),
+  })
+  .superRefine((result, context) => {
+    const summaryTotal = Object.values(result.summary).reduce(
+      (total, count) => total + count,
+      0,
+    );
+    const expectedNextOffset =
+      result.findings.offset + result.findings.items.length <
+      result.findings.total
+        ? result.findings.offset + result.findings.items.length
+        : null;
+    if (summaryTotal !== result.findings.total)
+      context.addIssue({
+        code: "custom",
+        message: "Finding classification counts must equal the finding total",
+        path: ["summary"],
+      });
+    if (result.findings.next_offset !== expectedNextOffset)
+      context.addIssue({
+        code: "custom",
+        message: "Finding cursor must identify the next retained offset",
+        path: ["findings", "next_offset"],
+      });
+    if (
+      result.findings.offset < result.findings.total &&
+      result.findings.items.length === 0
+    )
+      context.addIssue({
+        code: "custom",
+        message: "A nonterminal finding page must retain at least one item",
+        path: ["findings", "items"],
+      });
+    if (
+      (result.behavior_status === "observed_changed" &&
+        result.summary.observed_changes === 0) ||
+      (result.behavior_status === "observed_unchanged" &&
+        result.summary.observed_changes > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Observed-change status must agree with runtime findings",
+        path: ["behavior_status"],
+      });
+  });
 
 export type ChangedBehaviorResult = z.infer<typeof changedBehaviorResultSchema>;
 type Finding = z.infer<typeof findingSchema>;

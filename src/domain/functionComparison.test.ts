@@ -145,6 +145,7 @@ describe("function comparison", () => {
         FUNCTION_COMPARISON_EXAMPLE.left.evidence_id,
         FUNCTION_COMPARISON_EXAMPLE.right.evidence_id,
       ]);
+    expectFunctionDimensionAlgebra(result);
   });
 
   it("normalizes CFG relocation but preserves changed edges and constants", () => {
@@ -272,3 +273,28 @@ describe("function comparison", () => {
     expect(pseudocode?.left_digest).not.toBe(pseudocode?.right_digest);
   });
 });
+
+const expectFunctionDimensionAlgebra = (
+  result: ReturnType<typeof compareFunctions>,
+): void => {
+  const observed = result.dimensions.find(
+    ({ status }) => status === "unchanged" || status === "changed",
+  );
+  expect(observed).toBeDefined();
+  if (observed === undefined) return;
+  expect(
+    functionComparisonResultSchema.safeParse({
+      ...result,
+      dimensions: [
+        { ...observed, left_digest: null, right_digest: null },
+        ...result.dimensions.slice(1),
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    functionComparisonResultSchema.safeParse({
+      ...result,
+      function_match: { ...result.function_match, method: "explicit" },
+    }).success,
+  ).toBe(false);
+};

@@ -7,7 +7,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
 import { compareApplicationVersionsEvidence } from "../../../src/application/JavaScriptApplicationWorkflowService.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascriptApplicationVersionComparisonSchemas.js";
+import {
+  applicationVersionComparisonResultSchema,
+  type ApplicationVersionComparisonResult,
+} from "../../../src/domain/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptApplicationVersions } from "../../../src/domain/javascriptApplicationVersionComparison.js";
 import { createJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
 import { traceApplicationFeature } from "../../../src/domain/javascriptFeatureTrace.js";
@@ -188,6 +191,7 @@ describe("JavaScript application comparison workflows", () => {
     expect(result.limitations.join(" ")).toMatch(
       /module ordinals|fuzzy pairing/u,
     );
+    expectComparisonItemAlgebra(result);
   });
 
   it("pairs source-map originals without promoting the match to exact", async () => {
@@ -290,4 +294,43 @@ const analyzeFixture = async (root: string, sourceMaps = false) => {
   });
   if (!result.ok) throw result.error;
   return result.value;
+};
+
+const expectComparisonItemAlgebra = (
+  result: ApplicationVersionComparisonResult,
+): void => {
+  const matched = result.items.find(({ match }) => match.status === "matched");
+  expect(matched).toBeDefined();
+  if (matched === undefined) return;
+  expect(
+    applicationVersionComparisonResultSchema.safeParse({
+      ...result,
+      items: [{ ...matched, right_node_id: null }],
+    }).success,
+  ).toBe(false);
+  expect(
+    applicationVersionComparisonResultSchema.safeParse({
+      ...result,
+      items: [
+        {
+          ...matched,
+          match: {
+            ...matched.match,
+            basis: "none",
+            confidence: "unknown",
+          },
+        },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    applicationVersionComparisonResultSchema.safeParse({
+      ...result,
+      coverage: {
+        ...result.coverage,
+        status: "complete-within-inputs",
+        omitted_comparison_items: 1,
+      },
+    }).success,
+  ).toBe(false);
 };

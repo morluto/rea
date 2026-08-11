@@ -23,21 +23,31 @@ export interface DimensionResultInput {
 
 export const dimensionResult = (
   input: DimensionResultInput,
-): FunctionDimension => ({
-  dimension: input.dimension,
-  status: input.status,
-  left_digest: digest(input.left),
-  right_digest: digest(input.right),
-  left_count: input.leftCount,
-  right_count: input.rightCount,
-  text_delta: input.textDelta,
-  conclusion_kind:
-    input.status === "changed" && input.providersDiffer
+): FunctionDimension => {
+  const context = {
+    dimension: input.dimension,
+    left_digest: digest(input.left),
+    right_digest: digest(input.right),
+    left_count: input.leftCount,
+    right_count: input.rightCount,
+    text_delta: input.textDelta,
+    evidence_links: [...input.links],
+    limitations: [...input.limitations],
+  };
+  if (input.status === "unchanged")
+    return {
+      ...context,
+      status: "unchanged",
+      conclusion_kind: "derived_relationship",
+    };
+  return {
+    ...context,
+    status: "changed",
+    conclusion_kind: input.providersDiffer
       ? "contradiction"
       : "derived_relationship",
-  evidence_links: [...input.links],
-  limitations: [...input.limitations],
-});
+  };
+};
 
 export const unresolvedDimension = (input: {
   readonly dimension: DimensionName;
@@ -67,7 +77,6 @@ export const overallStatus = (
     return "truncated";
   if (
     match === "ambiguous" ||
-    match === "unknown" ||
     dimensions.some(({ status }) => status === "unknown")
   )
     return "unknown";

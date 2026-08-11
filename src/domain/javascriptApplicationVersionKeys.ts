@@ -1,15 +1,29 @@
 import type { ApplicationNode } from "./javascriptApplicationGraph.js";
 import { compareCodePoints } from "./javascriptApplicationGraph.js";
-import type { ApplicationVersionMatchBasis } from "./javascriptApplicationVersionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 
 /** One deterministic one-to-one match between two graph versions. */
-export interface ApplicationVersionNodePair {
+type ApplicationVersionPairMatch =
+  | {
+      readonly basis:
+        | "exact-node-identity"
+        | "exact-content-digest"
+        | "exact-module-source-digest";
+      readonly confidence: "exact";
+    }
+  | {
+      readonly basis: "source-map-identity";
+      readonly confidence: "high";
+    }
+  | {
+      readonly basis: "structural-fingerprint" | "semantic-key";
+      readonly confidence: "medium";
+    };
+
+export type ApplicationVersionNodePair = {
   readonly left: ApplicationNode;
   readonly right: ApplicationNode;
-  readonly basis: Exclude<ApplicationVersionMatchBasis, "none">;
-  readonly confidence: "exact" | "high" | "medium";
-}
+} & ApplicationVersionPairMatch;
 
 /** Matched nodes plus ambiguity candidates that were never forced into pairs. */
 export interface ApplicationVersionMatchingProjection {
@@ -21,26 +35,35 @@ export interface ApplicationVersionMatchingProjection {
 }
 
 interface MatchTier {
-  readonly basis: ApplicationVersionNodePair["basis"];
-  readonly confidence: ApplicationVersionNodePair["confidence"];
+  readonly match: ApplicationVersionPairMatch;
   readonly key: (node: ApplicationNode) => string | null;
 }
 
 const matchTiers = (): readonly MatchTier[] => [
-  { basis: "exact-content-digest", confidence: "exact", key: contentDigestKey },
   {
-    basis: "exact-module-source-digest",
-    confidence: "exact",
+    match: { basis: "exact-content-digest", confidence: "exact" },
+    key: contentDigestKey,
+  },
+  {
+    match: { basis: "exact-module-source-digest", confidence: "exact" },
     key: moduleSourceDigestKey,
   },
-  { basis: "exact-node-identity", confidence: "exact", key: nodeIdentityKey },
-  { basis: "source-map-identity", confidence: "high", key: sourceMapKey },
   {
-    basis: "structural-fingerprint",
-    confidence: "medium",
+    match: { basis: "exact-node-identity", confidence: "exact" },
+    key: nodeIdentityKey,
+  },
+  {
+    match: { basis: "source-map-identity", confidence: "high" },
+    key: sourceMapKey,
+  },
+  {
+    match: { basis: "structural-fingerprint", confidence: "medium" },
     key: structuralFingerprintKey,
   },
-  { basis: "semantic-key", confidence: "medium", key: semanticKey },
+  {
+    match: { basis: "semantic-key", confidence: "medium" },
+    key: semanticKey,
+  },
 ];
 
 /** Apply ordered, unique-only matching tiers without fuzzy pairing. */
@@ -99,7 +122,11 @@ const applyTier = (context: TierContext): void => {
     const leftNode = leftGroup[0];
     const rightNode = rightGroup[0];
     if (leftNode === undefined || rightNode === undefined) continue;
-    context.pairs.push({ left: leftNode, right: rightNode, ...context.tier });
+    context.pairs.push({
+      left: leftNode,
+      right: rightNode,
+      ...context.tier.match,
+    });
     context.left.delete(leftNode.node_id);
     context.right.delete(rightNode.node_id);
   }

@@ -1,102 +1,25 @@
 import { DirectedGraph } from "graphology";
 import { bidirectional } from "graphology-shortest-path/unweighted.js";
-import { z } from "zod";
 
-import { evidenceSchema } from "./evidence.js";
+import {
+  callPathInputSchema,
+  callPathResultSchema,
+  parseCallPathAddress,
+  type CallPathEvidenceGroup,
+  type CallPathInput,
+  type CallPathResult,
+  type OutputCallPath,
+} from "./callPathSchemas.js";
 import {
   parseFunctionEvidence,
   type FunctionSnapshot,
 } from "./functionDossierEvidence.js";
 
-const addressSchema = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]*)$/u);
-const inputAddressSchema = z
-  .string()
-  .regex(/^0[xX][0-9a-fA-F]+$/u)
-  .transform((address) => `0x${BigInt(address).toString(16)}`);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const evidenceGroupSchema = z.union([
-  evidenceSchema,
-  z.array(evidenceSchema).min(1).max(100),
-]);
-const MAX_EVIDENCE_PAGES = 2_000;
 const MAX_GRAPH_EDGES = 10_000;
 const MAX_PATH_EXPANSIONS = 100_000;
 
-/** Strict, bounded input for explicit call-path reconstruction. */
-export const callPathInputSchema = z
-  .object({
-    functions: z.array(evidenceGroupSchema).min(1).max(500),
-    start: z.object({ address: inputAddressSchema }).strict(),
-    goal: z.object({ address: inputAddressSchema }).strict(),
-    max_depth: z.number().int().min(0).max(32).default(8),
-    max_paths: z.number().int().min(1).max(100).default(10),
-    offset: z.number().int().min(0).default(0),
-    limit: z.number().int().min(1).max(100).default(100),
-    unknown_registry_approved: z.literal(true).optional(),
-  })
-  .superRefine(({ functions }, context) => {
-    const pages = functions.reduce(
-      (total, group) => total + (Array.isArray(group) ? group.length : 1),
-      0,
-    );
-    if (pages > MAX_EVIDENCE_PAGES)
-      context.addIssue({
-        code: "custom",
-        message: `Call-path Evidence exceeds ${MAX_EVIDENCE_PAGES} pages`,
-        path: ["functions"],
-      });
-  });
-
-const citedNodeSchema = z.object({
-  address: addressSchema,
-  name: z.string().nullable(),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(100),
-});
-const citedEdgeSchema = z.object({
-  source: addressSchema,
-  target: addressSchema,
-  evidence_links: z.array(evidenceIdSchema).min(1).max(100),
-});
-const pathSchema = z.object({
-  hops: z.number().int().min(0),
-  nodes: z.array(citedNodeSchema).min(1).max(33),
-  edges: z.array(citedEdgeSchema).max(32),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(3_300),
-});
-
-/** Evidence-cited, bounded directed call-path result. */
-export const callPathResultSchema = z.object({
-  status: z.enum(["found", "not_found", "unknown", "truncated"]),
-  start: addressSchema,
-  goal: addressSchema,
-  shortest_hops: z.number().int().min(0).nullable(),
-  search_scope: z.object({
-    max_depth: z.number().int().min(0).max(32),
-    max_paths: z.number().int().min(1).max(100),
-    exhaustive: z.boolean(),
-  }),
-  explored: z.object({
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    depth_reached: z.number().int().min(0),
-  }),
-  paths: z.object({
-    items: z.array(pathSchema).max(100),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1).max(100),
-    total: z.number().int().min(0).nullable(),
-    returned: z.number().int().min(0).max(100),
-    truncated: z.boolean(),
-    lower_bound: z.number().int().min(0),
-    next_offset: z.number().int().min(0).nullable(),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(50_000),
-  limitations: z.array(z.string()),
-});
-
-export type CallPathInput = z.infer<typeof callPathInputSchema>;
-export type CallPathResult = z.infer<typeof callPathResultSchema>;
-type OutputPath = z.infer<typeof pathSchema>;
+export { callPathInputSchema, callPathResultSchema };
+export type { CallPathInput, CallPathResult };
 
 interface SearchState {
   readonly graph: DirectedGraph;
@@ -109,13 +32,7 @@ interface SearchState {
 /** Reconstruct bounded direct-callee paths from explicit analyze_function Evidence. */
 export const buildCallPath = (input: CallPathInput): CallPathResult => {
   const parsed = callPathInputSchema.parse(input);
-  const snapshots = parseSnapshots(parsed.functions);
-  assertCompatible(snapshots);
-  if (!snapshots.has(parsed.start.address))
-    throw new TypeError(
-      `No analyze_function Evidence was supplied for start ${parsed.start.address}`,
-    );
-  const graph = createGraph(snapshots);
+  const { snapshots, graph } = prepareCallGraph(parsed);
   const search = inspectSearch({
     graph,
     snapshots,
@@ -144,75 +61,125 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
   const paths = retained.map((path) => citePath(path, snapshots));
   const total = paths.length;
   const items = paths.slice(parsed.offset, parsed.offset + parsed.limit);
-  const found = paths.length > 0;
+  const shortestHops = paths[0]?.hops;
+  const found = shortestHops !== undefined;
   const exhaustive = search.exhaustive && !capped;
-  const status = callPathStatus({ capped, found, exhaustive });
-  const limitations = [...search.limitations];
-  if (capped)
-    limitations.push(
-      enumeration.budgetExhausted
-        ? `Path enumeration stopped at ${MAX_PATH_EXPANSIONS} expansions`
-        : `Path enumeration stopped at max_paths=${parsed.max_paths}`,
-    );
-  if (!found && shortest !== null && shortest.length - 1 > parsed.max_depth)
-    limitations.push(
-      `The shortest observed path exceeds max_depth=${parsed.max_depth}`,
-    );
-  return callPathResultSchema.parse({
-    status,
+  const limitations = deriveLimitations(
+    search,
+    { budgetExhausted: enumeration.budgetExhausted, capped, found, shortest },
+    parsed,
+  );
+  const resultContext = {
     start: parsed.start.address,
     goal: parsed.goal.address,
-    shortest_hops: found ? (paths[0]?.hops ?? null) : null,
-    search_scope: {
-      max_depth: parsed.max_depth,
-      max_paths: parsed.max_paths,
-      exhaustive,
-    },
-    explored: {
-      nodes: search.reached.size,
-      edges: [...search.reached.keys()].reduce(
-        (count, node) =>
-          count + (graph.hasNode(node) ? graph.outDegree(node) : 0),
-        0,
-      ),
-      depth_reached: Math.max(0, ...search.reached.values()),
-    },
-    paths: {
-      items,
-      offset: parsed.offset,
-      limit: parsed.limit,
-      total: capped ? null : total,
-      returned: items.length,
-      truncated: capped,
-      lower_bound: total + (hasKnownExtraPath ? 1 : 0),
-      next_offset:
-        parsed.offset + items.length < total
-          ? parsed.offset + items.length
-          : null,
-    },
+    explored: summarizeSearch(graph, search.reached),
     evidence_links: uniqueEvidence(snapshots.values()),
     limitations: [...new Set(limitations)].sort((left, right) =>
       left.localeCompare(right),
     ),
+  };
+  const searchScope = {
+    max_depth: parsed.max_depth,
+    max_paths: parsed.max_paths,
+  };
+  const pathPage = {
+    items,
+    offset: parsed.offset,
+    limit: parsed.limit,
+    returned: items.length,
+    lower_bound: total + (hasKnownExtraPath ? 1 : 0),
+    next_offset:
+      parsed.offset + items.length < total
+        ? parsed.offset + items.length
+        : null,
+  };
+  if (capped)
+    return callPathResultSchema.parse({
+      ...resultContext,
+      status: "truncated",
+      shortest_hops: shortestHops ?? null,
+      search_scope: { ...searchScope, exhaustive: false },
+      paths: { ...pathPage, total: null, truncated: true },
+    });
+  if (found)
+    return callPathResultSchema.parse({
+      ...resultContext,
+      status: "found",
+      shortest_hops: shortestHops,
+      search_scope: { ...searchScope, exhaustive },
+      paths: { ...pathPage, total, truncated: false },
+    });
+  return callPathResultSchema.parse({
+    ...resultContext,
+    status: exhaustive ? "not_found" : "unknown",
+    shortest_hops: null,
+    search_scope: { ...searchScope, exhaustive },
+    paths: {
+      ...pathPage,
+      items: [],
+      total: 0,
+      returned: 0,
+      truncated: false,
+      lower_bound: 0,
+      next_offset: null,
+    },
   });
 };
 
-const callPathStatus = ({
-  capped,
-  found,
-  exhaustive,
-}: {
+interface PathOutcome {
+  readonly budgetExhausted: boolean;
   readonly capped: boolean;
   readonly found: boolean;
-  readonly exhaustive: boolean;
-}): CallPathResult["status"] => {
-  if (capped) return "truncated";
-  if (found) return "found";
-  return exhaustive ? "not_found" : "unknown";
+  readonly shortest: readonly string[] | null;
+}
+
+const deriveLimitations = (
+  search: SearchState,
+  outcome: PathOutcome,
+  input: CallPathInput,
+): string[] => {
+  const limitations = [...search.limitations];
+  if (outcome.capped)
+    limitations.push(
+      outcome.budgetExhausted
+        ? `Path enumeration stopped at ${MAX_PATH_EXPANSIONS} expansions`
+        : `Path enumeration stopped at max_paths=${input.max_paths}`,
+    );
+  if (
+    !outcome.found &&
+    outcome.shortest !== null &&
+    outcome.shortest.length - 1 > input.max_depth
+  )
+    limitations.push(
+      `The shortest observed path exceeds max_depth=${input.max_depth}`,
+    );
+  return limitations;
+};
+
+const summarizeSearch = (
+  graph: DirectedGraph,
+  reached: ReadonlyMap<string, number>,
+) => ({
+  nodes: reached.size,
+  edges: [...reached.keys()].reduce(
+    (count, node) => count + (graph.hasNode(node) ? graph.outDegree(node) : 0),
+    0,
+  ),
+  depth_reached: Math.max(0, ...reached.values()),
+});
+
+const prepareCallGraph = (input: CallPathInput) => {
+  const snapshots = parseSnapshots(input.functions);
+  assertCompatible(snapshots);
+  if (!snapshots.has(input.start.address))
+    throw new TypeError(
+      `No analyze_function Evidence was supplied for start ${input.start.address}`,
+    );
+  return { snapshots, graph: createGraph(snapshots) };
 };
 
 const parseSnapshots = (
-  groups: readonly z.infer<typeof evidenceGroupSchema>[],
+  groups: readonly CallPathEvidenceGroup[],
 ): Map<string, FunctionSnapshot> => {
   const snapshots = new Map<string, FunctionSnapshot>();
   for (const group of groups) {
@@ -416,7 +383,7 @@ const enumerateAtDepth = (state: EnumerationState, remaining: number): void => {
 const citePath = (
   addresses: readonly string[],
   snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): OutputPath => {
+): OutputCallPath => {
   const edges = addresses.slice(0, -1).map((source, index) => {
     const target = addresses[index + 1];
     if (target === undefined)
@@ -463,5 +430,4 @@ const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
     ...new Set([...snapshots].flatMap((snapshot) => snapshotLinks(snapshot))),
   ].sort((left, right) => left.localeCompare(right));
 
-const normalizeAddress = (input: string): string =>
-  inputAddressSchema.parse(input);
+const normalizeAddress = (input: string): string => parseCallPathAddress(input);

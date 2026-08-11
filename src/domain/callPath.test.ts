@@ -94,6 +94,16 @@ describe("call path reconstruction", () => {
     expect(result.status).toBe("found");
     expect(result.shortest_hops).toBe(2);
     expect(
+      callPathResultSchema.safeParse({ ...result, shortest_hops: null })
+        .success,
+    ).toBe(false);
+    expect(
+      callPathResultSchema.safeParse({
+        ...result,
+        paths: { ...result.paths, total: null },
+      }).success,
+    ).toBe(false);
+    expect(
       result.paths.items.map((path) =>
         path.nodes.map(({ address }) => address),
       ),
@@ -118,9 +128,14 @@ describe("call path reconstruction", () => {
   });
 
   it("only reports not_found for exhaustive closure", () => {
-    expect(run([observe("0x1000", []), observe("0x4000", [])]).status).toBe(
-      "not_found",
-    );
+    const notFound = run([observe("0x1000", []), observe("0x4000", [])]);
+    expect(notFound.status).toBe("not_found");
+    expect(
+      callPathResultSchema.safeParse({
+        ...notFound,
+        search_scope: { ...notFound.search_scope, exhaustive: false },
+      }).success,
+    ).toBe(false);
     const unknown = run([observe("0x1000", ["0x2000"])]);
     expect(unknown.status).toBe("unknown");
     expect(unknown.limitations).toContain(
