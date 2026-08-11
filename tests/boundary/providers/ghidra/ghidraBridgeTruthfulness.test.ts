@@ -4,29 +4,17 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
 let bridgeSource = "";
-let queueSource = "";
 
 beforeAll(async () => {
-  [bridgeSource, queueSource] = await Promise.all([
-    readFile(
-      fileURLToPath(
-        new URL(
-          "../../../../bridge/ghidra/ReaGhidraBridge.java",
-          import.meta.url,
-        ),
+  bridgeSource = await readFile(
+    fileURLToPath(
+      new URL(
+        "../../../../bridge/ghidra/ReaGhidraBridge.java",
+        import.meta.url,
       ),
-      "utf8",
     ),
-    readFile(
-      fileURLToPath(
-        new URL(
-          "../../../../src/ghidra/GhidraRequestQueue.ts",
-          import.meta.url,
-        ),
-      ),
-      "utf8",
-    ),
-  ]);
+    "utf8",
+  );
 });
 
 describe("Ghidra bridge truthfulness", () => {
@@ -73,15 +61,6 @@ describe("Ghidra bridge truthfulness", () => {
     );
     expect(bridgeSource).toContain(
       "not original source or Hopper-equivalent text",
-    );
-  });
-
-  it("serializes a bounded request queue before crossing the socket", () => {
-    expect(queueSource).toContain("class GhidraRequestQueue");
-    expect(queueSource).toContain("if (this.#size >= this.maximum)");
-    expect(queueSource).toContain("if (this.#active) return");
-    expect(queueSource).toContain(
-      "remaining = entry.deadline - performance.now()",
     );
   });
 

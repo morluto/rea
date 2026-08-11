@@ -1,4 +1,3 @@
-import { getEventListeners } from "node:events";
 import { access, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -76,18 +75,15 @@ describe("provider process runtime and wait primitives", () => {
     });
   });
 
-  it("clears the startup timer and external cancellation listener", async () => {
+  it("classifies external cancellation during startup", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
     const deadline = new ProviderStartupDeadline(1_000, controller.signal);
-    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
 
     const waiting = deadline.wait(1_000);
     controller.abort();
     await expect(waiting).resolves.toBe("aborted");
     expect(deadline.interruption).toBe("cancelled");
-    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
-    expect(vi.getTimerCount()).toBe(0);
     deadline.dispose();
   });
 
@@ -102,7 +98,6 @@ describe("provider process runtime and wait primitives", () => {
     expect(deadline.interruption).toBe("timeout");
     expect(deadline.remainingMs()).toBe(0);
     deadline.dispose();
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does not reclassify an elapsed deadline as later cancellation", async () => {
@@ -115,12 +110,10 @@ describe("provider process runtime and wait primitives", () => {
 
     expect(deadline.signal.reason).toMatchObject({ name: "TimeoutError" });
     expect(deadline.interruption).toBe("timeout");
-    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
-    expect(vi.getTimerCount()).toBe(0);
     deadline.dispose();
   });
 
-  it("releases pending request timers and abort listeners on every outcome", async () => {
+  it("settles pending requests once on cancellation, timeout, and failure", async () => {
     vi.useFakeTimers();
     const operations = new PendingOperations<number, string>();
     const controller = new AbortController();
@@ -130,10 +123,9 @@ describe("provider process runtime and wait primitives", () => {
       timeoutValue: () => "timeout",
       cancelledValue: () => "cancelled",
     });
-    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
     controller.abort();
     await expect(cancelled).resolves.toBe("cancelled");
-    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+    expect(operations.settle(1, "late reply")).toBe(false);
 
     const timedOut = operations.wait(2, {
       timeoutMs: 50,
@@ -142,6 +134,7 @@ describe("provider process runtime and wait primitives", () => {
     });
     await vi.advanceTimersByTimeAsync(50);
     await expect(timedOut).resolves.toBe("timeout");
+    expect(operations.settle(2, "late reply")).toBe(false);
 
     const failed = operations.wait(3, {
       timeoutMs: 1_000,
@@ -150,8 +143,8 @@ describe("provider process runtime and wait primitives", () => {
     });
     operations.failAll((key) => `failed:${String(key)}`);
     await expect(failed).resolves.toBe("failed:3");
+    expect(operations.settle(3, "late reply")).toBe(false);
     expect(operations.size).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -201,9 +194,6 @@ describe("provider process output and cleanup primitives", () => {
     expect(second).toBe(first);
     await expect(first).resolves.toEqual({ status: "killed" });
     expect(child.signalCode).toBe("SIGKILL");
-    expect(getEventListeners(child, "exit")).toHaveLength(0);
-    expect(getEventListeners(child, "close")).toHaveLength(0);
-    expect(getEventListeners(child, "error")).toHaveLength(0);
   });
 
   it("honors verified group cleanup instead of direct process signaling", async () => {

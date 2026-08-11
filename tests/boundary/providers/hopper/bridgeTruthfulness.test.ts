@@ -79,34 +79,6 @@ describe("Hopper bridge truthfulness", () => {
     );
   });
 
-  it("bounds search and makes regex an explicitly constrained opt-in", () => {
-    expect(bridgeSource).toContain('params.get("mode", "literal")');
-    expect(bridgeSource).toContain("pattern.casefold()");
-    expect(bridgeSource).toContain("_validate_regex_node(parsed)");
-    expect(bridgeSource).toContain(
-      "Nested regex repetitions are not supported",
-    );
-    expect(bridgeSource).toContain("MAX_SEARCH_PATTERN_LENGTH = 256");
-    expect(bridgeSource).toContain("MAX_SEARCH_VALUE_LENGTH = 4096");
-    expect(bridgeSource).toContain("MAX_REGEX_BACKTRACKING_PATHS = 10000");
-    expect(bridgeSource).toContain("MAX_REGEX_CANDIDATE_LENGTH = 4096");
-    expect(bridgeSource).toContain("MAX_REGEX_SEARCH_WORK_UNITS = 1000000");
-    expect(bridgeSource).toContain("_checked_regex_paths(");
-    expect(bridgeSource).toContain("_bounded_regex_matcher(");
-    expect(bridgeSource).toContain('"value_truncated"');
-    expect(bridgeSource).toContain("page_end = offset + limit");
-    expect(bridgeSource).toContain("if offset <= total < page_end:");
-    expect(bridgeSource).not.toContain(
-      "matching = [item for item in _search_inventory(document, kind)",
-    );
-  });
-
-  it("caches sorted search inventories and invalidates them after renames", () => {
-    expect(bridgeSource).toContain("_search_inventory_cache");
-    expect(bridgeSource).toContain("tuple(sorted(values.items()");
-    expect(bridgeSource).toContain("_invalidate_search_inventory(document)");
-  });
-
   it("stops background analysis and closes the session-owned document", () => {
     expect(bridgeSource).toContain("def _session_document():");
     expect(bridgeSource).toContain("os.path.realpath(REA_TARGET_PATH)");

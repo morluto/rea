@@ -5,17 +5,17 @@ import { silentLogger } from "../logger.js";
 import { HopperProvider } from "./HopperProvider.js";
 
 describe("Hopper provider capabilities", () => {
-  it("publishes deterministic immutable capability descriptors", () => {
+  it("publishes deterministic descriptors and resists caller mutation", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);
     if (!config.ok) return;
     const provider = new HopperProvider(config.value, silentLogger);
     const capabilities = provider.capabilities();
+    const published = structuredClone(capabilities);
     expect(capabilities).toHaveLength(37);
     expect(new Set(capabilities.map(({ operation }) => operation)).size).toBe(
       capabilities.length,
     );
-    expect(Object.isFrozen(capabilities)).toBe(true);
     for (const descriptor of capabilities) {
       expect(descriptor.provider).toEqual(provider.identity());
       expect(descriptor).toMatchObject({
@@ -24,10 +24,6 @@ describe("Hopper provider capabilities", () => {
         available: true,
         reason: null,
       });
-      expect(Object.isFrozen(descriptor)).toBe(true);
-      expect(Object.isFrozen(descriptor.effects)).toBe(true);
-      expect(Object.isFrozen(descriptor.limits)).toBe(true);
-      expect(Object.isFrozen(descriptor.limitations)).toBe(true);
     }
     expect(
       capabilities.find(({ operation }) => operation === "list_procedures"),
@@ -37,5 +33,14 @@ describe("Hopper provider capabilities", () => {
     ).toMatchObject({
       effects: { mutatesArtifact: true, mayWriteFilesystem: true },
     });
+    const first = capabilities[0];
+    if (first === undefined) throw new Error("Hopper capabilities are empty");
+    Reflect.set(capabilities, 0, { ...first, available: false });
+    Reflect.set(first, "available", false);
+    Reflect.set(first.effects, "mutatesArtifact", true);
+    Reflect.set(first.limits, "maxResults", 0);
+    Reflect.set(first.limitations, 0, "forged limitation");
+
+    expect(provider.capabilities()).toEqual(published);
   });
 });

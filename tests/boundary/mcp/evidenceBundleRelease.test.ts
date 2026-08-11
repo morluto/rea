@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
@@ -26,8 +26,16 @@ describe("evidence bundle release", () => {
   it("notifies snapshot observers and invalidates the retained URI", async () => {
     const session = createSession();
     const server = createServer(session, session);
-    const resourceUpdated = vi.spyOn(server.server, "sendResourceUpdated");
     const client = new Client({ name: "release-test", version: "1" });
+    const bundleUpdated = new Promise<string>((resolve) => {
+      client.setNotificationHandler(
+        "notifications/resources/updated",
+        (notice) => {
+          if (notice.params.uri.startsWith("rea://evidence-bundle/"))
+            resolve(notice.params.uri);
+        },
+      );
+    });
     let updates = 0;
     session.onAnalysisSnapshotChanged(() => {
       updates += 1;
@@ -64,9 +72,7 @@ describe("evidence bundle release", () => {
         released: true,
       });
       expect(updates).toBe(1);
-      expect(resourceUpdated).toHaveBeenCalledWith({
-        uri: snapshot.bundle_uri,
-      });
+      await expect(bundleUpdated).resolves.toBe(snapshot.bundle_uri);
       await expect(
         client.readResource({ uri: snapshot.bundle_uri }),
       ).rejects.toThrow(/not found/iu);
