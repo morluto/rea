@@ -100,10 +100,27 @@ describe("Hopper bridge truthfulness", () => {
     );
   });
 
-  it("invalidates cached search inventories after renames", () => {
-    expect(bridgeSource).toContain("_search_inventory_cache");
-    expect(bridgeSource).toContain("tuple(sorted(values.items()");
-    expect(bridgeSource).toContain("_invalidate_search_inventory(document)");
+  it("invalidates cached search inventories in both rename paths", () => {
+    const singleRenameStart = bridgeSource.indexOf(
+      'if method == "set_address_name":',
+    );
+    const bulkRenameStart = bridgeSource.indexOf(
+      'if method == "set_addresses_names":',
+      singleRenameStart,
+    );
+    const nextMethodStart = bridgeSource.indexOf(
+      'if method in ("set_comment", "set_inline_comment"):',
+      bulkRenameStart,
+    );
+    expect(singleRenameStart).toBeGreaterThan(-1);
+    expect(bulkRenameStart).toBeGreaterThan(singleRenameStart);
+    expect(nextMethodStart).toBeGreaterThan(bulkRenameStart);
+    expect(bridgeSource.slice(singleRenameStart, bulkRenameStart)).toContain(
+      "_invalidate_search_inventory(document)",
+    );
+    expect(bridgeSource.slice(bulkRenameStart, nextMethodStart)).toContain(
+      "_invalidate_search_inventory(document)",
+    );
   });
 
   it("returns deterministic addresses for direct procedure relationships", () => {
