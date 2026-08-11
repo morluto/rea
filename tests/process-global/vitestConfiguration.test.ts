@@ -26,7 +26,7 @@ const EXPECTED_PROJECTS = [
 ];
 const ALLOWED_DIRECT_TEMPORARY_ROOTS = new Set([
   "tests/support/workspace/workspaceFixture.ts",
-  "tests/conformance/packageInstallWorkflow.test.ts",
+  "tests/acceptance/setup/packageInstallWorkflow.test.ts",
   "tests/boundary/filesystem/temporaryDirectory.test.ts",
   "tests/boundary/filesystem/referenceSourceReader.test.ts",
   "tests/boundary/process/providerProcess.test.ts",
