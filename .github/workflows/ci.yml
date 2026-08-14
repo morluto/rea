@@ -109,7 +109,7 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           overwrite: true
-          retention-days: 1
+          retention-days: 7
 
   build:
     name: Build package
@@ -129,7 +129,7 @@ jobs:
           name: rea-dist
           path: dist
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   test:
     name: Test (coverage + timing)
