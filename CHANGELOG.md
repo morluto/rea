@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.1](https://github.com/morluto/rea/compare/rea-agents-3.1.0...rea-agents-3.1.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **ci:** retain artifacts for delayed reruns ([07888ec](https://github.com/morluto/rea/commit/07888ec096f69753a1535703fb7b3c3070e786b7))
+
+
+### Code Refactoring
+
+* **domain:** encode comparison and lifecycle states exactly ([#473](https://github.com/morluto/rea/issues/473)) ([d65730c](https://github.com/morluto/rea/commit/d65730c4c24ab6183426516d4564e6c25294b35d))
+* **test:** colocate pure-domain tests and reduce test debt ([#471](https://github.com/morluto/rea/issues/471)) ([e91c8c3](https://github.com/morluto/rea/commit/e91c8c39c2acddc4389ed0d01950d1954c472e47))
+* **test:** keep coverage at behavioral boundaries ([#474](https://github.com/morluto/rea/issues/474)) ([d4dc940](https://github.com/morluto/rea/commit/d4dc940bd871089ffa1b42d3475798b2f4f9c992))
+
 ## [3.1.0](https://github.com/morluto/rea/compare/rea-agents-3.0.0...rea-agents-3.1.0) (2026-08-09)
 
 
