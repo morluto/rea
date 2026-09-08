@@ -118,7 +118,7 @@ const verifySetupApply = async ({ cli, environment, supportedSetupHost }) => {
   const first = json(firstExecution.stdout);
   const alignedExecution = await runWithStatus(
     cli,
-    ["setup", "--json"],
+    ["setup", "--all-detected", "--json"],
     environment,
   );
   const aligned = json(alignedExecution.stdout);
@@ -142,7 +142,7 @@ const verifySetupApply = async ({ cli, environment, supportedSetupHost }) => {
       second.appliedActions.length !== 0
     )
       throw new Error(
-        `packaged setup did not preserve idempotent defaults and explicit Hopper reinstall behavior: ${JSON.stringify({ first, aligned, second })}`,
+        `packaged setup did not preserve idempotent agent configuration and explicit Hopper reinstall behavior: ${JSON.stringify({ first, aligned, second })}`,
       );
   }
   return {

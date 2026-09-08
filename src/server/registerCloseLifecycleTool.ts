@@ -1,11 +1,11 @@
 import { writeAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
-import { ok } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import {
   reportLifecycleEnd,
   reportLifecycleStart,
 } from "./lifecycleProgress.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import { permissionFailure } from "./permissionFailure.js";
+import { projectPermissionFailure } from "../application/PermissionFailure.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -47,7 +47,10 @@ export const registerCloseLifecycleTool = ({
           "write",
         );
         if (!authorized.ok)
-          return toCallToolResult(permissionFailure(authorized), closeContract);
+          return toCallToolResult(
+            err(projectPermissionFailure(authorized.error)),
+            closeContract,
+          );
       }
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok) return toCallToolResult(snapshot, closeContract);

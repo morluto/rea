@@ -78,30 +78,33 @@ describe("project permission store", () => {
     });
   });
 
-  it("round-trips managed runtime project grants", async () => {
-    const project = await createTestTempDirectory("rea-policy-managed-");
-    const path = join(project, "permissions.json");
-    const grant = {
-      grant_id: "project:managed-runtime",
-      capability: "managed_runtime" as const,
-      roots: [project],
-      executables: [process.execPath],
-      environment_names: [],
-      network: "none" as const,
-      mount: false,
-      lifetime: "project" as const,
-      operation_identity: null,
-      expires_at: null,
-    };
+  it.each(["managed_runtime", "v8_inspector_observe"] as const)(
+    "round-trips %s project grants",
+    async (capability) => {
+      const project = await createTestTempDirectory("rea-policy-managed-");
+      const path = join(project, "permissions.json");
+      const grant = {
+        grant_id: "project:managed-runtime",
+        capability,
+        roots: [project],
+        executables: [process.execPath],
+        environment_names: [],
+        network: "none" as const,
+        mount: false,
+        lifetime: "project" as const,
+        operation_identity: null,
+        expires_at: null,
+      };
 
-    expect(
-      await writeProjectPermissionStore(path, project, [grant]),
-    ).toMatchObject({ ok: true, value: { grants: [grant] } });
-    expect(await readProjectPermissionStore(path, project)).toMatchObject({
-      ok: true,
-      value: { grants: [grant] },
-    });
-  });
+      expect(
+        await writeProjectPermissionStore(path, project, [grant]),
+      ).toMatchObject({ ok: true, value: { grants: [grant] } });
+      expect(await readProjectPermissionStore(path, project)).toMatchObject({
+        ok: true,
+        value: { grants: [grant] },
+      });
+    },
+  );
 
   it("classifies malformed JSON as an invalid store", async () => {
     const project = await createTestTempDirectory("rea-policy-invalid-");

@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rm,
+  type FileHandle,
+} from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { streamChunkToBuffer } from "./StreamBytes.js";
@@ -35,20 +42,14 @@ export class SafeOutputTree {
   readonly #registry = new ArtifactPathRegistry();
   readonly #limits: ArtifactLimits;
   readonly #outputRoot: string;
-  readonly #stagingRoot: string;
   #totalBytes = 0;
   #published = false;
   #cleanup: SafeOutputCleanup = {
     status: "not-required",
   };
 
-  private constructor(
-    outputRoot: string,
-    stagingRoot: string,
-    limits: ArtifactLimits,
-  ) {
+  private constructor(outputRoot: string, limits: ArtifactLimits) {
     this.#outputRoot = outputRoot;
-    this.#stagingRoot = stagingRoot;
     this.#limits = limits;
   }
 
@@ -95,7 +96,7 @@ export class SafeOutputTree {
       } finally {
         await stagingHandle.close();
       }
-      return new SafeOutputTree(canonicalOutput, canonicalOutput, limits);
+      return new SafeOutputTree(canonicalOutput, limits);
     } catch (cause: unknown) {
       await rm(canonicalOutput, { recursive: true, force: true });
       throw cause;
@@ -184,12 +185,13 @@ export class SafeOutputTree {
       dirname(this.#outputRoot),
       constants.O_RDONLY | constants.O_DIRECTORY,
     );
-    const staging = await open(
-      this.#stagingRoot,
-      constants.O_RDONLY | constants.O_DIRECTORY,
-    );
+    let output: FileHandle | undefined;
     try {
-      await staging.sync();
+      output = await open(
+        this.#outputRoot,
+        constants.O_RDONLY | constants.O_DIRECTORY,
+      );
+      await output.sync();
       await parent.sync();
       this.#published = true;
     } catch (cause: unknown) {
@@ -199,20 +201,20 @@ export class SafeOutputTree {
         { cause },
       );
     } finally {
-      await Promise.allSettled([parent.close(), staging.close()]);
+      await Promise.allSettled([parent.close(), output?.close()]);
     }
   }
 
   /** Remove only this operation's unsealed tree and verify absence. */
   async rollback(): Promise<SafeOutputCleanup> {
     if (this.#published) return structuredClone(this.#cleanup);
-    await rm(this.#stagingRoot, { recursive: true, force: true });
-    const absent = await isAbsent(this.#stagingRoot);
+    await rm(this.#outputRoot, { recursive: true, force: true });
+    const absent = await isAbsent(this.#outputRoot);
     this.#cleanup = absent
       ? { status: "complete", residualPaths: [] }
       : {
           status: "incomplete",
-          residualPaths: [basename(this.#stagingRoot)],
+          residualPaths: [basename(this.#outputRoot)],
         };
     if (!absent)
       throw new ArtifactReaderFailure(
@@ -227,7 +229,7 @@ export class SafeOutputTree {
     const fileName = parts.pop();
     if (fileName === undefined)
       throw new ArtifactReaderFailure("path", "Invalid extraction path");
-    let current = this.#stagingRoot;
+    let current = this.#outputRoot;
     for (const part of parts) {
       current = join(current, part);
       await mkdir(current, { mode: 0o700 }).catch((cause: unknown) => {

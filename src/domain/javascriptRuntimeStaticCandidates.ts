@@ -1,5 +1,6 @@
-import { isAbsolute, posix, relative } from "node:path";
+import { posix, relative } from "node:path";
 
+import { isPathWithinRoot } from "./localPath.js";
 import {
   compareCodePoints,
   type ApplicationNode,
@@ -210,8 +211,7 @@ const pathBelowRoot = (root: string, value: string): string | null => {
   const remainder = relative(root, value);
   if (
     remainder === "" ||
-    remainder.startsWith("..") ||
-    isAbsolute(remainder) ||
+    !isPathWithinRoot(root, value) ||
     remainder.includes("\\")
   )
     return null;

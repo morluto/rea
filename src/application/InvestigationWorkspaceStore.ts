@@ -1,13 +1,12 @@
 import {
-  lstat,
-  open,
-  readFile,
-  realpath,
-  unlink,
-  type FileHandle,
-} from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+  createStoreFileLock,
+  removeStaleStoreFileLock,
+  type StoreFileLock,
+} from "./StoreFileLock.js";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 
+import { isPathWithinRoot } from "../domain/localPath.js";
 import writeFileAtomic from "write-file-atomic";
 
 import type { EvidenceFilePolicy } from "../domain/evidenceBundle.js";
@@ -19,6 +18,7 @@ import {
   type InvestigationWorkspace,
 } from "../domain/investigationWorkspace.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
 type WorkspaceResult<Value> = Result<Value, InvestigationWorkspaceError>;
 
@@ -108,7 +108,7 @@ export const writeRevisionedWorkspace = async <Document>(
   const bytes = Buffer.byteLength(encoded, "utf8");
   if (bytes > policy.maxBytes)
     return err(new InvestigationWorkspaceError("update", "too-large"));
-  let lock: { readonly path: string; readonly handle: FileHandle } | undefined;
+  let lock: StoreFileLock | undefined;
   try {
     const destination = await resolveDestination(path, policy.roots);
     if (destination === null)
@@ -133,7 +133,7 @@ export const writeRevisionedWorkspace = async <Document>(
   } catch (cause: unknown) {
     return err(new InvestigationWorkspaceError("update", "io", { cause }));
   } finally {
-    if (lock !== undefined) await releaseLock(lock);
+    if (lock !== undefined) await lock.release();
   }
 };
 
@@ -144,14 +144,10 @@ const resolveDestination = async (
   const requested = resolve(path);
   const canonicalParent = await realpath(dirname(requested));
   const destination = resolve(canonicalParent, basename(requested));
-  for (const configuredRoot of roots) {
-    const root = await realpath(resolve(configuredRoot));
-    const relation = relative(root, destination);
-    if (
-      relation === "" ||
-      (!relation.startsWith("..") && !isAbsolute(relation))
-    )
-      return destination;
+  for (const root of await canonicalizeConfiguredRoots(
+    roots.map((configuredRoot) => resolve(configuredRoot)),
+  )) {
+    if (isPathWithinRoot(root, destination)) return destination;
   }
   return null;
 };
@@ -192,16 +188,14 @@ const readWorkspaceFile = async <Document>(
 
 const acquireLock = async (
   destination: string,
-): Promise<
-  WorkspaceResult<{ readonly path: string; readonly handle: FileHandle }>
-> => {
+): Promise<WorkspaceResult<StoreFileLock>> => {
   const path = `${destination}.lock`;
   try {
-    return ok(await createLock(path));
+    return ok(await createStoreFileLock(path));
   } catch (cause: unknown) {
-    if (isAlreadyExists(cause) && (await removeStaleLock(path))) {
+    if (isAlreadyExists(cause) && (await removeStaleStoreFileLock(path))) {
       try {
-        return ok(await createLock(path));
+        return ok(await createStoreFileLock(path));
       } catch (retryCause: unknown) {
         return err(
           new InvestigationWorkspaceError(
@@ -220,54 +214,6 @@ const acquireLock = async (
       ),
     );
   }
-};
-
-const createLock = async (
-  path: string,
-): Promise<{ readonly path: string; readonly handle: FileHandle }> => {
-  const handle = await open(path, "wx", 0o600);
-  try {
-    await handle.writeFile(`${String(process.pid)}\n`, "utf8");
-    await handle.sync();
-    return { path, handle };
-  } catch (cause: unknown) {
-    await handle.close().catch(() => undefined);
-    await unlink(path).catch(() => undefined);
-    throw cause;
-  }
-};
-
-const removeStaleLock = async (path: string): Promise<boolean> => {
-  try {
-    const stats = await lstat(path);
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 32)
-      return false;
-    const encoded = (await readFile(path, "utf8")).trim();
-    if (!/^[1-9][0-9]{0,9}$/u.test(encoded)) return false;
-    const pid = Number(encoded);
-    if (processIsAlive(pid)) return false;
-    await unlink(path);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause: unknown) {
-    return errorCode(cause) !== "ESRCH";
-  }
-};
-
-const releaseLock = async (lock: {
-  readonly path: string;
-  readonly handle: FileHandle;
-}): Promise<void> => {
-  await lock.handle.close().catch(() => undefined);
-  await unlink(lock.path).catch(() => undefined);
 };
 
 function validateNextRevision(

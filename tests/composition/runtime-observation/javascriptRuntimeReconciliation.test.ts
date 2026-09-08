@@ -18,6 +18,32 @@ import { createElectronActiveObservationFixtureResult } from "../../../src/domai
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 
+it("reconciles runtime scripts inside dot-prefixed child directories", async () => {
+  const root = await applicationFixture();
+  await mkdir(join(root, "..cache"));
+  await writeFile(join(root, "..cache", "app.js"), SOURCE);
+  const result = reconcileJavaScriptRuntime({
+    static_layers: [
+      { role: "application", analysis: await analyzeFixture(root) },
+    ],
+    runtime_observations: [
+      electronRuntimeEvidence(root, SOURCE, {
+        scriptFile: "..cache/app.js",
+        includeWorker: false,
+      }),
+    ],
+  });
+  expect(result.reconciliations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        entity_kind: "script",
+        status: "matched",
+        basis: "content-and-location",
+      }),
+    ]),
+  );
+});
+
 it("matches renderer, frame, script bytes, and worker without claiming execution", async () => {
   const fixture = await applicationFixture();
   const staticEvidence = await analyzeFixture(fixture);

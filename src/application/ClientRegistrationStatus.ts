@@ -1,7 +1,7 @@
+import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -39,7 +39,6 @@ export type UnhealthyClientRegistrationStatus = Exclude<
   { readonly state: "aligned" }
 >;
 
-const objectSchema = z.record(z.string(), z.unknown());
 const registrationSchema = z
   .object({
     command: z.string().min(1),
@@ -59,12 +58,7 @@ export const readClientRegistrationStatuses = async (
       continue;
     try {
       const content = await readFile(client.configPath, "utf8");
-      const document = objectSchema.parse(
-        client.format === "toml" ? parseToml(content) : JSON.parse(content),
-      );
-      const servers = objectSchema.parse(
-        document[client.format === "toml" ? "mcp_servers" : "mcpServers"] ?? {},
-      );
+      const { servers } = parseClientConfiguration(content, client.format);
       const raw = servers[PRODUCT_IDENTITY.mcpServerKey];
       if (raw === undefined) {
         statuses.push(

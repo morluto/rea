@@ -3,7 +3,6 @@ import type { Evidence } from "../../domain/evidence.js";
 import type { EvidenceIntegrityError } from "../../domain/errors.js";
 import type { Result } from "../../domain/result.js";
 import { resolveSessionEvidenceIds } from "../sessionEvidence.js";
-import type { ManagedWorkflowToolRegistration } from "./types.js";
 
 export const resolveManagedEvidence = (
   session: BinarySessionPort,
@@ -51,17 +50,6 @@ export const resolveNativeEvidence = (
     records.push(...resolved.value);
   }
   return { ok: true, value: records };
-};
-
-export const recordManagedSources = (
-  recordEvidence: ManagedWorkflowToolRegistration["recordEvidence"],
-  sources: readonly Evidence[],
-) => {
-  for (const source of sources) {
-    const recorded = recordEvidence?.(source);
-    if (recorded !== undefined && !recorded.ok) return recorded;
-  }
-  return { ok: true as const, value: null };
 };
 
 export const sourceEvidence = (input: {

@@ -1,57 +1,28 @@
 import { Cli, z } from "incur";
 
+import { browserContext, browserCliError } from "./cliBrowserContext.js";
 import {
   analyzeWebBundle,
   inspectWebPage,
   listBrowserTargets,
   observeWebSession,
 } from "./application/BrowserObservationService.js";
-import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
-import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { logCliCommand } from "./cliLogging.js";
-import { parseConfig } from "./config.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
 } from "./domain/browserObservation.js";
 import { analyzeWebBundleInputSchema } from "./domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "./domain/browserSession.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  projectAnalysisError,
-} from "./domain/errors.js";
-import type { JsonValue } from "./domain/jsonValue.js";
+import { AnalysisInputError } from "./domain/errors.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { browserPageInspectionOptions } from "./cliObservationOptions.js";
-
-const browserScopeOptions = {
-  allowedOrigins: z
-    .array(z.string().min(1))
-    .optional()
-    .describe(
-      "Exact origins to observe; defaults to REA_BROWSER_ALLOWED_ORIGINS_JSON",
-    ),
-  approved: z.boolean().default(false).describe("Approve passive observation"),
-};
-
-const boundedCount = (
-  subject: string,
-  maximum: number,
-  fallback: number,
-  minimum = 1,
-) =>
-  z
-    .number()
-    .int()
-    .min(minimum)
-    .max(maximum)
-    .default(fallback)
-    .describe(`Maximum ${subject}`);
-
-const boundedBytes = (subject: string, maximum: number, fallback: number) =>
-  boundedCount(`${subject} in bytes`, maximum, fallback);
+import {
+  browserPageInspectionOptions,
+  browserScopeOptions,
+  boundedCount,
+  boundedBytes,
+} from "./cliObservationOptions.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
@@ -96,13 +67,15 @@ const registerTargetList = (
           limit: options.limit,
         });
         if (!parsed.success)
-          return cliError(new AnalysisInputError("list_browser_targets"));
+          return browserCliError(
+            new AnalysisInputError("list_browser_targets"),
+          );
         const result = await listBrowserTargets(
           context.provider,
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -167,13 +140,13 @@ const registerPageInspection = (
           },
         });
         if (!parsed.success)
-          return cliError(new AnalysisInputError("inspect_web_page"));
+          return browserCliError(new AnalysisInputError("inspect_web_page"));
         const result = await inspectWebPage(
           context.provider,
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -256,13 +229,13 @@ const registerBundleAnalysis = (
           },
         });
         if (!parsed.success)
-          return cliError(new AnalysisInputError("analyze_web_bundle"));
+          return browserCliError(new AnalysisInputError("analyze_web_bundle"));
         const result = await analyzeWebBundle(
           context.provider,
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -300,46 +273,13 @@ const registerObservationSession = (
           max_timeline_events: options.maxTimelineEvents,
         });
         if (!parsed.success)
-          return cliError(new AnalysisInputError("observe_web_session"));
+          return browserCliError(new AnalysisInputError("observe_web_session"));
         const result = await observeWebSession(
           context.provider,
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
-
-const browserContext = async (operation: string) => {
-  const config = parseConfig(process.env);
-  if (!config.ok) return { ok: false as const, error: cliError(config.error) };
-  const policy = config.value.browserObservationPolicy;
-  if (policy.status === "disabled")
-    return {
-      ok: false as const,
-      error: cliError(
-        new AnalysisCapabilityUnavailableError(
-          "rea-cdp-browser",
-          operation,
-          "browser observation is disabled; configure exact endpoints and origins before enabling it",
-        ),
-      ),
-    };
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok)
-    return { ok: false as const, error: cliError(authority.error) };
-  return {
-    ok: true as const,
-    authority: authority.value,
-    provider: new CdpBrowserProvider(),
-    allowedBrowserOrigins: policy.allowedOrigins,
-  };
-};
-
-const cliError = (
-  error: Parameters<typeof projectAnalysisError>[0],
-): JsonValue => ({
-  error: "Browser observation failed",
-  ...projectAnalysisError(error),
-});

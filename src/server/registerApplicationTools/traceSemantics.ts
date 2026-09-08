@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { resolveTraceJavaScriptSemanticsRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
@@ -6,7 +7,7 @@ import { applicationToolContract } from "../../contracts/applicationToolContract
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = applicationToolContract("trace_javascript_semantics");
@@ -31,7 +32,7 @@ export const registerTraceJavaScriptSemanticsTool = (
         ),
       );
       if (!result.ok) return toCallToolResult(result, contract);
-      const recorded = recordSources(options.recordEvidence, [
+      const recorded = recordSessionEvidenceSources(options.recordEvidence, [
         resolved.value.application,
       ]);
       if (!recorded.ok) return toCallToolResult(recorded, contract);

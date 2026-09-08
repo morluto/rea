@@ -1,4 +1,3 @@
-import { open } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import {
@@ -6,7 +5,6 @@ import {
   type EnabledJavaScriptReplayPolicy,
   type PreparedReplayPlan,
 } from "../application/JavaScriptReplayPlanning.js";
-import { buildLinuxX64ReplaySeccomp } from "./LinuxSeccompPolicy.js";
 import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
 
 export type RuntimeFile = Awaited<
@@ -36,24 +34,6 @@ export const assertRuntimeCommitment = (
     digestJson(prepared.publicPlan.runtime.read_only_files)
   )
     throw new TypeError("Replay runtime closure changed after approval");
-};
-
-export const temporaryFilterHandle = async () => {
-  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const directory = await mkdtemp(join(tmpdir(), "rea-replay-filter-"));
-  const path = join(directory, "seccomp.bpf");
-  await writeFile(path, buildLinuxX64ReplaySeccomp(), { mode: 0o600 });
-  const handle = await open(path, "r");
-  return {
-    path,
-    handle,
-    close: async () => {
-      await handle.close();
-      await rm(directory, { recursive: true, force: true });
-    },
-  };
 };
 
 export const systemdArguments = (

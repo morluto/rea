@@ -11,6 +11,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { registerJavaScriptApplicationGraphResource } from "./registerJavaScriptApplicationGraphResource.js";
 import { registerReconstructionObligationLedgerResource } from "./registerReconstructionObligationLedgerResource.js";
 import { registerReconstructionReadinessResource } from "./registerReconstructionReadinessResource.js";
+import { jsonResource } from "./resourceResult.js";
 
 /** Expose immutable session-owned Evidence v2 records as MCP resources. */
 export const registerEvidenceResources = (
@@ -118,15 +119,7 @@ const registerSessionEvidenceResource = (
         throw new ResourceNotFoundError(uri.href);
       const evidence = session.evidenceById(evidenceId);
       if (evidence === undefined) throw new ResourceNotFoundError(uri.href);
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: "application/json",
-            text: JSON.stringify(evidence, null, 2),
-          },
-        ],
-      };
+      return jsonResource(uri.href, evidence);
     },
   );
 };
@@ -397,16 +390,6 @@ const pick = (
   );
   return entries.length === 0 ? undefined : Object.fromEntries(entries);
 };
-
-const jsonResource = (uri: string, value: JsonValue) => ({
-  contents: [
-    {
-      uri,
-      mimeType: "application/json" as const,
-      text: JSON.stringify(value, null, 2),
-    },
-  ],
-});
 
 const ARTIFACT_COLLECTIONS = new Set(["nodes", "occurrences", "edges"]);
 

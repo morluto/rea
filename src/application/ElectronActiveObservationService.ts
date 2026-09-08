@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import { realpath } from "node:fs/promises";
 
 import type { ExecutionOptions } from "./AnalysisProvider.js";
@@ -7,8 +8,6 @@ import { digestJson } from "./JavaScriptReplayPlanning.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -90,14 +89,7 @@ const authorize = async (
     },
     "write",
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return canonical;
 };
 

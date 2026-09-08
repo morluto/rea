@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { projectManagedApplicationGraphEvidence } from "../../application/ManagedApplicationGraphService.js";
@@ -6,7 +7,6 @@ import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
-  recordManagedSources,
   resolveManagedArtifactEvidence,
   resolveManagedBoundaryEvidence,
   resolveManagedEvidence,
@@ -65,7 +65,7 @@ export const registerProjectManagedApplicationGraph = (
         () => Promise.resolve(projectManagedApplicationGraphEvidence(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, graphContract);
-      const recordedSources = recordManagedSources(
+      const recordedSources = recordSessionEvidenceSources(
         options.recordEvidence,
         sourceEvidence(parsed),
       );

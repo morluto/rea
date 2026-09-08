@@ -62,6 +62,25 @@ describe("client registration status", () => {
     expect(JSON.stringify(statuses)).not.toContain("SECRET");
   });
 
+  it.each([null, [], "invalid"])(
+    "reports a malformed server table %j as invalid",
+    async (servers) => {
+      const home = await createTestTempDirectory("rea-registration-shape-");
+      await mkdir(join(home, ".cursor"));
+      await writeFile(
+        join(home, ".cursor/mcp.json"),
+        JSON.stringify({ mcpServers: servers }),
+      );
+      expect(await readClientRegistrationStatuses(home)).toEqual([
+        expect.objectContaining({
+          client: "cursor",
+          state: "invalid",
+          command: [],
+        }),
+      ]);
+    },
+  );
+
   it("reports an unversioned npx registration as stale", async () => {
     const home = await createTestTempDirectory("rea-registrations-");
     await mkdir(join(home, ".codex"));

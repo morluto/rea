@@ -7,7 +7,8 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import {
-  MetadataRowCursor,
+  metadataRowCursor,
+  metadataCodedToken,
   metadataToken,
   readMetadataBlob,
   readMetadataGuid,
@@ -24,36 +25,6 @@ type AssemblyReference =
   ManagedArtifactInspection["references"]["items"][number];
 type ManagedResource = ManagedArtifactInspection["resources"]["items"][number];
 type CustomAttribute = ManagedArtifactInspection["attributes"]["items"][number];
-
-interface RowCursorContext {
-  readonly bytes: Buffer;
-  readonly layout: ManagedMetadataLayout;
-  readonly table: number;
-  readonly row: number;
-}
-
-const rowCursor = ({
-  bytes,
-  layout,
-  table,
-  row,
-}: RowCursorContext): MetadataRowCursor => {
-  const descriptor = layout.table(table);
-  const start = metadataRowOffset(layout, table, row);
-  if (descriptor === undefined)
-    throw managedFailure(
-      "invalid-row",
-      `metadata.${String(table)}`,
-      "Metadata table is absent",
-      start,
-    );
-  return new MetadataRowCursor(
-    bytes,
-    start,
-    start + descriptor.rowSize,
-    `metadata.${descriptor.name}`,
-  );
-};
 
 const publicKeyIdentity = (
   bytes: Buffer,
@@ -79,7 +50,7 @@ export const readModule = (
 ): ModuleIdentity | null => {
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
-  const cursor = rowCursor({ bytes, layout, table: 0, row: 1 });
+  const cursor = metadataRowCursor(bytes, layout, 0, 1);
   const generation = cursor.readUInt16();
   const name = readMetadataString(
     bytes,
@@ -120,7 +91,7 @@ export const readAssembly = (
 ): AssemblyIdentity | null => {
   const table = layout.table(32);
   if (table === undefined || table.rowCount === 0) return null;
-  const cursor = rowCursor({ bytes, layout, table: 32, row: 1 });
+  const cursor = metadataRowCursor(bytes, layout, 32, 1);
   const hashAlgorithm = cursor.readUInt32();
   const version = [
     cursor.readUInt16(),
@@ -168,7 +139,7 @@ export const readAssemblyReference = (
   row: number,
   maxBytes: number,
 ): AssemblyReference => {
-  const cursor = rowCursor({ bytes, layout, table: 35, row });
+  const cursor = metadataRowCursor(bytes, layout, 35, row);
   const version = [
     cursor.readUInt16(),
     cursor.readUInt16(),
@@ -216,18 +187,6 @@ export const readAssemblyReference = (
   };
 };
 
-const codedToken = (
-  raw: number,
-  bits: number,
-  tables: readonly (number | undefined)[],
-): string | null => {
-  if (raw === 0) return null;
-  const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
-  return table === undefined || row === 0 ? null : metadataToken(table, row);
-};
-
 interface ReadTypeNameContext {
   readonly bytes: Buffer;
   readonly layout: ManagedMetadataLayout;
@@ -246,7 +205,7 @@ const readTypeName = ({
   const descriptor = layout.table(table);
   if (descriptor === undefined || row < 1 || row > descriptor.rowCount)
     return null;
-  const cursor = rowCursor({ bytes, layout, table, row });
+  const cursor = metadataRowCursor(bytes, layout, table, row);
   if (table === 1) cursor.readIndex(layout.codedIndexSize("ResolutionScope"));
   else cursor.readUInt32();
   const name = readMetadataString(
@@ -274,7 +233,7 @@ const declaringTypeForMethod = (
   const methods = layout.table(6);
   if (types === undefined || methods === undefined) return null;
   for (let row = 1; row <= types.rowCount; row += 1) {
-    const cursor = rowCursor({ bytes, layout, table: 2, row });
+    const cursor = metadataRowCursor(bytes, layout, 2, row);
     cursor.readUInt32();
     const nameIndex = cursor.readIndex(layout.stringIndexSize);
     const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
@@ -303,7 +262,7 @@ const methodListForType = (
   layout: ManagedMetadataLayout,
   row: number,
 ): number => {
-  const cursor = rowCursor({ bytes, layout, table: 2, row });
+  const cursor = metadataRowCursor(bytes, layout, 2, row);
   cursor.readUInt32();
   cursor.readIndex(layout.stringIndexSize);
   cursor.readIndex(layout.stringIndexSize);
@@ -325,7 +284,7 @@ const attributeTypeName = (
   if (tag !== 3) return null;
   const memberRefs = layout.table(10);
   if (memberRefs === undefined || row > memberRefs.rowCount) return null;
-  const cursor = rowCursor({ bytes, layout, table: 10, row });
+  const cursor = metadataRowCursor(bytes, layout, 10, row);
   const parent = cursor.readIndex(layout.codedIndexSize("MemberRefParent"));
   const parentTag = parent & 7;
   const parentRow = Math.floor(parent / 8);
@@ -389,7 +348,7 @@ export const readCustomAttribute = (
   row: number,
   maxBytes: number,
 ): CustomAttribute => {
-  const cursor = rowCursor({ bytes, layout, table: 12, row });
+  const cursor = metadataRowCursor(bytes, layout, 12, row);
   const parentRaw = cursor.readIndex(
     layout.codedIndexSize("HasCustomAttribute"),
   );
@@ -402,7 +361,7 @@ export const readCustomAttribute = (
     cursor.readIndex(layout.blobIndexSize),
     maxBytes,
   );
-  const parent = codedToken(
+  const parent = metadataCodedToken(
     parentRaw,
     5,
     [
@@ -420,7 +379,12 @@ export const readCustomAttribute = (
   const typeName = attributeTypeName(bytes, layout, typeRaw, maxBytes);
   return {
     parent_token: parent,
-    constructor_token: codedToken(typeRaw, 3, [undefined, undefined, 6, 10]),
+    constructor_token: metadataCodedToken(typeRaw, 3, [
+      undefined,
+      undefined,
+      6,
+      10,
+    ]),
     type_name: typeName,
     value_length: value.length,
     value_sha256: sha256Bytes(value),
@@ -450,7 +414,7 @@ export const readResource = ({
   directory,
   issues,
 }: ReadResourceContext): ManagedResource => {
-  const cursor = rowCursor({ bytes, layout, table: 40, row });
+  const cursor = metadataRowCursor(bytes, layout, 40, row);
   const declaredOffset = cursor.readUInt32();
   const flags = cursor.readUInt32();
   const name = readMetadataString(
@@ -462,7 +426,11 @@ export const readResource = ({
   const implementationRaw = cursor.readIndex(
     layout.codedIndexSize("Implementation"),
   );
-  const implementationToken = codedToken(implementationRaw, 2, [38, 35, 39]);
+  const implementationToken = metadataCodedToken(
+    implementationRaw,
+    2,
+    [38, 35, 39],
+  );
   let dataLength: number | null = null;
   let dataSha256: string | null = null;
   if (implementationRaw === 0) {

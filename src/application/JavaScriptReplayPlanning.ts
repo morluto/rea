@@ -207,6 +207,8 @@ const prepareSide = async (
     if (remaining <= 0)
       throw new RangeError("Replay module bytes exceed the aggregate limit");
     const source = await host.readSource(module.path, remaining);
+    if (source.bytes.byteLength > remaining)
+      throw new RangeError("Replay module bytes exceed the aggregate limit");
     totalBytes += source.bytes.byteLength;
     loaded.push({ module, source });
   }

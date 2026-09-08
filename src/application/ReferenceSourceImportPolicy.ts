@@ -5,7 +5,7 @@ import ignore from "ignore";
 
 import { err, ok, type Result } from "../domain/result.js";
 import type { ReferenceSourceLimits } from "../reference/ReferenceSourceReader.js";
-import { withinRoot } from "../reference/ReferenceSourceReaderPaths.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import {
   DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS,
   DEFAULT_REFERENCE_SOURCE_LIMITS,
@@ -71,7 +71,7 @@ const authorizeRoot = async (
       approvedRoots.map((approvedRoot) => resolve(approvedRoot)),
     );
     for (const canonicalApproved of canonicalApprovedRoots) {
-      if (withinRoot(canonicalApproved, canonicalRoot))
+      if (isPathWithinRoot(canonicalApproved, canonicalRoot))
         return ok(canonicalRoot);
     }
     return err(

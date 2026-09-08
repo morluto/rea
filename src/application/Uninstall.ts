@@ -1,8 +1,11 @@
+import {
+  parseClientConfiguration,
+  serializeClientConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
@@ -123,11 +126,11 @@ const removeClient = async (
   let key: "mcp_servers" | "mcpServers";
   let servers: Record<string, unknown>;
   try {
-    document = objectSchema.parse(
-      client.format === "toml" ? parseToml(original) : JSON.parse(original),
-    );
-    key = client.format === "toml" ? "mcp_servers" : "mcpServers";
-    servers = optionalObject(document[key]);
+    ({
+      document,
+      servers,
+      serversKey: key,
+    } = parseClientConfiguration(original, client.format));
   } catch {
     return item(
       client.name,
@@ -158,17 +161,15 @@ const removeClient = async (
     );
   }
   try {
-    const encoded =
-      client.format === "toml"
-        ? stringifyToml(document)
-        : `${JSON.stringify(document, null, 2)}\n`;
-    await fileSystem.writeText(transactionPath, encoded);
-    const readback = objectSchema.parse(
-      client.format === "toml"
-        ? parseToml(await fileSystem.readText(transactionPath))
-        : JSON.parse(await fileSystem.readText(transactionPath)),
+    await fileSystem.writeText(
+      transactionPath,
+      serializeClientConfiguration(document, client.format),
     );
-    if (PRODUCT_IDENTITY.mcpServerKey in optionalObject(readback[key]))
+    const readback = parseClientConfiguration(
+      await fileSystem.readText(transactionPath),
+      client.format,
+    );
+    if (PRODUCT_IDENTITY.mcpServerKey in readback.servers)
       throw new Error("registration readback mismatch");
     return item(
       client.name,
@@ -278,9 +279,6 @@ const item = (
   status: UninstallItem["status"],
   detail: string,
 ): UninstallItem => ({ name, status, detail });
-const objectSchema = z.record(z.string(), z.unknown());
-const optionalObject = (value: unknown): Record<string, unknown> =>
-  value === undefined ? {} : objectSchema.parse(value);
 const registrationSchema = z
   .object({ command: z.string(), args: z.array(z.string()) })
   .passthrough();

@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareManagedMembersEvidenceValidated } from "../../application/ManagedMemberComparisonService.js";
@@ -6,7 +7,7 @@ import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
-import { recordManagedSources, resolveManagedEvidence } from "./evidence.js";
+import { resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
 const compareContract = managedWorkflowContract("compare_managed_members");
@@ -40,7 +41,7 @@ export const registerCompareManagedMembers = (
         () => Promise.resolve(compareManagedMembersEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, compareContract);
-      const recorded = recordManagedSources(options.recordEvidence, [
+      const recorded = recordSessionEvidenceSources(options.recordEvidence, [
         parsed.left,
         parsed.right,
       ]);

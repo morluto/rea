@@ -100,6 +100,33 @@ const graphInput = (): HistoricalSourceGraphInput => ({
 });
 
 describe("historical source graph", () => {
+  it("validates supplementary paths and derived indexes by code point", () => {
+    const paths = ["a", "aa", "\uE000", "\u{10000}"];
+    const input: HistoricalSourceGraphInput = {
+      ...graphInput(),
+      entries: paths.map((path) =>
+        fileEntry({
+          path,
+          language: path,
+          classifications: ["manifest"],
+        }),
+      ),
+      relationships: [],
+      languages: paths,
+      manifests: paths,
+    };
+    const graph = createHistoricalSourceGraph(input);
+    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(() =>
+      createHistoricalSourceGraph({
+        ...input,
+        entries: [...input.entries].sort((left, right) =>
+          left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+        ),
+      }),
+    ).toThrow(/Unicode code point/u);
+  });
+
   it("builds and verifies internal root and manifest commitments", () => {
     const graph = createHistoricalSourceGraph(graphInput());
     const first = createHistoricalSourceManifest(graph);

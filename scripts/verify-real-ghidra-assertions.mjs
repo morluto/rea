@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 
-import { parseBinaryTarget } from "../dist/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallation.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 

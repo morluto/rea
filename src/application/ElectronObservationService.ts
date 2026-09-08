@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { ElectronObservationPort } from "./ElectronObservationPort.js";
 import type { PermissionAuthority } from "./PermissionAuthority.js";
@@ -8,8 +9,6 @@ import type {
 } from "../domain/electronObservation.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -96,14 +95,7 @@ const prepare = async (
     },
     "read",
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return provider === undefined
     ? err(
         new AnalysisCapabilityUnavailableError(

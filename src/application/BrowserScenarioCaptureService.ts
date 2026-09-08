@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
@@ -5,8 +6,6 @@ import type { PermissionAuthority } from "./PermissionAuthority.js";
 import { digestJson } from "./JavaScriptReplayPlanning.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -57,14 +56,7 @@ const authorizeScenario = async (
     },
     "write",
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return { ok: true, value: true };
 };
 

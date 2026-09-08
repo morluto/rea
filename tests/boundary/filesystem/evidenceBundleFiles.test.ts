@@ -1,4 +1,4 @@
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -17,12 +17,12 @@ import {
   type EvidenceFilePolicy,
 } from "../../../src/domain/evidenceBundle.js";
 
-const bundle = () =>
+const bundle = (result = true) =>
   createEvidenceBundle([
     createEvidence(
       undefined,
       { id: "fixture", name: "Fixture", version: "1" },
-      { operation: "health", parameters: {}, result: true },
+      { operation: "health", parameters: {}, result },
     ),
   ]);
 
@@ -32,6 +32,44 @@ const policy = (root: string): EvidenceFilePolicy => ({
   maxDepth: 64,
   maxStringLength: 1024,
   maxNodes: 10_000,
+});
+
+describe("evidence bundle publication", () => {
+  it("allows only one simultaneous export without overwrite approval", async () => {
+    const root = await createTestTempDirectory("rea-evidence-exclusive-");
+    const path = join(root, "bundle.json");
+    const candidates = [bundle(), bundle(false)];
+    const results = await Promise.all(
+      candidates.map((value) =>
+        writeEvidenceBundle(value, path, false, policy(root)),
+      ),
+    );
+    expect(results.filter(({ ok }) => ok)).toHaveLength(1);
+    expect(results.filter(({ ok }) => !ok)).toMatchObject([
+      { ok: false, error: { _tag: "EvidenceFileError", reason: "exists" } },
+    ]);
+    const winner = candidates[results.findIndex(({ ok }) => ok)];
+    expect(await readEvidenceBundle(path, policy(root))).toEqual({
+      ok: true,
+      value: winner,
+    });
+    expect(await readdir(root)).toEqual(["bundle.json"]);
+  });
+
+  it("round trips dot-prefixed child names beneath an approved root", async () => {
+    const root = await createTestTempDirectory("rea-evidence-dot-child-");
+    const directory = join(root, "..cache");
+    await mkdir(directory);
+    const path = join(directory, "bundle.json");
+    const value = bundle();
+    expect(
+      await writeEvidenceBundle(value, path, false, policy(root)),
+    ).toMatchObject({ ok: true });
+    expect(await readEvidenceBundle(path, policy(root))).toEqual({
+      ok: true,
+      value,
+    });
+  });
 });
 
 describe("evidence bundle filesystem adapter", () => {

@@ -1,3 +1,4 @@
+import { isPathWithinRoot } from "../domain/localPath.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
@@ -9,10 +10,6 @@ export interface SnapshotResult {
   readonly files: readonly FileState[];
   readonly truncated: boolean;
 }
-
-const isWithin = (candidate: string, root: string): boolean =>
-  candidate === root ||
-  candidate.startsWith(`${root.endsWith("/") ? root.slice(0, -1) : root}/`);
 
 const hasSameIdentity = (
   before: Stats,
@@ -101,7 +98,7 @@ export const snapshotRoots = async (
         truncated = true;
         return;
       }
-      const safeTarget = isWithin(target, root)
+      const safeTarget = isPathWithinRoot(root, target)
         ? relative(root, target) || "."
         : "<outside-declared-root>";
       if (safeTarget === "<outside-declared-root>") truncated = true;

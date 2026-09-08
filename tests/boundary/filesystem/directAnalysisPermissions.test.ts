@@ -12,7 +12,7 @@ import {
   snapshotBinding,
   snapshotTarget,
 } from "../../../src/domain/analysisSnapshot.js";
-import { parseBinaryTarget } from "../../../src/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { permissionAuthorityForRoot } from "../../fixtures/permissionAuthority.js";

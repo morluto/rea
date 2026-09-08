@@ -1,6 +1,6 @@
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { err, ok } from "../domain/result.js";
 import { traverseDirectory } from "./ReferenceSourceReaderEntries.js";
-import { compareNames } from "./ReferenceSourceReaderPaths.js";
 import {
   type ReferenceSourceLimits,
   type ReferenceSourceReaderOptions,
@@ -62,7 +62,9 @@ export const readReferenceSource = async (
   };
   const traversal = await traverse(state);
   if (!traversal.ok) return traversal;
-  state.entries.sort((left, right) => compareNames(left.path, right.path));
+  state.entries.sort((left, right) =>
+    compareUnicodeCodePoints(left.path, right.path),
+  );
   return ok({
     root: canonicalRoot,
     entries: state.entries,

@@ -6,10 +6,8 @@ import {
   snapshotTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import {
-  parseBinaryTarget,
-  type BinaryTarget,
-} from "../domain/binaryTarget.js";
+import { parseBinaryTarget } from "./BinaryTargetResolver.js";
+import { type BinaryTarget } from "../domain/binaryTarget.js";
 import {
   EvidenceIntegrityError,
   type AnalysisError,

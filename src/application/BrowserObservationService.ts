@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   isLiteralLoopbackHostname,
@@ -14,8 +15,6 @@ import type {
 } from "../domain/webScreenshot.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -248,14 +247,7 @@ const prepare = async (
     },
     "read",
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return browser === undefined
     ? err(
         new AnalysisCapabilityUnavailableError(

@@ -125,6 +125,26 @@ describe("reference source import error projection", () => {
 });
 
 describe("reference source import behavior", () => {
+  it("imports BMP and supplementary filenames in Unicode code point order", async () => {
+    const root = await createTestTempDirectory("reference-unicode-");
+    try {
+      const paths = ["\uE000.ts", "\u{10000}.ts"];
+      await Promise.all(
+        paths.map((path) =>
+          writeFile(join(root, path), "export const value = 1;\n"),
+        ),
+      );
+      const result = await importTree(root, root);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.entries.map(({ path }) => path)).toEqual(paths);
+      const repeated = await importTree(root, root);
+      expect(repeated).toEqual(result);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
     const parent = await createTestTempDirectory("rea-reference-import-");
     try {

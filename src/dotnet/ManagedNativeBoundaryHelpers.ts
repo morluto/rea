@@ -4,18 +4,15 @@ import {
   type ManagedNativeBoundaryInspection,
   type ManagedParseIssue,
 } from "../domain/managedArtifact.js";
+import { type ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  metadataRowOffset,
-  type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import {
-  MetadataRowCursor,
+  metadataRowCursor,
+  metadataCodedToken,
   metadataToken,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
 import { managedTableRowCounts } from "./ManagedMetadataInventory.js";
 import type { ManagedMetadataInventory } from "./ManagedMetadataInventory.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
 import type { ManagedNativeBoundaryInspectionLimits } from "./ManagedNativeBoundaryInspector.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 
@@ -46,48 +43,6 @@ interface MemberCore {
   readonly rva: number | null;
 }
 
-interface RowCursorContext {
-  readonly bytes: Buffer;
-  readonly layout: ManagedMetadataLayout;
-  readonly table: number;
-  readonly row: number;
-}
-
-const rowCursor = ({
-  bytes,
-  layout,
-  table,
-  row,
-}: RowCursorContext): MetadataRowCursor => {
-  const descriptor = layout.table(table);
-  const start = metadataRowOffset(layout, table, row);
-  if (descriptor === undefined)
-    throw managedFailure(
-      "invalid-row",
-      `metadata.${String(table)}`,
-      "Metadata table is absent",
-      start,
-    );
-  return new MetadataRowCursor(
-    bytes,
-    start,
-    start + descriptor.rowSize,
-    `metadata.${descriptor.name}`,
-  );
-};
-
-const codedToken = (
-  raw: number,
-  tagBits: number,
-  tables: readonly number[],
-): string | null => {
-  const tagMask = (1 << tagBits) - 1;
-  const table = tables[raw & tagMask];
-  const row = raw >> tagBits;
-  if (table === undefined || row === 0) return null;
-  return metadataToken(table, row);
-};
-
 const flagsHex = (value: number): string =>
   `0x${value.toString(16).padStart(4, "0")}`;
 
@@ -117,7 +72,7 @@ export const parseModuleRefs = (
   const refs: ModuleRef[] = [];
   const table = layout.table(26);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor({ bytes, layout, table: 26, row });
+    const cursor = metadataRowCursor(bytes, layout, 26, row);
     refs.push({
       token: metadataToken(26, row),
       row_offset: cursor.start,
@@ -140,7 +95,7 @@ export const parseFields = (
   const fields = new Map<string, MemberCore>();
   const table = layout.table(4);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor({ bytes, layout, table: 4, row });
+    const cursor = metadataRowCursor(bytes, layout, 4, row);
     const flags = cursor.readUInt16();
     const name = readMetadataString(
       bytes,
@@ -171,7 +126,7 @@ export const parseMethods = (
   const methods = new Map<string, MemberCore>();
   const table = layout.table(6);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor({ bytes, layout, table: 6, row });
+    const cursor = metadataRowCursor(bytes, layout, 6, row);
     const rva = cursor.readUInt32();
     const implFlags = cursor.readUInt16();
     const flags = cursor.readUInt16();
@@ -216,9 +171,9 @@ export const parseImplMaps = ({
   const imports: NativeImport[] = [];
   const table = layout.table(28);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor({ bytes, layout, table: 28, row });
+    const cursor = metadataRowCursor(bytes, layout, 28, row);
     const mappingFlags = cursor.readUInt16();
-    const memberToken = codedToken(
+    const memberToken = metadataCodedToken(
       cursor.readIndex(layout.codedIndexSize("MemberForwarded")),
       1,
       [4, 6],

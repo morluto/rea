@@ -5,6 +5,28 @@ import { managedOutputSchemas } from "./toolOutputSchemas.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
+const managedReadLimits = {
+  max_file_bytes: z
+    .number()
+    .int()
+    .min(4_096)
+    .max(1_073_741_824)
+    .default(268_435_456),
+  max_metadata_bytes: z
+    .number()
+    .int()
+    .min(256)
+    .max(268_435_456)
+    .default(67_108_864),
+  max_table_rows: z.number().int().min(1).max(1_000_000).default(100_000),
+  max_heap_item_bytes: z
+    .number()
+    .int()
+    .min(1)
+    .max(16_777_216)
+    .default(1_048_576),
+};
+
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedArtifactInputSchema = z.object({
   path: z
@@ -20,25 +42,7 @@ export const managedArtifactInputSchema = z.object({
   resource_limit: z.number().int().min(1).max(500).default(100),
   attribute_offset: z.number().int().min(0).default(0),
   attribute_limit: z.number().int().min(1).max(500).default(100),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(4_096)
-    .max(1_073_741_824)
-    .default(268_435_456),
-  max_metadata_bytes: z
-    .number()
-    .int()
-    .min(256)
-    .max(268_435_456)
-    .default(67_108_864),
-  max_table_rows: z.number().int().min(1).max(1_000_000).default(100_000),
-  max_heap_item_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(16_777_216)
-    .default(1_048_576),
+  ...managedReadLimits,
 });
 
 /** Exact caller boundary for execution-free metadata/signature/IL inspection. */
@@ -54,25 +58,7 @@ export const managedMemberInputSchema = z.object({
   edge_offset: z.number().int().min(0).default(0),
   edge_limit: z.number().int().min(1).max(1_000).default(250),
   instruction_anchor_limit: z.number().int().min(0).max(500).default(100),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(4_096)
-    .max(1_073_741_824)
-    .default(268_435_456),
-  max_metadata_bytes: z
-    .number()
-    .int()
-    .min(256)
-    .max(268_435_456)
-    .default(67_108_864),
-  max_table_rows: z.number().int().min(1).max(1_000_000).default(100_000),
-  max_heap_item_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(16_777_216)
-    .default(1_048_576),
+  ...managedReadLimits,
   max_method_body_bytes: z
     .number()
     .int()
@@ -90,25 +76,7 @@ export const managedNativeBoundaryInputSchema = z.object({
   import_limit: z.number().int().min(1).max(500).default(100),
   implementation_offset: z.number().int().min(0).default(0),
   implementation_limit: z.number().int().min(1).max(500).default(100),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(4_096)
-    .max(1_073_741_824)
-    .default(268_435_456),
-  max_metadata_bytes: z
-    .number()
-    .int()
-    .min(256)
-    .max(268_435_456)
-    .default(67_108_864),
-  max_table_rows: z.number().int().min(1).max(1_000_000).default(100_000),
-  max_heap_item_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(16_777_216)
-    .default(1_048_576),
+  ...managedReadLimits,
 });
 
 const outputSchema = requireOutputSchema(

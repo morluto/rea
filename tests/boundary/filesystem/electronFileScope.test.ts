@@ -12,6 +12,18 @@ import {
 } from "../../../src/browser/ElectronFileScope.js";
 
 describe("Electron file scope", () => {
+  it("accepts dot-prefixed child names beneath a canonical root", async () => {
+    const root = await createTestTempDirectory("rea-electron-dot-child-");
+    const directory = join(root, "..cache");
+    await mkdir(directory);
+    const path = join(directory, "index.html");
+    await writeFile(path, "allowed");
+    const roots = await canonicalElectronRoots([root]);
+    expect(await authorizedElectronFile(pathToFileURL(path).href, roots)).toBe(
+      path,
+    );
+  });
+
   it("accepts canonical files within a root and rejects escape forms", async () => {
     const base = await createTestTempDirectory("rea-electron-scope-");
     const root = join(base, "root");

@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { resolveCompareApplicationVersionsRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
@@ -7,7 +8,7 @@ import { applicationVersionComparisonResultSchema } from "../../domain/javascrip
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const compareContract = applicationToolContract("compare_application_versions");
@@ -40,7 +41,10 @@ export const registerCompareApplicationVersionsTool = (
         ...parsed.left_native_observations,
         ...parsed.right_native_observations,
       ];
-      const recorded = recordSources(options.recordEvidence, sources);
+      const recorded = recordSessionEvidenceSources(
+        options.recordEvidence,
+        sources,
+      );
       if (!recorded.ok) return toCallToolResult(recorded, compareContract);
       const comparison = applicationVersionComparisonResultSchema.parse(
         result.value.normalized_result,

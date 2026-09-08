@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { parseBinaryTarget } from "../../dist/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
 import { buildManagedPeFixture } from "./managed-pe-fixture.mjs";
 import { createManagedConformanceOracleSupport } from "./managed-conformance-oracles.mjs";
 

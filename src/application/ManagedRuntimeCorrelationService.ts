@@ -1,8 +1,8 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import {
@@ -99,14 +99,7 @@ export const planManagedRuntimeCorrelationEvidenceValidated = async (
     "read",
     { remediation: "restart" },
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   try {
     const result = planManagedRuntimeCorrelation(
       input,

@@ -1,15 +1,6 @@
+import { temporaryFilterHandle } from "./ReplaySeccompFile.js";
 import { constants } from "node:fs";
-import {
-  mkdtemp,
-  open,
-  readFile,
-  realpath,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { open, readFile, realpath, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { spawn, type StdioOptions } from "node:child_process";
 
@@ -20,11 +11,10 @@ import type {
   ReplaySourceBytes,
 } from "../application/JavaScriptReplayPlanning.js";
 import { digestBytes } from "../application/JavaScriptReplayPlanning.js";
-import {
-  buildLinuxX64ReplaySeccomp,
-  linuxX64ReplaySeccompDigest,
-} from "./LinuxSeccompPolicy.js";
+import { linuxX64ReplaySeccompDigest } from "./LinuxSeccompPolicy.js";
 import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
+
+import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 const VERSION_OUTPUT_LIMIT = 16 * 1024;
 
@@ -45,7 +35,11 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
         throw new RangeError(
           `Replay source exceeds its declared limit: ${canonicalPath}`,
         );
-      const bytes = await handle.readFile();
+      const bytes = await readBoundedFileBytes(handle, maximumBytes);
+      if (bytes === undefined)
+        throw new RangeError(
+          `Replay source exceeds its declared limit: ${canonicalPath}`,
+        );
       return { canonicalPath, bytes };
     } finally {
       await handle.close();
@@ -97,10 +91,7 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
         .length === 0
     )
       throw new TypeError("Controlled replay requires delegated cgroup v2");
-    const directory = await mkdtemp(join(tmpdir(), "rea-replay-probe-"));
-    const filterPath = join(directory, "seccomp.bpf");
-    await writeFile(filterPath, buildLinuxX64ReplaySeccomp(), { mode: 0o600 });
-    const filter = await open(filterPath, "r");
+    const filter = await temporaryFilterHandle();
     try {
       await run(
         policy.bubblewrapPath,
@@ -130,7 +121,7 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
           "--",
           "/usr/bin/true",
         ],
-        ["ignore", "pipe", "pipe", filter.fd],
+        ["ignore", "pipe", "pipe", filter.handle.fd],
       );
       await runExpectFailure(
         policy.bubblewrapPath,
@@ -162,7 +153,7 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
           "--mount",
           "/usr/bin/true",
         ],
-        ["ignore", "pipe", "pipe", filter.fd],
+        ["ignore", "pipe", "pipe", filter.handle.fd],
       );
       await run(policy.systemdRunPath, [
         "--user",
@@ -178,7 +169,6 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
       ]);
     } finally {
       await filter.close();
-      await rm(directory, { recursive: true, force: true });
     }
   }
 }

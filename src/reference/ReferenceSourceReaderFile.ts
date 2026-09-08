@@ -19,9 +19,7 @@ const READ_CHUNK_BYTES = 64 * 1024;
 type PreparedFileRead =
   | {
       readonly status: "ready";
-      readonly handle: FileHandle;
       readonly before: BigStats;
-      readonly parentBefore: { readonly ok: true; readonly stats: BigStats };
     }
   | { readonly status: "failed"; readonly entry: ReferenceSourceEntry };
 
@@ -43,30 +41,10 @@ type FinalizeFileReadRequest = {
 
 const prepareFileRead = async (
   request: StableFileRequest,
+  handle: FileHandle,
 ): Promise<PreparedFileRead> => {
-  const { root, rootIdentity, absolute, path, expected, signal } = request;
-  const parentBefore = await validateDirectory(
-    root,
-    rootIdentity,
-    dirname(absolute),
-  );
-  if (!parentBefore.ok)
-    return {
-      status: "failed",
-      entry: entryFailure(
-        path,
-        "file",
-        parentBefore.code,
-        parentBefore.message,
-        safeSize(expected.size),
-      ),
-    };
-  const handle = await open(
-    absolute,
-    constants.O_RDONLY | constants.O_NOFOLLOW,
-  );
+  const { path, expected, signal } = request;
   if (isAborted(signal)) {
-    await handle.close().catch(() => undefined);
     return {
       status: "failed",
       entry: entryFailure(
@@ -80,7 +58,6 @@ const prepareFileRead = async (
   }
   const before = await handle.stat({ bigint: true });
   if (!sameFile(expected, before)) {
-    await handle.close().catch(() => undefined);
     return {
       status: "failed",
       entry: entryFailure(
@@ -92,7 +69,7 @@ const prepareFileRead = async (
       ),
     };
   }
-  return { status: "ready", handle, before, parentBefore };
+  return { status: "ready", before };
 };
 
 const readFileContents = async (request: {
@@ -211,9 +188,22 @@ export const readStableFile = async (
     request;
   let handle: FileHandle | undefined;
   try {
-    const prepared = await prepareFileRead(request);
+    const parentBefore = await validateDirectory(
+      root,
+      rootIdentity,
+      dirname(absolute),
+    );
+    if (!parentBefore.ok)
+      return entryFailure(
+        path,
+        "file",
+        parentBefore.code,
+        parentBefore.message,
+        safeSize(expected.size),
+      );
+    handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const prepared = await prepareFileRead(request, handle);
     if (prepared.status === "failed") return prepared.entry;
-    handle = prepared.handle;
     const contents = await readFileContents({
       handle,
       path,
@@ -228,7 +218,7 @@ export const readStableFile = async (
       path,
       handle,
       before: prepared.before,
-      parentBefore: prepared.parentBefore,
+      parentBefore,
       chunks: contents.chunks,
       total: contents.total,
     });

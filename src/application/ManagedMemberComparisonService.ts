@@ -15,11 +15,16 @@ import {
 } from "../domain/errors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js";
-import { MANAGED_STATIC_PROVIDER } from "./InvestigationProviders.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+import {
+  type ManagedMemberInspectionLimits,
+  inspectManagedMembersBytes,
+} from "../dotnet/ManagedMemberInspector.js";
+import {
+  MANAGED_STATIC_PROVIDER,
+  MANAGED_WORKFLOW_PROVIDER,
+} from "./InvestigationProviders.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (
@@ -140,24 +145,10 @@ export const compareManagedMemberPaths = async (input: {
   }
 };
 
-export interface ManagedMemberPathInspectionLimits {
+/** Byte-inspection limits plus the file admission bound for path comparisons. */
+export interface ManagedMemberPathInspectionLimits
+  extends ManagedMemberInspectionLimits {
   readonly maxFileBytes: number;
-  readonly typeOffset: number;
-  readonly typeLimit: number;
-  readonly methodOffset: number;
-  readonly methodLimit: number;
-  readonly fieldOffset: number;
-  readonly fieldLimit: number;
-  readonly memberRefOffset: number;
-  readonly memberRefLimit: number;
-  readonly edgeOffset: number;
-  readonly edgeLimit: number;
-  readonly instructionAnchorLimit: number;
-  readonly maxMetadataBytes: number;
-  readonly maxTableRows: number;
-  readonly maxHeapItemBytes: number;
-  readonly maxMethodBodyBytes: number;
-  readonly maxMethodInstructions: number;
 }
 
 const createManagedMemberComparisonEvidence = (

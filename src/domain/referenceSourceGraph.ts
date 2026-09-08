@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 const MAX_PATH = 4_096;
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedTextSchema = z.string().min(1).max(1_024);
@@ -240,16 +241,16 @@ const relationshipKey = (
 ): string =>
   `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
 
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
-
 const checkSortedUnique = (
   values: readonly string[],
   field: string,
   context: z.RefinementCtx,
 ): void => {
   for (let index = 1; index < values.length; index += 1)
-    if (compareCodePoints(values[index - 1] ?? "", values[index] ?? "") >= 0) {
+    if (
+      compareUnicodeCodePoints(values[index - 1] ?? "", values[index] ?? "") >=
+      0
+    ) {
       context.addIssue({
         code: "custom",
         message: `${field} must be sorted and unique by Unicode code point`,
@@ -270,7 +271,7 @@ const expectedLanguages = (
           : [],
       ),
     ),
-  ].sort(compareCodePoints);
+  ].sort(compareUnicodeCodePoints);
 
 const expectedManifests = (
   entries: readonly z.infer<typeof sourceEntrySchema>[],
@@ -281,7 +282,7 @@ const expectedManifests = (
         ? [entry.path]
         : [],
     )
-    .sort(compareCodePoints);
+    .sort(compareUnicodeCodePoints);
 
 type GraphStructure = z.infer<typeof historicalSourceGraphStructureSchema>;
 

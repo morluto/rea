@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import {
@@ -14,7 +15,7 @@ import { mcpProgressReporter } from "../mcpProgress.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordSources } from "./helpers.js";
+
 import type { ApplicationToolRegistration } from "./types.js";
 
 const prepareContract = applicationToolContract(
@@ -79,7 +80,10 @@ export const registerCharacterizationTools = (
         output.replay.evidence,
         output.evidence,
       ].map((item) => parseEvidence(item));
-      const recorded = recordSources(options.recordEvidence, sources);
+      const recorded = recordSessionEvidenceSources(
+        options.recordEvidence,
+        sources,
+      );
       if (!recorded.ok) return toCallToolResult(recorded, executeContract);
       return toCallToolResult(result, executeContract, {
         evidenceResourcesAvailable: options.recordEvidence !== undefined,

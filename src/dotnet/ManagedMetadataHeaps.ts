@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  metadataRowOffset,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import { managedFailure } from "./ManagedReaderFailure.js";
 
 const requireRange = (
@@ -219,3 +222,40 @@ export const strongNameToken = (publicKey: Buffer): string =>
   Buffer.from(createHash("sha1").update(publicKey).digest().subarray(-8))
     .reverse()
     .toString("hex");
+
+/** Create a cursor bounded to one admitted metadata table row. */
+export const metadataRowCursor = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: number,
+  row: number,
+): MetadataRowCursor => {
+  const descriptor = layout.table(table);
+  const start = metadataRowOffset(layout, table, row);
+  if (descriptor === undefined)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.${String(table)}`,
+      "Metadata table is absent",
+      start,
+    );
+  return new MetadataRowCursor(
+    bytes,
+    start,
+    start + descriptor.rowSize,
+    `metadata.${descriptor.name}`,
+  );
+};
+
+/** Decode a metadata coded index without signed 32-bit coercion. */
+export const metadataCodedToken = (
+  raw: number,
+  bits: number,
+  tables: readonly (number | undefined)[],
+): string | null => {
+  if (raw === 0) return null;
+  const tag = raw & (2 ** bits - 1);
+  const row = Math.floor(raw / 2 ** bits);
+  const table = tables[tag];
+  return table === undefined || row === 0 ? null : metadataToken(table, row);
+};

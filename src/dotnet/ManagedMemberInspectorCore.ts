@@ -1,16 +1,15 @@
 import type { ManagedMemberInspection } from "../domain/managedArtifact.js";
 import {
-  metadataRowOffset,
   type ManagedMetadataLayout,
   type MetadataTableLayout,
 } from "./ManagedMetadataLayout.js";
 import {
-  MetadataRowCursor,
+  metadataRowCursor,
+  metadataCodedToken,
   metadataToken,
   readMetadataString,
   sha256Bytes,
 } from "./ManagedMetadataHeaps.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
 
 export type ManagedPage<Item> = {
   readonly items: readonly Item[];
@@ -117,41 +116,6 @@ export const page = <Item>(
   };
 };
 
-export const rowCursor = (
-  bytes: Buffer,
-  layout: ManagedMetadataLayout,
-  table: number,
-  row: number,
-): MetadataRowCursor => {
-  const descriptor = layout.table(table);
-  const start = metadataRowOffset(layout, table, row);
-  if (descriptor === undefined)
-    throw managedFailure(
-      "invalid-row",
-      `metadata.${String(table)}`,
-      "Metadata table is absent",
-      start,
-    );
-  return new MetadataRowCursor(
-    bytes,
-    start,
-    start + descriptor.rowSize,
-    `metadata.${descriptor.name}`,
-  );
-};
-
-export const codedToken = (
-  raw: number,
-  bits: number,
-  tables: readonly (number | undefined)[],
-): string | null => {
-  if (raw === 0) return null;
-  const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
-  return table === undefined || row === 0 ? null : metadataToken(table, row);
-};
-
 const rowRange = (
   table: MetadataTableLayout | undefined,
   start: number,
@@ -179,7 +143,7 @@ const readTypeRange = (
 ): TypeRange => {
   const methods = layout.table(6);
   const fields = layout.table(4);
-  const cursor = rowCursor(bytes, layout, 2, row);
+  const cursor = metadataRowCursor(bytes, layout, 2, row);
   cursor.readUInt32();
   const name = readMetadataString(
     bytes,
@@ -200,7 +164,7 @@ const readTypeRange = (
   let nextMethod = (methods?.rowCount ?? 0) + 1;
   const typeTable = layout.table(2);
   if (typeTable !== undefined && row < typeTable.rowCount) {
-    const next = rowCursor(bytes, layout, 2, row + 1);
+    const next = metadataRowCursor(bytes, layout, 2, row + 1);
     next.readUInt32();
     next.readIndex(layout.stringIndexSize);
     next.readIndex(layout.stringIndexSize);
@@ -255,7 +219,7 @@ export const parseTypes = (
   const methods = layout.table(6);
   const items: ManagedType[] = [];
   for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor(bytes, layout, 2, row);
+    const cursor = metadataRowCursor(bytes, layout, 2, row);
     const flags = cursor.readUInt32();
     const name = readMetadataString(
       bytes,
@@ -286,7 +250,7 @@ export const parseTypes = (
       name,
       full_name: fullName(namespace, name),
       flags,
-      extends_token: codedToken(extendsRaw, 2, [2, 1, 27]),
+      extends_token: metadataCodedToken(extendsRaw, 2, [2, 1, 27]),
       field_list: {
         first_row: fieldRange.first,
         last_row: fieldRange.last,

@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
 import type { PermissionAuthority } from "./PermissionAuthority.js";
@@ -5,8 +6,6 @@ import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeO
 import type { Evidence } from "../domain/evidence.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   type AnalysisError,
 } from "../domain/errors.js";
 import type {
@@ -96,14 +95,7 @@ const prepare = async (
     },
     "read",
   );
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return provider === undefined
     ? err(
         new AnalysisCapabilityUnavailableError(

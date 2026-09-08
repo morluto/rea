@@ -130,6 +130,24 @@ describe("policy revocation approval", () => {
   }, 40_000);
 });
 
+describe("policy capability coverage", () => {
+  it.each(["v8_inspector_observe", "javascript_replay", "managed_runtime"])(
+    "explains %s without granting disabled authority",
+    async (capability) => {
+      const result = await runCli(["policy", "explain", capability, "--json"], {
+        ...process.env,
+        REA_V8_INSPECTOR_OBSERVE_ENABLED: "false",
+        REA_JAVASCRIPT_REPLAY_ENABLED: "false",
+        REA_MANAGED_RUNTIME_ENABLED: "false",
+      });
+      expect(result.output).toMatchObject({
+        allowed: false,
+        error: { code: "permission_required" },
+      });
+    },
+  );
+});
+
 const runCli = async (
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,

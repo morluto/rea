@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import {
@@ -9,7 +10,7 @@ import { reconstructionReadinessReportSchema } from "../../domain/reconstruction
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordSources } from "./helpers.js";
+
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = applicationToolContract("evaluate_reconstruction_readiness");
@@ -31,7 +32,7 @@ export const registerReconstructionReadinessTool = (
         ),
       );
       if (!result.ok) return toCallToolResult(result, contract);
-      const recorded = recordSources(
+      const recorded = recordSessionEvidenceSources(
         options.recordEvidence,
         resolved.value.evidence_bundle.records,
       );

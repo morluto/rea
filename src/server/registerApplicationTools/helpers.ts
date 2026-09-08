@@ -9,17 +9,6 @@ export const coverageWorkspaceUri = (workspace: {
 }): string =>
   `rea://reconstruction-coverage/${workspace.workspace_id}/revision/${String(workspace.revision)}`;
 
-export const recordSources = (
-  recordEvidence: ApplicationToolRegistration["recordEvidence"],
-  sources: readonly Evidence[],
-) => {
-  for (const source of sources) {
-    const recorded = recordEvidence?.(source);
-    if (recorded !== undefined && !recorded.ok) return recorded;
-  }
-  return { ok: true as const, value: null };
-};
-
 export const recordResult = (
   options: ApplicationToolRegistration,
   contract: (typeof APPLICATION_TOOL_CONTRACTS)[number],

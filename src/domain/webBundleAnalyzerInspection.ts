@@ -1,6 +1,7 @@
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 
+import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import type {
   AnalyzeWebBundleInput,
@@ -15,7 +16,6 @@ import {
   objectValue,
   propertyName,
   resolveSpecifier,
-  sanitizeCandidate,
   stringArgument,
 } from "./webBundleAnalyzerAst.js";
 
@@ -242,7 +242,7 @@ interface AddFindingContext {
 }
 
 const addFinding = (context: AddFindingContext): void => {
-  const value = sanitizeCandidate(context.rawValue);
+  const value = sanitizeEndpointCandidate(context.rawValue);
   const key = `finding\0${context.mechanism}\0${context.script.script_key}\0${value}`;
   addBounded(context.accumulator, key, context.maximumFindings, () =>
     context.collection.push({

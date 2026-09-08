@@ -24,7 +24,7 @@ import {
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProvider.js";
 import { GHIDRA_SESSION_CAPABILITIES as SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
-import { parseBinaryTarget } from "../dist/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const verifierRun = createVerifierRun();

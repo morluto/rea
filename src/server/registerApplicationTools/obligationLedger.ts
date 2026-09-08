@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import {
@@ -8,7 +9,7 @@ import { applicationToolContract } from "../../contracts/applicationToolContract
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = applicationToolContract(
@@ -32,7 +33,7 @@ export const registerReconstructionObligationLedgerTool = (
         ),
       );
       if (!result.ok) return toCallToolResult(result, contract);
-      const recorded = recordSources(
+      const recorded = recordSessionEvidenceSources(
         options.recordEvidence,
         resolved.value.evidence_bundle.records,
       );

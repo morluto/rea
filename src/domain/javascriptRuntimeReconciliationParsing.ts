@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute } from "node:path";
 
+import { isPathWithinRoot } from "./localPath.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -310,7 +311,7 @@ const assertV8RuntimeParameters = (
     if (
       (location.kind === "file" &&
         !parameters.allowed_file_roots.some((root) =>
-          isWithinRoot(root, location.file_path),
+          isPathWithinRoot(root, location.file_path),
         )) ||
       (location.kind === "url" &&
         !parameters.allowed_origins.includes(location.origin)) ||
@@ -319,13 +320,6 @@ const assertV8RuntimeParameters = (
       throw new TypeError(
         "Runtime Evidence contains a location outside its recorded scope",
       );
-};
-
-const isWithinRoot = (root: string, path: string): boolean => {
-  const remainder = relative(root, path);
-  return (
-    remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder))
-  );
 };
 
 const normalizeV8Inspection = (

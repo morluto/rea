@@ -3,7 +3,6 @@ import { posix } from "node:path";
 
 import * as t from "@babel/types";
 
-import { sanitizeBrowserUrl } from "./browserObservation.js";
 import type {
   JavaScriptBundlerRegistration,
   JavaScriptSourceRange,
@@ -410,20 +409,6 @@ export const detectVendors = (source: string): string[] =>
   vendorPatterns.flatMap(({ name, patterns }) =>
     patterns.some((pattern) => source.includes(pattern)) ? [name] : [],
   );
-
-/** Remove credentials, fragments, and query values from endpoint candidates. */
-export const sanitizeCandidate = (value: string): string => {
-  const bounded = value.slice(0, 4_096);
-  try {
-    const parsed = new URL(bounded, "https://rea.invalid");
-    const sanitized = sanitizeBrowserUrl(parsed.href).url;
-    return parsed.origin === "https://rea.invalid"
-      ? sanitized.replace("https://rea.invalid", "")
-      : sanitized;
-  } catch {
-    return bounded.split("#", 1)[0]?.split("?", 1)[0] ?? "";
-  }
-};
 
 /** Commit the static semantic content used to deduplicate registrations. */
 export const registrationKey = (

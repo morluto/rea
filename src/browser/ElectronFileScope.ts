@@ -1,7 +1,8 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isPathWithinRoot } from "../domain/localPath.js";
 /** Canonicalize operator roots before evaluating any Electron file target. */
 export const canonicalElectronRoots = async (
   roots: readonly string[],
@@ -43,14 +44,7 @@ export const authorizedElectronFile = async (
   } catch {
     return undefined;
   }
-  return roots.some((root) => withinRoot(root, canonical))
+  return roots.some((root) => isPathWithinRoot(root, canonical))
     ? canonical
     : undefined;
-};
-
-const withinRoot = (root: string, path: string): boolean => {
-  const remainder = relative(root, path);
-  return (
-    remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder))
-  );
 };

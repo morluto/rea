@@ -1,8 +1,5 @@
-import {
-  AnalysisProtocolError,
-  PermissionRequiredError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { projectPermissionFailure } from "./PermissionFailure.js";
+import { type AnalysisError } from "../domain/errors.js";
 import type { PermissionCapability } from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -36,13 +33,7 @@ export const authorizeRootPermission = async (
   );
   return authorized.ok
     ? ok(null)
-    : err(
-        authorized.error instanceof PermissionRequiredError
-          ? authorized.error
-          : new AnalysisProtocolError(authorized.error.message, {
-              cause: authorized.error,
-            }),
-      );
+    : err(projectPermissionFailure(authorized.error));
 };
 
 export interface DeferredFileWriteAuthorization {
@@ -77,13 +68,7 @@ export const authorizeFileReadWithDeferredWrite = async (
       !(read.error instanceof PermissionPathError) ||
       read.error.reason !== "not_found"
     )
-      return err(
-        read.error instanceof PermissionRequiredError
-          ? read.error
-          : new AnalysisProtocolError(read.error.message, {
-              cause: read.error,
-            }),
-      );
+      return err(projectPermissionFailure(read.error));
     writeAuthorization = authorizeRootPermission(authority, {
       capability: input.writeCapability,
       roots: [input.path],

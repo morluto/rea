@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { resolveCompareJavaScriptExportShapesRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
@@ -7,7 +8,7 @@ import { javaScriptExportShapeComparisonResultSchema } from "../../domain/javasc
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = applicationToolContract("compare_javascript_export_shapes");
@@ -31,7 +32,7 @@ export const registerCompareJavaScriptExportShapesTool = (
         Promise.resolve(compareJavaScriptExportShapesEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, contract);
-      const recorded = recordSources(options.recordEvidence, [
+      const recorded = recordSessionEvidenceSources(options.recordEvidence, [
         parsed.left,
         parsed.right,
       ]);

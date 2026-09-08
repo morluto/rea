@@ -5,7 +5,7 @@ import { delimiter, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { probeHomebrew } from "./homebrew.js";
 import {
@@ -90,7 +90,6 @@ export interface DoctorHost {
   manualHopperPaths(): Promise<readonly string[]>;
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
   installationPaths?(): Promise<readonly string[]>;
-  installedSkillVersion?(): Promise<string | undefined>;
   installedSkillIdentity?(): Promise<InstalledSkillIdentity | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   javascriptReplayCheck?(): Promise<DoctorCheck>;
@@ -208,7 +207,7 @@ const collectDoctorIdentity = async (
   readonly value: DoctorIdentity;
 }> => {
   const installationPaths = (await host.installationPaths?.()) ?? [];
-  const installedSkillIdentity = await readInstalledSkillIdentity(host);
+  const installedSkillIdentity = await host.installedSkillIdentity?.();
   const skillAligned = skillIdentityAligned(installedSkillIdentity);
   const registrations = (await host.clientRegistrations?.()) ?? [];
   return {
@@ -253,17 +252,6 @@ const collectDoctorIdentity = async (
       runtime_executables: runtimeExecutables ?? null,
     },
   };
-};
-
-const readInstalledSkillIdentity = async (
-  host: DoctorHost,
-): Promise<InstalledSkillIdentity | undefined> => {
-  const observed = await host.installedSkillIdentity?.();
-  if (observed !== undefined) return observed;
-  const legacyVersion = await host.installedSkillVersion?.();
-  return legacyVersion === undefined
-    ? undefined
-    : { version: legacyVersion, toolCount: null, catalogDigest: null };
 };
 
 const skillIdentityAligned = (
@@ -383,7 +371,6 @@ export const systemDoctorHost = (
       return [];
     }
   },
-  installedSkillVersion,
   installedSkillIdentity,
   clientRegistrations: () => readClientRegistrationStatuses(homedir()),
 });
@@ -436,16 +423,6 @@ const readInstalledSkill = (): Promise<string> =>
     join(homedir(), ".agents/skills", PRODUCT_IDENTITY.skillName, "SKILL.md"),
     "utf8",
   );
-
-const installedSkillVersion = async (): Promise<string | undefined> => {
-  try {
-    return /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(
-      await readInstalledSkill(),
-    )?.[1];
-  } catch {
-    return undefined;
-  }
-};
 
 const installedSkillIdentity = async (): Promise<
   InstalledSkillIdentity | undefined

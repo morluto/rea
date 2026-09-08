@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { isPathWithinRoot } from "./localPath.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 import {
@@ -451,12 +451,6 @@ export type ProcessPolicyDecision =
         | "filesystem root is outside approved roots";
     };
 
-const isWithin = (candidate: string, root: string): boolean =>
-  resolve(candidate) === resolve(root) ||
-  resolve(candidate).startsWith(
-    `${resolve(root)}${resolve(root).endsWith("/") ? "" : "/"}`,
-  );
-
 /** Evaluate scenario authority before any process or filesystem side effect occurs. */
 export const authorizeProcessScenario = (
   scenario: ProcessScenario,
@@ -470,13 +464,15 @@ export const authorizeProcessScenario = (
       reason: "host network access is not approved by operator policy",
     };
   if (
-    !policy.executableRoots.some((root) => isWithin(scenario.executable, root))
+    !policy.executableRoots.some((root) =>
+      isPathWithinRoot(root, scenario.executable),
+    )
   ) {
     return { allowed: false, reason: "executable is outside approved roots" };
   }
   if (
     !policy.workingRoots.some((root) =>
-      isWithin(scenario.working_directory, root),
+      isPathWithinRoot(root, scenario.working_directory),
     )
   ) {
     return {
@@ -498,7 +494,8 @@ export const authorizeProcessScenario = (
   }
   if (
     scenario.filesystem_roots.some(
-      (path) => !policy.workingRoots.some((root) => isWithin(path, root)),
+      (path) =>
+        !policy.workingRoots.some((root) => isPathWithinRoot(root, path)),
     )
   ) {
     return {

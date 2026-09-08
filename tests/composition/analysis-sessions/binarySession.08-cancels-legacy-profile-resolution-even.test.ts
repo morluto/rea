@@ -12,6 +12,30 @@ import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 describe("binary session", () => {
+  it("owns provider rejection when profile resolution synchronously cancels opening", async () => {
+    const [first] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
+    const controller = new AbortController();
+    provider.resolveAnalysisProfile = () => {
+      controller.abort();
+      return Promise.reject(new Error("Profile resolution cancelled"));
+    };
+    const session = createTestBinarySession(provider);
+    try {
+      await expect(
+        session.open(first, { signal: controller.signal }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+      });
+      // Allow Node to report any rejection abandoned by the cancellation path.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(session.activeTarget()).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
   it("cancels legacy profile resolution even when the provider ignores its signal", async () => {
     const [first] = await createBinarySessionTargets();
     const provider = createCacheProvider([]);

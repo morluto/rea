@@ -51,6 +51,46 @@ const fixture = async () => {
 };
 
 describe("persistent cross-version investigation workspace", () => {
+  it("uses valid workspace roots when another configured root is missing", async () => {
+    const root = await createTestTempDirectory("rea-workspace-stale-root-");
+    const path = join(root, "workspace.json");
+    const workspace = createInvestigationWorkspace(
+      "stale-root",
+      createEvidenceBundle([]),
+      [],
+    );
+    const configured = {
+      ...policy(root),
+      roots: [join(root, "missing"), root],
+    };
+    expect(
+      await writeInvestigationWorkspace(workspace, path, null, configured),
+    ).toMatchObject({ ok: true });
+    expect(await readInvestigationWorkspace(path, configured)).toEqual({
+      ok: true,
+      value: workspace,
+    });
+  });
+
+  it("stores workspaces in dot-prefixed child directories", async () => {
+    const root = await createTestTempDirectory("rea-workspace-dot-child-");
+    const directory = join(root, "..cache");
+    await mkdir(directory);
+    const path = join(directory, "workspace.json");
+    const workspace = createInvestigationWorkspace(
+      "dot-child",
+      createEvidenceBundle([]),
+      [],
+    );
+    expect(
+      await writeInvestigationWorkspace(workspace, path, null, policy(root)),
+    ).toMatchObject({ ok: true });
+    expect(await readInvestigationWorkspace(path, policy(root))).toEqual({
+      ok: true,
+      value: workspace,
+    });
+  });
+
   it("enforces shared JSON depth limits while reading workspaces", async () => {
     const { directory, path, input } = await fixture();
     const completed = await runCrossVersionInvestigation(

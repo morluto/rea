@@ -1,3 +1,4 @@
+import { temporaryFilterHandle } from "./ReplaySeccompFile.js";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -14,7 +15,6 @@ import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
 import {
   assertRuntimeCommitment,
   systemdArguments,
-  temporaryFilterHandle,
   type RuntimeFile,
 } from "./LinuxJavaScriptReplaySandbox.js";
 import {
@@ -56,39 +56,42 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
     const closure = await validateReplayCommitments(prepared, policy);
     const encoded = buildWorkerPayload(prepared);
     const filter = await temporaryFilterHandle();
-    const replayProcess = launchReplayProcess({
-      prepared,
-      policy,
-      encoded,
-      closure,
-      filterPath: filter.path,
-      unit,
-      signal,
-    });
     try {
-      const collected = await replayProcess.completion;
-      if (replayProcess.terminationRequest !== undefined)
-        await replayProcess.terminationRequest;
-      const unitResult = await observeUnitResult(policy.systemctlPath, unit);
-      const cleanup = await observeCleanup(policy.systemctlPath, unit);
-      return resolveReplayResult({
+      const replayProcess = launchReplayProcess({
         prepared,
-        collected,
-        unitResult,
-        cleanup,
-        termination: replayProcess.termination,
+        policy,
+        encoded,
+        closure,
+        filterPath: filter.path,
+        unit,
+        signal,
       });
-    } finally {
-      signal?.removeEventListener("abort", replayProcess.terminate);
-      if (replayProcess.timeout !== undefined)
-        clearTimeout(replayProcess.timeout);
-      if (
-        replayProcess.child !== undefined &&
-        replayProcess.child.exitCode === null
-      ) {
-        replayProcess.requestTermination();
-        await replayProcess.terminationRequest;
+      try {
+        const collected = await replayProcess.completion;
+        if (replayProcess.terminationRequest !== undefined)
+          await replayProcess.terminationRequest;
+        const unitResult = await observeUnitResult(policy.systemctlPath, unit);
+        const cleanup = await observeCleanup(policy.systemctlPath, unit);
+        return resolveReplayResult({
+          prepared,
+          collected,
+          unitResult,
+          cleanup,
+          termination: replayProcess.termination,
+        });
+      } finally {
+        signal?.removeEventListener("abort", replayProcess.terminate);
+        if (replayProcess.timeout !== undefined)
+          clearTimeout(replayProcess.timeout);
+        if (
+          replayProcess.child !== undefined &&
+          replayProcess.child.exitCode === null
+        ) {
+          replayProcess.requestTermination();
+          await replayProcess.terminationRequest;
+        }
       }
+    } finally {
       await filter.close();
     }
   }

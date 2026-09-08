@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import {
   addBoundedFinding,
   addLocatedFinding,
@@ -14,7 +15,6 @@ import {
   propertyName,
   range,
   rangeForOffsets,
-  sanitizeCandidate,
   sourceSlice,
   staticPath,
   staticPathResolutionContext,
@@ -264,7 +264,7 @@ const addEndpoint = (context: FindingContext, input: EndpointInput): void =>
     node: input.node,
     value: {
       kind: input.kind,
-      value: sanitizeCandidate(input.value),
+      value: sanitizeEndpointCandidate(input.value),
       mechanism: input.mechanism,
       module_key: null,
       location: range(input.node),

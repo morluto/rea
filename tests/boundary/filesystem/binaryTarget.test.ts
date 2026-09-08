@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseBinaryTarget } from "../../../src/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { pe, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

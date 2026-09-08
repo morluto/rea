@@ -1,9 +1,7 @@
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  codedToken,
   declaringType,
-  rowCursor,
   signature,
   type FieldCore,
   type ManagedCallEdge,
@@ -18,6 +16,8 @@ import {
 } from "./ManagedMemberInspectorCore.js";
 import {
   metadataToken,
+  metadataRowCursor,
+  metadataCodedToken,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -36,7 +36,7 @@ export const parseFields = (
   const core = new Map<string, FieldCore>();
   const table = layout.table(4);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor(bytes, layout, 4, row);
+    const cursor = metadataRowCursor(bytes, layout, 4, row);
     const flags = cursor.readUInt16();
     const name = readMetadataString(
       bytes,
@@ -78,7 +78,7 @@ export const parseMemberRefs = (
   const core = new Map<string, MemberRefCore>();
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor(bytes, layout, 10, row);
+    const cursor = metadataRowCursor(bytes, layout, 10, row);
     const parentRaw = cursor.readIndex(
       layout.codedIndexSize("MemberRefParent"),
     );
@@ -98,7 +98,7 @@ export const parseMemberRefs = (
     refs.push({
       token,
       row_offset: cursor.start,
-      parent_token: codedToken(parentRaw, 3, [2, 1, 26, 6, 27]),
+      parent_token: metadataCodedToken(parentRaw, 3, [2, 1, 26, 6, 27]),
       name,
       signature: signature(sig),
     });
@@ -131,7 +131,7 @@ export const parseMethods = ({
   const core = new Map<string, MethodCore>();
   const table = layout.table(6);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = rowCursor(bytes, layout, 6, row);
+    const cursor = metadataRowCursor(bytes, layout, 6, row);
     const rva = cursor.readUInt32();
     const implFlags = cursor.readUInt16();
     const flags = cursor.readUInt16();

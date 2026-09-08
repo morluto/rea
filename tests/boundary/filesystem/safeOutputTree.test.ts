@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir, readlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -19,6 +19,26 @@ const LIMITS = {
 } as const;
 
 describe("safe artifact output tree", () => {
+  it.skipIf(process.platform !== "linux")(
+    "closes the parent descriptor when the output disappears before commit",
+    async () => {
+      const parent = await createTestTempDirectory("rea-safe-output-");
+      const output = join(parent, "published");
+      const tree = await SafeOutputTree.create(output, LIMITS);
+      await rm(output, { recursive: true });
+      await expect(tree.commit()).rejects.toThrow();
+      const targets = await Promise.all(
+        (await readdir("/proc/self/fd")).map((fd) =>
+          readlink(`/proc/self/fd/${fd}`).catch(() => undefined),
+        ),
+      );
+      expect(targets.filter((target) => target === parent)).toEqual([]);
+      expect(await tree.rollback()).toEqual({
+        status: "complete",
+        residualPaths: [],
+      });
+    },
+  );
   it("removes only its owned tree after digest failure and proves absence", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-");
     const output = join(parent, "published");

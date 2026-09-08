@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { isPathWithinRoot } from "../domain/localPath.js";
 
 import type {
   EnabledProcessExecutionPolicy,
@@ -10,10 +11,6 @@ import {
 } from "./ProcessCaptureError.js";
 import { canonicalizeConfiguredRoots } from "./ConfiguredRoots.js";
 
-const isWithin = (candidate: string, root: string): boolean =>
-  candidate === root ||
-  candidate.startsWith(`${root.endsWith("/") ? root.slice(0, -1) : root}/`);
-
 export const assertRealPathAuthority = async (
   scenario: ProcessScenario,
   policy: EnabledProcessExecutionPolicy,
@@ -22,28 +19,28 @@ export const assertRealPathAuthority = async (
   const executableRoots = await canonicalizeConfiguredRoots(
     policy.executableRoots,
   );
-  if (!executableRoots.some((root) => isWithin(executable, root)))
+  if (!executableRoots.some((root) => isPathWithinRoot(root, executable)))
     throw new ProcessCaptureError(
       "resolved executable is outside approved roots",
     );
   const workingDirectory = await realpath(scenario.working_directory);
   const workingRoots = await canonicalizeConfiguredRoots(policy.workingRoots);
-  if (!workingRoots.some((root) => isWithin(workingDirectory, root)))
+  if (!workingRoots.some((root) => isPathWithinRoot(root, workingDirectory)))
     throw new ProcessCaptureError(
       "resolved working directory is outside approved roots",
     );
   for (const root of scenario.filesystem_roots) {
     const resolvedRoot = await realpath(root);
-    if (!workingRoots.some((approved) => isWithin(resolvedRoot, approved)))
+    if (
+      !workingRoots.some((approved) => isPathWithinRoot(approved, resolvedRoot))
+    )
       throw new ProcessCaptureError(
         "resolved filesystem root is outside approved roots",
       );
   }
 };
 
-/** Expected refusal or runtime failure from the process capture adapter. */
+/** Reject cancellation before a process capture operation begins. */
 export const assertNotCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true) throw processCaptureCancelled();
 };
-
-/** Runtime availability of the native PTY adapter on this host. */

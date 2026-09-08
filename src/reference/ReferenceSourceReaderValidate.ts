@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 
 import { err, ok } from "../domain/result.js";
 import { cancelled, failure } from "./ReferenceSourceReaderErrors.js";
-import { withinRoot } from "./ReferenceSourceReaderPaths.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import {
   type BigStats,
   type ReferenceSourceFailureCode,
@@ -62,7 +62,7 @@ export const validateDirectory = async (
         message: "Directory identity changed",
       };
     const canonical = await realpath(path);
-    if (canonical !== path || !withinRoot(root, canonical))
+    if (canonical !== path || !isPathWithinRoot(root, canonical))
       return {
         ok: false,
         code: "changed",

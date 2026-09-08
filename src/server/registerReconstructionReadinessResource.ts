@@ -6,6 +6,7 @@ import {
 
 import type { BinarySessionPort } from "../application/BinarySessionPort.js";
 import { reconstructionReadinessReportSchema } from "../domain/reconstructionReadinessSchemas.js";
+import { jsonResource } from "./resourceResult.js";
 
 /** Expose retained full readiness reports outside compact tool responses. */
 export const registerReconstructionReadinessResource = (
@@ -40,19 +41,10 @@ export const registerReconstructionReadinessResource = (
         evidence.normalized_result,
       );
       if (!report.success) throw new ResourceNotFoundError(uri.href);
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: "application/json",
-            text: JSON.stringify(
-              { evidence_id: evidence.evidence_id, report: report.data },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return jsonResource(uri.href, {
+        evidence_id: evidence.evidence_id,
+        report: report.data,
+      });
     },
   );
 };

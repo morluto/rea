@@ -11,14 +11,18 @@ export const waitForAbortable = async <Value>(
   signal: AbortSignal | undefined,
 ): Promise<Value | typeof ABORTED> => {
   if (signal === undefined) return pending;
-  if (signal.aborted) return ABORTED;
   let onAbort: (() => void) | undefined;
   const cancelled = new Promise<typeof ABORTED>((resolve) => {
+    if (signal.aborted) {
+      resolve(ABORTED);
+      return;
+    }
     onAbort = () => resolve(ABORTED);
     signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
-    return await Promise.race([pending, cancelled]);
+    // Even an already-cancelled wait must own the producer's eventual rejection.
+    return await Promise.race([cancelled, pending]);
   } finally {
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }

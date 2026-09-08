@@ -1,6 +1,7 @@
 import { z } from "incur";
 
-const boundedCount = (
+/** Bound a CLI observation count while preserving its subject-specific help. */
+export const boundedCount = (
   subject: string,
   maximum: number,
   fallback: number,
@@ -14,13 +15,18 @@ const boundedCount = (
     .default(fallback)
     .describe(`Maximum ${subject}`);
 
-const boundedBytes = (subject: string, maximum: number, fallback: number) =>
-  boundedCount(`${subject} in bytes`, maximum, fallback);
+/** Bound a CLI observation byte budget. */
+export const boundedBytes = (
+  subject: string,
+  maximum: number,
+  fallback: number,
+) => boundedCount(`${subject} in bytes`, maximum, fallback);
 
 const positiveCount = (subject: string, fallback: number) =>
   z.number().int().min(1).default(fallback).describe(`Maximum ${subject}`);
 
-const browserScopeOptions = {
+/** Shared passive browser origin and approval options. */
+export const browserScopeOptions = {
   allowedOrigins: z
     .array(z.string().min(1))
     .optional()
@@ -146,7 +152,8 @@ export const browserPageInspectionOptions = z.object({
   ),
 });
 
-const electronScopeOptions = {
+/** Shared passive Electron root and approval options. */
+export const electronScopeOptions = {
   allowedFileRoots: z
     .array(z.string().min(1))
     .optional()

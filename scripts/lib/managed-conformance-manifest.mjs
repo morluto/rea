@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 
-import { parseBinaryTarget } from "../../dist/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
 import { inspectManagedArtifactBytes } from "../../dist/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../dist/dotnet/ManagedMemberInspector.js";
 import { projectManagedApplicationGraphEvidence } from "../../dist/application/ManagedApplicationGraphService.js";

@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { runControlledReplayValidated } from "../../application/JavaScriptReplayService.js";
@@ -8,7 +9,7 @@ import { mcpProgressReporter } from "../mcpProgress.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordSources } from "./helpers.js";
+
 import type { ApplicationToolRegistration } from "./types.js";
 
 const replayContract = applicationToolContract("run_controlled_replay");
@@ -34,7 +35,7 @@ export const registerControlledReplayTool = (
       if (!result.ok) return toCallToolResult(result, replayContract);
       const output = controlledReplayOutputSchema.parse(result.value);
       if (output.phase === "execute") {
-        const sourcesRecorded = recordSources(
+        const sourcesRecorded = recordSessionEvidenceSources(
           options.recordEvidence,
           output.source_evidence.map((item) => parseEvidence(item)),
         );

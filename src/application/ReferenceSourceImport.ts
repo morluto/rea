@@ -1,3 +1,4 @@
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { isSecretLikePath } from "../domain/referenceSourceClassification.js";
 import {
   createHistoricalSourceGraph,
@@ -19,20 +20,6 @@ export type {
   ReferenceSourceImportError,
   ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-
-const compareCodePoints = (left: string, right: string): number => {
-  const leftPoints = [...left].map((value) => value.codePointAt(0) ?? 0);
-  const rightPoints = [...right].map((value) => value.codePointAt(0) ?? 0);
-  const length = Math.min(leftPoints.length, rightPoints.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftPoints[index] ?? 0) - (rightPoints[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return leftPoints.length - rightPoints.length;
-};
-
-const byCodePoint = (left: string, right: string): number =>
-  compareCodePoints(left, right);
 
 const failure = (
   code: ReferenceSourceImportError["code"],
@@ -73,7 +60,7 @@ export const normalizeHistoricalSourceParseFailures = (
 ): HistoricalSourceGraphInput["parse_failures"] =>
   [...failures]
     .sort((left, right) =>
-      byCodePoint(
+      compareUnicodeCodePoints(
         historicalSourceParseFailureKey(left),
         historicalSourceParseFailureKey(right),
       ),
@@ -107,7 +94,7 @@ const deriveLanguages = (
           : [],
       ),
     ),
-  ].sort(byCodePoint);
+  ].sort(compareUnicodeCodePoints);
 
 const deriveManifests = (
   entries: HistoricalSourceGraphInput["entries"],
@@ -118,7 +105,7 @@ const deriveManifests = (
         ? [entry.path]
         : [],
     )
-    .sort(byCodePoint);
+    .sort(compareUnicodeCodePoints);
 
 const deriveInventoryState = (
   input: Pick<
@@ -155,9 +142,9 @@ const sortAndLimit = (
   maxExclusions: number,
 ): HistoricalSourceGraphInput["exclusions"] => {
   const sorted = [...exclusions].sort((left, right) => {
-    const byPath = byCodePoint(left.path, right.path);
+    const byPath = compareUnicodeCodePoints(left.path, right.path);
     if (byPath !== 0) return byPath;
-    return byCodePoint(left.reason, right.reason);
+    return compareUnicodeCodePoints(left.reason, right.reason);
   });
   if (sorted.length <= maxExclusions) return sorted;
   return sorted.slice(0, maxExclusions);
@@ -229,10 +216,10 @@ export const importReferenceSource = async (
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
 
   const sortedEntries = [...entries].sort((left, right) =>
-    byCodePoint(left.path, right.path),
+    compareUnicodeCodePoints(left.path, right.path),
   );
   const sortedExclusions = sortAndLimit(exclusions, limits.maxEntries);
-  const sortedLimitations = [...limitations].sort(byCodePoint);
+  const sortedLimitations = [...limitations].sort(compareUnicodeCodePoints);
 
   const input: HistoricalSourceGraphInput = {
     schema: "HistoricalSourceGraph/v1",
@@ -247,7 +234,7 @@ export const importReferenceSource = async (
     }),
     entries: sortedEntries,
     relationships: uniqueRelationships.sort((left, right) =>
-      byCodePoint(relationshipKey(left), relationshipKey(right)),
+      compareUnicodeCodePoints(relationshipKey(left), relationshipKey(right)),
     ),
     parse_failures: uniqueFailures,
     exclusions: sortedExclusions,

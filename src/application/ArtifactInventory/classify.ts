@@ -2,7 +2,10 @@ import { open } from "node:fs/promises";
 
 import { classifyArtifactPath } from "../ArtifactGraphConstruction.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
-import { zipPackageFormatForPath } from "../../domain/zipPackageFormat.js";
+import {
+  hasZipSignature,
+  zipPackageFormatForPath,
+} from "../../domain/zipPackageFormat.js";
 
 const classifyContainerExtension = (
   path: string,
@@ -26,14 +29,7 @@ export const classifyRoot = async (
   try {
     const magic = Buffer.alloc(4);
     const observed = await handle.read(magic, 0, magic.length, 0);
-    if (
-      observed.bytesRead === 4 &&
-      magic[0] === 0x50 &&
-      magic[1] === 0x4b &&
-      [0x03, 0x05, 0x07].includes(magic[2] ?? -1) &&
-      [0x04, 0x06, 0x08].includes(magic[3] ?? -1)
-    )
-      return "zip";
+    if (hasZipSignature(magic.subarray(0, observed.bytesRead))) return "zip";
     if (observed.bytesRead === 4) {
       const header = magic.readUInt32BE(0);
       if ([0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca].includes(header))

@@ -1,20 +1,16 @@
 import { Cli, z } from "incur";
 
+import { browserContext, browserCliError } from "./cliBrowserContext.js";
+import { browserScopeOptions } from "./cliObservationOptions.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,
   compareWebScreenshotEvidence,
   discoverWebMcpTools,
 } from "./application/BrowserObservationService.js";
-import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { logCliCommand } from "./cliLogging.js";
-import { parseConfig } from "./config.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  projectAnalysisError,
-} from "./domain/errors.js";
+import { AnalysisInputError } from "./domain/errors.js";
 import { browserCaptureComparisonInputSchema } from "./domain/browserCaptureComparison.js";
 import { discoverWebMcpToolsInputSchema } from "./domain/webMcpDiscovery.js";
 import {
@@ -24,16 +20,6 @@ import {
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
-
-const scopeOptions = {
-  allowedOrigins: z
-    .array(z.string().min(1))
-    .optional()
-    .describe(
-      "Exact origins to observe; defaults to REA_BROWSER_ALLOWED_ORIGINS_JSON",
-    ),
-  approved: z.boolean().default(false).describe("Approve passive observation"),
-};
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
@@ -57,7 +43,7 @@ const registerWebMcp = (
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
-      ...scopeOptions,
+      ...browserScopeOptions,
       observationMs: z
         .number()
         .int()
@@ -116,7 +102,7 @@ const registerWebMcp = (
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -170,7 +156,7 @@ const registerCaptureDiff = (
           new CdpBrowserProvider(),
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -186,7 +172,7 @@ const registerScreenshot = (
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
-      ...scopeOptions,
+      ...browserScopeOptions,
       screenshotApproved: z
         .boolean()
         .default(false)
@@ -218,7 +204,7 @@ const registerScreenshot = (
           context.authority,
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
 };
@@ -262,35 +248,9 @@ const registerScreenshotDiff = (
           new CdpBrowserProvider(),
           parsed.data,
         );
-        return result.ok ? result.value : cliError(result.error);
+        return result.ok ? result.value : browserCliError(result.error);
       }),
   });
-};
-
-const browserContext = async (operation: string) => {
-  const config = parseConfig(process.env);
-  if (!config.ok) return { ok: false as const, error: cliError(config.error) };
-  const policy = config.value.browserObservationPolicy;
-  if (policy.status === "disabled")
-    return {
-      ok: false as const,
-      error: cliError(
-        new AnalysisCapabilityUnavailableError(
-          "rea-cdp-browser",
-          operation,
-          "browser observation is disabled; configure exact endpoints and origins before enabling it",
-        ),
-      ),
-    };
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok)
-    return { ok: false as const, error: cliError(authority.error) };
-  return {
-    ok: true as const,
-    authority: authority.value,
-    provider: new CdpBrowserProvider(),
-    allowedBrowserOrigins: policy.allowedOrigins,
-  };
 };
 
 const parseJson = (value: string): unknown => {
@@ -302,11 +262,4 @@ const parseJson = (value: string): unknown => {
 };
 
 const inputError = (operation: string): JsonValue =>
-  cliError(new AnalysisInputError(operation));
-
-const cliError = (
-  error: Parameters<typeof projectAnalysisError>[0],
-): JsonValue => ({
-  error: "Browser observation failed",
-  ...projectAnalysisError(error),
-});
+  browserCliError(new AnalysisInputError(operation));

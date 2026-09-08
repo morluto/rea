@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute } from "node:path";
 
+import { isPathWithinRoot } from "./localPath.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -33,7 +34,7 @@ export const parseActiveElectronCapture = (
     .parse(evidence.parameters);
   if (
     result.application.application_path !== parameters.application_path ||
-    !isWithinRoot(
+    !isPathWithinRoot(
       parameters.application_root,
       result.application.application_path,
     )
@@ -128,11 +129,4 @@ const digestCanonical = (value: unknown): string => {
   if (encoded === undefined)
     throw new TypeError("Runtime reconciliation could not canonicalize input");
   return createHash("sha256").update(encoded).digest("hex");
-};
-
-const isWithinRoot = (root: string, path: string): boolean => {
-  const remainder = relative(root, path);
-  return (
-    remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder))
-  );
 };

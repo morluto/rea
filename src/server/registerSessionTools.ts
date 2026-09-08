@@ -22,10 +22,10 @@ import type {
   ProcessExecutionPolicy,
   ProcessScenario,
 } from "../domain/processCapture.js";
-import { ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import { permissionFailure } from "./permissionFailure.js";
+import { projectPermissionFailure } from "../application/PermissionFailure.js";
 import {
   authorizeProcessCaptureWithElicitation,
   type ProcessCaptureElicitation,
@@ -131,7 +131,7 @@ const registerProcessTools = ({
         if (isInputRequiredResult(authorized)) return authorized;
         if (!authorized.ok)
           return toCallToolResult(
-            permissionFailure(authorized),
+            err(projectPermissionFailure(authorized.error)),
             captureContract,
           );
       }
@@ -235,7 +235,7 @@ const registerOpenLifecycleTool = ({
           );
           if (!authorized.ok)
             return toCallToolResult(
-              permissionFailure(authorized),
+              err(projectPermissionFailure(authorized.error)),
               openContract,
             );
         }

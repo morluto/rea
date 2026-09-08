@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { resolveTraceApplicationFeatureRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
@@ -6,7 +7,7 @@ import { applicationToolContract } from "../../contracts/applicationToolContract
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const traceContract = applicationToolContract("trace_application_feature");
@@ -33,7 +34,10 @@ export const registerTraceFeatureTool = (
       );
       if (!result.ok) return toCallToolResult(result, traceContract);
       const sources = [parsed.application, ...parsed.native_observations];
-      const recorded = recordSources(options.recordEvidence, sources);
+      const recorded = recordSessionEvidenceSources(
+        options.recordEvidence,
+        sources,
+      );
       if (!recorded.ok) return toCallToolResult(recorded, traceContract);
       return recordResult(options, traceContract, result.value);
     },

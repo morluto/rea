@@ -190,22 +190,9 @@ export class ProviderSelectionError extends AnalysisError {
   readonly rejections: readonly ProviderSelectionRejection[];
   override readonly userMessage: string;
 
-  constructor(input: string | ProviderSelectionErrorOptions) {
-    const legacy = typeof input === "string";
-    const options: ProviderSelectionErrorOptions = legacy
-      ? {
-          operation: input,
-          reason: "provider_unavailable",
-          requestedProviderId: "auto",
-          candidateIds: [],
-        }
-      : input;
+  constructor(options: ProviderSelectionErrorOptions) {
     const operation = options.operation ?? "open_binary";
-    super(
-      legacy
-        ? `No configured provider can execute ${operation}`
-        : providerSelectionDiagnostic(options),
-    );
+    super(providerSelectionDiagnostic(options));
     this.operation = operation;
     this.reason = options.reason;
     this.requestedProviderId = options.requestedProviderId;

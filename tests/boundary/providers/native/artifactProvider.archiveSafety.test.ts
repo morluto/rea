@@ -18,7 +18,7 @@ import {
 } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
-import { parseBinaryTarget } from "../../../../src/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
 describe("artifact archive safety", () => {

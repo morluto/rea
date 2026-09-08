@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import { parseConfig, type AppConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
@@ -10,8 +11,6 @@ import type { ArtifactToolName } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managedToolContracts.js";
 import {
   EvidenceIntegrityError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   projectAnalysisError,
   type AnalysisError,
 } from "../domain/errors.js";
@@ -20,7 +19,7 @@ import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
 } from "./AnalysisSnapshotFiles.js";
-import { parseBinaryTarget } from "../domain/binaryTarget.js";
+import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   snapshotEvidenceForQuery,
@@ -136,14 +135,7 @@ const authorizeAnalysis = async (
       },
       request.access,
     );
-    if (!result.ok)
-      return err(
-        result.error instanceof PermissionRequiredError
-          ? result.error
-          : new AnalysisProtocolError(result.error.message, {
-              cause: result.error,
-            }),
-      );
+    if (!result.ok) return err(projectPermissionFailure(result.error));
   }
   if (
     ["inventory_artifact", "inspect_artifact"].includes(tool) &&
@@ -161,14 +153,7 @@ const authorizeAnalysis = async (
       },
       "read",
     );
-    if (!result.ok)
-      return err(
-        result.error instanceof PermissionRequiredError
-          ? result.error
-          : new AnalysisProtocolError(result.error.message, {
-              cause: result.error,
-            }),
-      );
+    if (!result.ok) return err(projectPermissionFailure(result.error));
   }
   return ok(null);
 };

@@ -234,7 +234,7 @@ const limitationsFor = (operation: ManagedToolName): readonly string[] =>
             "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
           ]
         : [
-            "This capability decodes bounded PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# and cross-build matching are separate future contracts.",
+            "This capability decodes bounded PE/CLI metadata members, signatures, and file-backed method bodies; decompiled C# reconstruction and cross-build member comparison are separate operations.",
             "It never loads the target assembly, resolves dependencies through a CLR, decompiles C#, or executes target code.",
           ],
   );

@@ -6,6 +6,7 @@ import {
 
 import type { BinarySessionPort } from "../application/BinarySessionPort.js";
 import { reconstructionObligationLedgerPageSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { jsonResource } from "./resourceResult.js";
 
 /** Expose retained obligation-ledger pages as typed Evidence resources. */
 export const registerReconstructionObligationLedgerResource = (
@@ -40,19 +41,10 @@ export const registerReconstructionObligationLedgerResource = (
         evidence.normalized_result,
       );
       if (!page.success) throw new ResourceNotFoundError(uri.href);
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: "application/json",
-            text: JSON.stringify(
-              { evidence_id: evidence.evidence_id, page: page.data },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return jsonResource(uri.href, {
+        evidence_id: evidence.evidence_id,
+        page: page.data,
+      });
     },
   );
 };

@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 
 import type { ArtifactLimits } from "../artifacts/ArtifactReader.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { withinRoot } from "../reference/ReferenceSourceReaderPaths.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import {
   scanCanonicalArtifactInventory,
   type ArtifactInventoryOptions,
@@ -26,7 +26,7 @@ export const scanAuthorizedArtifactInventory = async (
     realpath(inputPath),
     canonicalizeConfiguredRoots(roots),
   ]);
-  if (!approved.some((root) => withinRoot(root, path)))
+  if (!approved.some((root) => isPathWithinRoot(root, path)))
     throw new ArtifactReaderFailure(
       "path",
       "Artifact path is outside approved input roots",

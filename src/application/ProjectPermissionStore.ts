@@ -1,12 +1,15 @@
+import {
+  createStoreFileLock,
+  removeStaleStoreFileLock,
+  type StoreFileLock,
+} from "./StoreFileLock.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
   open,
-  readFile,
   realpath,
-  unlink,
   type FileHandle,
 } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -15,30 +18,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
-import type { PermissionGrant } from "../domain/permissionPolicy.js";
+import {
+  PERMISSION_CAPABILITIES,
+  type PermissionGrant,
+} from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const grantSchema = z.object({
   grant_id: z.string().min(1),
-  capability: z.enum([
-    "process_capture",
-    "browser_observe",
-    "browser_automate",
-    "electron_observe",
-    "electron_automate",
-    "evidence_read",
-    "evidence_write",
-    "investigation_input",
-    "investigation_workspace_read",
-    "investigation_workspace_write",
-    "snapshot_read",
-    "snapshot_write",
-    "artifact_extract",
-    "native_mount",
-    "reference_read",
-    "javascript_replay",
-    "managed_runtime",
-  ]),
+  capability: z.enum(PERMISSION_CAPABILITIES),
   roots: z.array(z.string()),
   executables: z.array(z.string()),
   environment_names: z.array(z.string()),
@@ -156,27 +144,28 @@ export const writeProjectPermissionStore = async (
     );
   if (process.getuid === undefined)
     return err(new ProjectPermissionStoreError("not_owner_only"));
-  try {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFileAtomic(
-      path,
-      `${JSON.stringify(candidate.data, null, 2)}\n`,
-      {
-        encoding: "utf8",
-        mode: 0o600,
-      },
-    );
-    const verified = await readProjectPermissionStore(path, projectRoot);
-    if (!verified.ok) return verified;
-    if (
-      verified.value === null ||
-      JSON.stringify(verified.value) !== JSON.stringify(candidate.data)
-    )
-      return err(new ProjectPermissionStoreError("invalid"));
-    return ok(candidate.data);
-  } catch (cause: unknown) {
-    return err(new ProjectPermissionStoreError("io", { cause }));
-  }
+  return withPermissionStoreLock(path, () =>
+    writePreparedPermissionStore(path, projectRoot, candidate.data),
+  );
+};
+
+const writePreparedPermissionStore = async (
+  path: string,
+  projectRoot: string,
+  candidate: ProjectPermissionStore,
+): Promise<Result<ProjectPermissionStore, ProjectPermissionStoreError>> => {
+  await writeFileAtomic(path, `${JSON.stringify(candidate, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  const verified = await readProjectPermissionStore(path, projectRoot);
+  if (!verified.ok) return verified;
+  if (
+    verified.value === null ||
+    JSON.stringify(verified.value) !== JSON.stringify(candidate)
+  )
+    return err(new ProjectPermissionStoreError("invalid"));
+  return ok(candidate);
 };
 
 /** Revoke one grant while serializing the complete read-modify-write cycle. */
@@ -184,101 +173,57 @@ export const revokeProjectPermissionGrant = async (
   path: string,
   projectRoot: string,
   grantId: string,
-): Promise<Result<boolean, ProjectPermissionStoreError>> => {
-  let lock: PermissionStoreLock | undefined;
+): Promise<Result<boolean, ProjectPermissionStoreError>> =>
+  withPermissionStoreLock(path, async () => {
+    const current = await readProjectPermissionStore(path, projectRoot);
+    if (!current.ok) return current;
+    if (current.value === null) return ok(false);
+    const retained = current.value.grants.filter(
+      ({ grant_id }) => grant_id !== grantId,
+    );
+    if (retained.length === current.value.grants.length) return ok(false);
+    const written = await writePreparedPermissionStore(path, projectRoot, {
+      ...current.value,
+      grants: retained,
+    });
+    return written.ok ? ok(true) : written;
+  });
+
+const withPermissionStoreLock = async <Value>(
+  path: string,
+  action: () => Promise<Result<Value, ProjectPermissionStoreError>>,
+): Promise<Result<Value, ProjectPermissionStoreError>> => {
+  let lock: StoreFileLock | undefined;
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const acquired = await acquirePermissionStoreLock(path);
     if (!acquired.ok) return acquired;
     lock = acquired.value;
-    const current = await readProjectPermissionStore(path, projectRoot);
-    if (!current.ok) return current;
-    const grants = current.value?.grants ?? [];
-    const retained = grants.filter(({ grant_id }) => grant_id !== grantId);
-    if (retained.length === grants.length) return ok(false);
-    const written = await writeProjectPermissionStore(
-      path,
-      projectRoot,
-      retained,
-    );
-    return written.ok ? ok(true) : written;
+    return await action();
   } catch (cause: unknown) {
     return err(new ProjectPermissionStoreError("io", { cause }));
   } finally {
-    if (lock !== undefined) await releasePermissionStoreLock(lock);
+    if (lock !== undefined) await lock.release();
   }
 };
 
-interface PermissionStoreLock {
-  readonly path: string;
-  readonly handle: FileHandle;
-}
-
 const acquirePermissionStoreLock = async (
   destination: string,
-): Promise<Result<PermissionStoreLock, ProjectPermissionStoreError>> => {
+): Promise<Result<StoreFileLock, ProjectPermissionStoreError>> => {
   const path = `${destination}.lock`;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
-      return ok(await createPermissionStoreLock(path));
+      return ok(await createStoreFileLock(path));
     } catch (cause: unknown) {
       if (!isAlreadyExists(cause))
         return err(new ProjectPermissionStoreError("io", { cause }));
-      if (await removeStalePermissionStoreLock(path)) continue;
+      if (await removeStaleStoreFileLock(path)) continue;
       if (attempt === 99)
         return err(new ProjectPermissionStoreError("locked", { cause }));
       await delay(10);
     }
   }
   return err(new ProjectPermissionStoreError("locked"));
-};
-
-const createPermissionStoreLock = async (
-  path: string,
-): Promise<PermissionStoreLock> => {
-  const handle = await open(path, "wx", 0o600);
-  try {
-    await handle.writeFile(`${String(process.pid)}\n`, "utf8");
-    await handle.sync();
-    return { path, handle };
-  } catch (cause: unknown) {
-    await handle.close().catch(() => undefined);
-    await unlink(path).catch(() => undefined);
-    throw cause;
-  }
-};
-
-const removeStalePermissionStoreLock = async (
-  path: string,
-): Promise<boolean> => {
-  try {
-    const metadata = await lstat(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 32)
-      return false;
-    const encoded = (await readFile(path, "utf8")).trim();
-    if (!/^[1-9][0-9]{0,9}$/u.test(encoded)) return false;
-    if (processIsAlive(Number(encoded))) return false;
-    await unlink(path);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause: unknown) {
-    return errorCode(cause) !== "ESRCH";
-  }
-};
-
-const releasePermissionStoreLock = async (
-  lock: PermissionStoreLock,
-): Promise<void> => {
-  await lock.handle.close().catch(() => undefined);
-  await unlink(lock.path).catch(() => undefined);
 };
 
 const isNotFound = (cause: unknown): boolean => errorCode(cause) === "ENOENT";

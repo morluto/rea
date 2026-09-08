@@ -86,20 +86,24 @@ export class DirectoryArtifactReader implements ArtifactReader {
       entry.adapterKey,
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
-    const observed = await handle.stat();
-    if (
-      !observed.isFile() ||
-      entry.sourceIdentity === undefined ||
-      observed.dev !== entry.sourceIdentity.device ||
-      observed.ino !== entry.sourceIdentity.inode
-    ) {
-      await handle.close();
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Directory entry changed before open: ${entry.path}`,
-      );
+    try {
+      const observed = await handle.stat();
+      if (
+        !observed.isFile() ||
+        entry.sourceIdentity === undefined ||
+        observed.dev !== entry.sourceIdentity.device ||
+        observed.ino !== entry.sourceIdentity.inode
+      ) {
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `Directory entry changed before open: ${entry.path}`,
+        );
+      }
+      return handle.createReadStream({ autoClose: true });
+    } catch (cause: unknown) {
+      await handle.close().catch(() => undefined);
+      throw cause;
     }
-    return handle.createReadStream({ autoClose: true });
   }
 
   close(): Promise<void> {

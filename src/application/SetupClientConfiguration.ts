@@ -1,10 +1,13 @@
+import {
+  parseClientConfiguration,
+  serializeClientConfiguration,
+  type ClientConfigurationDocument,
+} from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import canonicalize from "canonicalize";
-import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import writeFileAtomic from "write-file-atomic";
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
@@ -24,44 +27,59 @@ const defaultCommand = (): readonly string[] => [
 ];
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
-export const configureJsonClient = async (
+export const configureJsonClient = (
   client: SetupClient,
-  environment: SetupProviderEnvironment | string = {},
+  environment: SetupProviderEnvironment = {},
   command: readonly string[] = defaultCommand(),
+): Promise<ClientConfigurationResult> =>
+  configureClientDocument(client, environment, command, "json");
+
+/** Back up, atomically update, and semantically read back one TOML MCP configuration. */
+export const configureTomlClient = (
+  client: SetupClient,
+  environment: SetupProviderEnvironment = {},
+  command: readonly string[] = defaultCommand(),
+): Promise<ClientConfigurationResult> =>
+  configureClientDocument(client, environment, command, "toml");
+
+const configureClientDocument = async (
+  client: SetupClient,
+  environment: SetupProviderEnvironment,
+  command: readonly string[],
+  format: "json" | "toml",
 ): Promise<ClientConfigurationResult> => {
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
   if (transactionPath === undefined)
     return { status: "failed", reason: "path" };
-  let document: Record<string, unknown> = {};
   let original: string | undefined;
   try {
     original = await readFile(transactionPath, "utf8");
-    document = parseObject(original);
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
-  let servers: Record<string, unknown>;
+  let parsed: ClientConfigurationDocument;
   try {
-    servers = parseOptionalObject(document.mcpServers);
+    parsed = parseClientConfiguration(
+      original ?? (format === "toml" ? "" : "{}"),
+      format,
+    );
   } catch {
     return { status: "failed", reason: "readback" };
   }
-  const desired = clientConfigurationDesired(
-    client,
-    normalizeProviderEnvironment(environment),
-    command,
-  );
-  if (sameConfiguration(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
+  const { document, servers, serversKey } = parsed;
+  const desired = clientConfigurationDesired(client, environment, command);
+  if (isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
     return { status: "unchanged" };
-  let backupPath: string | undefined;
-  if (original !== undefined) {
-    backupPath = `${client.configPath}.rea.backup`;
-    if (!(await preserveConfigBackup(transactionPath, backupPath)))
-      return { status: "failed", reason: "backup" };
-  }
-  document.mcpServers = {
+  const backupPath =
+    original === undefined ? undefined : `${client.configPath}.rea.backup`;
+  if (
+    backupPath !== undefined &&
+    !(await preserveConfigBackup(transactionPath, backupPath))
+  )
+    return { status: "failed", reason: "backup" };
+  document[serversKey] = {
     ...servers,
     [PRODUCT_IDENTITY.mcpServerKey]: desired,
   };
@@ -69,7 +87,7 @@ export const configureJsonClient = async (
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFileAtomic(
       transactionPath,
-      `${JSON.stringify(document, null, 2)}\n`,
+      serializeClientConfiguration(document, format),
       {
         encoding: "utf8",
         mode: 0o600,
@@ -79,87 +97,19 @@ export const configureJsonClient = async (
     return { status: "failed", reason: "write" };
   }
   try {
-    const readback = parseObject(await readFile(transactionPath, "utf8"));
+    const readback = parseClientConfiguration(
+      await readFile(transactionPath, "utf8"),
+      format,
+    );
     if (
-      !sameConfiguration(
-        parseOptionalObject(readback.mcpServers)[PRODUCT_IDENTITY.mcpServerKey],
+      !isDeepStrictEqual(
+        readback.servers[PRODUCT_IDENTITY.mcpServerKey],
         desired,
       )
     ) {
       await restoreConfig(transactionPath, original);
       return { status: "failed", reason: "readback" };
     }
-  } catch {
-    await restoreConfig(transactionPath, original);
-    return { status: "failed", reason: "readback" };
-  }
-  return {
-    status: "configured",
-    ...(backupPath === undefined ? {} : { backupPath }),
-  };
-};
-
-/** Back up, atomically update, and semantically read back Codex TOML configuration. */
-export const configureTomlClient = async (
-  client: SetupClient,
-  environment: SetupProviderEnvironment | string = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> => {
-  const transactionPath = await resolveClientConfigTransactionPath(
-    client.configPath,
-  );
-  if (transactionPath === undefined)
-    return { status: "failed", reason: "path" };
-  let document: Record<string, unknown> = {};
-  let original: string | undefined;
-  try {
-    original = await readFile(transactionPath, "utf8");
-    document = objectSchema.parse(parseToml(original));
-  } catch (cause: unknown) {
-    if (!isMissing(cause)) return { status: "failed", reason: "readback" };
-  }
-  let servers: Record<string, unknown>;
-  try {
-    servers = parseOptionalObject(document.mcp_servers);
-  } catch {
-    return { status: "failed", reason: "readback" };
-  }
-  const desired = clientConfigurationDesired(
-    client,
-    normalizeProviderEnvironment(environment),
-    command,
-  );
-  if (sameConfiguration(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
-    return { status: "unchanged" };
-  const backupPath =
-    original === undefined ? undefined : `${client.configPath}.rea.backup`;
-  if (
-    backupPath !== undefined &&
-    !(await preserveConfigBackup(transactionPath, backupPath))
-  )
-    return { status: "failed", reason: "backup" };
-  document.mcp_servers = {
-    ...servers,
-    [PRODUCT_IDENTITY.mcpServerKey]: desired,
-  };
-  try {
-    await mkdir(dirname(client.configPath), { recursive: true });
-    await writeFileAtomic(transactionPath, stringifyToml(document), {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    const readback = objectSchema.parse(
-      parseToml(await readFile(transactionPath, "utf8")),
-    );
-    if (
-      !sameConfiguration(
-        parseOptionalObject(readback.mcp_servers)[
-          PRODUCT_IDENTITY.mcpServerKey
-        ],
-        desired,
-      )
-    )
-      throw new Error("TOML readback mismatch");
   } catch {
     await restoreConfig(transactionPath, original);
     return { status: "failed", reason: "readback" };
@@ -183,14 +133,8 @@ export const clientConfigurationAligned = async (
   );
   try {
     const original = await readFile(client.configPath, "utf8");
-    const document =
-      client.format === "toml"
-        ? objectSchema.parse(parseToml(original))
-        : parseObject(original);
-    const servers = parseOptionalObject(
-      client.format === "toml" ? document.mcp_servers : document.mcpServers,
-    );
-    return sameConfiguration(servers[PRODUCT_IDENTITY.mcpServerKey], desired);
+    const { servers } = parseClientConfiguration(original, client.format);
+    return isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired);
   } catch {
     return false;
   }
@@ -229,14 +173,8 @@ export const inspectClientConfiguration = async (
     command,
   );
   try {
-    const document =
-      client.format === "toml"
-        ? objectSchema.parse(parseToml(original))
-        : parseObject(original);
-    const servers = parseOptionalObject(
-      client.format === "toml" ? document.mcp_servers : document.mcpServers,
-    );
-    if (sameConfiguration(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
+    const { servers } = parseClientConfiguration(original, client.format);
+    if (isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
       return { status: "already_current" };
   } catch {
     return {
@@ -251,19 +189,8 @@ export const inspectClientConfiguration = async (
   };
 };
 
-const objectSchema = z.record(z.string(), z.unknown());
-const parseOptionalObject = (value: unknown): Record<string, unknown> =>
-  value === undefined ? {} : objectSchema.parse(value);
-const parseObject = (text: string): Record<string, unknown> =>
-  objectSchema.parse(JSON.parse(text));
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-const sameConfiguration = (left: unknown, right: unknown): boolean => {
-  const encodedLeft = canonicalize(left);
-  const encodedRight = canonicalize(right);
-  return encodedLeft !== undefined && encodedLeft === encodedRight;
-};
-
 const preserveConfigBackup = async (
   source: string,
   destination: string,
@@ -309,10 +236,3 @@ const clientConfigurationDesired = (
     ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
   };
 };
-
-const normalizeProviderEnvironment = (
-  environment: SetupProviderEnvironment | string,
-): SetupProviderEnvironment =>
-  typeof environment === "string"
-    ? { HOPPER_LAUNCHER_PATH: environment }
-    : environment;

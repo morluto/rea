@@ -380,3 +380,17 @@ export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
     redacted: wasTruncated || hadCredentials || hadFragment || names.length > 0,
   };
 };
+
+/** Remove credentials, fragments, and query values from endpoint candidates. */
+export const sanitizeEndpointCandidate = (value: string): string => {
+  const bounded = value.slice(0, 4_096);
+  try {
+    const parsed = new URL(bounded, "https://rea.invalid");
+    const sanitized = sanitizeBrowserUrl(parsed.href).url;
+    return parsed.origin === "https://rea.invalid"
+      ? sanitized.replace("https://rea.invalid", "")
+      : sanitized;
+  } catch {
+    return bounded.split("#", 1)[0]?.split("?", 1)[0] ?? "";
+  }
+};

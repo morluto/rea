@@ -12,27 +12,14 @@ import {
   PermissionRequiredError,
   projectAnalysisError,
 } from "./domain/errors.js";
-import type { PermissionCapability } from "./domain/permissionPolicy.js";
+import {
+  PERMISSION_CAPABILITIES,
+  type PermissionCapability,
+} from "./domain/permissionPolicy.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 
-const capabilitySchema = z.enum([
-  "process_capture",
-  "browser_observe",
-  "browser_automate",
-  "electron_observe",
-  "electron_automate",
-  "evidence_read",
-  "evidence_write",
-  "investigation_input",
-  "investigation_workspace_read",
-  "investigation_workspace_write",
-  "snapshot_read",
-  "snapshot_write",
-  "artifact_extract",
-  "native_mount",
-  "reference_read",
-]);
+const capabilitySchema = z.enum(PERMISSION_CAPABILITIES);
 
 type PolicyRevocationApproval =
   | { readonly approved: true }

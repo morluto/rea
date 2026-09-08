@@ -16,7 +16,7 @@ import {
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
-import { parseBinaryTarget } from "../../../../src/domain/binaryTarget.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
 describe("artifact archive inventory", () => {

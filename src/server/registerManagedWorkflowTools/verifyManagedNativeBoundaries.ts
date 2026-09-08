@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { verifyManagedNativeBoundariesEvidence } from "../../application/ManagedNativeVerificationService.js";
@@ -7,7 +8,6 @@ import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
-  recordManagedSources,
   resolveManagedBoundaryEvidence,
   resolveNativeEvidence,
 } from "./evidence.js";
@@ -58,10 +58,10 @@ export const registerVerifyManagedNativeBoundaries = (
       );
       if (!result.ok)
         return toCallToolResult(result, nativeVerificationContract);
-      const recordedSources = recordManagedSources(options.recordEvidence, [
-        parsed.managed_boundaries,
-        ...parsed.native_observations,
-      ]);
+      const recordedSources = recordSessionEvidenceSources(
+        options.recordEvidence,
+        [parsed.managed_boundaries, ...parsed.native_observations],
+      );
       if (!recordedSources.ok)
         return toCallToolResult(recordedSources, nativeVerificationContract);
       const verification = managedNativeVerificationResultSchema.parse(

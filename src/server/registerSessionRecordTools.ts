@@ -7,16 +7,13 @@ import {
 } from "../application/EvidenceBundleFiles.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import {
-  AnalysisProtocolError,
-  PermissionRequiredError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import type { AnalysisError } from "../domain/errors.js";
 import type {
   EvidenceBundle,
   EvidenceFilePolicy,
 } from "../domain/evidenceBundle.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { projectPermissionFailure } from "../application/PermissionFailure.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
 
@@ -95,7 +92,9 @@ const authorizeEvidenceWrite = async ({
     },
     "write",
   );
-  return authorized.ok ? undefined : permissionFailure(authorized);
+  return authorized.ok
+    ? undefined
+    : err(projectPermissionFailure(authorized.error));
 };
 
 const registerExportEvidenceTool = ({
@@ -246,7 +245,9 @@ const authorizeEvidencePath = async (
     },
     input.access,
   );
-  return authorized.ok ? undefined : permissionFailure(authorized);
+  return authorized.ok
+    ? undefined
+    : err(projectPermissionFailure(authorized.error));
 };
 
 interface UnknownToolRegistration {
@@ -388,18 +389,4 @@ export const registerUnknownTools = (
   registerRecordUnknownTool(registration);
   registerUpdateUnknownTool(registration);
   registerVerifyUnknownTool(registration);
-};
-
-const permissionFailure = (
-  failure: Awaited<ReturnType<PermissionAuthority["authorize"]>>,
-): Result<never, AnalysisError> => {
-  if (failure.ok)
-    return err(new AnalysisProtocolError("Expected a denied permission"));
-  return err(
-    failure.error instanceof PermissionRequiredError
-      ? failure.error
-      : new AnalysisProtocolError(failure.error.message, {
-          cause: failure.error,
-        }),
-  );
 };

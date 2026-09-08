@@ -174,7 +174,9 @@ describe("JSON client configuration migration and provider paths", () => {
     const client = { name: "cursor", configPath };
     const original = "{}\n";
     await writeFile(configPath, original);
-    expect(await configureJsonClient(client, hopperPath)).toMatchObject({
+    expect(
+      await configureJsonClient(client, { HOPPER_LAUNCHER_PATH: hopperPath }),
+    ).toMatchObject({
       status: "configured",
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
@@ -186,11 +188,15 @@ describe("JSON client configuration migration and provider paths", () => {
         },
       },
     });
-    expect(await configureJsonClient(client, hopperPath)).toEqual({
+    expect(
+      await configureJsonClient(client, { HOPPER_LAUNCHER_PATH: hopperPath }),
+    ).toEqual({
       status: "unchanged",
     });
     expect(
-      await configureJsonClient(client, "/opt/hopper/bin/Hopper"),
+      await configureJsonClient(client, {
+        HOPPER_LAUNCHER_PATH: "/opt/hopper/bin/Hopper",
+      }),
     ).toMatchObject({ status: "configured" });
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
   });

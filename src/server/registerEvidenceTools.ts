@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "../application/PermissionFailure.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type {
@@ -8,10 +9,6 @@ import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import {
-  AnalysisProtocolError,
-  PermissionRequiredError,
-} from "../domain/errors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err } from "../domain/result.js";
@@ -61,13 +58,7 @@ export const registerEvidenceTools = (
             );
             if (!authorized.ok)
               return toCallToolResult(
-                err(
-                  authorized.error instanceof PermissionRequiredError
-                    ? authorized.error
-                    : new AnalysisProtocolError(authorized.error.message, {
-                        cause: authorized.error,
-                      }),
-                ),
+                err(projectPermissionFailure(authorized.error)),
                 contract,
               );
           }

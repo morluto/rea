@@ -6,6 +6,7 @@ import {
 
 import type { BinarySessionPort } from "../application/BinarySessionPort.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascriptApplicationAnalysis.js";
+import { jsonResource } from "./resourceResult.js";
 
 /** Register deterministic pages over one authenticated JavaScript graph. */
 export const registerJavaScriptApplicationGraphResource = (
@@ -50,29 +51,17 @@ export const registerJavaScriptApplicationGraphResource = (
       const values = analysis.data.graph[collection];
       const items = values.slice(offset, offset + limit);
       const nextOffset = offset + items.length;
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: "application/json" as const,
-            text: JSON.stringify(
-              {
-                evidence_id: evidence.evidence_id,
-                graph_id: analysis.data.graph.graph_id,
-                collection,
-                items,
-                offset,
-                limit,
-                total: values.length,
-                next_offset: nextOffset < values.length ? nextOffset : null,
-                has_more: nextOffset < values.length,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return jsonResource(uri.href, {
+        evidence_id: evidence.evidence_id,
+        graph_id: analysis.data.graph.graph_id,
+        collection,
+        items,
+        offset,
+        limit,
+        total: values.length,
+        next_offset: nextOffset < values.length ? nextOffset : null,
+        has_more: nextOffset < values.length,
+      });
     },
   );
 };

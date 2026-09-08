@@ -1,3 +1,4 @@
+import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { resolveCompareSourceToBundleRequestValidated } from "../../application/ApplicationWorkflowEvidenceResolver.js";
@@ -7,7 +8,7 @@ import { sourceToBundleComparisonResultSchema } from "../../domain/sourceToBundl
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";
-import { recordResult, recordSources } from "./helpers.js";
+import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = applicationToolContract("compare_source_to_bundle");
@@ -30,7 +31,7 @@ export const registerCompareSourceToBundleTool = (
         Promise.resolve(compareSourceToBundleEvidenceValidated(resolved.value)),
       );
       if (!result.ok) return toCallToolResult(result, contract);
-      const recorded = recordSources(options.recordEvidence, [
+      const recorded = recordSessionEvidenceSources(options.recordEvidence, [
         resolved.value.application,
       ]);
       if (!recorded.ok) return toCallToolResult(recorded, contract);

@@ -1,3 +1,4 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 
@@ -14,7 +15,6 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisProtocolError,
-  PermissionRequiredError,
   ReplayPlanStaleError,
   type AnalysisError,
 } from "../domain/errors.js";
@@ -170,14 +170,7 @@ const authorizeReplay = async (
     input.mode === "plan"
       ? await dependencies.authority.explain(request, "read")
       : await dependencies.authority.authorize(request, "read");
-  if (!authorized.ok)
-    return err(
-      authorized.error instanceof PermissionRequiredError
-        ? authorized.error
-        : new AnalysisProtocolError(authorized.error.message, {
-            cause: authorized.error,
-          }),
-    );
+  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
   return ok(policy);
 };
 
@@ -235,13 +228,7 @@ const authorizeReproducerExport = async (
     "write",
   );
   if (!exportAuthorized.ok)
-    return err(
-      exportAuthorized.error instanceof PermissionRequiredError
-        ? exportAuthorized.error
-        : new AnalysisProtocolError(exportAuthorized.error.message, {
-            cause: exportAuthorized.error,
-          }),
-    );
+    return err(projectPermissionFailure(exportAuthorized.error));
   const canonicalExportPath = exportAuthorized.value.request.roots[0];
   if (canonicalExportPath !== input.reproducer_export.path)
     return err(

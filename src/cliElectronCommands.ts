@@ -27,17 +27,10 @@ import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import {
   electronPageInspectionOptions,
+  electronScopeOptions,
   javascriptApplicationOptions,
 } from "./cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./cli/javascriptApplicationAnalysis.js";
-
-const scopeOptions = {
-  allowedFileRoots: z
-    .array(z.string().min(1))
-    .optional()
-    .describe("Filesystem roots; defaults to REA_ELECTRON_FILE_ROOTS_JSON"),
-  approved: z.boolean().default(false).describe("Approve passive observation"),
-};
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -137,7 +130,7 @@ const registerElectronTargetList = (
         .describe("Configured loopback Electron CDP endpoint"),
     }),
     options: z.object({
-      ...scopeOptions,
+      ...electronScopeOptions,
       offset: z
         .number()
         .int()

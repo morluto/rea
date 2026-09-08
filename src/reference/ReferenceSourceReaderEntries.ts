@@ -1,12 +1,10 @@
 import { readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { entryFailure, safeSize } from "./ReferenceSourceReaderErrors.js";
-import {
-  compareNames,
-  pathFromRoot,
-  withinRoot,
-} from "./ReferenceSourceReaderPaths.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
+import { pathFromRoot } from "./ReferenceSourceReaderPaths.js";
 import { readStableFile } from "./ReferenceSourceReaderFile.js";
 import {
   isAborted,
@@ -97,7 +95,10 @@ const readDirectoryNames = async (
   | { readonly ok: false; readonly message: string }
 > => {
   try {
-    return { ok: true, value: (await readdir(path)).sort(compareNames) };
+    return {
+      ok: true,
+      value: (await readdir(path)).sort(compareUnicodeCodePoints),
+    };
   } catch {
     return { ok: false, message: "Directory could not be read" };
   }
@@ -236,7 +237,7 @@ const describeSymlink = async (
   try {
     const rawTarget = await readlink(absolute);
     const lexicalTarget = resolve(dirname(absolute), rawTarget);
-    if (!withinRoot(root, lexicalTarget))
+    if (!isPathWithinRoot(root, lexicalTarget))
       return {
         status: "read",
         kind: "symlink",
@@ -246,7 +247,7 @@ const describeSymlink = async (
       };
     try {
       const canonicalTarget = await realpath(lexicalTarget);
-      return withinRoot(root, canonicalTarget)
+      return isPathWithinRoot(root, canonicalTarget)
         ? {
             status: "read",
             kind: "symlink",

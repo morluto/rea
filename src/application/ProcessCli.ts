@@ -1,11 +1,10 @@
+import { projectPermissionFailure } from "./PermissionFailure.js";
 import { readFile } from "node:fs/promises";
 
 import { parseConfig } from "../config.js";
 import {
   AnalysisError,
   AnalysisInputError,
-  AnalysisProtocolError,
-  PermissionRequiredError,
   projectAnalysisError,
 } from "../domain/errors.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
@@ -57,13 +56,7 @@ export const captureProcessScenarioFile = async (path: string) => {
       "read",
     );
     if (!authorized.ok)
-      return cliAnalysisError(
-        authorized.error instanceof PermissionRequiredError
-          ? authorized.error
-          : new AnalysisProtocolError(authorized.error.message, {
-              cause: authorized.error,
-            }),
-      );
+      return cliAnalysisError(projectPermissionFailure(authorized.error));
     const captured = await captureProcessScenario(
       scenario,
       config.value.processExecutionPolicy,
