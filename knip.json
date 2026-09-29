@@ -7,7 +7,9 @@
   "ignoreExportsUsedInFile": true,
   "ignoreIssues": {
     "src/domain/mobileApplicationInvestigation.ts": ["types"],
-    "src/domain/objcSwiftMetadata.ts": ["types"]
+    "src/domain/objcSwiftMetadata.ts": ["types"],
+    "src/domain/interfaceBuilderGraph.ts": ["types"],
+    "src/domain/nativeInvestigationGraph.ts": ["types"]
   },
   "rules": {
     "files": "error",

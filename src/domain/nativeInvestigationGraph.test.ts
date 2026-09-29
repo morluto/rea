@@ -5,7 +5,10 @@ import {
   joinInterfaceBuilderDispatch,
   traceNativeInvestigationGraph,
 } from "./nativeInvestigationGraph.js";
-import { buildInterfaceBuilderAnalysis, interfaceBuilderLimitsSchema } from "./interfaceBuilderGraph.js";
+import {
+  buildInterfaceBuilderAnalysis,
+  interfaceBuilderLimitsSchema,
+} from "./interfaceBuilderGraph.js";
 
 const evidence = [
   {
@@ -20,14 +23,60 @@ const graph = nativeInvestigationGraphSchema.parse({
   target_sha256: "a".repeat(64),
   provider: { id: "fixture", version: "1", tool_version: "test" },
   nodes: [
-    { id: "a", kind: "control", name: "button", location: null, attributes: {}, evidence },
-    { id: "b", kind: "function", name: "handler", location: null, attributes: {}, evidence },
-    { id: "c", kind: "state_value", name: "balance", location: null, attributes: {}, evidence },
+    {
+      id: "a",
+      kind: "control",
+      name: "button",
+      location: null,
+      attributes: {},
+      evidence,
+    },
+    {
+      id: "b",
+      kind: "function",
+      name: "handler",
+      location: null,
+      attributes: {},
+      evidence,
+    },
+    {
+      id: "c",
+      kind: "state_value",
+      name: "balance",
+      location: null,
+      attributes: {},
+      evidence,
+    },
   ],
   edges: [
-    { id: "1", from: "a", to: "b", relation: "target_action", resolution: "observed", evidence, limitations: [] },
-    { id: "2", from: "b", to: "c", relation: "writes", resolution: "inferred", evidence, limitations: ["static slice"] },
-    { id: "3", from: "b", to: null, relation: "swift_witness_dispatch", resolution: "unresolved", reason: "witness table unavailable", evidence, limitations: [] },
+    {
+      id: "1",
+      from: "a",
+      to: "b",
+      relation: "target_action",
+      resolution: "observed",
+      evidence,
+      limitations: [],
+    },
+    {
+      id: "2",
+      from: "b",
+      to: "c",
+      relation: "writes",
+      resolution: "inferred",
+      evidence,
+      limitations: ["static slice"],
+    },
+    {
+      id: "3",
+      from: "b",
+      to: null,
+      relation: "swift_witness_dispatch",
+      resolution: "unresolved",
+      reason: "witness table unavailable",
+      evidence,
+      limitations: [],
+    },
   ],
   coverage: [],
   truncated: false,
@@ -63,31 +112,43 @@ describe("native investigation graph traces", () => {
   });
 
   it("reports an unknown seed instead of treating it as an empty answer", () => {
-    expect(traceNativeInvestigationGraph(graph, { start: "missing" })).toMatchObject({
+    expect(
+      traceNativeInvestigationGraph(graph, { start: "missing" }),
+    ).toMatchObject({
       reason: "start_node_missing",
       nodes: [],
       truncated: false,
     });
   });
+});
 
+describe("Interface Builder dispatch joins", () => {
   it("joins a UI action to the target controller class, not the source control", () => {
     const ui = buildInterfaceBuilderAnalysis({
       targetSha256: "b".repeat(64),
       toolVersion: "test",
-      documents: [{
-        relativePath: "Main.storyboardc/scene.nib/objects.nib",
-        archiveSha256: "c".repeat(64),
-        documentKind: "storyboard_scene",
-        raw: {
-          "com.apple.ibtool.document.objects": {
-            controller: { customClass: "BuildViewController" },
-            button: { class: "UIButton", title: "Build" },
-          },
-          "com.apple.ibtool.document.connections": {
-            button: [{ type: "action", label: "buildTapped:", destinationId: "controller" }],
+      documents: [
+        {
+          relativePath: "Main.storyboardc/scene.nib/objects.nib",
+          archiveSha256: "c".repeat(64),
+          documentKind: "storyboard_scene",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              controller: { customClass: "BuildViewController" },
+              button: { class: "UIButton", title: "Build" },
+            },
+            "com.apple.ibtool.document.connections": {
+              button: [
+                {
+                  type: "action",
+                  label: "buildTapped:",
+                  destinationId: "controller",
+                },
+              ],
+            },
           },
         },
-      }],
+      ],
       limits: interfaceBuilderLimitsSchema.parse({}),
     });
     const joined = joinInterfaceBuilderDispatch(ui.graph, {
@@ -95,15 +156,17 @@ describe("native investigation graph traces", () => {
       objc_protocols: [],
       swift_decls: [],
       objc_ivars: [],
-      objc_dispatch_implementations: [{
-        class_name: "BuildViewController",
-        selector: "buildTapped:",
-        method_type: "instance",
-        implementation_address: "0x1000",
-        location: { address: "0x1000", file_offset: 0 },
-        decode: { status: "decoded", reason: null },
-        evidence,
-      }],
+      objc_dispatch_implementations: [
+        {
+          class_name: "BuildViewController",
+          selector: "buildTapped:",
+          method_type: "instance",
+          implementation_address: "0x1000",
+          location: { address: "0x1000", file_offset: 0 },
+          decode: { status: "decoded", reason: null },
+          evidence,
+        },
+      ],
       swift_conformances: [],
       swift_dispatch_slots: [],
       swift_symbols: [],
@@ -111,10 +174,85 @@ describe("native investigation graph traces", () => {
       coverage: [],
       db_save_result: null,
     });
-    expect(joined.edges).toContainEqual(expect.objectContaining({
-      relation: "objc_dispatch",
-      resolution: "inferred",
-      to: "native:function:0x1000",
-    }));
+    expect(joined.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "objc_dispatch",
+        resolution: "inferred",
+        to: "native:function:0x1000",
+      }),
+    );
+  });
+});
+
+describe("placeholder dispatch joins", () => {
+  it("keeps a unique selector match inferred when the receiver is only a placeholder", () => {
+    const ui = buildInterfaceBuilderAnalysis({
+      targetSha256: "b".repeat(64),
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Main.storyboardc/scene.nib/objects.nib",
+          archiveSha256: "c".repeat(64),
+          documentKind: "storyboard_scene",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              receiver: { class: "NSStoryboardPlaceholder" },
+              button: { class: "UIButton", title: "Build" },
+            },
+            "com.apple.ibtool.document.connections": {
+              button: [
+                {
+                  type: "action",
+                  label: "buildTapped:",
+                  destinationId: "receiver",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    const joined = joinInterfaceBuilderDispatch(ui.graph, {
+      objc_classes: [],
+      objc_protocols: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_dispatch_implementations: [
+        {
+          class_name: "BuildViewController",
+          selector: "buildTapped:",
+          method_type: "instance",
+          implementation_address: "0x1000",
+          location: { address: "0x1000", file_offset: null },
+          decode: { status: "partial", reason: "symbol_name_only" },
+          evidence,
+        },
+      ],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    });
+
+    expect(joined.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "objc_dispatch",
+        resolution: "inferred",
+        to: "native:function:0x1000",
+        limitations: [
+          expect.stringContaining("receiver is an unresolved placeholder"),
+        ],
+      }),
+    );
+    expect(joined.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "ui_to_objc_dispatch",
+        status: "partial",
+        reason: "some_action_receivers_remain_placeholders",
+      }),
+    );
   });
 });

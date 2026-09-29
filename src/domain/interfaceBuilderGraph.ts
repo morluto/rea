@@ -53,9 +53,7 @@ export const interfaceBuilderAnalysisSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-export type InterfaceBuilderAnalysis = z.infer<
-  typeof interfaceBuilderAnalysisSchema
->;
+type InterfaceBuilderAnalysis = z.infer<typeof interfaceBuilderAnalysisSchema>;
 
 export type InterfaceBuilderObject = z.infer<typeof objectNode>;
 export type InterfaceBuilderConnection = z.infer<typeof connection>;

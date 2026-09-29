@@ -38,7 +38,7 @@ export const nativeInvestigationNodeKindSchema = z.enum([
   "unknown",
 ]);
 
-export type NativeInvestigationNodeKind = z.infer<
+type NativeInvestigationNodeKind = z.infer<
   typeof nativeInvestigationNodeKindSchema
 >;
 
@@ -51,9 +51,7 @@ export const nativeInvestigationNodeSchema = z.strictObject({
   attributes: z.record(z.string(), jsonValueSchema),
   evidence: z.array(nativeMetadataEvidenceSchema),
 });
-export type NativeInvestigationNode = z.infer<
-  typeof nativeInvestigationNodeSchema
->;
+type NativeInvestigationNode = z.infer<typeof nativeInvestigationNodeSchema>;
 
 /** Relationship types preserve UI wiring, native dispatch, and value flow. */
 export const nativeInvestigationRelationSchema = z.enum([
@@ -72,13 +70,14 @@ export const nativeInvestigationRelationSchema = z.enum([
   "controls",
 ]);
 
-export type NativeInvestigationRelation = z.infer<
+type NativeInvestigationRelation = z.infer<
   typeof nativeInvestigationRelationSchema
 >;
 
 /** An observed, inferred, or unresolved relationship between entities. */
-export const nativeInvestigationEdgeSchema = z
-  .discriminatedUnion("resolution", [
+export const nativeInvestigationEdgeSchema = z.discriminatedUnion(
+  "resolution",
+  [
     z.strictObject({
       id: z.string().min(1),
       from: z.string().min(1),
@@ -98,7 +97,8 @@ export const nativeInvestigationEdgeSchema = z
       evidence: z.array(nativeMetadataEvidenceSchema),
       limitations: z.array(z.string()),
     }),
-  ]);
+  ],
+);
 
 export type NativeInvestigationEdge = z.infer<
   typeof nativeInvestigationEdgeSchema
@@ -272,6 +272,7 @@ export const joinInterfaceBuilderDispatch = (
 
   let examined = 0;
   let resolved = 0;
+  let inferredWithoutOwnerClass = 0;
   for (const action of nodes.values()) {
     if (action.kind !== "action") continue;
     const selector = action.attributes.selector;
@@ -283,7 +284,9 @@ export const joinInterfaceBuilderDispatch = (
         edge.resolution === "observed" &&
         edge.relation === "target_action" &&
         edge.from === action.id &&
-        nodes.get(edge.to)?.kind === "view_controller",
+        ["view_controller", "placeholder", "external_object"].includes(
+          nodes.get(edge.to)?.kind ?? "",
+        ),
     );
     if (
       destinationEdge === undefined ||
@@ -291,15 +294,21 @@ export const joinInterfaceBuilderDispatch = (
     )
       continue;
     const owner = nodes.get(destinationEdge.to);
-    const className = owner?.attributes.class_name;
-    if (typeof className !== "string" || className.length === 0) continue;
     examined += 1;
-
-    const implementation = metadata.objc_dispatch_implementations.find(
+    const declaredClass = owner?.attributes.class_name;
+    const className =
+      typeof declaredClass === "string" &&
+      declaredClass.length > 0 &&
+      owner?.kind === "view_controller"
+        ? declaredClass
+        : null;
+    const candidates = metadata.objc_dispatch_implementations.filter(
       (candidate) =>
-        candidate.class_name === className && candidate.selector === selector,
+        candidate.selector === selector &&
+        (className === null || candidate.class_name === className),
     );
-    const edgeId = `dispatch:${selectorNodeId}:${className}:${selector}`;
+    const implementation = candidates.length === 1 ? candidates[0] : undefined;
+    const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;
     if (existingEdgeIds.has(edgeId)) continue;
     existingEdgeIds.add(edgeId);
     if (
@@ -312,13 +321,16 @@ export const joinInterfaceBuilderDispatch = (
         to: null,
         relation: "objc_dispatch",
         resolution: "unresolved",
-        reason: "implementation_not_resolved_from_provider_symbols",
+        reason:
+          candidates.length > 1
+            ? "selector_has_multiple_candidate_implementations"
+            : "implementation_not_resolved_from_provider_symbols",
         evidence: [
           ...action.evidence,
-          ...(implementation?.evidence ?? []),
+          ...candidates.flatMap(({ evidence }) => evidence),
         ],
         limitations: [
-          "A missing symbol match does not prove that the runtime implementation is absent.",
+          "A missing or ambiguous symbol match does not prove that the runtime implementation is absent.",
         ],
       });
       continue;
@@ -329,13 +341,13 @@ export const joinInterfaceBuilderDispatch = (
       nodes.set(functionId, {
         id: functionId,
         kind: "function",
-        name: `${className} ${selector}`,
+        name: `${implementation.class_name} ${selector}`,
         location: {
           address: implementation.implementation_address,
           file_offset: implementation.location.file_offset,
         },
         attributes: {
-          class_name: className,
+          class_name: implementation.class_name,
           selector,
           method_type: implementation.method_type,
         },
@@ -348,11 +360,17 @@ export const joinInterfaceBuilderDispatch = (
       relation: "objc_dispatch",
       resolution: "inferred",
       evidence: [...action.evidence, ...implementation.evidence],
-      limitations: [
-        "The Interface Builder target and symbolized method agree on class and selector; runtime dispatch and dynamically supplied targets were not observed.",
-      ],
+      limitations:
+        className === null
+          ? [
+              "The selector uniquely matches a symbolized method, but the Interface Builder receiver is an unresolved placeholder; runtime dispatch was not observed.",
+            ]
+          : [
+              "The Interface Builder target and symbolized method agree on class and selector; runtime dispatch and dynamically supplied targets were not observed.",
+            ],
     });
     resolved += 1;
+    if (className === null) inferredWithoutOwnerClass += 1;
   }
 
   return nativeInvestigationGraphSchema.parse({
@@ -368,13 +386,18 @@ export const joinInterfaceBuilderDispatch = (
       ...graph.coverage,
       {
         facet: "ui_to_objc_dispatch",
-        status: examined === resolved ? "complete" : "partial",
+        status:
+          examined === resolved && inferredWithoutOwnerClass === 0
+            ? "complete"
+            : "partial",
         reason:
-          examined === resolved
+          examined === resolved && inferredWithoutOwnerClass === 0
             ? null
-            : "some_action_implementations_not_resolved",
+            : inferredWithoutOwnerClass > 0
+              ? "some_action_receivers_remain_placeholders"
+              : "some_action_implementations_not_resolved",
         examined,
-        omitted: examined - resolved,
+        omitted: examined - resolved + inferredWithoutOwnerClass,
       },
     ],
   });

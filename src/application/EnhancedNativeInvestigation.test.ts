@@ -6,11 +6,11 @@ import { nativeInvestigationTraceSchema } from "../domain/nativeInvestigationGra
 const target = "a".repeat(64);
 const evidence = [
   {
-  kind: "interface_builder_resource" as const,
-  description: "Fixture UI archive",
-  location: { address: null, file_offset: null },
-  artifact_path: null,
-  artifact_sha256: null,
+    kind: "interface_builder_resource" as const,
+    description: "Fixture UI archive",
+    location: { address: null, file_offset: null },
+    artifact_path: null,
+    artifact_sha256: null,
   },
 ];
 const graph = {

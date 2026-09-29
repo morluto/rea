@@ -80,7 +80,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   ),
   artifact(
     "decode_interface_builder",
-    "Decode compiled storyboard and nib property-list archives inside the active Apple app bundle into a bounded object and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns.",
+    "Decode compiled storyboard and nib archives inside the active Apple app bundle, including keyed property lists and NIBArchive object tables, into a bounded object, hierarchy, and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns.",
     z.strictObject({
       max_documents: z.number().int().min(1).max(64).default(64),
       max_objects: z.number().int().min(1).max(20_000).default(20_000),
