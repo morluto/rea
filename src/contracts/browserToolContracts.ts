@@ -1,12 +1,12 @@
 import type { ToolContract } from "./toolContracts.js";
 import {
   browserTargetListSchema,
-  inspectWebPageToolInputSchema,
+  inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
   webPageInspectionSchema,
 } from "../domain/browserObservation.js";
 import {
-  analyzeWebBundleToolInputSchema,
+  analyzeWebBundleInputSchema,
   webBundleAnalysisSchema,
 } from "../domain/webBundleAnalysis.js";
 import {
@@ -140,7 +140,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     description:
       "Passively inspect one approved page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence.",
     kind: "browser-provider",
-    inputSchema: inspectWebPageToolInputSchema,
+    inputSchema: inspectWebPageInputSchema,
     outputSchema: inspectionOutputSchema,
     examples: [
       {
@@ -159,7 +159,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     description:
       "Capture JavaScript source from one configured CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from allowed origins. JavaScript is parsed but never executed.",
     kind: "browser-provider",
-    inputSchema: analyzeWebBundleToolInputSchema,
+    inputSchema: analyzeWebBundleInputSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {

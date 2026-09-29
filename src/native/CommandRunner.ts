@@ -23,11 +23,7 @@ export interface NativeCommandCapture {
 export class NativeCommandFailure extends Error {
   constructor(
     readonly tool: string,
-    readonly reason:
-      | "unavailable"
-      | "cancelled"
-      | "nonzero-exit"
-      | "io",
+    readonly reason: "unavailable" | "cancelled" | "nonzero-exit" | "io",
     readonly exitCode: number | null = null,
     options?: ErrorOptions,
   ) {

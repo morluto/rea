@@ -228,7 +228,7 @@ const installationCoordinates = (
   const nativeDecompilerPath =
     installDir === null || decompilerPlatform === null
       ? null
-      : [
+      : ([
           path.join(
             installDir,
             "Ghidra",
@@ -248,7 +248,7 @@ const installationCoordinates = (
             decompilerPlatform,
             "decompile",
           ),
-        ].find((candidate) => host.executable(candidate)) ?? null;
+        ].find((candidate) => host.executable(candidate)) ?? null);
   const properties =
     applicationPropertiesPath === null
       ? undefined
@@ -298,9 +298,7 @@ const installationChecks = ({
   installationCheck({
     name: "platform",
     passed:
-      platform === "linux" ||
-      platform === "win32" ||
-      platform === "darwin",
+      platform === "linux" || platform === "win32" || platform === "darwin",
     code: "unsupported_host",
     detail: platform,
     remediation:
@@ -352,8 +350,7 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "native_decompiler",
-    passed:
-      platform !== "darwin" || coordinates.nativeDecompilerPath !== null,
+    passed: platform !== "darwin" || coordinates.nativeDecompilerPath !== null,
     code: "executable_missing",
     detail:
       platform !== "darwin"

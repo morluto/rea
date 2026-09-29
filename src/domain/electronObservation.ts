@@ -32,8 +32,6 @@ export const inspectElectronPageInputSchema = z.union([
     include_script_sources: z.literal(true),
   }),
 ]);
-export const inspectElectronPageToolInputSchema =
-  inspectElectronPageInputSchema;
 export type InspectElectronPageInput = z.infer<
   typeof inspectElectronPageInputSchema
 >;

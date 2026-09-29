@@ -5,7 +5,7 @@ import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
   listJavaScriptRuntimeTargetsInputSchema,
-  observeJavaScriptRuntimeToolInputSchema,
+  observeJavaScriptRuntimeInputSchema,
 } from "../domain/javascriptRuntimeObservation.js";
 
 const endpoint = "http://127.0.0.1:9229";
@@ -35,7 +35,7 @@ export const JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS = [
     description:
       "Attach passively to one Node/Electron V8 Inspector target by supplying its loopback Inspector endpoint and target ID. The provider rechecks that the target currently exists at that endpoint and is an attachable file or URL target. Captures Debugger.scriptParsed and Runtime execution-context events. REA never evaluates, pauses, resumes, reads source, or instruments the target; require/import edges, EventEmitter activity, and Electron IPC remain explicit unknowns. Reconcile the result with static Application Graph Evidence using reconcile_javascript_runtime. The selected endpoint exposes every target it serves to this tool.",
     kind: "runtime-provider",
-    inputSchema: observeJavaScriptRuntimeToolInputSchema,
+    inputSchema: observeJavaScriptRuntimeInputSchema,
     outputSchema: evidenceResultOf(javascriptRuntimeObservationSchema),
     examples: [
       {

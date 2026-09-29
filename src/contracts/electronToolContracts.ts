@@ -4,7 +4,7 @@ import { evidenceResultOf } from "./toolOutputSchemas.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
-  inspectElectronPageToolInputSchema,
+  inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "../domain/electronObservation.js";
 import {
@@ -64,7 +64,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     description:
       "Passively inspect one Electron file page by supplying its loopback CDP endpoint and target ID. The provider rechecks that the target currently exists at that endpoint and is a local file page. Returns frames, DOM structure, resource paths, and scripts without evaluating renderer JavaScript or invoking Electron APIs. The selected endpoint exposes every local file page and its metadata to this tool.",
     kind: "electron-provider",
-    inputSchema: inspectElectronPageToolInputSchema,
+    inputSchema: inspectElectronPageInputSchema,
     outputSchema: inspectionOutputSchema,
     examples: [
       {

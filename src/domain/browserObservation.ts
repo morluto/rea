@@ -137,13 +137,10 @@ export const inspectWebPageWithSourceInputSchema =
   inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
-export const inspectWebPageToolInputSchema = z.union([
+export const inspectWebPageInputSchema = z.union([
   inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
   inspectWebPageWithSourceInputSchema,
 ]);
-
-/** Parsed passive browser inspection input. */
-export const inspectWebPageInputSchema = inspectWebPageToolInputSchema;
 
 export type ListBrowserTargetsInput = z.infer<
   typeof listBrowserTargetsInputSchema

@@ -17,10 +17,7 @@ import type { ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisError } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
-import {
-  inspectElectronPageInputSchema,
-  inspectElectronPageToolInputSchema,
-} from "../domain/electronObservation.js";
+import { inspectElectronPageInputSchema } from "../domain/electronObservation.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -82,7 +79,7 @@ export const registerElectronTools = (
         inspectContract,
         { input, context },
         async (parsed, { signal, progress }) => {
-          const request = inspectElectronPageToolInputSchema.parse(parsed);
+          const request = inspectElectronPageInputSchema.parse(parsed);
           return inspectElectronPage(
             options.electron,
             options.permissionAuthority,

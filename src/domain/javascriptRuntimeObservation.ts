@@ -34,8 +34,6 @@ export const observeJavaScriptRuntimeInputSchema = z.strictObject({
   runtime_kind: javascriptRuntimeKindSchema.optional(),
   observation_ms: z.number().int().min(0).default(100),
 });
-export const observeJavaScriptRuntimeToolInputSchema =
-  observeJavaScriptRuntimeInputSchema;
 export type ObserveJavaScriptRuntimeInput = z.infer<
   typeof observeJavaScriptRuntimeInputSchema
 >;

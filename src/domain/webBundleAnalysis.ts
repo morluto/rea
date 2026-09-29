@@ -4,11 +4,10 @@ import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
 /** Capture-and-analyze input with optional source-map fetching. */
-export const analyzeWebBundleToolInputSchema =
+export const analyzeWebBundleInputSchema =
   inspectWebPageWithSourceInputSchema.safeExtend({
     fetch_source_maps: z.boolean().default(false),
   });
-export const analyzeWebBundleInputSchema = analyzeWebBundleToolInputSchema;
 export type AnalyzeWebBundleInput = z.infer<typeof analyzeWebBundleInputSchema>;
 
 const sourceLocationSchema = z.object({

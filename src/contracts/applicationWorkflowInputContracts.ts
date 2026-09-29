@@ -67,19 +67,3 @@ export const compareJavaScriptExportShapesRequestSchema = z.strictObject({
   left: evidenceSchema,
   right: evidenceSchema,
 });
-
-export type TraceApplicationFeatureRequest = z.output<
-  typeof traceApplicationFeatureRequestSchema
->;
-export type TraceJavaScriptSemanticsRequest = z.output<
-  typeof traceJavaScriptSemanticsRequestSchema
->;
-export type CompareApplicationVersionsRequest = z.output<
-  typeof compareApplicationVersionsRequestSchema
->;
-export type CompareSourceToBundleRequest = z.output<
-  typeof compareSourceToBundleRequestSchema
->;
-export type CompareJavaScriptExportShapesRequest = z.output<
-  typeof compareJavaScriptExportShapesRequestSchema
->;
