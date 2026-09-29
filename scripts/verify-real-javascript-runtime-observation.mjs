@@ -26,7 +26,7 @@ try {
     ["list-javascript-runtime-targets", endpoint, "--json"],
     environment,
   );
-  const target = listed.normalized_result?.targets?.items?.[0];
+  const target = listed.normalized_result?.targets?.[0];
   if (
     listed.operation !== "list_javascript_runtime_targets" ||
     typeof target?.target_id !== "string" ||

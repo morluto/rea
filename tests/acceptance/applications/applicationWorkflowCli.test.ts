@@ -129,7 +129,7 @@ describe("application workflow CLI input", () => {
 });
 
 describe("application workflow CLI export Evidence", () => {
-  it("compares exact export shapes from inline Evidence", async () => {
+  it("compares exact export shapes from file-backed Evidence", async () => {
     const root = await createTestTempDirectory("rea-export-shape-cli-");
     temporary.push(root);
     const leftRoot = join(root, "left");
@@ -155,8 +155,9 @@ describe("application workflow CLI export Evidence", () => {
     ]);
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
-    const compared = await runCli([
-      "compare-javascript-export-shapes",
+    const inputPath = join(root, "comparison.json");
+    await writeFile(
+      inputPath,
       JSON.stringify({
         left: left.value,
         right: right.value,
@@ -165,6 +166,10 @@ describe("application workflow CLI export Evidence", () => {
         right_module_path: "parser.mjs",
         right_export_name: "default",
       }),
+    );
+    const compared = await runCli([
+      "compare-javascript-export-shapes",
+      inputPath,
       "--json",
     ]);
     expect(compared).toMatchObject({

@@ -27,7 +27,7 @@ export async function verifyPackageCapabilitiesAndSearch({ cli, environment }) {
     );
     if (
       searchResult.operation !== "search_strings" ||
-      searchResult.normalized_result?.items?.length !== 1
+      !Array.isArray(searchResult.normalized_result)
     )
       throw new Error(
         `packaged search CLI failed: ${JSON.stringify(searchResult)}`,

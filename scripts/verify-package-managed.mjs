@@ -59,7 +59,7 @@ const verifyManagedMembers = async ({ cli, managedPath, environment }) => {
   );
   if (
     managedMembers.operation !== "inspect_managed_members" ||
-    managedMembers.normalized_result?.methods?.total !== 1
+    managedMembers.normalized_result?.methods?.length !== 1
   )
     throw new Error("packaged managed member CLI failed");
   return managedMembers;
@@ -183,9 +183,9 @@ const verifyManagedBoundaries = async ({ cli, managedPath, environment }) => {
   );
   if (
     managedBoundaries.operation !== "inspect_managed_native_boundaries" ||
-    managedBoundaries.normalized_result?.pinvoke_imports?.total !== 1 ||
-    managedBoundaries.normalized_result?.pinvoke_imports?.items?.[0]
-      ?.verification !== "managed-declaration-only"
+    managedBoundaries.normalized_result?.pinvoke_imports?.length !== 1 ||
+    managedBoundaries.normalized_result?.pinvoke_imports?.[0]?.verification !==
+      "managed-declaration-only"
   )
     throw new Error("packaged managed native-boundary CLI failed");
   return managedBoundaries;
@@ -199,16 +199,15 @@ const verifyManagedApplicationGraph = async ({
   environment,
 }) => {
   const managedApplicationGraphInput = {
-    managed_artifact: managedArtifact,
-    managed_members: managedMembers,
-    managed_native_boundaries: managedBoundaries,
-    limits: {
-      max_types: 100,
-      max_methods: 100,
-      max_fields: 100,
-      max_pinvoke_imports: 100,
-      max_native_implementations: 100,
-    },
+    managed_artifact: managedEvidence(
+      managedArtifact,
+      "inspect_managed_artifact",
+    ),
+    managed_members: managedEvidence(managedMembers, "inspect_managed_members"),
+    managed_native_boundaries: managedEvidence(
+      managedBoundaries,
+      "inspect_managed_native_boundaries",
+    ),
   };
   const managedApplicationGraph = json(
     await run(
@@ -232,7 +231,33 @@ const verifyManagedApplicationGraph = async ({
       ({ kind }) => kind === "managed-pinvoke-import",
     )
   )
-    throw new Error("packaged managed application-graph CLI failed");
+    throw new Error(
+      `packaged managed application-graph CLI failed: ${JSON.stringify(managedApplicationGraph).slice(0, 3000)}`,
+    );
+};
+
+const managedEvidence = (output, operation) => {
+  const result = output.normalized_result;
+  return createEvidence(
+    {
+      path: result.artifact.path,
+      sha256: result.artifact.sha256,
+      format: "pe",
+    },
+    {
+      id: "rea-dotnet-static",
+      name: "REA managed static analysis provider",
+      version: "1",
+    },
+    {
+      operation,
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations ?? [],
+      locations: [],
+    },
+  );
 };
 
 const verifyManagedNativeVerification = async ({
@@ -241,7 +266,10 @@ const verifyManagedNativeVerification = async ({
   environment,
 }) => {
   const managedNativeVerificationInput = {
-    managed_boundaries: managedBoundaries,
+    managed_boundaries: managedEvidence(
+      managedBoundaries,
+      "inspect_managed_native_boundaries",
+    ),
     native_observations: [
       createEvidence(
         {
@@ -265,10 +293,6 @@ const verifyManagedNativeVerification = async ({
         },
       ),
     ],
-    limits: {
-      max_native_observations: 20,
-      max_candidates_per_import: 25,
-    },
   };
   const managedNativeVerification = json(
     await run(

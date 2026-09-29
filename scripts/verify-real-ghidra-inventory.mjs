@@ -1,6 +1,6 @@
 import { parseGhidraInventoryResult } from "../dist/ghidra/GhidraInventoryValues.js";
 
-import { findValue, symbolTail } from "./verify-real-ghidra-assertions.mjs";
+import { findValue, matchesSymbol } from "./verify-real-ghidra-assertions.mjs";
 import {
   verifyCrossFormatOperations,
   verifyDebugFunctionOperations,
@@ -20,28 +20,9 @@ export async function call(client, operation, parameters) {
 }
 
 export async function allItems(client, operation, parameters) {
-  const items = [];
-  let offset = 0;
-  let total;
-  while (true) {
-    const page = await call(client, operation, {
-      ...parameters,
-      offset,
-      limit: 500,
-    });
-    if (typeof page !== "object" || page === null || Array.isArray(page))
-      throw new Error(`${operation} did not return a page`);
-    items.push(...page.items);
-    total ??= page.total;
-    if (page.total !== total)
-      throw new Error(`${operation} total changed during immutable paging`);
-    if (!page.has_more) break;
-    if (page.next_offset === null || page.next_offset <= offset)
-      throw new Error(`${operation} returned a non-advancing page`);
-    offset = page.next_offset;
-  }
-  if (items.length !== total)
-    throw new Error(`${operation} pagination was not exhaustive`);
+  const items = await call(client, operation, parameters);
+  if (!Array.isArray(items))
+    throw new Error(`${operation} did not return its complete inventory`);
   return items;
 }
 
@@ -104,11 +85,9 @@ export async function verifyInventoryOperations({
     pattern: String.raw`^REA_GHIDRA_(?:INVENTORY_ENTRY|LEAF_VALUE)$`,
     mode: "regex",
     case_sensitive: true,
-    offset: 0,
-    limit: 100,
     document: null,
   });
-  if (stringSearch.total !== 2 || stringSearch.items.length !== 2)
+  if (!Array.isArray(stringSearch) || stringSearch.length !== 2)
     throw new Error("Ghidra regex string search drifted");
   const stringItem = strings.find(
     (item) => item.value === "REA_GHIDRA_INVENTORY_ENTRY",
@@ -118,12 +97,11 @@ export async function verifyInventoryOperations({
   const filteredStrings = await call(client, "list_strings", {
     document: null,
     address: stringItem.address,
-    offset: 0,
-    limit: 500,
   });
   if (
-    filteredStrings.total !== 1 ||
-    filteredStrings.items[0]?.address !== stringItem.address
+    !Array.isArray(filteredStrings) ||
+    filteredStrings.length !== 1 ||
+    filteredStrings[0]?.address !== stringItem.address
   )
     throw new Error("Ghidra exact-address string filter drifted");
 
@@ -164,7 +142,7 @@ async function verifyDebugInventoryCore({
     document: null,
     address: entry.address,
   });
-  if (symbolTail(addressName) !== "rea_ghidra_inventory_entry")
+  if (!matchesSymbol(addressName, "rea_ghidra_inventory_entry"))
     throw new Error("Ghidra primary address-name resolution drifted");
   const resolvedAddress = await call(client, "procedure_address", {
     document: null,
@@ -183,29 +161,26 @@ async function verifyDebugInventoryCore({
     pattern: "rea_ghidra_inventory_",
     mode: "literal",
     case_sensitive: true,
-    offset: 0,
-    limit: 1,
     document: null,
   });
   if (
-    procedureSearch.total < 2 ||
-    procedureSearch.items.length !== 1 ||
-    !procedureSearch.has_more ||
-    procedureSearch.next_offset !== 1
+    !Array.isArray(procedureSearch) ||
+    procedureSearch.length < 2 ||
+    !procedureSearch.some((item) =>
+      matchesSymbol(item.value, "rea_ghidra_inventory_entry"),
+    )
   )
-    throw new Error("Ghidra literal procedure-search pagination drifted");
+    throw new Error("Ghidra literal procedure search drifted");
   const name = names.find((item) => item.address === entry.address);
   if (name === undefined)
     throw new Error("Ghidra entry name probe is unavailable");
   const filteredNames = await call(client, "list_names", {
     document: null,
     address: entry.address,
-    offset: 0,
-    limit: 500,
   });
   if (
-    filteredNames.total < 1 ||
-    !filteredNames.items.some((item) => item.value === name.value)
+    !Array.isArray(filteredNames) ||
+    !filteredNames.some((item) => item.value === name.value)
   )
     throw new Error("Ghidra exact-address name filter drifted");
   const functionAnalysis = await verifyDebugFunctionOperations(client, {

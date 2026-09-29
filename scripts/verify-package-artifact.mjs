@@ -108,9 +108,9 @@ const verifyPackagedElectronApplication = async ({
 
 const sameArtifactIdentity = (left, right) =>
   isDeepStrictEqual(left?.manifest, right?.manifest) &&
-  isDeepStrictEqual(left?.nodes?.items, right?.nodes?.items) &&
-  isDeepStrictEqual(left?.occurrences?.items, right?.occurrences?.items) &&
-  isDeepStrictEqual(left?.edges?.items, right?.edges?.items);
+  isDeepStrictEqual(left?.nodes, right?.nodes) &&
+  isDeepStrictEqual(left?.occurrences, right?.occurrences) &&
+  isDeepStrictEqual(left?.edges, right?.edges);
 
 const verifyPackagedArtifactExtraction = async ({
   artifactArchive,
@@ -118,7 +118,7 @@ const verifyPackagedArtifactExtraction = async ({
   cli,
   environment,
 }) => {
-  const occurrence = artifactInventory?.occurrences?.items?.find(
+  const occurrence = artifactInventory?.occurrences?.find(
     ({ logical_path: path }) => path === "app/main.js",
   );
   if (occurrence?.logical_path === undefined)
@@ -126,13 +126,7 @@ const verifyPackagedArtifactExtraction = async ({
   const extraction = json(
     await run(
       cli,
-      [
-        "extract-artifact",
-        artifactArchive,
-        "--paths",
-        occurrence.logical_path,
-        "--json",
-      ],
+      ["extract-artifact", artifactArchive, "--json"],
       environment,
     ),
   );
@@ -142,8 +136,9 @@ const verifyPackagedArtifactExtraction = async ({
       extraction.operation !== "extract_artifact" ||
       extraction.provider?.id !== "rea-artifact-graph" ||
       extraction.normalized_result?.containment_verified !== true ||
-      extraction.normalized_result?.artifacts?.items?.[0]?.relative_path !==
-        "app/main.js" ||
+      extraction.normalized_result?.artifacts?.some(
+        ({ relative_path: path }) => path === occurrence.logical_path,
+      ) !== true ||
       typeof outputRoot !== "string" ||
       (await readFile(join(outputRoot, "app/main.js"), "utf8")) !== "main();"
     )

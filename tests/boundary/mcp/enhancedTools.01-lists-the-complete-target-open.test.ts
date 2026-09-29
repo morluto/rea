@@ -326,7 +326,11 @@ describe("enhanced MCP tools", () => {
     });
     expect(results[13]).toMatchObject({
       target_sha256: null,
-      provider: { id: "fixture", name: "Fixture analysis provider", version: "1" },
+      provider: {
+        id: "fixture",
+        name: "Fixture analysis provider",
+        version: "1",
+      },
       result: {
         coverage: expect.arrayContaining([
           expect.objectContaining({ facet: "objc_dispatch_implementations" }),
