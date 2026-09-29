@@ -10,6 +10,7 @@ export const CLI_COMMANDS = Object.freeze({
   xrefs: "xrefs",
   trace: "trace",
   traceNativeUiAction: "trace-native-ui-action",
+  inspectNativeDispatchMetadata: "inspect-native-dispatch-metadata",
   capabilities: "capabilities",
   providers: "providers",
   function: "function",

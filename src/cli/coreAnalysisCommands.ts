@@ -22,6 +22,44 @@ export const registerCoreAnalysisCommands = (
   registerXrefsCommand(cli, logger);
   registerTraceCommand(cli, logger);
   registerNativeUiActionCommand(cli, logger);
+  registerNativeDispatchMetadataCommand(cli, logger);
+};
+
+const registerNativeDispatchMetadataCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.inspectNativeDispatchMetadata, {
+    description: "Inspect typed Objective-C and Swift dispatch metadata",
+    args: z.object({
+      path: z.string().describe("Target path used to bind the result evidence"),
+    }),
+    options: z.object({
+      maxRecords: z
+        .number()
+        .int()
+        .min(1)
+        .max(20_000)
+        .default(5_000)
+        .describe("Maximum symbol records to inspect"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load or update the local analysis snapshot"),
+      provider: providerSelectionOption,
+    }),
+    alias: { maxRecords: "max-records" },
+    run: async ({ args, options }) =>
+      logCliCommand(logger, "inspect-native-dispatch-metadata", () =>
+        runDirectAnalysis(
+          args.path,
+          "inspect_native_dispatch_metadata",
+          { max_records: options.maxRecords },
+          directAnalysisOptions(logger, options.snapshot, options.provider),
+        ),
+      ),
+  });
 };
 
 const registerNativeUiActionCommand = (
@@ -62,11 +100,6 @@ const registerNativeUiActionCommand = (
         .max(5_000)
         .default(500)
         .describe("Maximum returned graph edges"),
-      snapshot: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Load or update the local analysis snapshot"),
       provider: providerSelectionOption,
     }),
     alias: {
@@ -85,7 +118,7 @@ const registerNativeUiActionCommand = (
             max_nodes: options.maxNodes,
             max_edges: options.maxEdges,
           },
-          directAnalysisOptions(logger, options.snapshot, options.provider),
+          directAnalysisOptions(logger, undefined, options.provider),
         ),
       ),
   });

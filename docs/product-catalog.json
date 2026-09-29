@@ -430,7 +430,7 @@
     }
   ],
   "cli": {
-    "primary_count": 66,
+    "primary_count": 67,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -470,6 +470,7 @@
       "inspect-managed-members",
       "inspect-managed-native-boundaries",
       "inspect-native-api",
+      "inspect-native-dispatch-metadata",
       "inspect-plist",
       "inspect-signature",
       "inspect-web-page",
@@ -508,14 +509,14 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 66,
+      "cli_commands": 67,
       "mcp_tools": 114,
       "mcp_prompts": 6
     },
     "digests": {
       "tools_sha256": "eb79567cc08f4afec223254c3977dc167d498f766b920077db0e1eead8be67b9",
       "prompts_sha256": "fa889fc671185ac9c968c6dc8309cf609e709cdc837dbbf39b7cdfadb84ac2d7",
-      "combined_sha256": "2999f6b73ddd9e01824f65d2dfbd03ee06da96a84d466e2d15c43fa0daa8ab9d",
+      "combined_sha256": "3e9ab4e05563ea2609b7cf4db67638a79cd8a74188c292718d99a63451d5b9db",
       "providers_sha256": "03498d8adb7d941f8293eea8d71375871fb30a278e310fdc19b98df6781fc1a7"
     }
   }

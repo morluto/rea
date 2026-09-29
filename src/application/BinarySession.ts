@@ -12,6 +12,7 @@ import {
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { EvidenceSubjectTarget } from "../domain/evidence.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -302,7 +303,9 @@ export class BinarySession
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
-        this.lookupSnapshot(target, profile, operation, parameters),
+        operation === "decode_interface_builder"
+          ? undefined
+          : this.lookupSnapshot(target, profile, operation, parameters),
     });
     if (!prepared.ok) return prepared;
     const { active, capability, profile, cacheable, cached } = prepared.value;
@@ -311,9 +314,18 @@ export class BinarySession
     this.#calls.add(call);
     try {
       const result = await call;
-      const profiled = commitExecutionProfile(name, result, profile);
+      const profiled = bindExecutionTarget(
+        commitExecutionProfile(name, result, profile),
+        name,
+        active.target,
+      );
       this.#observeRuntimeAvailability(name, profiled);
-      if (profiled.ok && cacheable && profile !== undefined)
+      if (
+        profiled.ok &&
+        cacheable &&
+        profile !== undefined &&
+        name !== "decode_interface_builder"
+      )
         this.recordSnapshot({
           target: active.target,
           profile,
@@ -499,4 +511,34 @@ const commitExecutionProfile = (
     ...result.value,
     analysisProfile: structuredClone(profile),
   });
+};
+
+const bindExecutionTarget = (
+  result: Result<AnalysisExecution, AnalysisError>,
+  operation: AnalysisOperation,
+  target: BinaryTarget,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok) return result;
+  const subject: EvidenceSubjectTarget = {
+    path: target.path,
+    sha256: target.sha256,
+    format:
+      target.format === "analysis-database"
+        ? "analysis-database"
+        : target.format,
+    ...(target.architecture === undefined
+      ? {}
+      : { architecture: target.architecture }),
+  };
+  if (
+    result.value.subject !== null &&
+    result.value.subject.sha256 !== target.sha256
+  )
+    return err(
+      new ProviderAdapterError(
+        result.value.provider.id,
+        `${operation}:subject`,
+      ),
+    );
+  return ok({ ...result.value, subject: result.value.subject ?? subject });
 };

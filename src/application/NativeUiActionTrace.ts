@@ -131,6 +131,7 @@ export const traceNativeUiAction = async (
 
   const selected = resolveUiAction(graph, input.action);
   if (selected.nodeId === null) {
+    coverage.push(...graph.coverage);
     const trace = {
       target_sha256: graph.target_sha256,
       provider: graph.provider,
@@ -337,6 +338,11 @@ const addDirectCallees = async (input: {
   const nodes = new Map(input.initial.nodes.map((node) => [node.id, node]));
   const edges = new Map(input.initial.edges.map((edge) => [edge.id, edge]));
   const addressNames = new Map<string, string>();
+  const depthByNode = graphNodeDepths(
+    input.initial.start,
+    input.initial.nodes,
+    input.initial.edges,
+  );
   for (const node of nodes.values()) {
     if (node.kind === "function" && node.location?.address !== null)
       addressNames.set(node.location?.address ?? "", node.name);
@@ -347,7 +353,7 @@ const addDirectCallees = async (input: {
           {
             node,
             address: node.location.address,
-            depth: input.initial.reached_depth,
+            depth: depthByNode.get(node.id) ?? input.initial.reached_depth,
           },
         ]
       : [],
@@ -476,4 +482,36 @@ const addDirectCallees = async (input: {
     omitted,
     truncated,
   };
+};
+
+const graphNodeDepths = (
+  start: string,
+  nodes: readonly z.infer<
+    typeof nativeInvestigationGraphSchema
+  >["nodes"][number][],
+  edges: readonly z.infer<
+    typeof nativeInvestigationGraphSchema
+  >["edges"][number][],
+): ReadonlyMap<string, number> => {
+  const known = new Set(nodes.map(({ id }) => id));
+  const depths = new Map([[start, 0]]);
+  const queue = [start];
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    if (current === undefined) continue;
+    const depth = depths.get(current) ?? 0;
+    for (const edge of edges) {
+      if (
+        edge.resolution === "unresolved" ||
+        edge.from !== current ||
+        edge.to === null ||
+        !known.has(edge.to) ||
+        depths.has(edge.to)
+      )
+        continue;
+      depths.set(edge.to, depth + 1);
+      queue.push(edge.to);
+    }
+  }
+  return depths;
 };

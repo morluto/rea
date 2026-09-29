@@ -74,17 +74,15 @@ export class EnhancedTools {
     if (name === "analyze_function" || name === "inspect_native_api")
       return this.#executeFunctionAnalysis(name, input, signal);
     switch (name) {
-      case "inspect_native_dispatch_metadata":
-        return this.executeValidated(
-          {
-            name,
-            input:
-              enhancedInputSchemas.inspect_native_dispatch_metadata.parse(
-                input,
-              ),
-          },
-          signal,
-        );
+      case "inspect_native_dispatch_metadata": {
+        const parsed =
+          enhancedInputSchemas.inspect_native_dispatch_metadata.safeParse(
+            input,
+          );
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error);
+      }
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
@@ -259,7 +257,12 @@ export class EnhancedTools {
     );
     if (!execution.ok) return err(execution.error);
     const names = z
-      .array(z.object({ address: z.string(), value: z.string() }).strict())
+      .array(
+        z.union([
+          z.strictObject({ address: z.string(), value: z.string() }),
+          z.strictObject({ address: z.string(), name: z.string() }),
+        ]),
+      )
       .safeParse(execution.value.result);
     if (!names.success)
       return err(
@@ -275,7 +278,10 @@ export class EnhancedTools {
         analysis_profile_digest:
           execution.value.analysisProfile?.digest ?? null,
         result: inspectNativeDispatchMetadata(
-          names.data.map(({ address, value }) => ({ address, name: value })),
+          names.data.map((entry) => ({
+            address: entry.address,
+            name: "value" in entry ? entry.value : entry.name,
+          })),
           maxRecords,
         ),
       }),

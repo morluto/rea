@@ -224,13 +224,14 @@ export const traceNativeInvestigationGraph = (
         continue;
       }
       const nextId = direction === "forward" ? edge.to : edge.from;
-      selectedEdges.set(edge.id, edge);
-      if (visited.has(nextId)) continue;
-      if (current.depth >= limits.max_depth) {
+      const alreadyVisited = visited.has(nextId);
+      if (!alreadyVisited && current.depth >= limits.max_depth) {
         truncated = true;
         reason ??= "max_depth_reached";
         continue;
       }
+      selectedEdges.set(edge.id, edge);
+      if (alreadyVisited) continue;
       if (visited.size >= limits.max_nodes) {
         truncated = true;
         reason = "max_nodes_reached";
@@ -321,8 +322,10 @@ export const joinInterfaceBuilderDispatch = (
         : null;
     const candidates = metadata.objc_dispatch_implementations.filter(
       (candidate) =>
+        candidate.method_type === "instance" &&
         candidate.selector === selector &&
-        (className === null || candidate.class_name === className),
+        (className === null ||
+          candidate.class_name.replace(/\([^)]*\)$/u, "") === className),
     );
     const implementation = candidates.length === 1 ? candidates[0] : undefined;
     const edgeId = `dispatch:${selectorNodeId}:${className ?? owner?.id ?? "unknown"}:${selector}`;

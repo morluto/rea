@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   createAnalysisExecution,
@@ -7,7 +8,10 @@ import {
 } from "./AnalysisProvider.js";
 import type { AnalysisError } from "../domain/errors.js";
 import { EnhancedTools } from "./EnhancedTools.js";
-import { nativeInvestigationTraceSchema } from "../domain/nativeInvestigationGraph.js";
+import {
+  nativeInvestigationGraphSchema,
+  nativeInvestigationTraceSchema,
+} from "../domain/nativeInvestigationGraph.js";
 import { ok } from "../domain/result.js";
 import type { Result } from "../domain/result.js";
 
@@ -124,6 +128,7 @@ const testAnalysis = (
       ) => Result<AnalysisExecution, AnalysisError>
     >
   > = {},
+  uiGraph: z.input<typeof nativeInvestigationGraphSchema> = graph,
 ) => ({
   execute: async (
     operation: AnalysisOperation,
@@ -145,7 +150,7 @@ const testAnalysis = (
               hierarchy_complete: true,
             },
           ],
-          graph,
+          graph: uiGraph,
           limitations: [],
         });
       case "list_names":
@@ -194,7 +199,93 @@ describe("native UI action trace", () => {
       }),
     );
   });
+});
 
+describe("bounded native UI tracing", () => {
+  it("continues handler traversal from its own depth when another UI branch is deeper", async () => {
+    const deepGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        {
+          id: "view",
+          kind: "view" as const,
+          name: "Container",
+          location: null,
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "nested-view",
+          kind: "view" as const,
+          name: "Nested container",
+          location: null,
+          attributes: {},
+          evidence,
+        },
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: "controller-view",
+          from: "controller",
+          to: "view",
+          relation: "contains" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "view-nested-view",
+          from: "view",
+          to: "nested-view",
+          relation: "contains" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+      ],
+    };
+    const result = await new EnhancedTools(testAnalysis({}, deepGraph)).execute(
+      "trace_native_ui_action",
+      { action: "buildTapped:", max_depth: 3 },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      nativeInvestigationTraceSchema
+        .parse(result.value)
+        .nodes.map(({ id }) => id),
+    ).toContain("native:function:0x2000");
+  });
+
+  it("returns a typed input error for malformed direct metadata requests", async () => {
+    const result = await new EnhancedTools(testAnalysis()).execute(
+      "inspect_native_dispatch_metadata",
+      { max_records: 0 },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
+  it("binds dispatch metadata to the active target digest", async () => {
+    const result = await new EnhancedTools(testAnalysis()).execute(
+      "inspect_native_dispatch_metadata",
+      { max_records: 10 },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { target_sha256: target },
+    });
+  });
+});
+
+describe("native UI query outcomes", () => {
   it("resolves a control object ID through its authored action edge", async () => {
     const tools = new EnhancedTools(testAnalysis());
     const result = await tools.execute("trace_native_ui_action", {
@@ -253,6 +344,38 @@ describe("native UI action trace", () => {
     expect(result.value).toMatchObject({
       reason: "action_selector_matches_multiple_ui_connections",
       nodes: [{ id: "action" }, { id: "second-action" }],
+    });
+  });
+
+  it("retains decoder truncation coverage when the action is absent", async () => {
+    const boundedGraph = {
+      ...graph,
+      coverage: [
+        {
+          facet: "objects:Main.nib",
+          status: "partial" as const,
+          reason: "object_limit_reached",
+          examined: 2,
+          omitted: 1,
+        },
+      ],
+      truncated: true,
+    };
+    const result = await new EnhancedTools(
+      testAnalysis({}, boundedGraph),
+    ).execute("trace_native_ui_action", { action: "missing-selector" });
+
+    expect(result).toMatchObject({ ok: true, value: { truncated: true } });
+    if (!result.ok) return;
+    expect(result.value).toHaveProperty("coverage");
+    expect(result.value).toMatchObject({
+      coverage: expect.arrayContaining([
+        expect.objectContaining({
+          facet: "objects:Main.nib",
+          status: "partial",
+          reason: "object_limit_reached",
+        }),
+      ]),
     });
   });
 });

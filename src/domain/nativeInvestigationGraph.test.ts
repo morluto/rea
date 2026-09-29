@@ -111,6 +111,18 @@ describe("native investigation graph traces", () => {
     expect(trace.nodes).toHaveLength(2);
   });
 
+  it("does not retain a resolved edge beyond the depth boundary", () => {
+    const trace = traceNativeInvestigationGraph(graph, {
+      start: "a",
+      limits: { max_depth: 0 },
+    });
+
+    expect(trace.nodes.map(({ id }) => id)).toEqual(["a"]);
+    expect(trace.edges).toEqual([]);
+    expect(trace.truncated).toBe(true);
+    expect(trace.reason).toBe("max_depth_reached");
+  });
+
   it("reports an unknown seed instead of treating it as an empty answer", () => {
     expect(
       traceNativeInvestigationGraph(graph, { start: "missing" }),
@@ -180,6 +192,80 @@ describe("Interface Builder dispatch joins", () => {
         resolution: "inferred",
         to: "native:function:0x1000",
       }),
+    );
+  });
+
+  it("chooses an instance method and matches category-qualified owner names", () => {
+    const ui = buildInterfaceBuilderAnalysis({
+      targetSha256: "b".repeat(64),
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Main.nib",
+          archiveSha256: "c".repeat(64),
+          documentKind: "nib",
+          raw: {
+            "com.apple.ibtool.document.objects": {
+              controller: { customClass: "BuildViewController" },
+              button: { class: "UIButton" },
+            },
+            "com.apple.ibtool.document.connections": {
+              button: [
+                {
+                  type: "action",
+                  label: "buildTapped:",
+                  destinationId: "controller",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    const metadata = {
+      objc_classes: [],
+      objc_protocols: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_dispatch_implementations: [
+        {
+          class_name: "BuildViewController",
+          selector: "buildTapped:",
+          method_type: "class" as const,
+          implementation_address: "0x9999",
+          location: { address: "0x9999", file_offset: 0 },
+          decode: { status: "decoded" as const, reason: null },
+          evidence,
+        },
+        {
+          class_name: "BuildViewController(BuilderActions)",
+          selector: "buildTapped:",
+          method_type: "instance" as const,
+          implementation_address: "0x1000",
+          location: { address: "0x1000", file_offset: 0 },
+          decode: { status: "decoded" as const, reason: null },
+          evidence,
+        },
+      ],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    };
+
+    const joined = joinInterfaceBuilderDispatch(ui.graph, metadata);
+    expect(joined.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "objc_dispatch",
+        resolution: "inferred",
+        to: "native:function:0x1000",
+      }),
+    );
+    expect(joined.edges).not.toContainEqual(
+      expect.objectContaining({ to: "native:function:0x9999" }),
     );
   });
 });

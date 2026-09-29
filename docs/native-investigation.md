@@ -29,6 +29,8 @@ executes.
    it does not resolve Swift witnesses, vtables, closures, or cross-function
    value flow yet. The CLI uses the same query: `rea trace-native-ui-action
 <app-or-binary> <selector-or-object-id>`.
+   `inspect_native_dispatch_metadata` and `rea inspect-native-dispatch-metadata`
+   expose the provider's typed symbol-derived inventory separately.
 4. Ghidra `analyze_function` returns a bounded high-p-code def-use view for the
    selected function. This can support manual state/value analysis, but REA
    does not yet compose those views into an automatic cross-function slice.
@@ -60,11 +62,10 @@ metadata; REA does not extrapolate from neighboring targets.
 
 ## Provider admission and remaining work
 
-The macOS Ghidra host path has installation checks for Intel and Apple Silicon,
-including a matching native decompiler binary. It passed real host acceptance
-with Ghidra 12.1.4 and a full JDK 21 on Apple Silicon. The optimized AArch64
-ELF byte-table fixture has a separate lane so its acceptance does not depend on
-PE or Mach-O cross-linkers.
+Ghidra is admitted on Linux x64; the experimental Windows x64 P0 is limited to
+approved native PE applications. macOS is not an admitted Ghidra host. The
+optimized AArch64 ELF byte-table fixture has a separate lane so its acceptance
+does not depend on PE or Mach-O cross-linkers.
 
 The native feature set is still partial. Objective-C/Swift metadata currently
 uses symbol names rather than runtime sections, witness tables, vtables, or

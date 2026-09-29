@@ -79,6 +79,11 @@ describe("target-bound provider routing", () => {
         provider: { id: "alpha", version: "1" },
         analysisProfile: { provider: { id: "alpha", version: "1" } },
         result: "alpha:address_name",
+        subject: {
+          sha256: expect.any(String),
+          path: target,
+          format: "analysis-database",
+        },
       });
     expect(alpha.clients).toHaveLength(1);
     expect(beta.clients).toHaveLength(0);

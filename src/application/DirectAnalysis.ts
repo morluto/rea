@@ -49,6 +49,7 @@ type DirectAnalysisTool =
   | "read_function_instructions"
   | "analyze_function"
   | "inspect_native_api"
+  | "inspect_native_dispatch_metadata"
   | "search_strings"
   | "search_procedures"
   | "xrefs"
@@ -221,6 +222,7 @@ const runAnalysis = async (
     const evidenceProfile = analysisProfileForEvidence(session, tool);
     const bindingProfile = session.analysisProfile();
     if (
+      tool !== "trace_native_ui_action" &&
       snapshot !== undefined &&
       evidenceProfile !== undefined &&
       bindingProfile !== undefined
@@ -244,7 +246,11 @@ const runAnalysis = async (
       evidenceProfile,
     });
     if (evidence !== undefined) session.recordEvidence(evidence);
-    if (snapshotPath !== undefined && evidence !== undefined) {
+    if (
+      tool !== "trace_native_ui_action" &&
+      snapshotPath !== undefined &&
+      evidence !== undefined
+    ) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok) return cliError(snapshot.error);
       const written = await writeAnalysisSnapshot(
@@ -277,6 +283,7 @@ const executeAnalysisTool = async (input: {
     tool === "binary_overview" ||
     tool === "analyze_function" ||
     tool === "inspect_native_api" ||
+    tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
     tool === "trace_native_ui_action"
   ) {
