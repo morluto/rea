@@ -58,6 +58,11 @@ that a host or target is covered when it was skipped.
 | `npm run verify:ghidra:cross-format` | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
 | `npm run verify:ghidra:windows`      | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain            |
 
+The cross-format Ghidra lane also analyzes an optimized AArch64 ELF switch
+fixture. It checks the recovered case values against the source cases and
+requires unresolved table bounds or case mappings to remain visible as
+residual unknowns.
+
 Keep the provider-specific acceptance path independent from optional
 cross-compilers. Cross-format failures belong to the cross-format lane and must
 not make native host acceptance unavailable.

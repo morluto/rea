@@ -92,7 +92,7 @@ try {
   if (crossFormat) {
     await exec(clang, [
       "--target=aarch64-linux-gnu",
-      "-O0",
+      "-O2",
       "-g",
       "-fno-inline",
       "-fno-pie",
@@ -206,9 +206,10 @@ async function verifyNativeApiCli(
   targetPath,
   procedures,
   requireDenseJumpTable,
+  denseSwitchSymbol = "rea_ghidra_inventory_dense_switch",
 ) {
   const denseSwitch = procedures.find(({ value }) =>
-    value.endsWith("rea_ghidra_inventory_dense_switch"),
+    value.endsWith(denseSwitchSymbol),
   );
   if (denseSwitch === undefined)
     throw new Error("The Ghidra inventory omitted the dense switch fixture");
@@ -234,6 +235,22 @@ async function verifyNativeApiCli(
   const denseTable = boundary?.jump_tables?.find(
     ({ mappings }) => mappings.length > 32,
   );
+  const denseCases = new Set(
+    denseTable?.mappings.flatMap(({ case_value }) =>
+      typeof case_value === "number" ? [case_value] : [],
+    ) ?? [],
+  );
+  const expectedCases = Array.from({ length: 40 }, (_, index) => index);
+  const mappingsAreExact = expectedCases.every((caseValue) =>
+    denseTable?.mappings.some(
+      (mapping) =>
+        mapping.case_value === caseValue &&
+        mapping.confidence === "high" &&
+        mapping.evidence.some(({ detail }) =>
+          detail.includes(`case value ${caseValue} with target`),
+        ),
+    ),
+  );
   if (
     evidence.operation !== "inspect_native_api" ||
     evidence.provider?.id !== "rea-workflow" ||
@@ -246,6 +263,9 @@ async function verifyNativeApiCli(
   if (
     requireDenseJumpTable &&
     (denseTable === undefined ||
+      denseCases.size !== denseTable.mappings.length ||
+      expectedCases.some((caseValue) => !denseCases.has(caseValue)) ||
+      !mappingsAreExact ||
       evidence.normalized_result?.residual_unknowns?.length !== 0)
   )
     throw new Error(
@@ -327,13 +347,18 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       document: null,
       address: null,
     });
+    const crossArm64Elf = variant === "cross-arm64-elf";
     const nativeApiCli =
-      variant === "debug"
+      variant === "debug" || crossArm64Elf
         ? await verifyNativeApiCli(
             parsedTarget.value.path,
             procedures,
-            expectedNativeTarget.format === "elf" &&
-              expectedNativeTarget.architecture === "x86_64",
+            crossArm64Elf ||
+              (expectedNativeTarget.format === "elf" &&
+                expectedNativeTarget.architecture === "x86_64"),
+            crossArm64Elf
+              ? "rea_cross_dense_switch"
+              : "rea_ghidra_inventory_dense_switch",
           )
         : null;
     const probes =
