@@ -73,6 +73,8 @@ export const parseInterfaceBuilderRecords = (
   readonly connections: readonly InterfaceBuilderConnection[];
   readonly hierarchy: readonly unknown[];
   readonly classes: Readonly<Record<string, unknown>>;
+  readonly objectCount: number;
+  readonly omittedObjects: number;
 } => {
   const root = record(value);
   const keyed = parseKeyedArchive(root);
@@ -83,7 +85,8 @@ export const parseInterfaceBuilderRecords = (
   const classesRaw = record(root["com.apple.ibtool.document.classes"]);
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
-  for (const [id, raw] of Object.entries(objectsRaw).slice(0, 20_000)) {
+  const objectEntries = Object.entries(objectsRaw);
+  for (const [id, raw] of objectEntries.slice(0, 20_000)) {
     const attributes = record(raw);
     const className = firstString(
       attributes["customClass"],
@@ -134,6 +137,8 @@ export const parseInterfaceBuilderRecords = (
     connections,
     hierarchy: Array.isArray(hierarchyRaw) ? hierarchyRaw.slice(0, 20_000) : [],
     classes: classesRaw,
+    objectCount: objectEntries.length,
+    omittedObjects: Math.max(0, objectEntries.length - 20_000),
   };
 };
 
@@ -149,7 +154,12 @@ const parseKeyedArchive = (
     const uid = record(value).UID;
     if (typeof uid === "number") {
       const target = objectTable[uid];
-      return target === undefined ? null : resolve(target, depth + 1);
+      const resolved = target === undefined ? null : resolve(target, depth + 1);
+      return typeof resolved === "object" &&
+        resolved !== null &&
+        !Array.isArray(resolved)
+        ? { ...resolved, archiveUID: uid }
+        : resolved;
     }
     if (Array.isArray(value))
       return value.map((item) => resolve(item, depth + 1));
@@ -167,18 +177,46 @@ const parseKeyedArchive = (
     }
     return output;
   };
+  const toHierarchy = (value: unknown, depth = 0): unknown[] => {
+    if (depth > 32) return [];
+    if (Array.isArray(value))
+      return value.flatMap((item) => toHierarchy(item, depth + 1));
+    if (typeof value !== "object" || value === null) return [];
+    const item = record(value);
+    const objectId = firstString(
+      item.objectID,
+      item["object-id"],
+      item.id,
+      typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
+    );
+    const children = Object.entries(item)
+      .filter(([key]) =>
+        /(?:subviews|contentview|childviewcontrollers|children|views)$/iu.test(
+          key,
+        ),
+      )
+      .flatMap(([, child]) => toHierarchy(child, depth + 1));
+    return objectId === null ? children : [{ objectID: objectId, children }];
+  };
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
+  let objectCount = 0;
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
     const className = firstString(resolved.className);
     if (className === null) continue;
+    objectCount += 1;
+    if (objects.length >= 20_000) continue;
     const fields = Object.fromEntries(
       Object.entries(resolved).filter(([key]) => key !== "className"),
     );
     const authoredId = firstString(fields.objectID, fields["object-id"]);
-    const objectId = authoredId ?? String(index);
+    const objectId =
+      authoredId ??
+      (typeof fields.archiveUID === "number"
+        ? String(fields.archiveUID)
+        : String(index));
     const kind = classifyObject(className);
     objects.push(
       objectNode.parse({
@@ -196,23 +234,28 @@ const parseKeyedArchive = (
         attributes: jsonSafeRecord(fields),
       }),
     );
-    if (/(?:Outlet|Connection|Segue|ActionConnection)/iu.test(className)) {
+    if (
+      /(?:Outlet|Connection|Segue|ActionConnection|ControlConnector)/iu.test(
+        className,
+      )
+    ) {
+      const controlAction = /ControlConnector/iu.test(className);
       const source = firstObjectReference(
-        fields.source,
-        fields.from,
-        fields.owner,
+        controlAction ? fields.destination : fields.source,
+        controlAction ? fields.to : fields.from,
+        controlAction ? fields.target : fields.owner,
       );
       if (source === null) continue;
-      const kind = classifyConnection(className);
+      const kind = controlAction ? "action" : classifyConnection(className);
       connections.push(
         connection.parse({
           id: `archive:${objectId}`,
           kind,
           source_id: source,
           destination_id: firstObjectReference(
-            fields.destination,
-            fields.to,
-            fields.target,
+            controlAction ? fields.source : fields.destination,
+            controlAction ? fields.from : fields.to,
+            controlAction ? fields.owner : fields.target,
           ),
           label: firstString(
             fields.label,
@@ -226,8 +269,8 @@ const parseKeyedArchive = (
     }
   }
   const top = record(root.$top);
-  const topObject = record(resolve(top.root ?? top.UITopLevelObjectsKey));
-  const hierarchy = Array.isArray(topObject) ? topObject : [];
+  const topObject = resolve(top.root ?? top.UITopLevelObjectsKey);
+  const hierarchy = toHierarchy(topObject);
   const classes = Object.fromEntries(
     objectTable.flatMap((raw) => {
       const item = record(raw);
@@ -244,7 +287,14 @@ const parseKeyedArchive = (
           ];
     }),
   );
-  return { objects, connections, hierarchy, classes };
+  return {
+    objects,
+    connections,
+    hierarchy,
+    classes,
+    objectCount,
+    omittedObjects: Math.max(0, objectCount - 20_000),
+  };
 };
 
 /** Build the graph returned by the static Interface Builder archive decoder. */
@@ -274,6 +324,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
   let truncated = false;
   let omittedObjects = 0;
   let omittedConnections = 0;
+  let omittedGraphNodes = 0;
   for (const document of input.documents.slice(0, input.limits.max_documents)) {
     const parsed = parseInterfaceBuilderRecords(document.raw);
     const prefix = `ib:${document.relativePath}:`;
@@ -296,6 +347,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       if (nodes.has(node.id)) return true;
       if (nodes.size >= input.limits.max_objects) {
         truncated = true;
+        omittedGraphNodes += 1;
         return false;
       }
       nodes.set(node.id, node);
@@ -335,15 +387,33 @@ export const buildInterfaceBuilderAnalysis = (input: {
       }
       documentObjectCount += 1;
     }
+    let connectionEdgeCount = 0;
+    let hierarchyEdgeCount = 0;
+    let documentOmittedConnections = 0;
+    let documentOmittedHierarchyEdges = 0;
     const objectNodeId = (objectId: string): string =>
       `${prefix}object:${objectId}`;
-    const addEdge = (edge: (typeof edges)[number]): void => {
-      if (edges.length >= input.limits.max_connections * 3) {
+    const addEdge = (
+      edge: (typeof edges)[number],
+      isHierarchy: boolean,
+    ): void => {
+      if (
+        isHierarchy
+          ? hierarchyEdgeCount >= input.limits.max_objects
+          : connectionEdgeCount >= input.limits.max_connections * 3
+      ) {
         truncated = true;
-        omittedConnections += 1;
+        if (isHierarchy) {
+          documentOmittedHierarchyEdges += 1;
+        } else {
+          omittedConnections += 1;
+          documentOmittedConnections += 1;
+        }
         return;
       }
       edges.push(edge);
+      if (isHierarchy) hierarchyEdgeCount += 1;
+      else connectionEdgeCount += 1;
     };
     const connect = (
       id: string,
@@ -353,28 +423,45 @@ export const buildInterfaceBuilderAnalysis = (input: {
       description: string,
       reason?: string,
     ) => {
+      if (!nodes.has(from)) {
+        truncated = true;
+        if (relation === "contains" && id.includes(":hierarchy:")) {
+          documentOmittedHierarchyEdges += 1;
+        } else {
+          omittedConnections += 1;
+          documentOmittedConnections += 1;
+        }
+        return;
+      }
       const evidence = evidenceFor(description);
+      const unresolvedEndpoint = to !== null && !nodes.has(to);
+      if (unresolvedEndpoint) truncated = true;
+      const edgeTo = unresolvedEndpoint ? null : to;
+      const edgeReason = unresolvedEndpoint
+        ? "endpoint_omitted_by_object_limit"
+        : (reason ?? "destination_unresolved");
       addEdge(
-        to === null
+        edgeTo === null
           ? {
               id,
               from,
               to: null,
               relation,
               resolution: "unresolved",
-              reason: reason ?? "destination_unresolved",
+              reason: edgeReason,
               evidence,
               limitations: [],
             }
           : {
               id,
               from,
-              to,
+              to: edgeTo,
               relation,
               resolution: "observed",
               evidence,
               limitations: [],
             },
+        relation === "contains" && id.includes(":hierarchy:"),
       );
     };
     let hierarchyCount = 0;
@@ -391,7 +478,12 @@ export const buildInterfaceBuilderAnalysis = (input: {
       }
       if (typeof value !== "object" || value === null) return;
       const item = record(value);
-      const objectId = firstString(item.objectID, item["object-id"], item.id);
+      const objectId = firstString(
+        item.objectID,
+        item["object-id"],
+        item.id,
+        typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
+      );
       let nextParent = parentId;
       if (objectId !== null) {
         const known = objectIds.has(objectId);
@@ -560,10 +652,13 @@ export const buildInterfaceBuilderAnalysis = (input: {
         );
       }
     }
-    const objectsTruncated = parsed.objects.length > documentObjectCount;
+    const objectsTruncated =
+      parsed.omittedObjects > 0 || parsed.objects.length > documentObjectCount;
     const connectionsTruncated =
       parsed.connections.length > input.limits.max_connections;
-    omittedObjects += Math.max(0, parsed.objects.length - documentObjectCount);
+    omittedObjects +=
+      parsed.omittedObjects +
+      Math.max(0, parsed.objects.length - documentObjectCount);
     omittedConnections += Math.max(
       0,
       parsed.connections.length - input.limits.max_connections,
@@ -572,7 +667,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       relative_path: document.relativePath,
       archive_sha256: document.archiveSha256,
       document_kind: document.documentKind,
-      object_count: parsed.objects.length,
+      object_count: parsed.objectCount,
       connection_count: parsed.connections.length,
       hierarchy_complete: parsed.hierarchy.length > 0 && !truncated,
     });
@@ -582,37 +677,46 @@ export const buildInterfaceBuilderAnalysis = (input: {
         status: objectsTruncated ? "partial" : "complete",
         reason: objectsTruncated ? "object_limit_reached" : null,
         examined: documentObjectCount,
-        omitted: Math.max(0, parsed.objects.length - documentObjectCount),
+        omitted:
+          parsed.omittedObjects +
+          Math.max(0, parsed.objects.length - documentObjectCount),
       },
       {
         facet: `connections:${document.relativePath}`,
-        status: connectionsTruncated ? "partial" : "complete",
-        reason: connectionsTruncated ? "connection_limit_reached" : null,
+        status:
+          connectionsTruncated || documentOmittedConnections > 0
+            ? "partial"
+            : "complete",
+        reason:
+          connectionsTruncated || documentOmittedConnections > 0
+            ? "connection_limit_reached"
+            : null,
         examined: Math.min(
           parsed.connections.length,
           input.limits.max_connections,
         ),
-        omitted: Math.max(
-          0,
-          parsed.connections.length - input.limits.max_connections,
-        ),
+        omitted:
+          Math.max(
+            0,
+            parsed.connections.length - input.limits.max_connections,
+          ) + documentOmittedConnections,
       },
       {
         facet: `hierarchy:${document.relativePath}`,
         status:
           parsed.hierarchy.length === 0
             ? "unsupported"
-            : hierarchyTruncated
+            : hierarchyTruncated || documentOmittedHierarchyEdges > 0
               ? "partial"
               : "complete",
         reason:
           parsed.hierarchy.length === 0
             ? "archive_hierarchy_not_decoded"
-            : hierarchyTruncated
+            : hierarchyTruncated || documentOmittedHierarchyEdges > 0
               ? "graph_limit_reached"
               : null,
         examined: hierarchyCount,
-        omitted: 0,
+        omitted: documentOmittedHierarchyEdges,
       },
       {
         facet: `classes:${document.relativePath}`,
@@ -637,6 +741,14 @@ export const buildInterfaceBuilderAnalysis = (input: {
       omitted: input.documents.length - input.limits.max_documents,
     });
   }
+  if (omittedGraphNodes > 0)
+    coverage.push({
+      facet: "graph_nodes",
+      status: "partial",
+      reason: "max_objects_reached",
+      examined: nodes.size,
+      omitted: omittedGraphNodes,
+    });
   return interfaceBuilderAnalysisSchema.parse({
     target_sha256: input.targetSha256,
     documents: summaries,
@@ -679,6 +791,7 @@ const firstObjectReference = (...values: unknown[]): string | null => {
       item["object-id"],
       item.id,
       item.identifier,
+      typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
     );
     if (objectId !== null) return objectId;
   }

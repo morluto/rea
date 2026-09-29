@@ -28,14 +28,16 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
   let omitted = 0;
+  let attempted = 0;
   try {
     for await (const entry of reader.entries(input.signal)) {
       if (entry.kind !== "file" || !isInterfaceBuilderArchive(entry.path))
         continue;
-      if (documents.length >= limits.max_documents) {
+      if (attempted >= limits.max_documents) {
         omitted += 1;
         continue;
       }
+      attempted += 1;
       try {
         const bytes = await readEntry(reader, entry, input.signal);
         const raw =
@@ -78,8 +80,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           status:
             invalid.length > 0 ? ("partial" as const) : ("complete" as const),
           reason: invalid.length > 0 ? "one_or_more_archives_invalid" : null,
-          examined: documents.length,
-          omitted: invalid.length + omitted,
+          examined: attempted,
+          omitted,
         },
       ],
       truncated: result.graph.truncated || omitted > 0 || invalid.length > 0,
@@ -247,13 +249,7 @@ const projectNibArchive = (archive: NibArchiveDocument): JsonValue => {
     ({ class_name }) => class_name.replace(/\0+$/u, "") === "NSIBObjectData",
   );
   const rootId = reference(ibData?.values.NSRoot);
-  const hierarchyRoots = archive.objects
-    .filter(({ id }) =>
-      /(?:View|Window|ViewController)$/iu.test(runtimeClass(id) ?? ""),
-    )
-    .map(({ id }) => id);
-  if (rootId !== null && !hierarchyRoots.includes(rootId))
-    hierarchyRoots.unshift(rootId);
+  const hierarchyRoots = rootId === null ? [] : [rootId];
   for (const hierarchyRoot of hierarchyRoots) {
     const root = hierarchyFor(hierarchyRoot, new Set(), 0);
     if (root !== null) hierarchy.push(root);

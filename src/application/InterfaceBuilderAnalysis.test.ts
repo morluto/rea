@@ -90,6 +90,34 @@ describe("compiled Interface Builder bundle reader", () => {
       }),
     ).rejects.toMatchObject({ reason: "cancelled" });
   });
+});
+
+describe("bounded Interface Builder archive decoding", () => {
+  it("counts malformed archives against the document limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-ib-test-"));
+    roots.push(root);
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "BadOne.nib"), Buffer.from("bplist00bad"));
+    await writeFile(join(resources, "BadTwo.nib"), Buffer.from("bplist00bad"));
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+      limits: { max_documents: 1 },
+    });
+
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        examined: 1,
+        omitted: 1,
+      }),
+    );
+    expect(result.graph.truncated).toBe(true);
+  });
 
   it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/ibtool"))(
     "decodes an Xcode-compiled storyboard NIB and recovers its UI routes",
