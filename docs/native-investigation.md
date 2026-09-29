@@ -9,8 +9,10 @@ executes.
 
 1. `decode_interface_builder` reads compiled Apple storyboard and nib resources
    from an artifact graph and returns scenes, objects, outlets, actions,
-   connections, and available controller/class names. It records unsupported
-   archive objects and partial coverage instead of treating them as absent.
+   connections, and available controller/class names. A source-owned AppKit
+   XIB is compiled by `ibtool` in `verify:interface-builder` and checked for
+   its hierarchy and target/action edge. Storyboard compilation still depends
+   on an installed iOS platform; unsupported archive objects remain explicit.
 2. `inspect_native_dispatch_metadata` normalizes supported provider name
    inventory into typed Objective-C and Swift records. Current extraction is
    symbol-name based: symbolized Objective-C method implementations and

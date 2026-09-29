@@ -64,6 +64,13 @@ fixture. It checks the recovered case values against the source cases and
 requires unresolved table bounds or case mappings to remain visible as
 residual unknowns.
 
+## Apple Interface Builder archives
+
+`npm run verify:interface-builder` compiles the source-owned AppKit XIB into a
+real `.nib` with Xcode `ibtool`, wraps it in a temporary app bundle, and checks
+the decoded view hierarchy, outlet, action, evidence coverage, and truncation
+status. Storyboard compilation additionally requires an installed iOS platform.
+
 Keep the provider-specific acceptance path independent from optional
 cross-compilers. Cross-format failures belong to the cross-format lane and must
 not make native host acceptance unavailable.
