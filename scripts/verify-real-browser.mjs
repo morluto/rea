@@ -211,22 +211,47 @@ try {
 
   pageProxy = await startPageCdpProxy(endpoint);
   await verifyPageScopedTransport(provider, pageProxy, site.origin);
-  const attachedScenario = await runScenarioCli(
-    browserScenario(
-      {
-        mode: "connect",
-        cdp_endpoint: endpoint,
-        target_id: target,
-        ownership: "external",
-        cleanup: "disconnect-only",
-      },
-      site.origin,
-    ),
+  const attachedScenarioInput = browserScenario(
     {
+      mode: "connect",
+      cdp_endpoint: endpoint,
+      target_id: target,
+      ownership: "external",
+      cleanup: "disconnect-only",
+    },
+    site.origin,
+  );
+  let attachedScenario;
+  try {
+    attachedScenario = await runScenarioCli(attachedScenarioInput, {
       REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON: JSON.stringify([endpoint]),
       REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON: JSON.stringify([site.origin]),
-    },
-  );
+    });
+  } catch (cliError) {
+    const direct =
+      await new PlaywrightBrowserScenarioProvider().captureScenario(
+        attachedScenarioInput,
+      );
+    if (!direct.ok) {
+      const underlying = direct.error.cause;
+      const details =
+        underlying instanceof Error
+          ? `${underlying.name}: ${underlying.message}`
+          : String(underlying ?? direct.error.message);
+      const redactedDetails = [...SECRET_VALUES, "browser-secret-value"].reduce(
+        (message, secret) => message.replaceAll(secret, "<redacted>"),
+        details,
+      );
+      throw new Error(
+        `Attached browser scenario failed through both CLI and provider: ${redactedDetails}`,
+        { cause: cliError },
+      );
+    }
+    throw new Error(
+      "Attached browser scenario failed through CLI, but direct provider capture succeeded",
+      { cause: cliError },
+    );
+  }
   if (
     attachedScenario.normalized_result?.browser?.cleanup !==
       "disconnected-external" ||
