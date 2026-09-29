@@ -15,6 +15,8 @@ import {
 } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
+import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { ok as resultOk } from "../../../src/domain/result.js";
 
 const PROCEDURES = {
   "0x1": "_TtC7Fixture5Class",
@@ -28,14 +30,35 @@ const PROCEDURES = {
 const inventory = (values: Readonly<Record<string, string>>) =>
   Object.entries(values).map(([address, value]) => ({ address, value }));
 
+const targetObservation = (value: unknown) =>
+  resultOk(
+    createAnalysisExecution(
+      value,
+      {
+        id: "fixture",
+        name: "Fixture analysis provider",
+        version: "1",
+      },
+      {
+        subject: {
+          path: "/fixture.app",
+          sha256: "a".repeat(64),
+          format: "mach-o",
+          architecture: "arm64",
+        },
+      },
+    ),
+  );
+
 const fixturePort = (): AnalysisOperationPort => ({
+  // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
       case "list_procedures":
         return Promise.resolve(ok(inventory(PROCEDURES)));
       case "list_names":
         return Promise.resolve(
-          ok(
+          targetObservation(
             inventory({
               "0x10": "_OBJC_CLASS_$_Fixture",
               "0x11": "_OBJC_CLASS_$_Fixture",
@@ -43,6 +66,26 @@ const fixturePort = (): AnalysisOperationPort => ({
               "0x13": "entry",
             }),
           ),
+        );
+      case "decode_interface_builder":
+        return Promise.resolve(
+          targetObservation({
+            target_sha256: "a".repeat(64),
+            documents: [],
+            graph: {
+              target_sha256: "a".repeat(64),
+              provider: {
+                id: "rea-artifact-graph",
+                version: "1",
+                tool_version: "fixture",
+              },
+              nodes: [],
+              edges: [],
+              coverage: [],
+              truncated: false,
+            },
+            limitations: [],
+          }),
         );
       case "procedure_pseudo_code": {
         const procedure = arguments_.procedure;
@@ -206,29 +249,7 @@ describe("enhanced MCP tools", () => {
       ["trace_feature", { query: "hello" }],
       ["find_code_for_string", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
-      [
-        "trace_native_investigation",
-        {
-          graph: {
-            target_sha256: "a".repeat(64),
-            provider: { id: "fixture", version: "1", tool_version: "test" },
-            nodes: [
-              {
-                id: "start",
-                kind: "control",
-                name: "Build",
-                location: null,
-                attributes: {},
-                evidence: [],
-              },
-            ],
-            edges: [],
-            coverage: [],
-            truncated: false,
-          },
-          start: "start",
-        },
-      ],
+      ["trace_native_ui_action", { action: "missing-selector" }],
       ["inspect_native_dispatch_metadata", { max_records: 100 }],
     ] as const;
     const results = await Promise.all(
@@ -322,11 +343,11 @@ describe("enhanced MCP tools", () => {
       truncated: false,
     });
     expect(results[12]).toMatchObject({
-      start: "start",
-      nodes: [expect.objectContaining({ id: "start" })],
+      start: "missing-selector",
+      reason: "ui_action_or_object_not_found",
     });
     expect(results[13]).toMatchObject({
-      target_sha256: null,
+      target_sha256: "a".repeat(64),
       provider: {
         id: "fixture",
         name: "Fixture analysis provider",

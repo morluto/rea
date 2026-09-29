@@ -15,11 +15,17 @@ import {
   nativeDispatchMetadataResultSchema,
 } from "../domain/objcSwiftMetadata.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { parseNames, parseRelatedAddresses } from "../domain/hopperValues.js";
+import { parseRelatedAddresses } from "../domain/hopperValues.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisOutputError, projectAnalysisError } from "../domain/errors.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
+const nativeNameSchema = z.array(
+  z.union([
+    z.strictObject({ address: z.string(), name: z.string() }),
+    z.strictObject({ address: z.string(), value: z.string() }),
+  ]),
+);
 
 /** Build a UI-to-code trace from the active app and selected native provider. */
 export const traceNativeUiAction = async (
@@ -41,8 +47,8 @@ export const traceNativeUiAction = async (
   ]);
 
   if (!namesExecution.ok) return err(namesExecution.error);
-  const parsedNames = parseNames(namesExecution.value.result);
-  if (!parsedNames.ok)
+  const parsedNames = nativeNameSchema.safeParse(namesExecution.value.result);
+  if (!parsedNames.success)
     return err(
       new AnalysisOutputError(
         "list_names",
@@ -64,9 +70,9 @@ export const traceNativeUiAction = async (
     analysis_profile_digest:
       namesExecution.value.analysisProfile?.digest ?? null,
     result: inspectNativeDispatchMetadata(
-      parsedNames.value.map(({ address, name }) => ({
-        address,
-        name,
+      parsedNames.data.map((entry) => ({
+        address: entry.address,
+        name: "name" in entry ? entry.name : entry.value,
       })),
     ),
   });

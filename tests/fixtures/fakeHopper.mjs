@@ -163,7 +163,10 @@ const server = createServer((socket) => {
           },
           true,
         );
-      } else if (request.method === "shutdown") {
+      } else if (
+        request.method === "shutdown" ||
+        request.method === "shutdown_document"
+      ) {
         send({ id: request.id, result: shutdownResult() });
         if (shutdownMode !== "cleanup-required")
           setTimeout(() => server.close(), 2);
