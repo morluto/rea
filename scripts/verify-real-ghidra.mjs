@@ -58,6 +58,7 @@ if (installation.providerVersion !== SUPPORTED_GHIDRA_VERSION)
   throw new Error("Ghidra provider version commitment drifted");
 
 const crossFormat = process.argv.includes("--cross-format");
+const aarch64JumpTableOnly = process.argv.includes("--aarch64-jump-table");
 const expectedNativeTarget = nativeFixtureTarget(
   process.platform,
   process.arch,
@@ -89,7 +90,24 @@ try {
     strippedFlags.push("-fvisibility=hidden");
   await exec(compiler, [...strippedFlags, sourcePath, "-o", strippedPath]);
   const crossTargets = [];
-  if (crossFormat) {
+  if (aarch64JumpTableOnly) {
+    await exec(clang, [
+      "--target=aarch64-linux-gnu",
+      "-O2",
+      "-g",
+      "-fno-inline",
+      "-fno-pie",
+      "-c",
+      crossFormatSourcePath,
+      "-o",
+      arm64ElfPath,
+    ]);
+    crossTargets.push([
+      arm64ElfPath,
+      "aarch64-jump-table",
+      { format: "elf", architecture: "arm64" },
+    ]);
+  } else if (crossFormat) {
     await exec(clang, [
       "--target=aarch64-linux-gnu",
       "-O2",
@@ -160,7 +178,7 @@ try {
   const crossResults = [];
   for (const [targetPath, variant, expectedTarget] of crossTargets) {
     const result = await verifyTarget(targetPath, variant, expectedTarget);
-    assertCrossFixture(result);
+    if (variant !== "aarch64-jump-table") assertCrossFixture(result);
     crossResults.push(result);
   }
   await assertMalformedFixture(malformedPath);
@@ -173,13 +191,20 @@ try {
       verifier_run: await completeVerifierRun(verifierRun),
       ok: true,
       provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
-      verification_lane: crossFormat ? "cross-format" : "host-native",
-      fixture_sources: crossFormat
-        ? [sourcePath, crossFormatSourcePath]
-        : [sourcePath],
+      verification_lane: aarch64JumpTableOnly
+        ? "aarch64-jump-table"
+        : crossFormat
+          ? "cross-format"
+          : "host-native",
+      fixture_sources:
+        crossFormat || aarch64JumpTableOnly
+          ? [sourcePath, crossFormatSourcePath]
+          : [sourcePath],
       fixtures: [debug, stripped, ...crossResults].map(summary),
       malformed_target: "rejected-before-provider-start",
-      native_api_cli: debug.native_api_cli,
+      native_api_cli: aarch64JumpTableOnly
+        ? (crossResults[0]?.native_api_cli ?? null)
+        : debug.native_api_cli,
       custom_target: custom === null ? null : summary(custom),
       cleanup: "complete",
     })}\n`,
@@ -246,8 +271,10 @@ async function verifyNativeApiCli(
       (mapping) =>
         mapping.case_value === caseValue &&
         mapping.confidence === "high" &&
-        mapping.evidence.some(({ detail }) =>
-          detail.includes(`case value ${caseValue} with target`),
+        mapping.evidence.some(
+          ({ detail }) =>
+            detail.includes(`case value ${caseValue} with target`) ||
+            detail.startsWith(`Case value ${caseValue} indexes byte `),
         ),
     ),
   );
@@ -347,7 +374,8 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       document: null,
       address: null,
     });
-    const crossArm64Elf = variant === "cross-arm64-elf";
+    const crossArm64Elf =
+      variant === "cross-arm64-elf" || variant === "aarch64-jump-table";
     const nativeApiCli =
       variant === "debug" || crossArm64Elf
         ? await verifyNativeApiCli(
@@ -362,7 +390,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
           )
         : null;
     const probes =
-      variant === "custom"
+      variant === "custom" || variant === "aarch64-jump-table"
         ? null
         : await verifyInventoryOperations({
             client,

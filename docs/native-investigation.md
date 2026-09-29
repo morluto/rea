@@ -44,16 +44,21 @@ A p-code `STORE` can describe stack memory and does not by itself identify
 persistent application state.
 
 Recovered jump-table load sources and case-to-target mappings are reported as
-separate facts. A load-table address is not attributed to each target unless
-Ghidra provides that relationship. Case values are paired with targets only
-when Ghidra returns aligned label and target lists; incomplete or mismatched
-lists leave case values unknown.
+separate facts. On AArch64, REA additionally decodes the verified byte-indexed
+relative branch-table form when the selector's unsigned upper bound, `LDRB`
+table load, `ADR` branch base, scaled `ADD`, indirect `BR`, and recovered
+target set agree. It reads only the proven entry count and reports one direct
+mapping per selector value. Other layouts retain unknown case values and
+unknown table bounds when Ghidra does not provide aligned labels or load-table
+metadata; REA does not extrapolate from neighboring targets.
 
 ## Provider admission and remaining work
 
 The macOS Ghidra host path has installation checks for Intel and Apple Silicon,
-including a matching native decompiler binary. It remains pending real-provider
-acceptance until verified with a configured Ghidra installation.
+including a matching native decompiler binary. It passed real host acceptance
+with Ghidra 12.1.4 and a full JDK 21 on Apple Silicon. The optimized AArch64
+ELF byte-table fixture has a separate lane so its acceptance does not depend on
+PE or Mach-O cross-linkers.
 
 The broader native metadata and trace goals still require provider-backed
 runtime metadata readers, dispatch-table and closure/thunk recovery, automatic

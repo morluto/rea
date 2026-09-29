@@ -1198,6 +1198,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             canonicalAddress(jumpTable.getSwitchAddress())
         );
         JumpTable.LoadTable[] loadTables = jumpTable.getLoadTables();
+        RecoveredAArch64ByteTable recoveredAArch64 =
+            loadTables.length == 0
+                ? recoverAArch64ByteTable(jumpTable)
+                : null;
         List<Address> referencedDataAddresses = loadTables.length == 0
             ? dispatchPathDataReferences(jumpTable)
             : List.of();
@@ -1231,8 +1235,37 @@ public final class ReaGhidraBridge extends HeadlessScript {
             source.add("evidence", evidence);
             dataSources.add(source);
         }
+        if (recoveredAArch64 != null) {
+            JsonObject source = new JsonObject();
+            source.addProperty(
+                "address",
+                canonicalAddress(recoveredAArch64.tableAddress)
+            );
+            source.addProperty("provenance", "ghidra-aarch64-byte-table");
+            source.addProperty("entry_size_bytes", 1);
+            source.addProperty("entry_count", recoveredAArch64.mappings.size());
+            source.addProperty("confidence", "high");
+            JsonArray evidence = new JsonArray();
+            evidence.add(
+                inferenceEvidence(
+                    "jump-table",
+                    "ghidra-instruction-and-memory",
+                    "Decoded " + recoveredAArch64.mappings.size() +
+                    " byte entries from " + canonicalAddress(recoveredAArch64.tableAddress) +
+                    "; the AArch64 LDRB/ADR/ADD/BR chain uses a selector guarded by an unsigned upper-bound branch."
+                )
+            );
+            source.add("evidence", evidence);
+            dataSources.add(source);
+        }
         for (int index = 0; index < referencedDataAddresses.size(); index += 1) {
             Address address = referencedDataAddresses.get(index);
+            if (
+                recoveredAArch64 != null &&
+                recoveredAArch64.tableAddress.equals(address)
+            ) {
+                continue;
+            }
             JsonObject source = new JsonObject();
             source.addProperty("address", canonicalAddress(address));
             source.addProperty(
@@ -1260,6 +1293,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Integer[] labels = jumpTable.getLabelValues();
         boolean labelsAligned = labels != null && labels.length == targets.length;
         JsonArray mappings = new JsonArray();
+        if (recoveredAArch64 != null) {
+            for (int index = 0; index < recoveredAArch64.mappings.size(); index += 1) {
+                monitor.checkCancelled();
+                RecoveredAArch64Mapping recovered = recoveredAArch64.mappings.get(index);
+                JsonObject mapping = new JsonObject();
+                mapping.addProperty("case_value", recovered.caseValue);
+                String targetAddress = canonicalAddress(recovered.targetAddress);
+                mapping.addProperty("target_address", targetAddress);
+                mapping.addProperty("confidence", "high");
+                JsonArray evidence = new JsonArray();
+                evidence.add(
+                    inferenceEvidence(
+                        "jump-table",
+                        "ghidra-instruction-and-memory",
+                        "Case value " + recovered.caseValue + " indexes byte " +
+                        recovered.caseValue + " at " + canonicalAddress(recoveredAArch64.tableAddress) +
+                        "; the loaded byte selects a four-byte instruction offset from " +
+                        canonicalAddress(recoveredAArch64.branchBase) + ", reaching " + targetAddress + "."
+                    )
+                );
+                mapping.add("evidence", evidence);
+                mappings.add(mapping);
+            }
+        }
+        else {
         for (int index = 0; index < targets.length; index += 1) {
             monitor.checkCancelled();
             JsonObject mapping = new JsonObject();
@@ -1304,6 +1362,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             mapping.add("evidence", evidence);
             mappings.add(mapping);
         }
+        }
         result.add("mappings", mappings);
         JsonArray limitations = new JsonArray();
         if (loadTables.length == 0 && referencedDataAddresses.isEmpty()) {
@@ -1311,12 +1370,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Ghidra recovered targets but exposed no backing load-table or dispatch-block data address."
             );
         }
-        if (loadTables.length == 0 && !referencedDataAddresses.isEmpty()) {
+        if (
+            recoveredAArch64 == null &&
+            loadTables.length == 0 &&
+            !referencedDataAddresses.isEmpty()
+        ) {
             limitations.add(
                 "Load-table metadata was absent; table-level candidate ownership is inferred from typed data references in the dispatch block and its immediate control-flow predecessors, but candidates are not assigned to individual mappings."
             );
         }
-        if (!labelsAligned) {
+        if (recoveredAArch64 == null && !labelsAligned) {
             limitations.add(
                 "Case-label and target counts differ or labels are unavailable; all case values are left unknown because index alignment cannot be established."
             );
@@ -1328,6 +1391,235 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("limitations", limitations);
         return result;
+    }
+
+    private static final class RecoveredAArch64Mapping {
+        private final int caseValue;
+        private final Address targetAddress;
+
+        private RecoveredAArch64Mapping(int caseValue, Address targetAddress) {
+            this.caseValue = caseValue;
+            this.targetAddress = targetAddress;
+        }
+    }
+
+    private static final class RecoveredAArch64ByteTable {
+        private final Address tableAddress;
+        private final Address branchBase;
+        private final List<RecoveredAArch64Mapping> mappings;
+
+        private RecoveredAArch64ByteTable(
+            Address tableAddress,
+            Address branchBase,
+            List<RecoveredAArch64Mapping> mappings
+        ) {
+            this.tableAddress = tableAddress;
+            this.branchBase = branchBase;
+            this.mappings = mappings;
+        }
+    }
+
+    /**
+     * Recover only the directly verified AArch64 byte-indexed relative branch
+     * table form. Other instruction sequences keep their case labels unknown.
+     */
+    private RecoveredAArch64ByteTable recoverAArch64ByteTable(
+        JumpTable jumpTable
+    ) throws Exception {
+        if (!currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
+            return null;
+        }
+        Function function = containingFunction(jumpTable.getSwitchAddress());
+        if (function == null) return null;
+
+        List<Instruction> instructions = new ArrayList<>();
+        InstructionIterator iterator = currentProgram.getListing().getInstructions(
+            function.getBody(), true
+        );
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            Instruction instruction = iterator.next();
+            instructions.add(instruction);
+            if (instruction.getAddress().equals(jumpTable.getSwitchAddress())) break;
+        }
+        int branchIndex = instructions.size() - 1;
+        if (branchIndex < 1 ||
+            !instructions.get(branchIndex).getMnemonicString().equalsIgnoreCase("BR")) {
+            return null;
+        }
+
+        Address[] recoveredTargets = jumpTable.getCases();
+        Set<String> recoveredTargetSet = new HashSet<>();
+        for (Address target : recoveredTargets) recoveredTargetSet.add(canonicalAddress(target));
+        List<Address> dataAddresses = dispatchPathDataReferences(jumpTable);
+        if (dataAddresses.isEmpty()) return null;
+
+        for (int loadIndex = 0; loadIndex < branchIndex; loadIndex += 1) {
+            Instruction load = instructions.get(loadIndex);
+            if (!load.getMnemonicString().equalsIgnoreCase("LDRB")) continue;
+            String loadOperands = operands(load);
+            java.util.regex.Matcher loadMatcher = java.util.regex.Pattern
+                .compile("(?i)^[wx]\\d+,\\s*\\[([wx]\\d+),\\s*([wx]\\d+)\\]$")
+                .matcher(loadOperands);
+            if (!loadMatcher.matches()) continue;
+            String loadedRegister = normalizedRegister(loadOperands.substring(0, loadOperands.indexOf(',')));
+            String tableBaseRegister = normalizedRegister(loadMatcher.group(1));
+            String indexRegister = normalizedRegister(loadMatcher.group(2));
+
+            Address tableAddress = null;
+            for (Address candidate : dataAddresses) {
+                if (currentProgram.getMemory().contains(candidate)) {
+                    tableAddress = candidate;
+                    break;
+                }
+            }
+            if (tableAddress == null) continue;
+
+            Address resolvedTableAddress = null;
+            for (int index = 0; index < loadIndex; index += 1) {
+                Instruction instruction = instructions.get(index);
+                String mnemonic = instruction.getMnemonicString().toUpperCase(Locale.ROOT);
+                String text = operands(instruction);
+                if (mnemonic.equals("ADRP") &&
+                    text.matches("(?i)^[wx]\\d+,\\s*0x[0-9a-f]+$")) {
+                    String[] parts = text.split(",");
+                    if (normalizedRegister(parts[0]).equals(tableBaseRegister)) {
+                        resolvedTableAddress = addressFromOperand(parts[1]);
+                    }
+                }
+                else if (mnemonic.equals("ADD") && resolvedTableAddress != null &&
+                    text.matches("(?i)^[wx]\\d+,\\s*[wx]\\d+,\\s*#?(?:0x[0-9a-f]+|[0-9]+)$")) {
+                    String[] parts = text.split(",");
+                    if (normalizedRegister(parts[0]).equals(tableBaseRegister) &&
+                        normalizedRegister(parts[1]).equals(tableBaseRegister)) {
+                        resolvedTableAddress = resolvedTableAddress.add(parseInteger(parts[2].trim().replaceFirst("^#", "")));
+                    }
+                }
+            }
+            if (!tableAddress.equals(resolvedTableAddress)) continue;
+
+            Address branchBase = null;
+            boolean addressChain = false;
+            for (int index = 0; index < branchIndex; index += 1) {
+                Instruction instruction = instructions.get(index);
+                String mnemonic = instruction.getMnemonicString().toUpperCase(Locale.ROOT);
+                String text = operands(instruction);
+                if (index < loadIndex && mnemonic.equals("ADR") && text.matches("(?i)^[wx]\\d+,\\s*0x[0-9a-f]+$")) {
+                    int comma = text.indexOf(',');
+                    String destination = normalizedRegister(text.substring(0, comma));
+                    if (destination.equals(tableBaseRegister)) continue;
+                    branchBase = addressFromOperand(text.substring(comma + 1));
+                }
+                if (index > loadIndex && mnemonic.equals("ADD") && branchBase != null &&
+                    text.matches("(?i)^[wx]\\d+,\\s*[wx]\\d+,\\s*[wx]\\d+,\\s*LSL\\s*#(?:0x)?2$")) {
+                    String[] parts = text.split(",");
+                    String destination = normalizedRegister(parts[0]);
+                    String base = normalizedRegister(parts[1]);
+                    String offset = normalizedRegister(parts[2]);
+                    if (destination.equals(base) &&
+                        base.equals(normalizedRegister(operands(instructions.get(branchIndex)))) &&
+                        offset.equals(loadedRegister)) {
+                        addressChain = true;
+                    }
+                }
+            }
+            if (!addressChain || branchBase == null) continue;
+
+            int entryCount = -1;
+            Address defaultTarget = null;
+            for (int compareIndex = 0; compareIndex < loadIndex; compareIndex += 1) {
+                Instruction compare = instructions.get(compareIndex);
+                if (!compare.getMnemonicString().equalsIgnoreCase("CMP")) continue;
+                java.util.regex.Matcher compareMatcher = java.util.regex.Pattern
+                    .compile("(?i)^([wx]\\d+),\\s*#?(0x[0-9a-f]+|[0-9]+)$")
+                    .matcher(operands(compare));
+                if (!compareMatcher.matches()) continue;
+                String comparedRegister = normalizedRegister(compareMatcher.group(1));
+                long upperBound = parseInteger(compareMatcher.group(2));
+                if (upperBound < 0 || upperBound >= 4096) continue;
+                for (int guardIndex = compareIndex + 1; guardIndex < loadIndex; guardIndex += 1) {
+                    Instruction guard = instructions.get(guardIndex);
+                    String mnemonic = guard.getMnemonicString().toUpperCase(Locale.ROOT);
+                    if (!mnemonic.equals("B.HI")) continue;
+                    Address[] flows = guard.getFlows();
+                    if (flows.length != 1 || !recoveredTargetSet.contains(canonicalAddress(flows[0]))) continue;
+                    boolean selectorFeedsTable = indexRegister.equals(comparedRegister);
+                    boolean supportedSequence = true;
+                    for (int sequenceIndex = compareIndex + 1; sequenceIndex < loadIndex; sequenceIndex += 1) {
+                        String sequenceMnemonic = instructions.get(sequenceIndex)
+                            .getMnemonicString().toUpperCase(Locale.ROOT);
+                        if (!Set.of("B.HI", "MOV", "ADRP", "ADD", "ADR").contains(sequenceMnemonic)) {
+                            supportedSequence = false;
+                            break;
+                        }
+                    }
+                    for (int moveIndex = compareIndex + 1; moveIndex < loadIndex && !selectorFeedsTable; moveIndex += 1) {
+                        Instruction move = instructions.get(moveIndex);
+                        if (!move.getMnemonicString().equalsIgnoreCase("MOV")) continue;
+                        String[] moveParts = operands(move).split(",");
+                        if (moveParts.length == 2 &&
+                            normalizedRegister(moveParts[0]).equals(indexRegister) &&
+                            normalizedRegister(moveParts[1]).equals(comparedRegister)) {
+                            selectorFeedsTable = true;
+                        }
+                    }
+                    if (selectorFeedsTable && supportedSequence) {
+                        entryCount = (int) upperBound + 1;
+                        defaultTarget = flows[0];
+                        break;
+                    }
+                }
+                if (entryCount > 0) break;
+            }
+            if (entryCount <= 0 || entryCount > 4096 || defaultTarget == null) continue;
+
+            List<RecoveredAArch64Mapping> mappings = new ArrayList<>();
+            Set<String> mappedTargets = new HashSet<>();
+            boolean valid = true;
+            for (int caseValue = 0; caseValue < entryCount; caseValue += 1) {
+                int encodedOffset = currentProgram.getMemory().getByte(tableAddress.add(caseValue)) & 0xff;
+                Address target = branchBase.add((long) encodedOffset * 4L);
+                String canonicalTarget = canonicalAddress(target);
+                if (!recoveredTargetSet.contains(canonicalTarget)) {
+                    valid = false;
+                    break;
+                }
+                mappedTargets.add(canonicalTarget);
+                mappings.add(new RecoveredAArch64Mapping(caseValue, target));
+            }
+            if (!valid || mappedTargets.contains(canonicalAddress(defaultTarget))) continue;
+            Set<String> accountedTargets = new HashSet<>(mappedTargets);
+            accountedTargets.add(canonicalAddress(defaultTarget));
+            if (!accountedTargets.equals(recoveredTargetSet)) continue;
+            return new RecoveredAArch64ByteTable(tableAddress, branchBase, List.copyOf(mappings));
+        }
+        return null;
+    }
+
+    private static String operands(Instruction instruction) {
+        List<String> values = new ArrayList<>();
+        for (int index = 0; index < instruction.getNumOperands(); index += 1) {
+            values.add(instruction.getDefaultOperandRepresentation(index));
+        }
+        return String.join(", ", values);
+    }
+
+    private static String normalizedRegister(String value) {
+        String register = value.trim().toLowerCase(Locale.ROOT);
+        return register.matches("[wx]\\d+") ? "r" + register.substring(1) : register;
+    }
+
+    private static long parseInteger(String value) {
+        String number = value.toLowerCase(Locale.ROOT);
+        return number.startsWith("0x")
+            ? Long.parseUnsignedLong(number.substring(2), 16)
+            : Long.parseLong(number);
+    }
+
+    private Address addressFromOperand(String value) {
+        String hex = value.trim().replaceFirst("(?i)^0x", "");
+        return currentProgram.getAddressFactory().getDefaultAddressSpace()
+            .getAddress(Long.parseUnsignedLong(hex, 16));
     }
 
     private List<Address> dispatchPathDataReferences(JumpTable jumpTable)

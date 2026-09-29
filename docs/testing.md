@@ -52,11 +52,12 @@ commands. Check prerequisites before starting expensive work and name the
 missing command, target, and lane in any failure message. A lane must not imply
 that a host or target is covered when it was skipped.
 
-| Ghidra lane                          | Supported runner/target                                                            | Additional local tools                                                      |
-| ------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `npm run verify:ghidra`              | Linux x64 with x86-64 ELF; macOS x64/arm64 with native Mach-O                      | Host C compiler, Ghidra 12.1.4, full JDK 21, and matching native decompiler |
-| `npm run verify:ghidra:cross-format` | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
-| `npm run verify:ghidra:windows`      | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain            |
+| Ghidra lane                                | Supported runner/target                                                            | Additional local tools                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `npm run verify:ghidra`                    | Linux x64 with x86-64 ELF; macOS x64/arm64 with native Mach-O                      | Host C compiler, Ghidra 12.1.4, full JDK 21, and matching native decompiler |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 Linux ELF relocatable fixture                   | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21           |
+| `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain            |
 
 The cross-format Ghidra lane also analyzes an optimized AArch64 ELF switch
 fixture. It checks the recovered case values against the source cases and
