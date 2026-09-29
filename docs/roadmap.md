@@ -21,6 +21,10 @@ operations, and nine function-analysis operations. Real source-owned x86-64
 debug/stripped ELF, AArch64 ELF, PE, and Mach-O fixtures cover program,
 procedure, string, symbol, external/thunk, memory, resolution, search,
 decompilation, assembly, calls, typed references, xrefs, and CFG semantics.
+Function dossiers also expose bounded Ghidra high-p-code def-use and memory or
+control-flow effects, mark decompiler-dead operations, and report truncation
+plus known omitted counts. This is intra-function
+decompiler evidence; cross-function state flow remains unimplemented.
 Hosted Windows CI covers build, package, target admission, transport, and
 lifecycle seams; a controlled self-hosted workflow covers the real Ghidra P0
 claim.

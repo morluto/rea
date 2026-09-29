@@ -43,6 +43,25 @@ claims belong to their explicit `npm run verify:*` lanes. They are not inferred
 from mocks or folded into the deterministic local gate. Real model trials are
 manual; Vitest covers only deterministic evaluator logic.
 
+## Real-toolchain verification lanes
+
+Each real-toolchain command must require only the host tools needed to prove
+its stated claim. Use a host-native fixture for host/provider acceptance, and
+place optional cross-target formats or platform-specific runners in separate
+commands. Check prerequisites before starting expensive work and name the
+missing command, target, and lane in any failure message. A lane must not imply
+that a host or target is covered when it was skipped.
+
+| Ghidra lane                          | Supported runner/target                                                            | Additional local tools                                                      |
+| ------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `npm run verify:ghidra`              | Linux x64 with x86-64 ELF; macOS x64/arm64 with native Mach-O                      | Host C compiler, Ghidra 12.1.4, full JDK 21, and matching native decompiler |
+| `npm run verify:ghidra:cross-format` | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
+| `npm run verify:ghidra:windows`      | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain            |
+
+Keep the provider-specific acceptance path independent from optional
+cross-compilers. Cross-format failures belong to the cross-format lane and must
+not make native host acceptance unavailable.
+
 ## Developer commands
 
 `npm test` runs every deterministic project once. The narrower feedback loops
