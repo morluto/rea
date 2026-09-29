@@ -352,9 +352,9 @@ export const ENHANCED_TOOL_CONTRACTS = [
     enhancedInputSchemas.trace_call_path,
   ),
   enhanced(
-    "trace_native_investigation",
-    "Trace a caller-supplied, Evidence-linked native investigation graph from one node. Optionally join compiled Interface Builder action selectors to provider metadata for the exact same target SHA-256. Observed, inferred, and unresolved routes remain distinct; caller-supplied graph edges are not revalidated as source truth.",
-    enhancedInputSchemas.trace_native_investigation,
+    "trace_native_ui_action",
+    "Trace one unique compiled Interface Builder action selector or object ID through its authored UI connections to symbolized Objective-C handlers and bounded direct callees. REA decodes the active app bundle and reads the selected provider's symbol inventory itself. Authored connections, statically matched handlers, resolved direct calls, and unresolved dynamic dispatch remain distinct; runtime reachability and cross-function value flow are not claimed.",
+    enhancedInputSchemas.trace_native_ui_action,
   ),
 ] as const satisfies readonly ToolContract[];
 

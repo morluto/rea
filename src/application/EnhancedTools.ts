@@ -8,7 +8,6 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   projectAnalysisError,
   type AnalysisError,
@@ -32,10 +31,7 @@ import {
   inspectNativeDispatchMetadata,
   nativeDispatchMetadataResultSchema,
 } from "../domain/objcSwiftMetadata.js";
-import {
-  joinInterfaceBuilderDispatch,
-  traceNativeInvestigationGraph,
-} from "../domain/nativeInvestigationGraph.js";
+import { traceNativeUiAction } from "./NativeUiActionTrace.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 import {
@@ -68,9 +64,9 @@ export class EnhancedTools {
       name === "trace_call_path"
     )
       return this.#executeTracing(name, input, signal);
-    if (name === "trace_native_investigation") {
+    if (name === "trace_native_ui_action") {
       const parsed =
-        enhancedInputSchemas.trace_native_investigation.safeParse(input);
+        enhancedInputSchemas.trace_native_ui_action.safeParse(input);
       return parsed.success
         ? this.executeValidated({ name, input: parsed.data }, signal)
         : invalidEnhancedInput(name, parsed.error);
@@ -183,47 +179,8 @@ export class EnhancedTools {
           call.input,
           signal,
         );
-      case "trace_native_investigation": {
-        const {
-          graph,
-          metadata,
-          start,
-          direction,
-          max_depth,
-          max_nodes,
-          max_edges,
-        } = call.input;
-        if (
-          metadata !== undefined &&
-          metadata.target_sha256 !== graph.target_sha256
-        )
-          return Promise.resolve(
-            err(
-              new AnalysisInputError(call.name, undefined, [
-                {
-                  path: ["metadata", "target_sha256"],
-                  reason: "invalid_value",
-                  message:
-                    "metadata and graph must refer to the same target SHA-256",
-                },
-              ]),
-            ),
-          );
-        const source =
-          metadata === undefined
-            ? graph
-            : joinInterfaceBuilderDispatch(graph, metadata.result);
-        return Promise.resolve(
-          ok(
-            jsonValueSchema.parse(
-              traceNativeInvestigationGraph(source, {
-                start,
-                direction,
-                limits: { max_depth, max_nodes, max_edges },
-              }),
-            ),
-          ),
-        );
+      case "trace_native_ui_action": {
+        return traceNativeUiAction(this.analysis, call.input, signal);
       }
     }
   }

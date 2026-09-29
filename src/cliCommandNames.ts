@@ -9,7 +9,7 @@ export const CLI_COMMANDS = Object.freeze({
   upgrade: "upgrade",
   xrefs: "xrefs",
   trace: "trace",
-  traceNativeInvestigation: "trace-native-investigation",
+  traceNativeUiAction: "trace-native-ui-action",
   capabilities: "capabilities",
   providers: "providers",
   function: "function",

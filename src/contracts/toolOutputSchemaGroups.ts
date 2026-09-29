@@ -225,7 +225,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_native_dispatch_metadata: resultOf(
     nativeDispatchMetadataResultSchema,
   ),
-  trace_native_investigation: resultOf(nativeInvestigationTraceSchema),
+  trace_native_ui_action: resultOf(nativeInvestigationTraceSchema),
   get_objc_classes: symbolDiscoveryOutput("classes"),
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   batch_decompile: resultOf(

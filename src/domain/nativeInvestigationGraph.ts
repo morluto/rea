@@ -144,6 +144,8 @@ export type NativeInvestigationTraceLimits = z.infer<
 
 /** Exact graph route and any unresolved edges encountered along the route. */
 export const nativeInvestigationTraceSchema = z.strictObject({
+  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  provider: nativeInvestigationGraphSchema.shape.provider,
   start: z.string().min(1),
   direction: z.enum(["forward", "backward"]),
   nodes: z.array(nativeInvestigationNodeSchema),
@@ -152,6 +154,8 @@ export const nativeInvestigationTraceSchema = z.strictObject({
   reached_depth: z.number().int().nonnegative(),
   truncated: z.boolean(),
   reason: z.string().nullable(),
+  coverage: z.array(nativeInvestigationCoverageSchema),
+  limitations: z.array(z.string().min(1)),
 });
 
 export type NativeInvestigationTrace = z.infer<
@@ -170,6 +174,8 @@ export const traceNativeInvestigationGraph = (
   const start = graph.nodes.find(({ id }) => id === input.start);
   if (start === undefined)
     return {
+      target_sha256: graph.target_sha256,
+      provider: graph.provider,
       start: input.start,
       direction: input.direction ?? "forward",
       nodes: [],
@@ -178,6 +184,10 @@ export const traceNativeInvestigationGraph = (
       reached_depth: 0,
       truncated: false,
       reason: "start_node_missing",
+      coverage: graph.coverage,
+      limitations: [
+        "The requested start node is absent from the supplied graph.",
+      ],
     };
 
   const limits = nativeInvestigationTraceLimitsSchema.parse(input.limits ?? {});
@@ -238,6 +248,8 @@ export const traceNativeInvestigationGraph = (
   }
 
   return {
+    target_sha256: graph.target_sha256,
+    provider: graph.provider,
     start: start.id,
     direction,
     nodes: [...visited].flatMap((id) => {
@@ -249,6 +261,11 @@ export const traceNativeInvestigationGraph = (
     reached_depth: reachedDepth,
     truncated,
     reason,
+    coverage: graph.coverage,
+    limitations: [
+      "Static analysis does not prove that an authored UI action is reachable or executed at runtime.",
+      "Provider call graphs may omit unresolved indirect dispatch.",
+    ],
   };
 };
 

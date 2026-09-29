@@ -61,7 +61,7 @@ export const registerEnhancedTools = (
     traceFeature,
     codeForString,
     traceCallPath,
-    traceNativeInvestigation,
+    traceNativeUiAction,
   ] = ENHANCED_TOOL_CONTRACTS;
   server.registerTool(
     nativeDispatchMetadata.name,
@@ -181,11 +181,11 @@ export const registerEnhancedTools = (
       }),
   );
   server.registerTool(
-    traceNativeInvestigation.name,
-    toolRegistrationOptions(traceNativeInvestigation),
+    traceNativeUiAction.name,
+    toolRegistrationOptions(traceNativeUiAction),
     (input, context) =>
-      executeEnhancedTool(analysis, options, traceNativeInvestigation, {
-        validatedCall: { name: "trace_native_investigation", input },
+      executeEnhancedTool(analysis, options, traceNativeUiAction, {
+        validatedCall: { name: "trace_native_ui_action", input },
         context,
       }),
   );

@@ -1,30 +1,4 @@
 import { z } from "zod";
-import {
-  nativeInvestigationEdgeSchema,
-  nativeInvestigationGraphSchema,
-  nativeInvestigationNodeSchema,
-} from "../domain/nativeInvestigationGraph.js";
-import {
-  nativeDispatchMetadataResultSchema,
-  objcSwiftMetadataSchema,
-} from "../domain/objcSwiftMetadata.js";
-
-const traceGraphInputSchema = nativeInvestigationGraphSchema.extend({
-  nodes: z.array(nativeInvestigationNodeSchema).max(2_000),
-  edges: z.array(nativeInvestigationEdgeSchema).max(5_000),
-  coverage: z
-    .array(
-      z.object({
-        facet: z.string().min(1),
-        status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
-        reason: z.string().nullable(),
-        examined: z.number().int().nonnegative(),
-        omitted: z.number().int().nonnegative(),
-      }),
-    )
-    .max(256),
-});
-
 const traceLiteralInputSchema = z.strictObject({
   query: z.string().min(1),
   case_sensitive: z.boolean().default(false),
@@ -76,18 +50,11 @@ export const enhancedInputSchemas = {
       .optional(),
     direction: z.enum(["forward", "backward"]).default("forward"),
   }),
-  trace_native_investigation: z.strictObject({
-    graph: traceGraphInputSchema,
-    metadata: z
-      .strictObject({
-        target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-        provider: nativeDispatchMetadataResultSchema.shape.provider,
-        analysis_profile_digest: z.string().min(1).nullable(),
-        result: objcSwiftMetadataSchema,
-      })
-      .optional(),
-    start: z.string().min(1),
-    direction: z.enum(["forward", "backward"]).default("forward"),
+  trace_native_ui_action: z.strictObject({
+    action: z
+      .string()
+      .min(1)
+      .describe("A unique compiled UI action selector or interface object ID"),
     max_depth: z.number().int().min(0).max(32).default(8),
     max_nodes: z.number().int().min(1).max(2_000).default(250),
     max_edges: z.number().int().min(1).max(5_000).default(500),

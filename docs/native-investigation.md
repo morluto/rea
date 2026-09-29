@@ -20,11 +20,15 @@ executes.
    decode Objective-C runtime sections, ivar layouts, protocol conformance
    records, Swift witness tables, vtables, relative pointers, or closure
    thunks from binary metadata.
-3. `trace_native_investigation` walks a supplied bounded graph and can join an
-   Interface Builder action to a unique symbolized Objective-C selector
-   implementation. Ambiguous and missing implementations remain unresolved.
-   The caller-provided graph is not automatically populated by a whole-program
-   native call-graph or runtime traversal.
+3. `trace_native_ui_action` accepts one selector or Interface Builder object
+   ID. REA decodes the active app and reads names from the bound native provider,
+   verifies that both observations refer to the same target digest, joins an
+   authored action to a symbolized Objective-C implementation, and follows
+   bounded direct callees. Ambiguous selectors and unresolved calls remain
+   explicit. This is a static candidate route, not proof of runtime reachability;
+   it does not resolve Swift witnesses, vtables, closures, or cross-function
+   value flow yet. The CLI uses the same query: `rea trace-native-ui-action
+<app-or-binary> <selector-or-object-id>`.
 4. Ghidra `analyze_function` returns a bounded high-p-code def-use view for the
    selected function. This can support manual state/value analysis, but REA
    does not yet compose those views into an automatic cross-function slice.
@@ -62,9 +66,12 @@ with Ghidra 12.1.4 and a full JDK 21 on Apple Silicon. The optimized AArch64
 ELF byte-table fixture has a separate lane so its acceptance does not depend on
 PE or Mach-O cross-linkers.
 
-The broader native metadata and trace goals still require provider-backed
-runtime metadata readers, dispatch-table and closure/thunk recovery, automatic
-bounded graph construction across functions, and source-owned fixtures for
-field reads/writes, predicates, RNG ranges, and multiple state mutations.
-Until those are implemented and verified, the relevant feature issues remain
-partially complete rather than closeable.
+The native feature set is still partial. Objective-C/Swift metadata currently
+uses symbol names rather than runtime sections, witness tables, vtables, or
+relative pointers. UI action traces do not yet resolve Swift dispatch or
+closure/thunk routes. Value dependencies remain intra-function, and the
+AArch64 switch lane currently proves one optimized byte-indexed ELF layout;
+sparse, stripped, Mach-O, and other table patterns remain unknown. The local
+Xcode installation has no iOS simulator platform, so compiled storyboard
+acceptance could not run here. These boundaries should stay visible until
+matching provider-backed readers and fixtures exist.

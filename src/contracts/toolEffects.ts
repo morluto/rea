@@ -41,7 +41,7 @@ const sessionEvidence = effects({ mutatesSession: true });
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_native_dispatch_metadata: evidence,
-  trace_native_investigation: evidence,
+  trace_native_ui_action: evidence,
   address_name: evidence,
   comment: evidence,
   current_address: evidence,
