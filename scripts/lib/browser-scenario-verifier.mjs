@@ -111,23 +111,6 @@ export function browserScenario(browser, origin) {
         "downloads",
       ],
     },
-    limits: {
-      max_duration_ms: 30_000,
-      action_timeout_ms: 5_000,
-      navigation_timeout_ms: 10_000,
-      max_events: 10_000,
-      max_frames: 100,
-      max_workers: 20,
-      max_popups: 10,
-      max_websockets: 100,
-      max_dom_nodes: 10_000,
-      max_accessibility_nodes: 10_000,
-      max_screenshots: 8,
-      max_screenshot_bytes: 4 * 1_024 * 1_024,
-      max_storage_entries: 256,
-      max_total_metadata_bytes: 8 * 1_024 * 1_024,
-    },
-    approved: true,
   });
 }
 
