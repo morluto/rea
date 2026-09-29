@@ -71,6 +71,8 @@ type AvailabilityContext = {
 };
 
 const ENHANCED_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
+  trace_native_investigation: [],
+  inspect_native_dispatch_metadata: ["list_names"],
   get_objc_classes: ["list_names"],
   get_objc_protocols: ["list_names"],
   batch_decompile: ["procedure_pseudo_code"],

@@ -40,6 +40,8 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_native_dispatch_metadata: evidence,
+  trace_native_investigation: evidence,
   address_name: evidence,
   comment: evidence,
   current_address: evidence,
@@ -99,6 +101,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   demangle_swift: nativeEvidence,
   inspect_artifact: evidence,
   extract_artifact: effects({ mutatesSession: true, writesFilesystem: true }),
+  decode_interface_builder: evidence,
   inspect_managed_artifact: evidence,
   inspect_managed_members: evidence,
   inspect_managed_native_boundaries: evidence,

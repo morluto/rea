@@ -9,6 +9,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import { inventoryArtifactFully } from "../application/ArtifactInventory.js";
 import { extractArtifact } from "../application/ArtifactExtraction.js";
+import { analyzeInterfaceBuilderBundle } from "../application/InterfaceBuilderAnalysis.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   artifactInventoryInputSchema,
@@ -22,6 +23,7 @@ import {
   type AnalysisError,
 } from "../domain/errors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { interfaceBuilderLimitsSchema } from "../domain/interfaceBuilderGraph.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
@@ -50,7 +52,7 @@ export class ArtifactProvider implements AnalysisProvider {
         reason: null,
         effects: Object.freeze({
           mutatesArtifact: false,
-          launchesProcess: true,
+          launchesProcess: operation !== "decode_interface_builder",
           mayShowUi: false,
           mayAccessNetwork: false,
           mayWriteFilesystem: operation === "extract_artifact",
@@ -108,6 +110,33 @@ class ArtifactClient implements AnalysisClient {
       if (operation === "inspect_artifact") {
         const inspected = await this.inspectArtifact(parameters, options);
         return inspected;
+      }
+      if (operation === "decode_interface_builder") {
+        if (
+          this.target.kind !== "executable" ||
+          this.target.sourcePath === undefined ||
+          !this.target.sourcePath.toLowerCase().endsWith(".app")
+        )
+          throw new ArtifactReaderFailure(
+            "unavailable",
+            "decode_interface_builder requires an active .app bundle target",
+          );
+        const limits = interfaceBuilderLimitsSchema.parse(parameters);
+        const result = await analyzeInterfaceBuilderBundle({
+          bundlePath: this.target.sourcePath,
+          targetSha256: this.target.sha256,
+          limits,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        });
+        return ok(
+          createAnalysisExecution(result, IDENTITY, {
+            limitations: result.limitations,
+            locations: result.documents.map(({ relative_path: path }) => ({
+              kind: "artifact-path" as const,
+              path,
+            })),
+          }),
+        );
       }
       if (operation === "extract_artifact") {
         const parsed = artifactExtractionExecutionSchema.parse(parameters);

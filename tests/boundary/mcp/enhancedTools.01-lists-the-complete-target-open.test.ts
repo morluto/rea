@@ -169,6 +169,7 @@ const jsonResult = (result: CallToolResult): JsonValue => {
   return parsed.data;
 };
 
+// oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.
 describe("enhanced MCP tools", () => {
   it("lists the complete target-open analysis surface", async () => {
     const client = await connect();
@@ -188,7 +189,8 @@ describe("enhanced MCP tools", () => {
     ).toEqual(ENHANCED_TOOL_CONTRACTS.map(({ name }) => name).sort());
   });
 
-  it("executes all twelve tools through production registration", async () => {
+  // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
+  it("executes all fourteen tools through production registration", async () => {
     const client = await connect();
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
@@ -203,6 +205,30 @@ describe("enhanced MCP tools", () => {
       ["trace_feature", { query: "hello" }],
       ["find_code_for_string", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
+      [
+        "trace_native_investigation",
+        {
+          graph: {
+            target_sha256: "a".repeat(64),
+            provider: { id: "fixture", version: "1", tool_version: "test" },
+            nodes: [
+              {
+                id: "start",
+                kind: "control",
+                name: "Build",
+                location: null,
+                attributes: {},
+                evidence: [],
+              },
+            ],
+            edges: [],
+            coverage: [],
+            truncated: false,
+          },
+          start: "start",
+        },
+      ],
+      ["inspect_native_dispatch_metadata", { max_records: 100 }],
     ] as const;
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
@@ -293,6 +319,19 @@ describe("enhanced MCP tools", () => {
         { address: "0x2", depth: 1 },
       ],
       truncated: false,
+    });
+    expect(results[12]).toMatchObject({
+      start: "start",
+      nodes: [expect.objectContaining({ id: "start" })],
+    });
+    expect(results[13]).toMatchObject({
+      target_sha256: null,
+      provider: { id: "fixture", name: "Fixture analysis provider", version: "1" },
+      result: {
+        coverage: expect.arrayContaining([
+          expect.objectContaining({ facet: "objc_dispatch_implementations" }),
+        ]),
+      },
     });
   });
 });

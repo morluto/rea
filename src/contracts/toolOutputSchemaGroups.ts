@@ -21,6 +21,7 @@ import {
 } from "../domain/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
+import { interfaceBuilderAnalysisSchema } from "../domain/interfaceBuilderGraph.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
@@ -40,6 +41,8 @@ import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCor
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
 import { replayMachineRunOutputSchema } from "../domain/replayMachineRun.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import { nativeDispatchMetadataResultSchema } from "../domain/objcSwiftMetadata.js";
+import { nativeInvestigationTraceSchema } from "../domain/nativeInvestigationGraph.js";
 import {
   addressList,
   addressedValue,
@@ -219,6 +222,10 @@ const callPathTraceOutput = resultOf(
 
 /** Exact structured-content schemas for composed analysis workflows. */
 export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  inspect_native_dispatch_metadata: resultOf(
+    nativeDispatchMetadataResultSchema,
+  ),
+  trace_native_investigation: resultOf(nativeInvestigationTraceSchema),
   get_objc_classes: symbolDiscoveryOutput("classes"),
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   batch_decompile: resultOf(
@@ -306,6 +313,7 @@ export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_artifact: resultOf(artifactInspectionResultSchema),
   extract_artifact: resultOf(artifactExtractionResultSchema),
+  decode_interface_builder: resultOf(interfaceBuilderAnalysisSchema),
 };
 
 /** Exact Evidence schema for execution-free managed static analysis. */

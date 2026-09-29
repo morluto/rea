@@ -296,6 +296,11 @@ export type OfficialToolName = (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"];
 /** Workflow tools composed from one or more provider operations. */
 export const ENHANCED_TOOL_CONTRACTS = [
   enhanced(
+    "inspect_native_dispatch_metadata",
+    "Inspect the bound provider's name inventory for Objective-C class/method symbols and Swift mangled symbols, returning at most max_records decoded names. Includes target SHA-256 when available, provider identity/version, analysis-profile digest, facet coverage, and per-record Evidence. This is symbol-level evidence, not runtime metadata: ivar layouts, protocol conformances, witness/class tables, and relative pointers are explicitly marked unsupported unless a provider supplies those decoders. The provider controls how its name inventory is acquired.",
+    enhancedInputSchemas.inspect_native_dispatch_metadata,
+  ),
+  enhanced(
     "get_objc_classes",
     "Discover and deduplicate Objective-C class labels, optionally filtering by literal substring.",
     enhancedInputSchemas.get_objc_classes,
@@ -345,6 +350,11 @@ export const ENHANCED_TOOL_CONTRACTS = [
     "trace_call_path",
     "Trace direct callers or callees from one exact procedure address until the graph is exhausted or the optional goal is reached. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns; unresolved indirect calls remain unknown.",
     enhancedInputSchemas.trace_call_path,
+  ),
+  enhanced(
+    "trace_native_investigation",
+    "Trace a caller-supplied, Evidence-linked native investigation graph from one node. Optionally join compiled Interface Builder action selectors to provider metadata for the exact same target SHA-256. Observed, inferred, and unresolved routes remain distinct; caller-supplied graph edges are not revalidated as source truth.",
+    enhancedInputSchemas.trace_native_investigation,
   ),
 ] as const satisfies readonly ToolContract[];
 

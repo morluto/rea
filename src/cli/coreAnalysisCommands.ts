@@ -9,6 +9,8 @@ import type { Logger } from "../logger.js";
 import { directAnalysisOptions, providerSelectionOption } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 
 export const registerCoreAnalysisCommands = (
   cli: CliInstance,
@@ -21,6 +23,100 @@ export const registerCoreAnalysisCommands = (
   registerSearchCommand(cli, logger);
   registerXrefsCommand(cli, logger);
   registerTraceCommand(cli, logger);
+  registerNativeInvestigationCommand(cli, logger);
+};
+
+const registerNativeInvestigationCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.traceNativeInvestigation, {
+    description:
+      "Trace a bounded route through a normalized native evidence graph",
+    args: z.object({
+      path: z.string().describe("Target path used to bind the result evidence"),
+      graph: z
+        .string()
+        .describe("Inline JSON or path to a normalized investigation graph"),
+      start: z.string().min(1).describe("Starting graph node ID"),
+    }),
+    options: z.object({
+      metadata: z
+        .string()
+        .optional()
+        .describe(
+          "Inline JSON or path to native dispatch metadata for the same SHA-256",
+        ),
+      direction: z
+        .enum(["forward", "backward"])
+        .default("forward")
+        .describe("Traverse outgoing or incoming graph relationships"),
+      maxDepth: z
+        .number()
+        .int()
+        .min(0)
+        .max(32)
+        .default(8)
+        .describe("Maximum relationship depth"),
+      maxNodes: z
+        .number()
+        .int()
+        .min(1)
+        .max(2_000)
+        .default(250)
+        .describe("Maximum returned graph nodes"),
+      maxEdges: z
+        .number()
+        .int()
+        .min(1)
+        .max(5_000)
+        .default(500)
+        .describe("Maximum returned graph edges"),
+      snapshot: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Load or update the local analysis snapshot"),
+      provider: providerSelectionOption,
+    }),
+    alias: {
+      maxDepth: "max-depth",
+      maxNodes: "max-nodes",
+      maxEdges: "max-edges",
+    },
+    run: async ({ args, options }) => {
+      const graph = await parseCliJsonInput(
+        args.graph,
+        "trace_native_investigation",
+      );
+      if (!graph.ok) return graph.error;
+      let metadata: unknown;
+      if (options.metadata !== undefined) {
+        const parsed = await parseCliJsonInput(
+          options.metadata,
+          "trace_native_investigation",
+        );
+        if (!parsed.ok) return parsed.error;
+        metadata = parsed.value;
+      }
+      return logCliCommand(logger, "trace-native-investigation", () =>
+        runDirectAnalysis(
+          args.path,
+          "trace_native_investigation",
+          jsonObjectSchema.parse({
+            graph: graph.value,
+            ...(metadata === undefined ? {} : { metadata }),
+            start: args.start,
+            direction: options.direction,
+            max_depth: options.maxDepth,
+            max_nodes: options.maxNodes,
+            max_edges: options.maxEdges,
+          }),
+          directAnalysisOptions(logger, options.snapshot, options.provider),
+        ),
+      );
+    },
+  });
 };
 
 const registerCoreCommands = (cli: CliInstance, logger: Logger): void => {

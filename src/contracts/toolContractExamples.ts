@@ -44,6 +44,28 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   trace_feature: { query: "license" },
   find_code_for_string: { query: "authorization failed" },
   trace_call_path: { start: "0x1000", goal: "0x1100" },
+  trace_native_investigation: {
+    graph: {
+      target_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      provider: { id: "rea-artifact-graph", version: "1", tool_version: "1" },
+      nodes: [{
+        id: "ui:build-button",
+        kind: "control",
+        name: "Build",
+        location: null,
+        attributes: {},
+        evidence: [{
+          kind: "interface_builder_resource",
+          description: "Compiled UI archive fixture",
+          location: { address: null, file_offset: null },
+        }],
+      }],
+      edges: [],
+      coverage: [],
+      truncated: false,
+    },
+    start: "ui:build-button",
+  },
   open_binary: { path: "/tmp/fixture" },
   export_evidence_bundle: { path: "/tmp/evidence.json" },
   inspect_address_context: { address: "0x1000" },

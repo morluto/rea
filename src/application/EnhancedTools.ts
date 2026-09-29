@@ -8,6 +8,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
+  AnalysisInputError,
   AnalysisOutputError,
   projectAnalysisError,
   type AnalysisError,
@@ -27,6 +28,14 @@ import {
   discoverObjcClasses,
   discoverObjcProtocols,
 } from "../domain/symbolAnalysis.js";
+import {
+  inspectNativeDispatchMetadata,
+  nativeDispatchMetadataResultSchema,
+} from "../domain/objcSwiftMetadata.js";
+import {
+  joinInterfaceBuilderDispatch,
+  traceNativeInvestigationGraph,
+} from "../domain/nativeInvestigationGraph.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 import {
@@ -59,9 +68,27 @@ export class EnhancedTools {
       name === "trace_call_path"
     )
       return this.#executeTracing(name, input, signal);
+    if (name === "trace_native_investigation") {
+      const parsed =
+        enhancedInputSchemas.trace_native_investigation.safeParse(input);
+      return parsed.success
+        ? this.executeValidated({ name, input: parsed.data }, signal)
+        : invalidEnhancedInput(name, parsed.error);
+    }
     if (name === "analyze_function" || name === "inspect_native_api")
       return this.#executeFunctionAnalysis(name, input, signal);
     switch (name) {
+      case "inspect_native_dispatch_metadata":
+        return this.executeValidated(
+          {
+            name,
+            input:
+              enhancedInputSchemas.inspect_native_dispatch_metadata.parse(
+                input,
+              ),
+          },
+          signal,
+        );
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
@@ -110,6 +137,11 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     switch (call.name) {
+      case "inspect_native_dispatch_metadata":
+        return this.#inspectNativeDispatchMetadata(
+          call.input.max_records,
+          signal,
+        );
       case "get_objc_classes":
         return this.#objcClasses(call.input.pattern, signal);
       case "get_objc_protocols":
@@ -151,6 +183,48 @@ export class EnhancedTools {
           call.input,
           signal,
         );
+      case "trace_native_investigation": {
+        const {
+          graph,
+          metadata,
+          start,
+          direction,
+          max_depth,
+          max_nodes,
+          max_edges,
+        } = call.input;
+        if (
+          metadata !== undefined &&
+          metadata.target_sha256 !== graph.target_sha256
+        )
+          return Promise.resolve(
+            err(
+              new AnalysisInputError(call.name, undefined, [
+                {
+                  path: ["metadata", "target_sha256"],
+                  reason: "invalid_value",
+                  message:
+                    "metadata and graph must refer to the same target SHA-256",
+                },
+              ]),
+            ),
+          );
+        const source =
+          metadata === undefined
+            ? graph
+            : joinInterfaceBuilderDispatch(graph, metadata.result);
+        return Promise.resolve(
+          ok(
+            jsonValueSchema.parse(
+              traceNativeInvestigationGraph(source, {
+                start,
+                direction,
+                limits: { max_depth, max_nodes, max_edges },
+              }),
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -215,6 +289,40 @@ export class EnhancedTools {
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
     const names = await this.#allAddressed("list_names", signal);
     return names.ok ? ok(discoverObjcClasses(names.value, pattern)) : names;
+  }
+
+  async #inspectNativeDispatchMetadata(
+    maxRecords: number,
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const execution = await this.analysis.execute(
+      "list_names",
+      {},
+      signal === undefined ? {} : { signal },
+    );
+    if (!execution.ok) return err(execution.error);
+    const names = z
+      .array(z.object({ address: z.string(), value: z.string() }).strict())
+      .safeParse(execution.value.result);
+    if (!names.success)
+      return err(
+        new AnalysisOutputError(
+          "list_names",
+          "provider returned an invalid inventory",
+        ),
+      );
+    return ok(
+      nativeDispatchMetadataResultSchema.parse({
+        target_sha256: execution.value.subject?.sha256 ?? null,
+        provider: execution.value.provider,
+        analysis_profile_digest:
+          execution.value.analysisProfile?.digest ?? null,
+        result: inspectNativeDispatchMetadata(
+          names.data.map(({ address, value }) => ({ address, name: value })),
+          maxRecords,
+        ),
+      }),
+    );
   }
 
   async #objcProtocols(signal?: AbortSignal): EnhancedResult {

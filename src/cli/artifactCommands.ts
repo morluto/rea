@@ -13,6 +13,61 @@ export const registerArtifactCommands = (
 ): void => {
   registerInspectionCommand(cli, logger);
   registerExtractionCommand(cli, logger);
+  registerInterfaceBuilderCommand(cli, logger);
+};
+
+const registerInterfaceBuilderCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.decodeInterfaceBuilder, {
+    description:
+      "Decode compiled storyboard and nib archives from an app bundle",
+    args: z.object({
+      path: z.string().describe("Apple .app bundle path"),
+    }),
+    options: z.object({
+      maxDocuments: z
+        .number()
+        .int()
+        .min(1)
+        .max(64)
+        .default(64)
+        .describe("Maximum archives to decode"),
+      maxObjects: z
+        .number()
+        .int()
+        .min(1)
+        .max(20_000)
+        .default(20_000)
+        .describe("Maximum graph objects"),
+      maxConnections: z
+        .number()
+        .int()
+        .min(1)
+        .max(40_000)
+        .default(40_000)
+        .describe("Maximum decoded connections"),
+    }),
+    alias: {
+      maxDocuments: "max-documents",
+      maxObjects: "max-objects",
+      maxConnections: "max-connections",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, "decode-interface-builder", () =>
+        runProviderAnalysis(
+          args.path,
+          "decode_interface_builder",
+          {
+            max_documents: options.maxDocuments,
+            max_objects: options.maxObjects,
+            max_connections: options.maxConnections,
+          },
+          logger,
+        ),
+      ),
+  });
 };
 
 const registerExtractionCommand = (cli: CliInstance, logger: Logger): void => {

@@ -38,6 +38,7 @@ const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_artifact: {},
   extract_artifact: {},
+  decode_interface_builder: {},
 };
 
 const artifact = <
@@ -76,6 +77,15 @@ export const ARTIFACT_TOOL_CONTRACTS = [
     "extract_artifact",
     "Extract all regular files from the active archive or application package into a fresh temporary directory chosen by REA. The result includes its location. Rejects traversal and symlink escapes, never overwrites, enforces archive integrity checks, and verifies cleanup.",
     artifactExtractionInputSchema,
+  ),
+  artifact(
+    "decode_interface_builder",
+    "Decode compiled storyboard and nib property-list archives inside the active Apple app bundle into a bounded object and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns.",
+    z.strictObject({
+      max_documents: z.number().int().min(1).max(64).default(64),
+      max_objects: z.number().int().min(1).max(20_000).default(20_000),
+      max_connections: z.number().int().min(1).max(40_000).default(40_000),
+    }),
   ),
 ] as const satisfies readonly ToolContract[];
 
