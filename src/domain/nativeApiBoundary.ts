@@ -64,7 +64,6 @@ const jumpTableMappingSchema = z
   .object({
     case_value: z.number().int().nullable(),
     target_address: z.string().min(1),
-    data_addresses: z.array(z.string().min(1)),
     confidence: inferenceConfidenceSchema,
     evidence: z.array(inferenceEvidenceSchema).min(1),
   })

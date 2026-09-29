@@ -1203,13 +1203,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
             : List.of();
         JsonArray dataSources = new JsonArray();
         for (int index = 0; index < loadTables.length; index += 1) {
+            monitor.checkCancelled();
             JumpTable.LoadTable loadTable = loadTables[index];
             JsonObject source = new JsonObject();
             source.addProperty("address", canonicalAddress(loadTable.getAddress()));
             source.addProperty("provenance", "ghidra-decompiler-load-table");
-            source.addProperty("entry_size_bytes", loadTable.getSize());
-            source.addProperty("entry_count", loadTable.getNum());
-            source.addProperty("confidence", "high");
+            int entrySize = loadTable.getSize();
+            int entryCount = loadTable.getNum();
+            if (entrySize > 0) source.addProperty("entry_size_bytes", entrySize);
+            else source.add("entry_size_bytes", JsonNull.INSTANCE);
+            if (entryCount > 0) source.addProperty("entry_count", entryCount);
+            else source.add("entry_count", JsonNull.INSTANCE);
+            source.addProperty(
+                "confidence",
+                entrySize > 0 && entryCount > 0 ? "high" : "medium"
+            );
             JsonArray evidence = new JsonArray();
             evidence.add(
                 inferenceEvidence(
@@ -1250,10 +1258,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("data_sources", dataSources);
         Address[] targets = jumpTable.getCases();
         Integer[] labels = jumpTable.getLabelValues();
+        boolean labelsAligned = labels != null && labels.length == targets.length;
         JsonArray mappings = new JsonArray();
         for (int index = 0; index < targets.length; index += 1) {
+            monitor.checkCancelled();
             JsonObject mapping = new JsonObject();
-            if (labels == null || index >= labels.length || labels[index] == null) {
+            if (!labelsAligned || labels[index] == null) {
                 mapping.add("case_value", JsonNull.INSTANCE);
             }
             else {
@@ -1261,24 +1271,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             String targetAddress = canonicalAddress(targets[index]);
             mapping.addProperty("target_address", targetAddress);
-            JsonArray dataAddresses = new JsonArray();
-            for (int sourceIndex = 0; sourceIndex < loadTables.length; sourceIndex += 1) {
-                dataAddresses.add(
-                    canonicalAddress(loadTables[sourceIndex].getAddress())
-                );
-            }
-            mapping.add("data_addresses", dataAddresses);
-            mapping.addProperty("confidence", "medium");
+            // Ghidra's recovered case-to-target relation does not identify
+            // which backing load table produced an individual case. Keep the
+            // table inventory and recovered mappings separate instead of
+            // attaching every table address to every target.
+            mapping.addProperty(
+                "confidence",
+                labelsAligned && labels[index] != null
+                    ? "high"
+                    : "medium"
+            );
             JsonArray evidence = new JsonArray();
             evidence.add(
                 inferenceEvidence(
                     "jump-table",
                     "ghidra-high-function",
-                    "Recovered target " +
-                    targetAddress +
-                    " from dispatch " +
-                    canonicalAddress(jumpTable.getSwitchAddress()) +
-                    "."
+                    labelsAligned && labels[index] != null
+                        ? "Ghidra paired case value " +
+                          labels[index] +
+                          " with target " +
+                          targetAddress +
+                          " at dispatch " +
+                          canonicalAddress(jumpTable.getSwitchAddress()) +
+                          "."
+                        : "Ghidra recovered target " +
+                          targetAddress +
+                          " at dispatch " +
+                          canonicalAddress(jumpTable.getSwitchAddress()) +
+                          ", but no aligned case value was available."
                 )
             );
             mapping.add("evidence", evidence);
@@ -1296,9 +1316,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Load-table metadata was absent; table-level candidate ownership is inferred from typed data references in the dispatch block and its immediate control-flow predecessors, but candidates are not assigned to individual mappings."
             );
         }
-        if (labels == null || labels.length != targets.length) {
+        if (!labelsAligned) {
             limitations.add(
-                "Case labels were unavailable or incomplete; null labels are preserved."
+                "Case-label and target counts differ or labels are unavailable; all case values are left unknown because index alignment cannot be established."
+            );
+        }
+        if (targets.length == 0) {
+            limitations.add(
+                "Ghidra exposed a jump-table dispatch without recovered case targets."
             );
         }
         result.add("limitations", limitations);

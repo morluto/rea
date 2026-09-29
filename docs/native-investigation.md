@@ -43,6 +43,12 @@ runtime behavior, and application-level meaning require additional evidence.
 A p-code `STORE` can describe stack memory and does not by itself identify
 persistent application state.
 
+Recovered jump-table load sources and case-to-target mappings are reported as
+separate facts. A load-table address is not attributed to each target unless
+Ghidra provides that relationship. Case values are paired with targets only
+when Ghidra returns aligned label and target lists; incomplete or mismatched
+lists leave case values unknown.
+
 ## Provider admission and remaining work
 
 The macOS Ghidra host path has installation checks for Intel and Apple Silicon,

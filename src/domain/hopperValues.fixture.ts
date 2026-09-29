@@ -92,7 +92,6 @@ export const ghidraNativeApiBoundary = () => ({
         {
           case_value: 0,
           target_address: "0x401020",
-          data_addresses: ["0x403000"],
           confidence: "medium" as const,
           evidence: [
             {

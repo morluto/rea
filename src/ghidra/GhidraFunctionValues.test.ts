@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import { functionDossierSchema } from "../domain/hopperValues.js";
 import {
   GHIDRA_FUNCTION_OPERATIONS,
   isGhidraFunctionOperation,
@@ -147,7 +148,6 @@ describe("Ghidra function-analysis result values", () => {
               mappings: [
                 {
                   target_address: "0x401020",
-                  data_addresses: ["0x403000"],
                 },
               ],
             },
@@ -199,7 +199,28 @@ describe("Ghidra function-analysis result values", () => {
       error: { _tag: "AnalysisOutputError" },
     });
   });
+});
 
+describe("Ghidra jump-table mapping contract", () => {
+  it("keeps jump-table sources separate from case-to-target mappings", () => {
+    const parsed = parseGhidraFunctionResult(
+      "analyze_function",
+      ghidraFunctionDossier(),
+    );
+    if (!parsed.ok) throw parsed.error;
+    const boundary = functionDossierSchema.parse(parsed.value).native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const mapping = boundary.jump_tables[0]?.mappings[0];
+    expect(mapping).toMatchObject({
+      case_value: 0,
+      target_address: "0x401020",
+    });
+    expect(mapping).not.toHaveProperty("data_addresses");
+  });
+});
+
+describe("Ghidra function-analysis malformed results", () => {
   it.each(malformedOutputs())(
     "rejects malformed %s output",
     (_name, operation, value) => {

@@ -21,7 +21,6 @@ describe("native API inspection", () => {
             mappings: [
               {
                 target_address: "0x401020",
-                data_addresses: ["0x403000"],
               },
             ],
           },
@@ -58,6 +57,28 @@ describe("native API inspection", () => {
         expect.stringContaining("jump table"),
       ],
     });
+  });
+
+  it("reports missing jump-table targets as an explicit unknown", () => {
+    const value = ghidraFunctionDossier();
+    const dossier = functionDossierSchema.parse(value);
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    if (table === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+
+    const incomplete = functionDossierSchema.parse({
+      ...dossier,
+      native_api: {
+        ...boundary,
+        jump_tables: [{ ...table, mappings: [] }],
+      },
+    });
+    expect(projectNativeApiInspection(incomplete).residual_unknowns).toContain(
+      "Which case values and targets belong to the dispatch at 0x401010?",
+    );
   });
 
   it("rejects boundary types placed in the wrong ABI role", () => {

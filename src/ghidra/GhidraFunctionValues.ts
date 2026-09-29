@@ -152,10 +152,7 @@ const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
     const addresses = value.jump_tables.flatMap((table) => [
       table.dispatch_address,
       ...table.data_sources.map(({ address }) => address),
-      ...table.mappings.flatMap(({ target_address, data_addresses }) => [
-        target_address,
-        ...data_addresses,
-      ]),
+      ...table.mappings.map(({ target_address }) => target_address),
     ]);
     if (
       addresses.some(

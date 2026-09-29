@@ -72,6 +72,10 @@ const availableResidualUnknowns = (
 ): readonly string[] => {
   const unknowns: string[] = [];
   for (const table of boundary.jump_tables) {
+    if (table.mappings.length === 0)
+      unknowns.push(
+        `Which case values and targets belong to the dispatch at ${table.dispatch_address}?`,
+      );
     if (table.data_sources.length === 0)
       unknowns.push(
         `What backing data address produced the jump table dispatched at ${table.dispatch_address}?`,
