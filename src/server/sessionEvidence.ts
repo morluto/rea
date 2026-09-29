@@ -3,8 +3,6 @@ import { EvidenceIntegrityError } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
 import { ok, type Result } from "../domain/result.js";
 
-type EvidenceAuthorityResult = Result<Evidence[], EvidenceIntegrityError>;
-
 /** Record source evidence in order, stopping at the first session rejection. */
 export const recordSessionEvidenceSources = (
   recordEvidence: BinarySessionPort["recordEvidence"] | undefined,
