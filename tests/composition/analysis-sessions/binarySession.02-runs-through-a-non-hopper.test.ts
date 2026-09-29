@@ -92,7 +92,11 @@ describe("binary session", () => {
         },
         limitations: [],
         locations: [],
-        subject: null,
+        subject: {
+          format: "analysis-database",
+          path: first,
+          sha256: expect.any(String),
+        },
       },
     });
     expect(provider.identity().id).toBe("fixture");
