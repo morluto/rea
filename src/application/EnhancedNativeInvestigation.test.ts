@@ -12,8 +12,9 @@ import {
   nativeInvestigationGraphSchema,
   nativeInvestigationTraceSchema,
 } from "../domain/nativeInvestigationGraph.js";
-import { ok } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { Result } from "../domain/result.js";
+import { AnalysisCancelledError } from "../domain/errors.js";
 
 const target = "a".repeat(64);
 const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -374,6 +375,50 @@ describe("native UI query outcomes", () => {
           facet: "objects:Main.nib",
           status: "partial",
           reason: "object_limit_reached",
+        }),
+      ]),
+    });
+  });
+
+  it("returns cancellation instead of a successful trace during callee expansion", async () => {
+    const result = await new EnhancedTools(
+      testAnalysis({
+        procedure_callees: () =>
+          err(new AnalysisCancelledError("procedure_callees")),
+      }),
+    ).execute("trace_native_ui_action", { action: "buildTapped:" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "procedure_callees" },
+    });
+  });
+
+  it("reports only callees left unprocessed by the edge limit", async () => {
+    const result = await new EnhancedTools(
+      testAnalysis({
+        procedure_callees: (parameters) =>
+          execution(
+            "procedure_callees",
+            parameters.procedure === "0x1000"
+              ? ["0x2000", "0x2001", "0x2002"]
+              : [],
+          ),
+      }),
+    ).execute("trace_native_ui_action", {
+      action: "buildTapped:",
+      max_depth: 4,
+      max_edges: 5,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      coverage: expect.arrayContaining([
+        expect.objectContaining({
+          facet: "direct_native_calls",
+          status: "partial",
+          omitted: 1,
         }),
       ]),
     });

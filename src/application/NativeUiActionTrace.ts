@@ -17,7 +17,11 @@ import {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { parseRelatedAddresses } from "../domain/hopperValues.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisOutputError, projectAnalysisError } from "../domain/errors.js";
+import {
+  AnalysisOutputError,
+  projectAnalysisError,
+  type AnalysisError,
+} from "../domain/errors.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
 const nativeNameSchema = z.array(
@@ -170,6 +174,7 @@ export const traceNativeUiAction = async (
     targetSha256,
     signal,
   });
+  if (expanded.error !== undefined) return err(expanded.error);
   coverage.push({
     facet: "direct_native_calls",
     status: "partial",
@@ -384,6 +389,8 @@ const addDirectCallees = async (input: {
     );
     examined += 1;
     if (!execution.ok) {
+      if (execution.error._tag === "AnalysisCancelledError")
+        return { error: execution.error };
       const id = `unknown-callees:${current.address}`;
       edges.set(id, {
         id,
@@ -416,10 +423,10 @@ const addDirectCallees = async (input: {
       });
       continue;
     }
-    for (const address of related.value) {
+    for (const [index, address] of related.value.entries()) {
       if (edges.size >= input.input.max_edges) {
         truncated = true;
-        omitted += related.value.length;
+        omitted += related.value.length - index;
         break;
       }
       const targetId = `native:function:${address}`;
