@@ -1,9 +1,8 @@
 # Static-analysis provider evaluation
 
-Status: the Ghidra read-only analysis provider is shipped on Linux x64, has an
-implemented but not yet real-provider-verified macOS x64/arm64 host path, and
-has an experimental Windows x64 P0 for approved native PE applications. The
-macOS path requires a matching executable native decompiler. It
+Status: the Ghidra read-only analysis provider is shipped on Linux x64 and has
+an experimental Windows x64 P0 for approved native PE applications. macOS is
+not an admitted Ghidra host. The provider
 validates an exact bring-your-own Ghidra 12.1.4/JDK 21 environment, resolves a
 provider/version/profile commitment, runs one isolated read-only headless
 import, and publishes 19 operation-level capabilities after the authenticated
@@ -112,7 +111,7 @@ capability from a successful import.
 | Result extent           | Function instruction scans and native API boundary observations remain complete. P-code flow is the explicit bounded exception; its count fields distinguish exact retained counts from lower-bound or known-omitted counts. Caller cancellation and provider failures remain distinct.                                                                                                                                                                                                                                                  |
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
-host-native targets (x86-64 ELF on Linux x64; Mach-O on macOS x64/arm64). It proves all
+host-native targets (x86-64 ELF on Linux x64). It proves all
 19 operations, external functions, resolved thunks, exports, stripped-name
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
@@ -122,9 +121,10 @@ cover startup deadlines, process exit, queued cancellation, and malformed wire
 output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
-Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; keeping this
-matrix separate lets host/provider acceptance run with only the host compiler
-and avoids making optional cross-linkers prerequisites for macOS verification.
+Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set
+`REA_CLANG`, `REA_LLD`, or `REA_LLD_LINK` to select them. The verifier checks
+these tools before compilation. Keeping this matrix separate lets Linux
+host/provider acceptance run with only the host compiler.
 
 `npm run verify:ghidra:windows` generates a deterministic source-owned native
 x86-64 PE application, proves all 19 operations through the production Windows

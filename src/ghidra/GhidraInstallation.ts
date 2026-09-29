@@ -297,24 +297,18 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "platform",
-    passed:
-      platform === "linux" || platform === "win32" || platform === "darwin",
+    passed: platform === "linux" || platform === "win32",
     code: "unsupported_host",
     detail: platform,
-    remediation:
-      "Use REA's Ghidra adapter on Linux or Windows x64, or macOS x64/arm64 with a matching native Ghidra decompiler.",
+    remediation: "Use REA's Ghidra adapter on Linux or Windows x64.",
   }),
   installationCheck({
     name: "architecture",
     passed:
-      ((platform === "linux" || platform === "win32") &&
-        architecture === "x64") ||
-      (platform === "darwin" &&
-        (architecture === "x64" || architecture === "arm64")),
+      (platform === "linux" || platform === "win32") && architecture === "x64",
     code: "unsupported_host",
     detail: architecture,
-    remediation:
-      "Use x64 on Linux or Windows. On macOS, use x64 or arm64 with a matching native decompiler.",
+    remediation: "Use x64 on Linux or Windows.",
   }),
   installationCheck({
     name: "installation",

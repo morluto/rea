@@ -75,7 +75,7 @@ describe("Ghidra installation inspection", () => {
   });
 
   it.each(["x64", "arm64"] as const)(
-    "accepts Ghidra 12.1.4 on macOS %s when its native decompiler is present",
+    "keeps Ghidra unavailable on unadmitted macOS %s hosts",
     (architecture) => {
       const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/os/${architecture === "arm64" ? "mac_arm_64" : "mac_x86_64"}/decompile`;
       const macHost: GhidraInstallationHost = {
@@ -91,7 +91,7 @@ describe("Ghidra installation inspection", () => {
           macHost,
         ),
       ).toMatchObject({
-        status: "available",
+        status: "unavailable",
         platform: "darwin",
         architecture,
         nativeDecompilerPath: decompiler,

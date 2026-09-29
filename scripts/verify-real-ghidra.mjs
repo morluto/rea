@@ -80,7 +80,35 @@ const machObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.o");
 const malformedPath = join(fixtureRoot, "rea-ghidra-malformed");
 const compiler = process.env.REA_CC ?? "cc";
 const clang = process.env.REA_CLANG ?? "clang";
+const lld = process.env.REA_LLD ?? "ld.lld";
 const lldLink = process.env.REA_LLD_LINK ?? "lld-link";
+const lane = crossFormat
+  ? "cross-format"
+  : aarch64JumpTableOnly
+    ? "AArch64 jump-table"
+    : "host-format";
+const toolchain = new Map([[compiler, "host fixture compiler"]]);
+if (crossFormat || aarch64JumpTableOnly)
+  toolchain.set(clang, "cross-format clang compiler");
+if (crossFormat) {
+  toolchain.set(lld, "LLVM LLD linker");
+  toolchain.set(lldLink, "Windows PE linker");
+}
+const crossTarget = crossFormat
+  ? "aarch64-linux-gnu, x86_64-pc-windows-msvc, x86_64-apple-darwin"
+  : aarch64JumpTableOnly
+    ? "aarch64-linux-gnu"
+    : `${expectedNativeTarget.format}/${expectedNativeTarget.architecture}`;
+for (const [command, role] of toolchain) {
+  try {
+    await exec(command, [command === lldLink ? "/?" : "--version"]);
+  } catch (cause) {
+    throw new Error(
+      `Ghidra ${lane} verification cannot run for target ${crossTarget}: required ${role} '${command}' is unavailable or failed its preflight.`,
+      { cause },
+    );
+  }
+}
 try {
   const common = ["-O0", "-g", "-fno-inline"];
   if (expectedNativeTarget.format === "elf") common.push("-fno-pie", "-no-pie");
