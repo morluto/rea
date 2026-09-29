@@ -194,7 +194,11 @@ copying license secrets into logs, or killing unrelated Hopper processes.
 ## Ghidra
 
 REA's Ghidra provider is bring-your-own and supports Linux x64 with the exact
-official Ghidra 12.1.4 release and a 64-bit full JDK 21. An experimental
+official Ghidra 12.1.4 release and a 64-bit full JDK 21. The macOS x64/arm64
+host path is implemented but awaits real-provider acceptance; it requires an
+executable native decompiler matching the host architecture. REA checks for
+that binary but does not build Ghidra native components or change Gatekeeper
+state. An experimental
 Windows x64 P0 supports approved native x86-64 PE applications. It supplies
 discovery, analysis-profile commitment, an isolated read-only headless session,
 ten inventory/name/search operations and nine function-analysis operations,

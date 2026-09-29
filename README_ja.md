@@ -152,9 +152,9 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 | ツール群               |  数 | 例                                                                                                                                                                                                        |
 | ---------------------- | --: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | バイナリ調査           |  36 | プロシージャ、疑似コード、アセンブリ、文字列、名前、セグメント、callers、callees、xrefs、注釈                                                                                                             |
-| 合成解析               |  12 | `binary_overview`, `analyze_function`, `inspect_native_api`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出                                                                 |
+| 合成解析               |  14 | `binary_overview`, `analyze_function`, `inspect_native_api`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift / ObjC 検出                                                                 |
 | macOS ネイティブ       |   5 | Mach-O メタデータ、署名、plist、アーキテクチャ、Swift デマングル。Hopper 起動不要                                                                                                                         |
-| アーティファクトグラフ |   2 | ディレクトリと対応パッケージの完全なインライン調査、および明示選択されたトランザクション抽出                                                                                                              |
+| アーティファクトグラフ |   3 | ディレクトリと対応パッケージの完全なインライン調査、および明示選択されたトランザクション抽出                                                                                                              |
 | Managed PE/CLI         |   8 | PE/CLI 識別、メタデータメンバー、CIL ハッシュ、P/Invoke/ネイティブ境界宣言と検証、アプリケーショングラフ投影、逆コンパイル再構成インポート、構造的 token 再マッピング、ランタイム相関計画、バージョン比較 |
 | ブラウザ観察           |   9 | origin 限定 CDP 取得、bundle/source map 解析、WebMCP 検出、セッション、capture diff、視覚証拠                                                                                                             |
 | Electron 解析          |   5 | canonical ファイルルート内の受動観察、有界な静的アプリマッピング、Evidence に基づく静的/実行時の照合                                                                                                      |

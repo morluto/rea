@@ -1,7 +1,9 @@
 # Static-analysis provider evaluation
 
-Status: the Ghidra read-only analysis provider is shipped on Linux x64 and has
-an experimental Windows x64 P0 for approved native PE applications. It
+Status: the Ghidra read-only analysis provider is shipped on Linux x64, has an
+implemented but not yet real-provider-verified macOS x64/arm64 host path, and
+has an experimental Windows x64 P0 for approved native PE applications. The
+macOS path requires a matching executable native decompiler. It
 validates an exact bring-your-own Ghidra 12.1.4/JDK 21 environment, resolves a
 provider/version/profile commitment, runs one isolated read-only headless
 import, and publishes 19 operation-level capabilities after the authenticated

@@ -10,7 +10,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 111,
+    "total": 114,
     "families": [
       {
         "id": "direct",
@@ -58,7 +58,7 @@
       {
         "id": "enhanced",
         "surface": "enhanced",
-        "count": 12,
+        "count": 14,
         "tools": [
           "analyze_function",
           "analyze_swift_types",
@@ -70,8 +70,10 @@
           "get_objc_classes",
           "get_objc_protocols",
           "inspect_native_api",
+          "inspect_native_dispatch_metadata",
           "trace_call_path",
-          "trace_feature"
+          "trace_feature",
+          "trace_native_investigation"
         ]
       },
       {
@@ -89,8 +91,12 @@
       {
         "id": "artifact",
         "surface": "artifact-provider",
-        "count": 2,
-        "tools": ["extract_artifact", "inspect_artifact"]
+        "count": 3,
+        "tools": [
+          "decode_interface_builder",
+          "extract_artifact",
+          "inspect_artifact"
+        ]
       },
       {
         "id": "managed",
@@ -279,7 +285,11 @@
       "id": "rea-artifact-graph",
       "name": "REA safe artifact graph provider",
       "version": "1",
-      "capabilities": ["extract_artifact", "inspect_artifact"]
+      "capabilities": [
+        "decode_interface_builder",
+        "extract_artifact",
+        "inspect_artifact"
+      ]
     },
     {
       "id": "rea-cdp-browser",
@@ -420,7 +430,7 @@
     }
   ],
   "cli": {
-    "primary_count": 64,
+    "primary_count": 66,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -439,6 +449,7 @@
       "compare-source-to-bundle",
       "compare-web-captures",
       "compare-web-screenshots",
+      "decode-interface-builder",
       "decompile",
       "demangle-swift",
       "discover-webmcp-tools",
@@ -482,6 +493,7 @@
       "trace",
       "trace-application-feature",
       "trace-javascript-semantics",
+      "trace-native-investigation",
       "uninstall",
       "upgrade",
       "verify-managed-native-boundaries",
@@ -496,15 +508,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 64,
-      "mcp_tools": 111,
+      "cli_commands": 66,
+      "mcp_tools": 114,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "37c7ca2a93d9c78dd5372b88db55626d7ee5474bbb1b82477d14363631d68ddf",
+      "tools_sha256": "ea890c3be9391b53480efe5473df12fc4ea65f02bdf93b10db75480a18988460",
       "prompts_sha256": "fa889fc671185ac9c968c6dc8309cf609e709cdc837dbbf39b7cdfadb84ac2d7",
-      "combined_sha256": "64e291ccdfb45d454eb084b2944e94d5b46fbdec61802cff95ad6bd420125526",
-      "providers_sha256": "7247eece8fad09c8023af8d5c682d223d7ed7ebd68eac79e9154962a7e03b66b"
+      "combined_sha256": "61566cee06c3ff0110c6d326d2ba9907ca3e17b5347be4cc56fe17ed489b22ec",
+      "providers_sha256": "03498d8adb7d941f8293eea8d71375871fb30a278e310fdc19b98df6781fc1a7"
     }
   }
 }
