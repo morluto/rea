@@ -126,7 +126,7 @@ const captureHistory = async (page: Page) => {
         name: sanitizeBrowserUrl(name),
       })),
     };
-    return value;
+    return { state: "captured" as const, value };
   } catch {
     return missing("history capture failed");
   }
@@ -166,7 +166,7 @@ const captureStorage = async (input: {
         ...secrets.fingerprint(value),
       })),
     };
-    return value;
+    return { state: "captured" as const, value };
   } catch {
     return missing("storage capture failed");
   }
@@ -211,9 +211,10 @@ export const capturePlaywrightStepArtifacts = async (input: {
     accessibility: await state("accessibility", () =>
       captureAccessibility({ page, secrets }),
     ),
-    url: await state("url", async () =>
-      Promise.resolve(sanitizeBrowserUrl(page.url())),
-    ),
+    url: await state("url", async () => ({
+      state: "captured" as const,
+      value: sanitizeBrowserUrl(page.url()),
+    })),
     history: await state("history", () => captureHistory(page)),
     storage: await state("storage", () =>
       captureStorage({ context, page, scenario, secrets }),
