@@ -12,6 +12,7 @@ import {
 const INSTALL = "/opt/ghidra";
 const PROPERTIES = `${INSTALL}/Ghidra/application.properties`;
 const HEADLESS = `${INSTALL}/support/analyzeHeadless`;
+const MAC_DECOMPILER = `${INSTALL}/Ghidra/Features/Decompiler/os/mac_arm_64/decompile`;
 const WINDOWS_INSTALL = "C:\\tools\\ghidra_12.1.4_PUBLIC";
 const WINDOWS_PROPERTIES = `${WINDOWS_INSTALL}\\Ghidra\\application.properties`;
 const WINDOWS_HEADLESS = `${WINDOWS_INSTALL}\\support\\analyzeHeadless.bat`;
@@ -30,7 +31,7 @@ const host = (
     path === PROPERTIES
       ? `application.version=${SUPPORTED_GHIDRA_VERSION}\n`
       : undefined,
-  executable: (path) => path === HEADLESS,
+  executable: (path) => path === HEADLESS || path === MAC_DECOMPILER,
   probeJava: () => JAVA,
   ...overrides,
 });
@@ -72,6 +73,31 @@ describe("Ghidra installation inspection", () => {
       javaVersion: "21.0.11",
     });
   });
+
+  it.each(["x64", "arm64"] as const)(
+    "accepts Ghidra 12.1.4 on macOS %s when its native decompiler is present",
+    (architecture) => {
+      const decompiler = `${INSTALL}/Ghidra/Features/Decompiler/os/${architecture === "arm64" ? "mac_arm_64" : "mac_x86_64"}/decompile`;
+      const macHost: GhidraInstallationHost = {
+        ...host({
+          platform: "darwin",
+          architecture,
+          executable: (path) => path === HEADLESS || path === decompiler,
+        }),
+      };
+      expect(
+        inspectGhidraInstallation(
+          { installDir: INSTALL, platform: "darwin", architecture },
+          macHost,
+        ),
+      ).toMatchObject({
+        status: "available",
+        platform: "darwin",
+        architecture,
+        nativeDecompilerPath: decompiler,
+      });
+    },
+  );
 
   it("accepts the exact Windows x64 batch launcher and JDK commitment", () => {
     const windowsHost: GhidraInstallationHost = {
@@ -126,7 +152,7 @@ describe("Ghidra installation rejection diagnostics", () => {
       name: "unsupported platform",
       options: {
         installDir: INSTALL,
-        platform: "darwin" as const,
+        platform: "aix" as const,
         architecture: "x64" as const,
       },
       override: {},

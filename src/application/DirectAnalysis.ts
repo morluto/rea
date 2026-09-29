@@ -52,7 +52,8 @@ type DirectAnalysisTool =
   | "search_strings"
   | "search_procedures"
   | "xrefs"
-  | "trace_feature";
+  | "trace_feature"
+  | "trace_native_investigation";
 
 /**
  * Open one binary, execute one tool, and always release provider resources.
@@ -276,7 +277,8 @@ const executeAnalysisTool = async (input: {
     tool === "binary_overview" ||
     tool === "analyze_function" ||
     tool === "inspect_native_api" ||
-    tool === "trace_feature"
+    tool === "trace_feature" ||
+    tool === "trace_native_investigation"
   ) {
     const result = await new EnhancedTools(session).execute(
       tool,
@@ -398,7 +400,8 @@ const isWorkflowEvidenceTool = (
 ): boolean =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
-  tool === "trace_feature";
+  tool === "trace_feature" ||
+  tool === "trace_native_investigation";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {

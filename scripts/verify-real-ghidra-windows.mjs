@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
-import { GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS } from "../dist/ghidra/GhidraDefaults.js";
 import {
   GHIDRA_FUNCTION_OPERATIONS,
   parseGhidraFunctionInput,
@@ -45,7 +44,7 @@ const installation = inspectGhidraInstallation({
     : { javaHome: process.env.JAVA_HOME }),
 });
 if (
-  !installation.available ||
+  installation.status !== "available" ||
   installation.analyzeHeadlessPath === null ||
   installation.providerVersion !== SUPPORTED_GHIDRA_VERSION
 )
@@ -90,7 +89,6 @@ const client = new GhidraClient({
   transport: "authenticated-loopback-tcp",
   providerVersion: SUPPORTED_GHIDRA_VERSION,
   profileDigest: profile.value.profile.digest,
-  requestTimeoutMs: GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,
 });
 
 let coordinates;
@@ -211,9 +209,7 @@ async function inventory(operation, parameters) {
 async function functionOperation(operation, parameters) {
   const input = parseGhidraFunctionInput(operation, parameters);
   if (!input.ok) throw input.error;
-  const called = await client.callTool(operation, input.value, {
-    timeoutMs: GHIDRA_DECOMPILE_REQUEST_TIMEOUT_MS,
-  });
+  const called = await client.callTool(operation, input.value);
   if (!called.ok) throw called.error;
   const result = parseGhidraFunctionResult(operation, called.value);
   if (!result.ok) throw result.error;

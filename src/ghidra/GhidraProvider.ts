@@ -190,7 +190,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     if (!prerequisites.ok) return unavailableClient(prerequisites.error);
     const committedProfile = prerequisites.value.profile;
     const providerLimitations =
-      installation.platform === "win32" ? windowsP0Limitations : [];
+      installation.platform === "win32"
+        ? windowsP0Limitations
+        : installation.platform === "darwin"
+          ? [
+              "macOS sessions require a matching executable Ghidra native decompiler; REA checks for it but does not build native components or change Gatekeeper quarantine state.",
+            ]
+          : [];
     const client = this.clientFactory({
       launcher: new GhidraHeadlessLauncher({
         analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,

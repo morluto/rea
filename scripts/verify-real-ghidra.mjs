@@ -47,7 +47,7 @@ const installation = inspectGhidraInstallation({
     ? {}
     : { javaHome: process.env.JAVA_HOME }),
 });
-if (!installation.available || installation.analyzeHeadlessPath === null)
+if (installation.status !== "available" || installation.analyzeHeadlessPath === null)
   throw new Error(
     `Ghidra installation is unavailable: ${JSON.stringify(installation)}`,
   );

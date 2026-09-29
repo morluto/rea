@@ -42,12 +42,14 @@ export type GhidraInstallationCheckName =
   | "installation"
   | "version"
   | "headless"
+  | "native_decompiler"
   | "java";
 
 interface GhidraInstallationObservation {
   readonly platform: NodeJS.Platform;
   readonly architecture: NodeJS.Architecture;
   readonly applicationPropertiesPath: string | null;
+  readonly nativeDecompilerPath: string | null;
   readonly javaCommand: string;
   readonly checks: readonly GhidraInstallationCheck[];
 }
@@ -109,6 +111,7 @@ interface GhidraInstallationCoordinates {
   readonly installDir: string | null;
   readonly applicationPropertiesPath: string | null;
   readonly analyzeHeadlessPath: string | null;
+  readonly nativeDecompilerPath: string | null;
   readonly properties: Readonly<{ providerVersion: string | null }> | undefined;
   readonly javaCommand: string;
   readonly java: GhidraJavaObservation | undefined;
@@ -129,7 +132,12 @@ export const inspectGhidraInstallation = (
 ): GhidraInstallationInspection => {
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
-  const coordinates = installationCoordinates(options, platform, host);
+  const coordinates = installationCoordinates(
+    options,
+    platform,
+    architecture,
+    host,
+  );
   const checks = installationChecks({
     coordinates,
     platform,
@@ -145,6 +153,7 @@ export const inspectGhidraInstallation = (
     platform,
     architecture,
     applicationPropertiesPath: coordinates.applicationPropertiesPath,
+    nativeDecompilerPath: coordinates.nativeDecompilerPath,
     javaCommand: coordinates.javaCommand,
     checks,
   };
@@ -193,6 +202,7 @@ const availableInstallation = (
 const installationCoordinates = (
   options: GhidraInstallationOptions,
   platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
   host: GhidraInstallationHost,
 ): GhidraInstallationCoordinates => {
   const path = platform === "win32" ? win32 : posix;
@@ -209,6 +219,36 @@ const installationCoordinates = (
           "support",
           platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
         );
+  const decompilerPlatform =
+    platform === "darwin"
+      ? architecture === "arm64"
+        ? "mac_arm_64"
+        : "mac_x86_64"
+      : null;
+  const nativeDecompilerPath =
+    installDir === null || decompilerPlatform === null
+      ? null
+      : [
+          path.join(
+            installDir,
+            "Ghidra",
+            "Features",
+            "Decompiler",
+            "os",
+            decompilerPlatform,
+            "decompile",
+          ),
+          path.join(
+            installDir,
+            "Ghidra",
+            "Features",
+            "Decompiler",
+            "build",
+            "os",
+            decompilerPlatform,
+            "decompile",
+          ),
+        ].find((candidate) => host.executable(candidate)) ?? null;
   const properties =
     applicationPropertiesPath === null
       ? undefined
@@ -227,6 +267,7 @@ const installationCoordinates = (
     installDir,
     applicationPropertiesPath,
     analyzeHeadlessPath,
+    nativeDecompilerPath,
     properties:
       properties === undefined
         ? undefined
@@ -256,19 +297,26 @@ const installationChecks = ({
   }),
   installationCheck({
     name: "platform",
-    passed: platform === "linux" || platform === "win32",
+    passed:
+      platform === "linux" ||
+      platform === "win32" ||
+      platform === "darwin",
     code: "unsupported_host",
     detail: platform,
     remediation:
-      "Use REA's Ghidra adapter on a supported Linux or Windows x64 host.",
+      "Use REA's Ghidra adapter on Linux or Windows x64, or macOS x64/arm64 with a matching native Ghidra decompiler.",
   }),
   installationCheck({
     name: "architecture",
-    passed: architecture === "x64",
+    passed:
+      ((platform === "linux" || platform === "win32") &&
+        architecture === "x64") ||
+      (platform === "darwin" &&
+        (architecture === "x64" || architecture === "arm64")),
     code: "unsupported_host",
     detail: architecture,
     remediation:
-      "Use the official x86-64 Ghidra distribution on an x64 Linux or Windows host.",
+      "Use x64 on Linux or Windows. On macOS, use x64 or arm64 with a matching native decompiler.",
   }),
   installationCheck({
     name: "installation",
@@ -302,6 +350,19 @@ const installationChecks = ({
     remediation:
       "Restore support/analyzeHeadless or support/analyzeHeadless.bat from the official Ghidra release.",
   }),
+  installationCheck({
+    name: "native_decompiler",
+    passed:
+      platform !== "darwin" || coordinates.nativeDecompilerPath !== null,
+    code: "executable_missing",
+    detail:
+      platform !== "darwin"
+        ? "not required on this platform"
+        : (coordinates.nativeDecompilerPath ??
+          "matching macOS native decompiler was not found"),
+    remediation:
+      "REA does not build native tools. Build Ghidra's native components for this macOS architecture or provide an installation containing Ghidra/Features/Decompiler/os/<platform>/decompile.",
+  }),
   javaCheck(coordinates.java, coordinates.javaCommand, javaHome),
 ];
 
@@ -311,6 +372,7 @@ export const ghidraInstallationDiagnostics = (
 ): Readonly<Record<string, JsonValue>> => ({
   install_dir: inspection.installDir,
   analyze_headless_path: inspection.analyzeHeadlessPath,
+  native_decompiler_path: inspection.nativeDecompilerPath,
   application_properties_path: inspection.applicationPropertiesPath,
   provider_version: inspection.providerVersion,
   java_command: inspection.javaCommand,

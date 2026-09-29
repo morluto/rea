@@ -60,7 +60,11 @@ const selectedChecks = (
     byName.get("architecture"),
     installation,
     ...(installation?.status === "passed"
-      ? [byName.get("version"), byName.get("headless")]
+      ? [
+          byName.get("version"),
+          byName.get("headless"),
+          byName.get("native_decompiler"),
+        ]
       : []),
     byName.get("java"),
   ].filter((candidate): candidate is GhidraInstallationCheck =>
