@@ -303,8 +303,11 @@ const auxiliaryProvider = (
       execute: (operation) =>
         Promise.resolve(
           ok(
-            createAnalysisExecution(`${operation}:auxiliary`, identity, (operation === "inventory_artifact" ||
-              operation === "inspect_artifact"
+            createAnalysisExecution(
+              `${operation}:auxiliary`,
+              identity,
+              operation === "inventory_artifact" ||
+                operation === "inspect_artifact"
                 ? {
                     subject: {
                       path: target.sourcePath ?? target.path,
@@ -312,7 +315,8 @@ const auxiliaryProvider = (
                       format: "directory",
                     },
                   }
-                : {})),
+                : {},
+            ),
           ),
         ),
       close: () => Promise.resolve(),
