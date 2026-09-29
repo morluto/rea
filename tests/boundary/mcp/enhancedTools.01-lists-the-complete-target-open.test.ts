@@ -187,6 +187,7 @@ describe("enhanced MCP tools", () => {
         )
         .sort(),
     ).toEqual(ENHANCED_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    expect(listed.tools.map(({ name }) => name)).not.toContain("open_binary");
   });
 
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.

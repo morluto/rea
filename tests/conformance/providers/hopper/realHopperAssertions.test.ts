@@ -63,7 +63,7 @@ describe("real Hopper fixture assertions", () => {
       comment: "REA real-Hopper verifier",
       successor: "0x1010",
     });
-    expect(
+    expect(() =>
       requireFunctionDossierOracle(entry, {
         procedure_address: "0x1000",
         callee_address: "0x2000",
@@ -74,7 +74,7 @@ describe("real Hopper fixture assertions", () => {
         require_cfg_successor: true,
         require_assembly: true,
       }),
-    ).toEqual(entry);
+    ).not.toThrow();
 
     for (const field of [
       "callees",

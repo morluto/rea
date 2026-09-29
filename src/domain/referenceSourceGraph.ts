@@ -255,7 +255,8 @@ const checkSortedUnique = (
     }
 };
 
-const expectedLanguages = (
+/** Derive the canonical language index from inventoried source files. */
+export const historicalSourceLanguages = (
   entries: readonly z.infer<typeof sourceEntrySchema>[],
 ): string[] =>
   [
@@ -268,7 +269,8 @@ const expectedLanguages = (
     ),
   ].sort(compareUnicodeCodePoints);
 
-const expectedManifests = (
+/** Derive the canonical manifest path index from inventoried source files. */
+export const historicalSourceManifests = (
   entries: readonly z.infer<typeof sourceEntrySchema>[],
 ): string[] =>
   entries
@@ -408,7 +410,7 @@ function checkGraphInvariants(
 
   if (
     canonicalJson(graph.languages) !==
-    canonicalJson(expectedLanguages(graph.entries))
+    canonicalJson(historicalSourceLanguages(graph.entries))
   )
     context.addIssue({
       code: "custom",
@@ -417,7 +419,7 @@ function checkGraphInvariants(
     });
   if (
     canonicalJson(graph.manifests) !==
-    canonicalJson(expectedManifests(graph.entries))
+    canonicalJson(historicalSourceManifests(graph.entries))
   )
     context.addIssue({
       code: "custom",

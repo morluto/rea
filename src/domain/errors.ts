@@ -39,7 +39,6 @@ const ANALYSIS_ERROR_TAGS = [
   "ProcessCaptureError",
   "EvidenceIntegrityError",
   "EvidenceFileError",
-  "WorkspaceStorageError",
   "UnknownRegistryError",
   "HopperTimeoutError",
   "HopperCancelledError",
@@ -332,29 +331,6 @@ export class EvidenceFileError extends AnalysisError {
   }
 }
 
-/** A revisioned workspace could not be read or updated. */
-export class WorkspaceStorageError extends AnalysisError {
-  readonly _tag = "WorkspaceStorageError";
-
-  constructor(
-    readonly operation: "read" | "update",
-    readonly reason:
-      | "disabled"
-      | "outside-root"
-      | "not-file"
-      | "too-large"
-      | "invalid-json"
-      | "integrity"
-      | "locked"
-      | "revision-conflict"
-      | "name-conflict"
-      | "io",
-    options?: ErrorOptions,
-  ) {
-    super(`Workspace storage ${operation} failed: ${reason}`, options);
-  }
-}
-
 /** Residual-unknown mutation failed a lifecycle, reference, or CAS invariant. */
 export class UnknownRegistryError extends AnalysisError {
   readonly _tag = "UnknownRegistryError";
@@ -516,7 +492,6 @@ export interface AnalysisErrorProjection
     | "process_capture_failed"
     | "cleanup_incomplete"
     | "revision_conflict"
-    | "outside_approved_root"
     | "configuration_invalid"
     | "target_unavailable"
     | "execution_failure"

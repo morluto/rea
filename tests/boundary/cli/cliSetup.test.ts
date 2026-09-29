@@ -107,6 +107,11 @@ describe("interactive setup journey", () => {
     expect(result.output).not.toContain(
       "REA reverse-engineering skill (skill)",
     );
+    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
+    expect(result.output).not.toContain("CREATE  Codex");
+    expect(result.output).not.toContain(
+      "INSTALL  Hopper deep-analysis provider",
+    );
     expect(result.decision).toEqual({
       approved: true,
       selectedActionIds: ["install_skill"],
@@ -188,27 +193,6 @@ describe("interactive setup selection and confirmation", () => {
     expect(result.decision).toEqual({
       approved: false,
       selectedActionIds: ["configure_client:codex", "install_skill"],
-    });
-  });
-
-  it("repairs an aligned agent integration through the bundled option", async () => {
-    const result = await runJourney(
-      [step("What should REA set up?", "\r"), step("Apply this change?", "\r")],
-      false,
-      actions.filter(({ kind }) => kind !== "configure_client"),
-    );
-
-    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
-    expect(result.output).toContain(
-      "Agent integration (MCP + guided workflow)",
-    );
-    expect(result.output).not.toContain("CREATE  Codex");
-    expect(result.output).not.toContain(
-      "INSTALL  Hopper deep-analysis provider",
-    );
-    expect(result.decision).toEqual({
-      approved: true,
-      selectedActionIds: ["install_skill"],
     });
   });
 

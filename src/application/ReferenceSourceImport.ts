@@ -2,6 +2,8 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { isSecretLikePath } from "../domain/referenceSourceClassification.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceLanguages,
+  historicalSourceManifests,
   historicalSourceParseFailureKey,
   type HistoricalSourceGraph,
   type HistoricalSourceGraphInput,
@@ -82,30 +84,6 @@ const buildProvenance = (
   importer_version: options.importerVersion ?? null,
   caller: options.caller,
 });
-
-const deriveLanguages = (
-  entries: HistoricalSourceGraphInput["entries"],
-): string[] =>
-  [
-    ...new Set(
-      entries.flatMap((entry) =>
-        entry.kind === "file" && entry.language !== null
-          ? [entry.language]
-          : [],
-      ),
-    ),
-  ].sort(compareUnicodeCodePoints);
-
-const deriveManifests = (
-  entries: HistoricalSourceGraphInput["entries"],
-): string[] =>
-  entries
-    .flatMap((entry) =>
-      entry.kind === "file" && entry.classifications.includes("manifest")
-        ? [entry.path]
-        : [],
-    )
-    .sort(compareUnicodeCodePoints);
 
 const deriveInventoryState = (
   input: Pick<
@@ -229,8 +207,8 @@ export const importReferenceSource = async (
     ),
     parse_failures: uniqueFailures,
     exclusions: sortedExclusions,
-    languages: deriveLanguages(sortedEntries),
-    manifests: deriveManifests(sortedEntries),
+    languages: historicalSourceLanguages(sortedEntries),
+    manifests: historicalSourceManifests(sortedEntries),
     vcs,
     provenance: buildProvenance(options),
     limitations: sortedLimitations,

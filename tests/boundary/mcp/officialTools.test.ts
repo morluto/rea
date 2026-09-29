@@ -234,6 +234,14 @@ describe("official Hopper proxy tools", () => {
       case_sensitive: false,
       document: null,
     });
+    expect(
+      invocations.find(({ name }) => name === "search_strings")?.arguments_,
+    ).toEqual({
+      pattern: "hello",
+      mode: "literal",
+      case_sensitive: false,
+      document: null,
+    });
   });
 
   it("returns stable safe MCP error content", async () => {

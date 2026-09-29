@@ -11,6 +11,7 @@ import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
@@ -24,7 +25,6 @@ import {
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
-  isHttpUrl,
 } from "./CdpCaptureValues.js";
 import { captureScripts } from "./CdpPageCaptureScripts.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
@@ -104,7 +104,13 @@ const captureAuthorizedPage = async (
   const { connection, sessionId, input, signal } = context;
   await authorizeObservationWindow(state);
   await captureJsonResponseBodies(state);
-  const frameResult = await authorizedFrameTree(context, allowedOrigins);
+  const frameResult = await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    signal: context.signal,
+    allowedOrigins,
+    delayOperation: context.operation,
+  });
   const attachedUrl = mainFrameUrl(frameResult) ?? "";
   const frameCapture = captureFrames(
     frameResult,
@@ -145,10 +151,13 @@ const captureAuthorizedPage = async (
   );
   if (!input.include_storage_keys)
     state.events.completeness.exclude("storage_keys", "not_approved", null);
-  const completedFrameResult = await authorizedFrameTree(
-    context,
+  const completedFrameResult = await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    signal: context.signal,
     allowedOrigins,
-  );
+    delayOperation: context.operation,
+  });
   const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
   if (state.events.originViolation)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
@@ -200,7 +209,13 @@ const authorizeObservationWindow = async (
   const { connection, sessionId, signal } = context;
   await report(context.progress, 1, "Enabling passive CDP domains");
   await connection.send("Page.enable", {}, sessionId, signal);
-  const initialFrameResult = await authorizedFrameTree(context, allowedOrigins);
+  const initialFrameResult = await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    signal: context.signal,
+    allowedOrigins,
+    delayOperation: context.operation,
+  });
   const mainFrame = captureFrames(initialFrameResult, allowedOrigins).items[0];
   if (mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
@@ -288,30 +303,6 @@ const normalizedInspection = (
   storage: captured.storage,
   limitations: state.limitations,
 });
-
-const authorizedFrameTree = async (
-  context: CaptureContext,
-  allowedOrigins: ReadonlySet<string>,
-): Promise<unknown> => {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const result = await context.connection.send(
-      "Page.getFrameTree",
-      {},
-      context.sessionId,
-      context.signal,
-    );
-    const currentUrl = mainFrameUrl(result);
-    if (allowedSanitizedUrl(currentUrl, allowedOrigins) !== undefined)
-      return result;
-    if (isHttpUrl(currentUrl))
-      throw new BrowserObservationError(
-        "inspect_web_page",
-        "target_not_allowed",
-      );
-    await delayWithCancellation(25, context.operation, context.signal);
-  }
-  throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-};
 
 const enableObservationDomains = async (
   connection: CdpConnection,

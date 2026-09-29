@@ -10,7 +10,6 @@ import {
   HopperProcessError,
   HopperStartError,
   HopperTimeoutError,
-  WorkspaceStorageError,
   NoBinaryOpenError,
   PermissionRequiredError,
   ProviderSelectionError,
@@ -78,8 +77,6 @@ export const analysisErrorCategory = (
     return "unavailable";
   if (error instanceof ArtifactOperationError)
     return artifactErrorCategory(error.reason);
-  if (error instanceof WorkspaceStorageError)
-    return workspaceStorageCategory(error.reason);
   return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
 };
 
@@ -95,21 +92,6 @@ const browserErrorCategory = (
     reason === "disconnected"
   )
     return "unavailable";
-  return "execution_failure";
-};
-
-const workspaceStorageCategory = (
-  reason: WorkspaceStorageError["reason"],
-): AnalysisErrorProjection["category"] => {
-  if (
-    reason === "disabled" ||
-    reason === "outside-root" ||
-    reason === "not-file"
-  )
-    return "unavailable";
-  if (reason === "too-large") return "truncated";
-  if (reason === "invalid-json" || reason === "integrity")
-    return "integrity_mismatch";
   return "execution_failure";
 };
 
@@ -156,8 +138,6 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
   if (error instanceof EvidenceFileError)
     return evidenceFileMessage(error.reason);
-  if (error instanceof WorkspaceStorageError)
-    return workspaceStorageMessage(error.reason);
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "The requested residual unknown does not exist in this session. Check the unknown_id and try again.";
   if (error instanceof UnknownRegistryError)
@@ -262,26 +242,6 @@ const evidenceFileMessage = (reason: EvidenceFileError["reason"]): string => {
   return "Evidence file could not be accessed. Check file permissions and try again.";
 };
 
-const workspaceStorageMessage = (
-  reason: WorkspaceStorageError["reason"],
-): string => {
-  if (reason === "disabled")
-    return "Investigation workspace access is disabled. Configure a workspace directory and try again.";
-  if (reason === "outside-root")
-    return "Investigation workspace is outside the allowed directory. Choose a configured workspace directory and try again.";
-  if (reason === "not-file")
-    return "Investigation workspace path is not a file. Choose a workspace file and try again.";
-  if (reason === "too-large")
-    return "Investigation workspace is too large. Reduce its size and try again.";
-  if (reason === "invalid-json" || reason === "integrity")
-    return "Investigation workspace is invalid or has changed. Recreate or repair it, then try again.";
-  if (reason === "locked")
-    return "Another investigation update is in progress. Try again when it finishes.";
-  if (reason === "revision-conflict" || reason === "name-conflict")
-    return "Investigation workspace state changed. Refresh the current state and try again.";
-  return "Investigation workspace could not be accessed. Check file permissions and try again.";
-};
-
 const KNOWN_ERROR_TAGS = {
   AnalysisProtocolError: true,
   AnalysisInputError: true,
@@ -296,7 +256,6 @@ const KNOWN_ERROR_TAGS = {
   ProcessCaptureError: true,
   EvidenceIntegrityError: true,
   EvidenceFileError: true,
-  WorkspaceStorageError: true,
   UnknownRegistryError: true,
   HopperTimeoutError: true,
   HopperCancelledError: true,

@@ -17,7 +17,6 @@ import {
   HopperProcessError,
   HopperRemoteError,
   HopperTimeoutError,
-  WorkspaceStorageError,
   PermissionRequiredError,
   ProviderAdapterError,
   ProviderSelectionError,
@@ -72,8 +71,6 @@ const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
   if (error instanceof ArtifactOperationError)
     return artifactOperationCode(error);
   if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
-  if (error instanceof WorkspaceStorageError)
-    return workspaceStorageCode(error.reason);
   if (error instanceof UnknownRegistryError)
     return unknownRegistryCode(error.reason);
   if (error._tag === "ProcessCaptureError") return processCaptureCode(error);
@@ -112,19 +109,6 @@ const evidenceFileCode = (
     ? "evidence_integrity_mismatch"
     : "execution_failure";
 
-const workspaceStorageCode = (
-  reason: WorkspaceStorageError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "revision-conflict" || reason === "name-conflict")
-    return "revision_conflict";
-  if (reason === "too-large") return "truncated";
-  if (reason === "disabled") return "capability_unavailable";
-  if (reason === "outside-root") return "outside_approved_root";
-  if (reason === "integrity" || reason === "invalid-json")
-    return "evidence_integrity_mismatch";
-  return "execution_failure";
-};
-
 const unknownRegistryCode = (
   reason: UnknownRegistryError["reason"],
 ): AnalysisErrorProjection["code"] => {
@@ -149,7 +133,6 @@ type SpecializedErrorTag =
   | "ArtifactOperationError"
   | "BrowserObservationError"
   | "EvidenceFileError"
-  | "WorkspaceStorageError"
   | "PermissionRequiredError"
   | "ProcessCaptureError"
   | "ProviderSelectionError"
@@ -188,7 +171,6 @@ const staticErrorCode = (
     case "ArtifactOperationError":
     case "BrowserObservationError":
     case "EvidenceFileError":
-    case "WorkspaceStorageError":
     case "PermissionRequiredError":
     case "ProcessCaptureError":
     case "ProviderSelectionError":
@@ -262,8 +244,6 @@ const artifactStateErrorDetails = (
       reason: error.reason,
       ...(error.reason === "limit" ? { truncated: true } : {}),
     };
-  if (error instanceof WorkspaceStorageError)
-    return { operation: error.operation, reason: error.reason };
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof EvidenceFileError)
     return { operation: error.operation, reason: error.reason };

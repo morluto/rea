@@ -22,21 +22,8 @@ export type {
   ArtifactNativeMountPolicy,
 } from "./ArtifactInventory/types.js";
 
-/** Inventory one local artifact without extracting or mounting it. */
+/** Inventory one local artifact and return every graph collection inline. */
 export const inventoryArtifact = async (
-  inputPath: string,
-  options: {
-    readonly signal?: AbortSignal;
-    readonly nativeMount?: ArtifactNativeMountPolicy;
-    readonly integrity?: ArtifactIntegrityPolicy;
-  } = {},
-): Promise<ArtifactInventoryResult> => {
-  const snapshot = await scanArtifactInventory(inputPath, options);
-  return artifactInventoryResultSchema.parse(snapshot);
-};
-
-/** Inventory one artifact and return every graph collection in one response. */
-export const inventoryArtifactFully = async (
   inputPath: string,
   options: {
     readonly signal?: AbortSignal;

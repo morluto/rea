@@ -5,7 +5,6 @@ import {
   createRequestStateCodec,
   McpServer,
   PROTOCOL_VERSION_META_KEY,
-  type ServerContext,
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -31,6 +30,7 @@ import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost
 import { mcpEnvelopeValue } from "./mcpClientMetadata.js";
 import {
   PROCESS_CAPTURE_ELICITATION_POLICY,
+  type ProcessCaptureElicitation,
   type ProcessCaptureElicitationState,
 } from "./ProcessCaptureElicitation.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
@@ -99,17 +99,6 @@ const installSessionToolAvailability = (
   return {
     policy,
   };
-};
-
-type ProcessCaptureElicitation = {
-  readonly stateCodec: ReturnType<
-    typeof createRequestStateCodec<ProcessCaptureElicitationState>
-  >;
-  readonly supported: (context: {
-    readonly mcpReq: Pick<ServerContext["mcpReq"], "envelope">;
-  }) => boolean;
-  readonly now: typeof Date.now;
-  readonly consumedNonces: Map<string, number>;
 };
 
 const createProcessCaptureElicitation = (

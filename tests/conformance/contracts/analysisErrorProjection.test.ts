@@ -6,7 +6,6 @@ import {
   ArtifactOperationError,
   EvidenceFileError,
   HopperRemoteError,
-  WorkspaceStorageError,
   UnknownRegistryError,
   projectAnalysisError,
   type AnalysisError,
@@ -32,20 +31,6 @@ describe("analysis error projection contract", () => {
       ...(["not-file", "exists", "invalid-json", "io"] as const).map(
         (reason) => new EvidenceFileError("read", reason),
       ),
-      ...(
-        [
-          "disabled",
-          "outside-root",
-          "not-file",
-          "too-large",
-          "invalid-json",
-          "integrity",
-          "locked",
-          "revision-conflict",
-          "name-conflict",
-          "io",
-        ] as const
-      ).map((reason) => new WorkspaceStorageError("update", reason)),
       ...(
         [
           "not-found",

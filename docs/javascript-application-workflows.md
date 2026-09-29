@@ -160,8 +160,8 @@ all four `--left-module-path`, `--left-export-name`, `--right-module-path`, and
 `--right-export-name` options to verify an explicit export pair.
 
 Because source Evidence and derived Evidence are retained by the normal session
-ledger, evidence bundles, analysis snapshots, and investigation workspaces can
-carry these records without another persistence format.
+ledger, evidence bundles and analysis snapshots can carry these records without
+another persistence format.
 
 ## Controlled replay boundary
 

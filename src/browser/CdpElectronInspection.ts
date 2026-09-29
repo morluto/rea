@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type {
   ElectronPageInspection,
@@ -11,6 +7,7 @@ import { BrowserObservationError } from "../domain/errors.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import { canonicalJsonDigest } from "./CdpCanonicalJsonDigest.js";
 import {
   delayWithCancellation,
   numberValue,
@@ -298,7 +295,7 @@ const captureResources = async (
             ? null
             : Math.max(0, numberValue(resource.contentSize) ?? 0),
       };
-      const resourceKey = `electron_resource_${digest(item)}`;
+      const resourceKey = `electron_resource_${canonicalJsonDigest(item)}`;
       if (seen.has(resourceKey)) continue;
       seen.add(resourceKey);
       resources.push({
@@ -379,12 +376,6 @@ const stringAt = (strings: readonly string[], value: unknown): string =>
 const integer = (value: unknown, fallback: number): number => {
   const number = numberValue(value);
   return number === undefined ? fallback : Math.trunc(number);
-};
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined) throw new TypeError("Expected canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
 };
 
 const report = async (

@@ -352,7 +352,6 @@ REA handles the app analysis in steps 1–5. The agent performs step 6 with its 
 - Reconstruct an app's authentication, storage, update, or networking flow.
 - Recover enough structure to document an undocumented format or interface.
 - Trace a suspicious behavior from a string or symbol to the code that implements it.
-- Run, checkpoint, resume, and reuse a content-addressed artifact investigation across two versions.
 - Turn recovered behavior into product features, tests, migration notes, ports, or interoperable replacements.
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
@@ -397,7 +396,6 @@ REA is already useful for native application, browser, and Electron investigatio
 - Search and trace features across symbols, strings, metadata, references, and call paths.
 - Record every successful result as deterministic Evidence with artifact and provider identity, confidence, authority, limitations, and locations.
 - Export and import evidence bundles across sessions.
-- Persist automatic cross-version artifact runs as canonical, lock-protected workspaces with tamper-evident revision commitments.
 - Capture approved PTY scenarios as Process Capture Evidence, including committed run manifests, raw and rendered terminal frames, scripted interactions, descendant settlement, named filesystem checkpoints, deterministic command shims, and loopback HTTP/WebSocket exchanges.
 - Validate finite replay machines without launching a target through `run_replay_machine` or `rea run-replay-machine`; ordered events return typed decisions, actions, captured aliases, transition journals, final state, and exact limit use without echoing request or captured values.
 - Compare complete artifact inventories by stable path, content, metadata, and relations; incomplete evidence never implies equivalence.
@@ -543,7 +541,6 @@ current session for bounded `completion/complete` suggestions; see
 flowchart LR
     Agent["Agent"] --> REA["REA<br/>CLI + MCP"]
     Terminal --> REA
-    REA --> Workspace["Investigation workspace<br/>evidence + artifacts + captures"]
     REA --> Session["Target-bound session router"]
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
@@ -560,7 +557,7 @@ flowchart LR
     Artifact --> Target
 ```
 
-The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger across an investigation. Approved persistent workspaces keep canonical Evidence and resumable run checkpoints across both process and session lifetimes.
+The CLI and MCP server use the same application workflows and evidence contracts. A provider declares which capabilities it supports and the side effects those capabilities may have. Terminal commands are short-lived; an MCP session can retain an active target and evidence ledger for the session.
 
 ## CLI
 

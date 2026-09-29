@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
 import type {
   ElectronPageInspection,
   InspectElectronPageInput,
@@ -9,6 +5,7 @@ import type {
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
+import { canonicalJsonDigest } from "./CdpCanonicalJsonDigest.js";
 import { requiredRecord, stringValue } from "./CdpCaptureValues.js";
 import type { ElectronScriptDraft } from "./CdpElectronScriptEvents.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
@@ -52,7 +49,7 @@ export const captureElectronScripts = async (
       is_module: script.isModule,
       language: script.language,
     };
-    const scriptKey = `electron_script_${digest(identity)}`;
+    const scriptKey = `electron_script_${canonicalJsonDigest(identity)}`;
     if (seen.has(scriptKey)) continue;
     seen.add(scriptKey);
     total += 1;
@@ -104,10 +101,4 @@ const captureScriptSource = async (
       artifact: createWebTextArtifact(text, "text/javascript"),
     },
   };
-};
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined) throw new TypeError("Expected canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
 };

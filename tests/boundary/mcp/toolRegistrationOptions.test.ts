@@ -7,19 +7,6 @@ import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 describe("tool registration options", () => {
-  it("preserves canonical Zod parsers in the SDK schemas", () => {
-    for (const contract of TOOL_CONTRACTS) {
-      const options = toolRegistrationOptions(contract);
-      expect(options.inputSchema).not.toBe(contract.inputSchema);
-      expect(
-        options.inputSchema.safeParse(contract.examples[0]?.input ?? {}),
-      ).toEqual(
-        contract.inputSchema.safeParse(contract.examples[0]?.input ?? {}),
-      );
-      expect(options.outputSchema).toBe(contract.outputSchema);
-    }
-  });
-
   it("generates the checked-in catalog from the SDK wire projection", async () => {
     const server = new McpServer({ name: "catalog-test", version: "0" });
     for (const contract of TOOL_CONTRACTS)

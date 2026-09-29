@@ -49,7 +49,7 @@ const registerChangedBehavior = (
 ): void => {
   server.registerTool(
     contract.name,
-    contractOptions(contract),
+    toolRegistrationOptions(contract),
     async (input, context) => {
       const closure = evidenceClosure(
         session,
@@ -107,7 +107,7 @@ const registerCallPath = (
 ): void => {
   server.registerTool(
     contract.name,
-    contractOptions(contract),
+    toolRegistrationOptions(contract),
     async (input, context) => {
       const closure = evidenceClosure(
         session,
@@ -164,7 +164,7 @@ const registerStaticRuntime = (
 ): void => {
   server.registerTool(
     contract.name,
-    contractOptions(contract),
+    toolRegistrationOptions(contract),
     async (input, context) => {
       const closure = evidenceClosure(
         session,
@@ -225,7 +225,7 @@ const registerReconstruction = (
 ): void => {
   server.registerTool(
     contract.name,
-    contractOptions(contract),
+    toolRegistrationOptions(contract),
     async (input, context) => {
       const owned = session.exportEvidenceBundle();
       const computed = await runDerivedOperation(context, contract.name, () =>
@@ -265,5 +265,3 @@ const registerReconstruction = (
     },
   );
 };
-
-const contractOptions = toolRegistrationOptions;

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import * as t from "@babel/types";
 
+import { propertyName } from "./javascriptAstValues.js";
+
 /** Static CommonJS export names. */
 export interface StaticExports {
   readonly values: readonly string[];
@@ -118,13 +120,6 @@ const memberPath = (node: t.Node | null | undefined): string => {
     const property = propertyName(node.property);
     return object === "" ? property : `${object}.${property}`;
   }
-  return "";
-};
-
-const propertyName = (node: t.Node): string => {
-  if (t.isIdentifier(node)) return node.name;
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node))
-    return String(node.value);
   return "";
 };
 

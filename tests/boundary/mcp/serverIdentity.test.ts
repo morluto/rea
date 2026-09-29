@@ -11,6 +11,7 @@ import {
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -97,7 +98,7 @@ describe("server and catalog identity", () => {
     expect(CATALOG_IDENTITY.counts).toEqual({
       cli_commands: CLI_COMMAND_NAMES.length,
       mcp_tools: TOOL_CONTRACTS.length,
-      mcp_prompts: 6,
+      mcp_prompts: PROMPT_CONTRACTS.length,
     });
     expect(CATALOG_IDENTITY.digests.combined_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });

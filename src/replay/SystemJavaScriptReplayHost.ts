@@ -16,6 +16,33 @@ import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
 
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
+const bubblewrapProbeArguments = (command: readonly string[]): string[] => [
+  "--unshare-all",
+  "--unshare-user",
+  "--disable-userns",
+  "--new-session",
+  "--die-with-parent",
+  "--cap-drop",
+  "ALL",
+  "--ro-bind",
+  "/usr",
+  "/usr",
+  "--ro-bind",
+  "/lib",
+  "/lib",
+  "--ro-bind-try",
+  "/lib64",
+  "/lib64",
+  "--proc",
+  "/proc",
+  "--dev",
+  "/dev",
+  "--seccomp",
+  "3",
+  "--",
+  ...command,
+];
+
 /** Production planning host for descriptor-backed reads and fail-closed probes. */
 export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
   async readSource(
@@ -93,64 +120,16 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
     try {
       await run(
         policy.bubblewrapPath,
-        [
-          "--unshare-all",
-          "--unshare-user",
-          "--disable-userns",
-          "--new-session",
-          "--die-with-parent",
-          "--cap-drop",
-          "ALL",
-          "--ro-bind",
-          "/usr",
-          "/usr",
-          "--ro-bind",
-          "/lib",
-          "/lib",
-          "--ro-bind-try",
-          "/lib64",
-          "/lib64",
-          "--proc",
-          "/proc",
-          "--dev",
-          "/dev",
-          "--seccomp",
-          "3",
-          "--",
-          "/usr/bin/true",
-        ],
+        bubblewrapProbeArguments(["/usr/bin/true"]),
         ["ignore", "pipe", "pipe", filter.handle.fd],
       );
       await runExpectFailure(
         policy.bubblewrapPath,
-        [
-          "--unshare-all",
-          "--unshare-user",
-          "--disable-userns",
-          "--new-session",
-          "--die-with-parent",
-          "--cap-drop",
-          "ALL",
-          "--ro-bind",
-          "/usr",
-          "/usr",
-          "--ro-bind",
-          "/lib",
-          "/lib",
-          "--ro-bind-try",
-          "/lib64",
-          "/lib64",
-          "--proc",
-          "/proc",
-          "--dev",
-          "/dev",
-          "--seccomp",
-          "3",
-          "--",
+        bubblewrapProbeArguments([
           "/usr/bin/unshare",
           "--mount",
           "/usr/bin/true",
-        ],
+        ]),
         ["ignore", "pipe", "pipe", filter.handle.fd],
       );
       await run(policy.systemdRunPath, [

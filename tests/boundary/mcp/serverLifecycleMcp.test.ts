@@ -7,11 +7,6 @@ import { HopperRemoteError } from "../../../src/domain/errors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import {
-  SESSION_TOOL_CONTRACTS,
-  TOOL_CONTRACTS,
-} from "../../../src/contracts/toolContracts.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managedWorkflowToolContracts.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -49,22 +44,6 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
     throw new Error("missing structured result");
   return Object.fromEntries(Object.entries(result.structuredContent));
 };
-
-it("preserves the target-open tool inventory without a session", async () => {
-  const client = await connect({
-    execute: () => Promise.resolve(ok(null)),
-  });
-  const listed = await client.listTools();
-  expect(listed.tools).toHaveLength(
-    TOOL_CONTRACTS.length -
-      SESSION_TOOL_CONTRACTS.length -
-      MANAGED_WORKFLOW_TOOL_CONTRACTS.length,
-  );
-  const names = listed.tools.map((t) => t.name);
-  expect(names).toContain("binary_overview");
-  expect(names).toContain("batch_decompile");
-  expect(names).not.toContain("open_binary");
-});
 
 it("projects remote failures without provider or bridge details", async () => {
   const client = await connect({

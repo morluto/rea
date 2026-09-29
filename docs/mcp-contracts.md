@@ -45,7 +45,7 @@ REA accepts ordinary `tools/call` progress tokens. Updates are monotonic,
 rate-bounded to at most one intermediate update per 100 ms, and always allow a
 terminal update. Unknown totals are omitted; REA does not fabricate percentages.
 Provider calls receive the request cancellation signal. Artifact traversal,
-hashing, cross-version scanning/checkpoints, Hopper requests, and process capture
+hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
 Derived comparisons and reconstruction verification yield before computation
@@ -69,9 +69,10 @@ current/containing procedure. Its capability inventory exposes a
 the caller supplies `document` and the provider lacks `current_document`. A
 cursor outside a procedure is represented as
 `procedure: null`. `inspect_address_context` requires an explicit address and
-returns bounded name, procedure, comment, inline-comment, and bookmark facets;
-unsupported facets are local `unavailable` outcomes. The scalar getters remain
-available while the aggregate contracts are evaluated.
+returns name, procedure, comment, inline-comment, and bookmark facets;
+unsupported facets are local `unavailable` outcomes. Use `current_document`,
+`current_address`, and `current_procedure` for direct single-field lookups; use
+the aggregate tools when you need related context together.
 
 ## Permission policy
 

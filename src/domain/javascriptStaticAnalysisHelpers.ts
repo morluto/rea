@@ -10,6 +10,9 @@ import type {
   JavaScriptStaticPathContext,
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
+import { propertyName } from "./javascriptAstValues.js";
+
+export { propertyName } from "./javascriptAstValues.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -296,14 +299,6 @@ const calleeNameAt = (node: t.Node): string => {
     const property = propertyName(node.property);
     return object === "" ? property : `${object}.${property}`;
   }
-  return "";
-};
-
-/** Read a literal property name without evaluating computed syntax. */
-export const propertyName = (node: t.Node): string => {
-  if (t.isIdentifier(node)) return node.name;
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node))
-    return String(node.value);
   return "";
 };
 

@@ -62,9 +62,7 @@ export const registerJavaScriptRuntimeObservationTools = (
           return observeJavaScriptRuntime(
             options.runtime,
             options.permissionAuthority,
-            observeJavaScriptRuntimeInputSchema.parse({
-              ...request,
-            }),
+            request,
             { signal },
           );
         },

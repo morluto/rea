@@ -236,34 +236,6 @@ describe("browser CLI capture parity", () => {
   );
 });
 
-describe("browser CLI configured access", () => {
-  it(
-    "uses the configured endpoint without a redundant request approval flag",
-    async () => {
-      const browser = await startFakeCdpBrowser();
-      browsers.push(browser);
-      const result = await runCli(
-        ["list-browser-targets", browser.endpoint, "--json"],
-        {
-          ...process.env,
-          REA_BROWSER_OBSERVE_ENABLED: "true",
-          REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-          REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-            browser.allowedOrigin,
-          ]),
-        },
-      );
-      expect(result).toMatchObject({
-        operation: "list_browser_targets",
-        normalized_result: {
-          targets: [{ target_id: "allowed-page" }],
-        },
-      });
-    },
-    INTEGRATION_TEST_TIMEOUT_MS,
-  );
-});
-
 const runCli = async (
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,

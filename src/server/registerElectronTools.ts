@@ -83,9 +83,7 @@ export const registerElectronTools = (
           return inspectElectronPage(
             options.electron,
             options.permissionAuthority,
-            inspectElectronPageInputSchema.parse({
-              ...request,
-            }),
+            request,
             { signal, progress },
           );
         },
