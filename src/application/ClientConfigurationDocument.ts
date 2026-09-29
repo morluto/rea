@@ -1,4 +1,5 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import type { SetupClient } from "./SupportedClients.js";
@@ -11,6 +12,27 @@ export interface ClientConfigurationDocument {
 }
 
 const objectSchema = z.record(z.string(), z.unknown());
+
+/** Compare parsed configuration values without depending on parser prototypes. */
+export const clientConfigurationValuesEqual = (
+  left: unknown,
+  right: unknown,
+): boolean =>
+  isDeepStrictEqual(
+    normalizeConfigurationValue(left),
+    normalizeConfigurationValue(right),
+  );
+
+const normalizeConfigurationValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(normalizeConfigurationValue);
+  if (typeof value !== "object" || value === null || value instanceof Date)
+    return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, normalizeConfigurationValue(nested)]),
+  );
+};
 
 /** Parse the client format and reject malformed root or server-table values. */
 export const parseClientConfiguration = (

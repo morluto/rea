@@ -1,4 +1,5 @@
 import {
+  clientConfigurationValuesEqual,
   parseClientConfiguration,
   serializeClientConfiguration,
   type ClientConfigurationDocument,
@@ -6,7 +7,6 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -70,7 +70,12 @@ const configureClientDocument = async (
   }
   const { document, servers, serversKey } = parsed;
   const desired = clientConfigurationDesired(client, environment, command);
-  if (isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
+  if (
+    clientConfigurationValuesEqual(
+      servers[PRODUCT_IDENTITY.mcpServerKey],
+      desired,
+    )
+  )
     return { status: "unchanged" };
   const backupPath =
     original === undefined ? undefined : `${client.configPath}.rea.backup`;
@@ -102,7 +107,7 @@ const configureClientDocument = async (
       format,
     );
     if (
-      !isDeepStrictEqual(
+      !clientConfigurationValuesEqual(
         readback.servers[PRODUCT_IDENTITY.mcpServerKey],
         desired,
       )
@@ -134,7 +139,10 @@ export const clientConfigurationAligned = async (
   try {
     const original = await readFile(client.configPath, "utf8");
     const { servers } = parseClientConfiguration(original, client.format);
-    return isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired);
+    return clientConfigurationValuesEqual(
+      servers[PRODUCT_IDENTITY.mcpServerKey],
+      desired,
+    );
   } catch {
     return false;
   }
@@ -174,7 +182,12 @@ export const inspectClientConfiguration = async (
   );
   try {
     const { servers } = parseClientConfiguration(original, client.format);
-    if (isDeepStrictEqual(servers[PRODUCT_IDENTITY.mcpServerKey], desired))
+    if (
+      clientConfigurationValuesEqual(
+        servers[PRODUCT_IDENTITY.mcpServerKey],
+        desired,
+      )
+    )
       return { status: "already_current" };
   } catch {
     return {
