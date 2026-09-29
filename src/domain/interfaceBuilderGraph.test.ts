@@ -156,6 +156,45 @@ describe("compiled Interface Builder graph projection", () => {
   });
 });
 
+describe("Interface Builder parser bounds", () => {
+  it("reports connections discarded by the parser's hard ceiling", () => {
+    const connections = Array.from({ length: 40_001 }, (_, index) => ({
+      type: "custom-connection",
+      label: `action${String(index)}:`,
+    }));
+    const raw = {
+      "com.apple.ibtool.document.objects": {
+        button: { class: "UIButton" },
+      },
+      "com.apple.ibtool.document.connections": { button: connections },
+    };
+    const parsed = parseInterfaceBuilderRecords(raw);
+    expect(parsed.connections).toHaveLength(40_000);
+    expect(parsed.omittedConnections).toBe(1);
+
+    const result = buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Main.storyboardc/scene.nib",
+          archiveSha256: hash,
+          documentKind: "storyboard_scene",
+          raw,
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Main.storyboardc/scene.nib",
+        status: "partial",
+        omitted: 1,
+      }),
+    );
+  });
+});
+
 describe("keyed archive decoding and graph limits", () => {
   it("preserves keyed archive UID identities, arrays, and control actions", () => {
     const parsed = parseInterfaceBuilderRecords({

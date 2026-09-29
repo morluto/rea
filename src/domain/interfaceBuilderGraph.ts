@@ -75,6 +75,7 @@ export const parseInterfaceBuilderRecords = (
   readonly classes: Readonly<Record<string, unknown>>;
   readonly objectCount: number;
   readonly omittedObjects: number;
+  readonly omittedConnections: number;
 } => {
   const root = record(value);
   const keyed = parseKeyedArchive(root);
@@ -85,6 +86,7 @@ export const parseInterfaceBuilderRecords = (
   const classesRaw = record(root["com.apple.ibtool.document.classes"]);
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
+  let omittedConnections = 0;
   const objectEntries = Object.entries(objectsRaw);
   for (const [id, raw] of objectEntries.slice(0, 20_000)) {
     const attributes = record(raw);
@@ -112,7 +114,10 @@ export const parseInterfaceBuilderRecords = (
   for (const [sourceId, rawConnections] of Object.entries(connectionsRaw)) {
     if (!Array.isArray(rawConnections)) continue;
     for (const [index, raw] of rawConnections.entries()) {
-      if (connections.length >= 40_000) break;
+      if (connections.length >= 40_000) {
+        omittedConnections += rawConnections.length - index;
+        break;
+      }
       const item = record(raw);
       const type = firstString(item.type, item.connectionType) ?? "unknown";
       const destination = firstString(
@@ -139,6 +144,7 @@ export const parseInterfaceBuilderRecords = (
     classes: classesRaw,
     objectCount: objectEntries.length,
     omittedObjects: Math.max(0, objectEntries.length - 20_000),
+    omittedConnections,
   };
 };
 
@@ -201,13 +207,13 @@ const parseKeyedArchive = (
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
   let objectCount = 0;
+  let omittedConnections = 0;
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
     const className = firstString(resolved.className);
     if (className === null) continue;
     objectCount += 1;
-    if (objects.length >= 20_000) continue;
     const fields = Object.fromEntries(
       Object.entries(resolved).filter(([key]) => key !== "className"),
     );
@@ -218,22 +224,23 @@ const parseKeyedArchive = (
         ? String(fields.archiveUID)
         : String(index));
     const kind = classifyObject(className);
-    objects.push(
-      objectNode.parse({
-        id: objectId,
-        kind,
-        class_name: className,
-        name:
-          firstString(
-            fields.label,
-            fields.title,
-            fields.identifier,
-            fields.accessibilityLabel,
-            className,
-          ) ?? `object ${String(index)}`,
-        attributes: jsonSafeRecord(fields),
-      }),
-    );
+    if (objects.length < 20_000)
+      objects.push(
+        objectNode.parse({
+          id: objectId,
+          kind,
+          class_name: className,
+          name:
+            firstString(
+              fields.label,
+              fields.title,
+              fields.identifier,
+              fields.accessibilityLabel,
+              className,
+            ) ?? `object ${String(index)}`,
+          attributes: jsonSafeRecord(fields),
+        }),
+      );
     if (
       /(?:Outlet|Connection|Segue|ActionConnection|ControlConnector)/iu.test(
         className,
@@ -247,25 +254,25 @@ const parseKeyedArchive = (
       );
       if (source === null) continue;
       const kind = controlAction ? "action" : classifyConnection(className);
-      connections.push(
-        connection.parse({
-          id: `archive:${objectId}`,
-          kind,
-          source_id: source,
-          destination_id: firstObjectReference(
-            controlAction ? fields.source : fields.destination,
-            controlAction ? fields.from : fields.to,
-            controlAction ? fields.owner : fields.target,
-          ),
-          label: firstString(
-            fields.label,
-            fields.selector,
-            fields.identifier,
-            fields.action,
-          ),
-          attributes: jsonSafeRecord(fields),
-        }),
-      );
+      const parsedConnection = connection.parse({
+        id: `archive:${objectId}`,
+        kind,
+        source_id: source,
+        destination_id: firstObjectReference(
+          controlAction ? fields.source : fields.destination,
+          controlAction ? fields.from : fields.to,
+          controlAction ? fields.owner : fields.target,
+        ),
+        label: firstString(
+          fields.label,
+          fields.selector,
+          fields.identifier,
+          fields.action,
+        ),
+        attributes: jsonSafeRecord(fields),
+      });
+      if (connections.length < 40_000) connections.push(parsedConnection);
+      else omittedConnections += 1;
     }
   }
   const top = record(root.$top);
@@ -294,6 +301,7 @@ const parseKeyedArchive = (
     classes,
     objectCount,
     omittedObjects: Math.max(0, objectCount - 20_000),
+    omittedConnections,
   };
 };
 
@@ -654,21 +662,22 @@ export const buildInterfaceBuilderAnalysis = (input: {
     }
     const objectsTruncated =
       parsed.omittedObjects > 0 || parsed.objects.length > documentObjectCount;
+    const parserOmittedConnections = parsed.omittedConnections;
     const connectionsTruncated =
+      parserOmittedConnections > 0 ||
       parsed.connections.length > input.limits.max_connections;
     omittedObjects +=
       parsed.omittedObjects +
       Math.max(0, parsed.objects.length - documentObjectCount);
-    omittedConnections += Math.max(
-      0,
-      parsed.connections.length - input.limits.max_connections,
-    );
+    omittedConnections +=
+      Math.max(0, parsed.connections.length - input.limits.max_connections) +
+      parserOmittedConnections;
     summaries.push({
       relative_path: document.relativePath,
       archive_sha256: document.archiveSha256,
       document_kind: document.documentKind,
       object_count: parsed.objectCount,
-      connection_count: parsed.connections.length,
+      connection_count: parsed.connections.length + parserOmittedConnections,
       hierarchy_complete: parsed.hierarchy.length > 0 && !truncated,
     });
     coverage.push(
@@ -699,7 +708,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
           Math.max(
             0,
             parsed.connections.length - input.limits.max_connections,
-          ) + documentOmittedConnections,
+          ) +
+          documentOmittedConnections +
+          parserOmittedConnections,
       },
       {
         facet: `hierarchy:${document.relativePath}`,

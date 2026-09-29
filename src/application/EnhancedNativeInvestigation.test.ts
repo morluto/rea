@@ -424,3 +424,63 @@ describe("native UI query outcomes", () => {
     });
   });
 });
+
+describe("native UI trace boundaries", () => {
+  it("returns cancellation when archive decoding is cancelled", async () => {
+    const result = await new EnhancedTools(
+      testAnalysis({
+        decode_interface_builder: () =>
+          err(new AnalysisCancelledError("decode_interface_builder")),
+      }),
+    ).execute("trace_native_ui_action", { action: "buildTapped:" });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "decode_interface_builder",
+      },
+    });
+  });
+
+  it("matches handlers after the dispatch inventory's former default limit", async () => {
+    const names = Array.from({ length: 5_000 }, (_, index) => ({
+      address: `0x${(index + 1).toString(16)}`,
+      name: `unrelated_symbol_${index}`,
+    }));
+    names.push({
+      address: "0x2000",
+      name: "-[BuildViewController buildTapped:]",
+    });
+    const result = await new EnhancedTools(
+      testAnalysis({ list_names: () => execution("list_names", names) }),
+    ).execute("trace_native_ui_action", { action: "buildTapped:" });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ id: "native:function:0x2000" }),
+      ]),
+    });
+  });
+
+  it("counts edges removed with nodes in bounded graph coverage", async () => {
+    const result = await new EnhancedTools(testAnalysis()).execute(
+      "trace_native_ui_action",
+      { action: "missing-selector", max_nodes: 1 },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      coverage: expect.arrayContaining([
+        expect.objectContaining({
+          facet: "interface_builder_graph",
+          status: "partial",
+          omitted: 8,
+        }),
+      ]),
+    });
+  });
+});

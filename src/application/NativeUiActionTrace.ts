@@ -18,9 +18,9 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { parseRelatedAddresses } from "../domain/hopperValues.js";
 import { err, ok } from "../domain/result.js";
 import {
+  AnalysisCancelledError,
   AnalysisOutputError,
   projectAnalysisError,
-  type AnalysisError,
 } from "../domain/errors.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
@@ -50,6 +50,8 @@ export const traceNativeUiAction = async (
     analysis.execute("list_names", {}, signal === undefined ? {} : { signal }),
   ]);
 
+  if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
+    return err(new AnalysisCancelledError("decode_interface_builder"));
   if (!namesExecution.ok) return err(namesExecution.error);
   const parsedNames = nativeNameSchema.safeParse(namesExecution.value.result);
   if (!parsedNames.success)
@@ -78,6 +80,7 @@ export const traceNativeUiAction = async (
         address: entry.address,
         name: "name" in entry ? entry.name : entry.value,
       })),
+      parsedNames.data.length,
     ),
   });
 
@@ -260,7 +263,7 @@ const boundUiGraph = (
   );
   const edges = eligibleEdges.slice(0, maxEdges);
   const omitted =
-    graph.nodes.length - nodes.length + eligibleEdges.length - edges.length;
+    graph.nodes.length - nodes.length + graph.edges.length - edges.length;
   const truncated = omitted > 0;
   return {
     graph: nativeInvestigationGraphSchema.parse({
