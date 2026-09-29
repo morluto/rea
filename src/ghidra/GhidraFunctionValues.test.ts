@@ -157,7 +157,46 @@ describe("Ghidra function-analysis result values", () => {
             compilable: false,
           },
         },
+        native_value_flow: {
+          available: true,
+          provenance: "ghidra-high-pcode",
+          operations: [
+            expect.objectContaining({ id: "0x401000#0", opcode: "COPY" }),
+          ],
+          truncated: false,
+        },
       },
+    });
+  });
+
+  it("rejects p-code relationships that refer to omitted operation IDs", () => {
+    const dossier = ghidraFunctionDossier();
+    if (
+      typeof dossier !== "object" ||
+      dossier === null ||
+      Array.isArray(dossier)
+    )
+      throw new TypeError("Ghidra dossier fixture is invalid");
+    const flow = dossier.native_value_flow;
+    if (typeof flow !== "object" || flow === null || Array.isArray(flow))
+      throw new TypeError("Ghidra p-code fixture is invalid");
+    expect(
+      parseGhidraFunctionResult("analyze_function", {
+        ...dossier,
+        native_value_flow: {
+          ...flow,
+          def_use: [
+            {
+              definition: "0x401000#missing",
+              use: "0x401000#0",
+              input_index: 0,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
     });
   });
 

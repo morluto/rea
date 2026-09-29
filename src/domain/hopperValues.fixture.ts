@@ -149,6 +149,42 @@ export const ghidraFunctionDossier = (includeAssembly = true): JsonValue => {
     referenced_names: [],
     basic_blocks: [{ start: "0x401000", end: "0x401006", successors: [] }],
     native_api: ghidraNativeApiBoundary(),
+    native_value_flow: {
+      available: true,
+      provenance: "ghidra-high-pcode",
+      operations: [
+        {
+          id: "0x401000#0",
+          address: "0x401000",
+          sequence: 0,
+          opcode: "COPY",
+          is_dead: false,
+          inputs: [
+            {
+              kind: "constant",
+              size_bytes: 4,
+              location: null,
+              constant_hex: "2a",
+            },
+          ],
+          output: {
+            kind: "register",
+            size_bytes: 4,
+            location: "register:0x0",
+            constant_hex: null,
+          },
+        },
+      ],
+      def_use: [],
+      effects: [],
+      truncated: false,
+      omitted_operations_lower_bound: 0,
+      known_omitted_inputs: 0,
+      known_omitted_edges: 0,
+      limitations: [
+        "High p-code is a decompiler-derived intra-function representation, not original source or runtime behavior.",
+      ],
+    },
     limitations: [
       "Unresolved computed or indirect flows without target addresses are not represented as reference edges.",
       "Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.",

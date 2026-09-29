@@ -4,6 +4,7 @@ import type { JsonValue } from "./jsonValue.js";
 import { AnalysisOutputError, HopperProtocolError } from "./errors.js";
 import { err, ok, type Result } from "./result.js";
 import { nativeApiBoundarySchema } from "./nativeApiBoundary.js";
+import { nativeValueFlowSchema } from "./nativeValueFlow.js";
 
 export interface AddressedName {
   readonly address: string;
@@ -176,6 +177,7 @@ export const functionDossierSchema = z
         .strict(),
     ),
     native_api: nativeApiBoundarySchema.nullable().default(null),
+    native_value_flow: nativeValueFlowSchema.nullable().default(null),
     limitations: z.array(z.string()).default([]),
   })
   .strict();

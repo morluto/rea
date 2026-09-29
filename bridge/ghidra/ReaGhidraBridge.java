@@ -25,8 +25,11 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
@@ -74,8 +77,15 @@ import ghidra.program.model.pcode.FunctionPrototype;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.pcode.JumpTable;
+import ghidra.program.model.pcode.PcodeOp;
+import ghidra.program.model.pcode.PcodeOpAST;
+import ghidra.program.model.pcode.Varnode;
+import ghidra.program.model.pcode.VarnodeAST;
 
 public final class ReaGhidraBridge extends HeadlessScript {
+    private static final int MAX_HIGH_PCODE_OPS = 3000;
+    private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
+    private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
@@ -523,6 +533,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "native_api",
             nativeApiBoundary(function, decompilation)
         );
+        result.add("native_value_flow", nativeValueFlow(decompilation));
         JsonArray limitations = new JsonArray();
         limitations.add(
             "Unresolved computed or indirect flows without target addresses are not represented as reference edges."
@@ -538,6 +549,205 @@ public final class ReaGhidraBridge extends HeadlessScript {
         );
         result.add("limitations", limitations);
         return result;
+    }
+
+    private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
+        HighFunction highFunction =
+            decompilation == null ? null : decompilation.getHighFunction();
+        if (highFunction == null) {
+            JsonObject unavailable = new JsonObject();
+            unavailable.addProperty("available", false);
+            unavailable.addProperty(
+                "reason",
+                "Ghidra has no HighFunction p-code model for this procedure"
+            );
+            JsonArray limitations = new JsonArray();
+            limitations.add(
+                "No p-code operations or def-use relationships were recovered for this procedure."
+            );
+            unavailable.add("limitations", limitations);
+            return unavailable;
+        }
+
+        List<PcodeOpAST> selected = new ArrayList<>();
+        int omittedOperationsLowerBound = 0;
+        Iterator<PcodeOpAST> operations = highFunction.getPcodeOps();
+        while (operations.hasNext()) {
+            monitor.checkCancelled();
+            PcodeOpAST operation = operations.next();
+            if (selected.size() >= MAX_HIGH_PCODE_OPS) {
+                omittedOperationsLowerBound = 1;
+                break;
+            }
+            selected.add(operation);
+        }
+
+        Map<PcodeOpAST, String> operationIds = new IdentityHashMap<>();
+        for (PcodeOpAST operation : selected) {
+            operationIds.put(operation, pcodeOperationId(operation));
+        }
+        JsonArray operationValues = new JsonArray();
+        JsonArray defUse = new JsonArray();
+        JsonArray effects = new JsonArray();
+        int omittedInputs = 0;
+        int omittedEdges = 0;
+        for (PcodeOpAST operation : selected) {
+            monitor.checkCancelled();
+            String operationId = operationIds.get(operation);
+            JsonObject value = new JsonObject();
+            value.addProperty("id", operationId);
+            value.addProperty(
+                "address",
+                canonicalAddress(operation.getSeqnum().getTarget())
+            );
+            value.addProperty("sequence", operation.getSeqnum().getTime());
+            value.addProperty("opcode", operation.getMnemonic());
+            value.addProperty("is_dead", operation.isDead());
+            JsonArray inputs = new JsonArray();
+            int inputCount = operation.getNumInputs();
+            int capturedInputs = Math.min(inputCount, MAX_HIGH_PCODE_INPUTS_PER_OP);
+            for (int inputIndex = 0; inputIndex < capturedInputs; inputIndex += 1) {
+                Varnode input = operation.getInput(inputIndex);
+                inputs.add(varnodeValue(input));
+                if (input instanceof VarnodeAST astInput) {
+                    PcodeOp definition = astInput.getDef();
+                    if (definition instanceof PcodeOpAST astDefinition) {
+                        String definitionId = operationIds.get(astDefinition);
+                        if (definitionId == null || defUse.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) {
+                            omittedEdges += 1;
+                        } else {
+                            JsonObject edge = new JsonObject();
+                            edge.addProperty("definition", definitionId);
+                            edge.addProperty("use", operationId);
+                            edge.addProperty("input_index", inputIndex);
+                            defUse.add(edge);
+                        }
+                    }
+                }
+            }
+            omittedInputs += inputCount - capturedInputs;
+            value.add("inputs", inputs);
+            Varnode output = operation.getOutput();
+            value.add("output", output == null ? JsonNull.INSTANCE : varnodeValue(output));
+            operationValues.add(value);
+            addPcodeEffect(effects, operation, operationId);
+        }
+
+        JsonObject result = new JsonObject();
+        result.addProperty("available", true);
+        result.addProperty("provenance", "ghidra-high-pcode");
+        result.add("operations", operationValues);
+        result.add("def_use", defUse);
+        result.add("effects", effects);
+        boolean truncated = omittedOperationsLowerBound > 0 ||
+            omittedInputs > 0 || omittedEdges > 0;
+        result.addProperty("truncated", truncated);
+        result.addProperty(
+            "omitted_operations_lower_bound",
+            omittedOperationsLowerBound
+        );
+        result.addProperty("known_omitted_inputs", omittedInputs);
+        result.addProperty("known_omitted_edges", omittedEdges);
+        JsonArray limitations = new JsonArray();
+        limitations.add(
+            "High p-code is a decompiler-derived intra-function representation, not original source or runtime behavior; dead operations are retained and marked."
+        );
+        limitations.add(
+            "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
+        );
+        limitations.add(
+            "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."
+        );
+        limitations.add(
+            "Operation, input, and def-use limits can truncate large functions; inspect truncation, omitted lower bounds, and known omitted counts before drawing conclusions."
+        );
+        limitations.add(
+            "Known omitted-edge counts cover links omitted from retained operations; omitted operations may contain additional uncounted links."
+        );
+        result.add("limitations", limitations);
+        return result;
+    }
+
+    private String pcodeOperationId(PcodeOpAST operation) {
+        return canonicalAddress(operation.getSeqnum().getTarget()) + "#" +
+            operation.getSeqnum().getTime();
+    }
+
+    private JsonObject varnodeValue(Varnode varnode) {
+        JsonObject result = new JsonObject();
+        String kind = varnode.isConstant()
+            ? "constant"
+            : varnode.isAddress()
+                ? "address"
+                : varnode.isRegister()
+                    ? "register"
+                    : varnode.isUnique() ? "unique" : "other";
+        result.addProperty("kind", kind);
+        result.addProperty("size_bytes", varnode.getSize());
+        result.add(
+            "location",
+            varnode.isConstant()
+                ? JsonNull.INSTANCE
+                : GSON.toJsonTree(canonicalAddress(varnode.getAddress()))
+        );
+        result.add(
+            "constant_hex",
+            varnode.isConstant()
+                ? GSON.toJsonTree(Long.toUnsignedString(varnode.getOffset(), 16))
+                : JsonNull.INSTANCE
+        );
+        return result;
+    }
+
+    private void addPcodeEffect(
+        JsonArray destination,
+        PcodeOp operation,
+        String operationId
+    ) {
+        String kind = null;
+        Integer operandInput = null;
+        Integer valueInput = null;
+        switch (operation.getOpcode()) {
+            case PcodeOp.LOAD -> {
+                kind = "memory_read";
+                operandInput = 1;
+            }
+            case PcodeOp.STORE -> {
+                kind = "memory_write";
+                operandInput = 1;
+                valueInput = 2;
+            }
+            case PcodeOp.CBRANCH -> {
+                kind = "conditional_branch";
+                valueInput = 1;
+            }
+            case PcodeOp.BRANCHIND -> {
+                kind = "indirect_branch";
+                operandInput = 0;
+            }
+            case PcodeOp.CALL -> {
+                kind = "direct_call";
+                operandInput = 0;
+            }
+            case PcodeOp.CALLIND -> {
+                kind = "indirect_call";
+                operandInput = 0;
+            }
+            default -> { }
+        }
+        if (kind == null) return;
+        JsonObject effect = new JsonObject();
+        effect.addProperty("operation", operationId);
+        effect.addProperty("kind", kind);
+        effect.add(
+            "operand_input",
+            operandInput == null ? JsonNull.INSTANCE : GSON.toJsonTree(operandInput)
+        );
+        effect.add(
+            "value_input",
+            valueInput == null ? JsonNull.INSTANCE : GSON.toJsonTree(valueInput)
+        );
+        destination.add(effect);
     }
 
     private JsonElement addressName(JsonObject params) {
@@ -636,7 +846,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonObject search(JsonObject params, boolean procedureSearch) throws Exception {
+    private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {
         requireKeys(
             params,
             Set.of("pattern", "mode", "case_sensitive", "document")
@@ -1512,7 +1722,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonArray inventory(
         List<InventoryItem> inventory,
-        String factsName) {
+        String factsName) throws Exception {
         JsonArray result = new JsonArray();
         for (InventoryItem item : inventory) {
             monitor.checkCancelled();

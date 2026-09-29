@@ -8,6 +8,7 @@ import {
 } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
+import { nativeValueFlowSchema } from "../domain/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ghidraIdentifierSchema,
@@ -169,8 +170,63 @@ const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
   },
 );
 
+const ghidraNativeValueFlow = nativeValueFlowSchema.superRefine(
+  (value, context) => {
+    if (!value.available) return;
+    const operations = value.operations;
+    const addresses = operations.flatMap((operation) => [
+      operation.address,
+      ...operation.inputs.flatMap(({ location }) =>
+        location === null ? [] : [location],
+      ),
+      ...(operation.output?.location == null
+        ? []
+        : [operation.output.location]),
+    ]);
+    if (
+      addresses.some(
+        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra p-code flow contains a non-canonical address",
+      });
+    const operationIds = new Set(operations.map(({ id }) => id));
+    if (operationIds.size !== operations.length)
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra p-code operation identifiers are not unique",
+      });
+    if (
+      value.def_use.some(
+        ({ definition, use }) =>
+          !operationIds.has(definition) || !operationIds.has(use),
+      ) ||
+      value.effects.some(({ operation }) => !operationIds.has(operation))
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra p-code relationship references a missing operation",
+      });
+    if (
+      value.truncated !==
+      (value.omitted_operations_lower_bound > 0 ||
+        value.known_omitted_inputs > 0 ||
+        value.known_omitted_edges > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra p-code truncation flag contradicts omitted counts",
+      });
+  },
+);
+
 const ghidraFunctionDossier = functionDossierSchema
-  .extend({ native_api: ghidraNativeApiBoundary })
+  .extend({
+    native_api: ghidraNativeApiBoundary,
+    native_value_flow: ghidraNativeValueFlow,
+  })
   .strict()
   .superRefine((value, context) => {
     const addresses = [

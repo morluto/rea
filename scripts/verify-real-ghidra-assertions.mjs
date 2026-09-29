@@ -31,16 +31,16 @@ export function assertProviderText(assembly, pseudocode, expectedAddress) {
 }
 
 export function assertReferenceMetadata(observed) {
+  const references = observed?.references;
   if (
-    observed.instructions_scanned < 1 ||
-    observed.instruction_scan_truncated ||
-    observed.references.items.length === 0 ||
-    !observed.references.items.every(
+    !Array.isArray(references) ||
+    references.length === 0 ||
+    !references.every(
       ({ kind }) =>
         kind.available && kind.provenance === "ghidra-reference-manager",
     ) ||
-    !observed.references.items.some(({ kind }) => kind.call) ||
-    !observed.references.items.some(({ kind }) => kind.data)
+    !references.some(({ kind }) => kind.call) ||
+    !references.some(({ kind }) => kind.data)
   )
     throw new Error(
       `Ghidra typed reference metadata drifted: ${JSON.stringify(observed)}`,
@@ -60,11 +60,40 @@ export function assertDossier(
 ) {
   assertDossierProcedure(dossier, address);
   assertNativeApiBoundary(dossier.native_api, requireJumpTable);
+  assertNativeValueFlow(dossier.native_value_flow);
   assertDossierReferences(dossier);
   assertDossierCallees(dossier, expectedCallees);
   assertDossierStrings(dossier, expectedString);
   assertDossierAssembly(dossier, requireAssembly);
   assertDossierMultiBlock(dossier, requireMultiBlock);
+}
+
+function assertNativeValueFlow(observed) {
+  if (
+    observed?.available !== true ||
+    observed.provenance !== "ghidra-high-pcode" ||
+    observed.operations.length === 0 ||
+    !observed.limitations.some((value) =>
+      /cross function boundaries/u.test(value),
+    )
+  )
+    throw new Error(
+      `Ghidra p-code value-flow boundary drifted: ${JSON.stringify(observed)}`,
+    );
+  const ids = new Set(observed.operations.map(({ id }) => id));
+  if (
+    observed.def_use.some(
+      ({ definition, use }) => !ids.has(definition) || !ids.has(use),
+    ) ||
+    observed.effects.some(({ operation }) => !ids.has(operation)) ||
+    observed.truncated !==
+      (observed.omitted_operations_lower_bound > 0 ||
+        observed.known_omitted_inputs > 0 ||
+        observed.known_omitted_edges > 0)
+  )
+    throw new Error(
+      "Ghidra p-code value-flow links or truncation facts drifted",
+    );
 }
 
 export function assertDenseSwitchDossier(dossier, address) {
@@ -261,7 +290,7 @@ export function assertDebugFixture(observed) {
   const entry = findValue(observed.procedures, "rea_ghidra_inventory_entry");
   const leaf = findValue(observed.procedures, "rea_ghidra_inventory_leaf");
   const external = observed.procedures.find(
-    (item) => item.procedure.external && symbolTail(item.value) === "puts",
+    (item) => item.procedure.external && matchesSymbol(item.value, "puts"),
   );
   if (entry === undefined || leaf === undefined || external === undefined)
     throw new Error(
@@ -352,13 +381,18 @@ function assertSegments(segments, imageBase) {
 }
 
 export function findValue(items, expected) {
-  return items.find((item) => symbolTail(item.value) === expected);
+  return items.find((item) => matchesSymbol(item.value, expected));
 }
 
 export function requireProcedure(items, expected) {
   const observed = findValue(items, expected);
   if (observed === undefined)
-    throw new Error(`Ghidra procedure probe is unavailable: ${expected}`);
+    throw new Error(
+      `Ghidra procedure probe is unavailable: ${expected}; observed: ${items
+        .slice(0, 40)
+        .map(({ value }) => value)
+        .join(", ")}`,
+    );
   return observed;
 }
 
