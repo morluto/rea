@@ -426,6 +426,23 @@ describe("native UI query outcomes", () => {
 });
 
 describe("native UI trace boundaries", () => {
+  it("retains unresolved dispatch evidence during callee expansion", async () => {
+    const result = await new EnhancedTools(
+      testAnalysis({ list_names: () => execution("list_names", []) }),
+    ).execute("trace_native_ui_action", { action: "buildTapped:" });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      unresolved: [
+        expect.objectContaining({
+          relation: "objc_dispatch",
+          resolution: "unresolved",
+        }),
+      ],
+    });
+  });
+
   it("returns cancellation when archive decoding is cancelled", async () => {
     const result = await new EnhancedTools(
       testAnalysis({

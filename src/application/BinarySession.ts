@@ -533,12 +533,22 @@ const bindExecutionTarget = (
   if (
     result.value.subject !== null &&
     result.value.subject.sha256 !== target.sha256
-  )
-    return err(
-      new ProviderAdapterError(
-        result.value.provider.id,
-        `${operation}:subject`,
-      ),
-    );
+  ) {
+    if (!isArtifactInventorySubject(operation, result.value.subject, target))
+      return err(
+        new ProviderAdapterError(
+          result.value.provider.id,
+          `${operation}:subject`,
+        ),
+      );
+  }
   return ok({ ...result.value, subject: result.value.subject ?? subject });
 };
+
+const isArtifactInventorySubject = (
+  operation: AnalysisOperation,
+  subject: EvidenceSubjectTarget,
+  target: BinaryTarget,
+): boolean =>
+  (operation === "inventory_artifact" || operation === "inspect_artifact") &&
+  subject.path === (target.sourcePath ?? target.path);

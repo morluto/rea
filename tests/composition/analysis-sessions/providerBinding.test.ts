@@ -9,6 +9,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type AnalysisOperation,
   type AnalysisProvider,
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
@@ -24,6 +25,8 @@ import {
   ProviderAdapterError,
 } from "../../../src/domain/errors.js";
 import { err, ok } from "../../../src/domain/result.js";
+
+type DeclaredOperation = Exclude<AnalysisOperation, "health">;
 
 describe("target-bound provider routing", () => {
   it("rejects provider identity and operation-family collisions at composition", () => {
@@ -124,6 +127,28 @@ describe("target-bound provider routing", () => {
 
     await session.close();
     expect(beta.clients[0]?.closed).toBe(true);
+  });
+
+  it("preserves bundle-root identity for artifact inventory operations", async () => {
+    const target = await databaseTarget();
+    const analysis = deepProvider("alpha");
+    const artifact = auxiliaryProvider("artifact", "inventory_artifact");
+    const session = selectableSession([analysis.provider], artifact);
+
+    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+    const result = await session.execute("inventory_artifact", {});
+    if (!result.ok) throw result.error;
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        subject: {
+          path: target,
+          sha256: "f".repeat(64),
+          format: "directory",
+        },
+      },
+    });
   });
 
   it("cancels a provider switch, closes its old client, and restores the binding", async () => {
@@ -264,7 +289,7 @@ const successfulExecution = (
 
 const auxiliaryProvider = (
   id = "auxiliary",
-  operation: "address_name" | "inspect_macho" = "inspect_macho",
+  operation: DeclaredOperation = "inspect_macho",
 ): AnalysisProvider => {
   const identity = {
     id,
@@ -274,10 +299,21 @@ const auxiliaryProvider = (
   return {
     identity: () => identity,
     capabilities: () => [capability(identity, operation)],
-    createClient: () => ({
+    createClient: (target) => ({
       execute: (operation) =>
         Promise.resolve(
-          ok(createAnalysisExecution(`${operation}:auxiliary`, identity)),
+          ok(
+            createAnalysisExecution(`${operation}:auxiliary`, identity, (operation === "inventory_artifact" ||
+              operation === "inspect_artifact"
+                ? {
+                    subject: {
+                      path: target.sourcePath ?? target.path,
+                      sha256: "f".repeat(64),
+                      format: "directory",
+                    },
+                  }
+                : {})),
+          ),
         ),
       close: () => Promise.resolve(),
     }),
@@ -295,7 +331,7 @@ const selectableSession = (
 
 const capability = (
   provider: ProviderIdentity,
-  operation: "address_name" | "inspect_macho",
+  operation: DeclaredOperation,
 ): CapabilityDescriptor => ({
   provider,
   operation,

@@ -344,7 +344,12 @@ const addDirectCallees = async (input: {
   readonly signal: AbortSignal | undefined;
 }) => {
   const nodes = new Map(input.initial.nodes.map((node) => [node.id, node]));
-  const edges = new Map(input.initial.edges.map((edge) => [edge.id, edge]));
+  const edges = new Map(
+    [...input.initial.edges, ...input.initial.unresolved].map((edge) => [
+      edge.id,
+      edge,
+    ]),
+  );
   const addressNames = new Map<string, string>();
   const depthByNode = graphNodeDepths(
     input.initial.start,
