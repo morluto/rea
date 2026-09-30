@@ -53,6 +53,39 @@ Evidence IDs, preserve limitations and incomplete coverage, and never imply
 that static analysis observed execution. Ask for approval only where a tool or
 policy requires it; approval never broadens a different authority boundary.
 
+## Plan broader investigations
+
+For requests that span multiple features or subsystems, use a staged workflow:
+
+1. Turn the request into a checklist of questions and the evidence each answer
+   needs. Resolve target identity and constraints from the conversation and
+   workspace before asking for information again.
+2. Inspect the current REA session, artifact identity, saved analysis database,
+   bookmarks, and prior evidence. Reuse matching state; do not open duplicate
+   sessions or repeat identical analysis.
+3. Start with the smallest useful overview or inventory. Follow each question
+   from its entry point through relevant data and state changes to its result.
+   Batch related operations around a specific hypothesis, then expand only when
+   the returned evidence leaves a concrete gap.
+4. Inspect relevant packaged resources and configuration alongside code when
+   they affect the question. Use format-aware inventory and parsers; do not
+   infer behavior from filenames, strings, or layout alone.
+5. Corroborate a conclusion with the evidence type it requires. Use runtime
+   observation or controlled replay only when static evidence cannot answer the
+   question and the required authority is available.
+6. Decompose work into independent questions. When parallel workers are
+   available and the questions do not depend on one another, assign distinct
+   scopes, point workers to existing evidence, and ask them to return sources,
+   conclusions, and unresolved gaps. Otherwise, work sequentially.
+7. Keep a concise finding ledger linking each conclusion to Evidence IDs,
+   confidence/evidence type, search boundary, and remaining unknowns. Update
+   the shared index or investigation report so later passes can reuse results.
+
+Before finishing, revisit the original checklist. Mark each question as
+answered, partially answered, or unresolved based on its evidence; keep
+bounded negative searches bounded, and do not describe a broad investigation
+as complete while required questions remain open.
+
 ## Read only the relevant guide
 
 - Native binaries, managed assemblies, archives, and extraction:
@@ -68,9 +101,11 @@ policy requires it; approval never broadens a different authority boundary.
 
 ## Readiness and setup
 
-If REA tools are available, use them directly; do not run `doctor` on every
-task. If the MCP server is unavailable or registration is reported stale, run
-`npx -y rea-agents@latest doctor`. Propose
+The readiness rule is conditional: when REA tools are available and their
+registration is not known to be stale, proceed directly; do not run `doctor`
+before every task. Run `npx -y rea-agents@latest doctor` when the MCP server or
+required provider is unavailable, registration is reported stale, or the user
+asks for an environment diagnosis. Propose
 `npx -y rea-agents@latest setup` only when doctor identifies an alignment or
 provider problem. Show the exact plan and obtain approval before setup writes
 configuration or installs Hopper. Restart the agent after MCP registration
