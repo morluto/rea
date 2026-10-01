@@ -20,6 +20,23 @@ protocol, authority, and resource-safety constraints, and report their effects.
 These are task shapes, not required prefixes. Name a tool for the action and
 object agents reason about; keep the name distinct from nearby alternatives.
 
+## Prefer primitives; compose workflows
+
+Start with a primitive when one call can report a reusable fact about one
+identified object or relationship, such as an instruction decode, a type
+layout, a reference, a dispatch target, or a resource graph. The same primitive
+should be useful across different applications or analyst questions. A
+format-specific decoder can still be a primitive when it describes a reusable
+format rather than one application's product behavior.
+
+Add a workflow when repeated analysis shows that callers need the same
+multi-source result and REA can join the evidence without hiding important
+choices or uncertainty. A useful check is whether the workflow remains
+meaningful for different applications that share the relevant evidence types.
+If its purpose depends on one application's business rules or product concepts,
+keep that interpretation outside the general tool contract and expose the
+underlying evidence through reusable primitives.
+
 ## Decide whether to add a tool
 
 1. State the user intent and the smallest result that answers it.

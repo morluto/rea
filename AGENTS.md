@@ -50,6 +50,11 @@ Use ESM TypeScript, two-space indentation, and Prettier defaults. Keep compiler 
 
 Start from the analyst question and desired result, not a provider API. Before adding a tool, inspect the existing contract and its nearest alternative.
 
+- Prefer reusable, composable primitives: inspect one explicit object or
+  relationship and return evidence that can support different analyst
+  questions. Compose primitives into a workflow only for a recurring outcome
+  that benefits from joining evidence sources; keep one-application or
+  business-domain interpretations out of general tool contracts.
 - Use **inspect/search** tools for facts about a target or candidate set; use **trace** tools for relationships; use **compare** tools for explicitly paired inputs.
 - Add a **workflow** when observed agent use shows a repeated sequence that REA can compose without losing analyst control. Return useful results inline so callers can choose their next action.
 - Use **observe/capture/replay** only when runtime activity is required, and declare authority and lifecycle effects in the contract.
