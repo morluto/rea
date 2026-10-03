@@ -133,30 +133,27 @@ interface StartCaptureRuntimeOptions {
  * Wait until the capture journal stops growing.
  *
  * node-pty reports buffered output through `onData` callbacks rather than an
- * awaitable read, so after the child exits there can still be chunks in flight
- * that have not yet been journalled. Yielding to the event loop until the
- * journal length holds steady lets those land before the caller decides the
- * target is gone.
- *
- * Returning on the first unchanged sample would only grant a single turn of
- * grace, and a chunk queued on a later iteration would still be missed. Require
- * several consecutive unchanged turns instead, so a callback arriving on any of
- * the next few iterations still lands before the caller proceeds. `maxTicks`
- * bounds the total turns spent waiting so a pathological stream cannot stall
- * exit.
+ * awaitable read, so chunks can still be in flight after the child exits. The
+ * quiet interval is measured in elapsed time rather than scheduler turns:
+ * consecutive `setImmediate` turns elapse in microseconds, so any fixed number
+ * of them finishes long before a delayed pty callback under host contention,
+ * which is exactly when the trailing chunk matters. `maxWaitMs` bounds the
+ * total wait so a pathological stream cannot stall exit.
  */
 const settleTrailingJournal = async (
   journal: readonly ProcessCaptureEventJournalEntry[],
-  quietTurns = 4,
-  maxTicks = 64,
+  quietMs = 25,
+  maxWaitMs = 500,
 ): Promise<void> => {
-  let settled = 0;
-  for (let tick = 0; tick < maxTicks && settled < quietTurns; tick += 1) {
-    const before = journal.length;
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
-    settled = journal.length === before ? settled + 1 : 0;
+  const deadline = Date.now() + maxWaitMs;
+  let observed = journal.length;
+  let lastChangeAt = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 4));
+    if (journal.length !== observed) {
+      observed = journal.length;
+      lastChangeAt = Date.now();
+    } else if (Date.now() - lastChangeAt >= quietMs) return;
   }
 };
 
