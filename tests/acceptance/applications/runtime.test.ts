@@ -43,6 +43,18 @@ const expectAvailableToolInventory = async (client: Client): Promise<void> => {
   );
 };
 
+/**
+ * Parses complete newline-delimited records, dropping any partial trailing
+ * line so a chunk boundary cannot turn into a JSON parse error.
+ */
+const completeStderrRecords = (stderr: string): unknown[] =>
+  stderr
+    .split("\n")
+    .slice(0, -1)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line): unknown => JSON.parse(line));
+
 describe("production stdio runtime", () => {
   it("starts the built entrypoint, lists the catalog, calls one, and shuts down", async () => {
     const transport = new StdioClientTransport({
@@ -75,11 +87,7 @@ describe("production stdio runtime", () => {
       await client.close();
       await transport.close();
     }
-    const records = stderr
-      .trim()
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line: string): unknown => JSON.parse(line));
+    const records = completeStderrRecords(stderr);
     expect(records).toContainEqual(
       expect.objectContaining({
         application: "rea",
@@ -121,23 +129,34 @@ describe("production stdio runtime", () => {
       // startup record.
       const listed = await client.listTools();
       expect(listed.tools.length).toBeGreaterThan(0);
-      const fatal = stderr
-        .trim()
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line): unknown => JSON.parse(line))
-        .filter(
-          (record): record is { level: number } =>
-            typeof record === "object" &&
-            record !== null &&
-            "level" in record &&
-            typeof record.level === "number" &&
-            record.level >= 50,
-        );
-      expect(fatal).toEqual([]);
+      // A database-kind initial target must also serve a tool. Merely listing
+      // the catalog starts no bridge work, so without this call the child
+      // writes no startup records at all and the fatal-record assertion below
+      // would pass without observing anything.
+      await expect(
+        client.callTool({ name: "current_document", arguments: {} }),
+      ).resolves.toBeDefined();
     } finally {
       await client.close();
       await transport.close();
     }
+    // The transport has closed, so the stderr pipe has ended and every record
+    // the child wrote has been delivered. Reading while the child is still
+    // running races the pipe and can observe an empty or partial buffer, which
+    // would silently miss the fatal record this test exists to catch.
+    const records = completeStderrRecords(stderr);
+    expect(
+      records.length,
+      "no startup records were observed, so the fatal-record check is vacuous",
+    ).toBeGreaterThan(0);
+    const fatal = records.filter(
+      (record): record is { level: number } =>
+        typeof record === "object" &&
+        record !== null &&
+        "level" in record &&
+        typeof record.level === "number" &&
+        record.level >= 50,
+    );
+    expect(fatal).toEqual([]);
   }, 15_000);
 });
