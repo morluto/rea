@@ -84,14 +84,32 @@ describe("provider process runtime and wait primitives", () => {
     controller.abort();
     await expect(waiting).resolves.toBe("aborted");
     expect(deadline.interruption).toBe("cancelled");
-    // A disposed deadline must be inert: neither a later abort nor a later
-    // timer tick may reclassify the run. This asserts detach behaviour rather
-    // than the listener and timer counts, which change whenever the
-    // implementation adds any unrelated internal subscription or timer.
+  });
+
+  it("releases the owned timer and abort listener when disposed", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const deadline = new ProviderStartupDeadline(60_000, controller.signal);
+
+    // The deadline owns exactly one live timer while it is undisposed.
+    expect(vi.getTimerCount()).toBe(1);
+    expect(deadline.interruption).toBeUndefined();
+
     deadline.dispose();
+
+    // Disposal must release the timer it owns. Leaving it armed would keep a
+    // live handle per provider startup for the whole timeout.
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Disposal must also detach the abort listener. A listener that survived
+    // disposal would still classify this deadline as cancelled, which is the
+    // observable difference between a released and a retained deadline.
     controller.abort();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(deadline.interruption).toBe("cancelled");
+    expect(deadline.interruption).toBeUndefined();
+
+    // No timer may be reintroduced by later ticks either.
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("uses one absolute startup deadline across interval waits", async () => {
@@ -199,29 +217,69 @@ describe("provider process output and cleanup primitives", () => {
     });
   });
 
-  it("shares double-stop and escalates a stubborn child from TERM to KILL", async () => {
-    const child = spawnProviderProcessFixture("stubborn");
-    const supervisor = new ProviderProcessSupervisor({
-      process: child,
-      ownsProcessLifetime: true,
-    });
-    await waitForProviderProcessReady(child);
+  // POSIX-only: libuv maps every signal to TerminateProcess on Windows, so a
+  // child that ignores SIGTERM cannot survive the TERM step there and the
+  // escalation below is unreachable.
+  it.skipIf(process.platform === "win32")(
+    "shares double-stop and escalates a stubborn child from TERM to KILL",
+    async () => {
+      const child = spawnProviderProcessFixture("stubborn");
+      const supervisor = new ProviderProcessSupervisor({
+        process: child,
+        ownsProcessLifetime: true,
+      });
+      await waitForProviderProcessReady(child);
 
-    const first = supervisor.stop({ terminationGraceMs: 20, killGraceMs: 500 });
-    const second = supervisor.stop({
-      terminationGraceMs: 20,
-      killGraceMs: 500,
-    });
-    expect(second).toBe(first);
-    await expect(first).resolves.toEqual({ status: "killed" });
-    expect(child.signalCode).toBe("SIGKILL");
-    // The supervisor must have released the child, so stopping again after the
-    // run settled is still a no-op that reports the same outcome. This checks
-    // detachment behaviour instead of counting the listeners the supervisor
-    // happened to register on the child.
-    await expect(
-      supervisor.stop({ terminationGraceMs: 20, killGraceMs: 500 }),
-    ).resolves.toEqual({ status: "killed" });
+      const first = supervisor.stop({
+        terminationGraceMs: 20,
+        killGraceMs: 500,
+      });
+      const second = supervisor.stop({
+        terminationGraceMs: 20,
+        killGraceMs: 500,
+      });
+      // Concurrent callers must share one escalation instead of signalling
+      // the same child twice.
+      expect(second).toBe(first);
+      await expect(first).resolves.toEqual({ status: "killed" });
+      expect(child.signalCode).toBe("SIGKILL");
+    },
+  );
+
+  it("detaches its process listeners when disposed", async () => {
+    const child = spawnProviderProcessFixture("stubborn");
+    const diagnostics: ProviderProcessDiagnostic[] = [];
+    const supervisor = new ProviderProcessSupervisor(
+      { process: child, ownsProcessLifetime: true },
+      { onDiagnostic: (event) => diagnostics.push(event) },
+    );
+    await waitForProviderProcessReady(child);
+    // The no-op listener only prevents Node's unhandled-'error' throw. The
+    // supervisor's own listener is what is under test.
+    child.on("error", () => undefined);
+
+    try {
+      // Control: while attached, a late event reaches the diagnostic channel.
+      child.emit("error", new Error("attached provider failure"));
+      expect(diagnostics).toContainEqual(
+        expect.objectContaining({
+          type: "error",
+          message: "attached provider failure",
+        }),
+      );
+
+      supervisor.dispose();
+
+      // A released supervisor must ignore later events. A retained listener
+      // would keep invoking callbacks for an owner that has already let go,
+      // which is what accumulates handles across repeated provider lifecycles.
+      const observed = diagnostics.length;
+      child.emit("error", new Error("late provider failure"));
+      child.emit("close", 0, null);
+      expect(diagnostics).toHaveLength(observed);
+    } finally {
+      await stopProviderProcessFixture(child);
+    }
   });
 
   it("honors verified group cleanup instead of direct process signaling", async () => {
