@@ -106,18 +106,20 @@ describe("reference source import error projection", () => {
 });
 
 describe("reference source import behavior", () => {
-  // The importer declares no byte ceiling and no entry-count ceiling. These
-  // tests previously wrote 16 MiB and 10,001 files to assert the absence of
-  // caps that no longer exist, costing ~2.4s to re-implement the removed
-  // numbers. Scale independence is now asserted as a relationship: every file
-  // written is returned, none is limited, and coverage stays complete. That
-  // holds for any count, so a reintroduced cap fails it at any size.
+  // The importer declares no byte ceiling and no entry-count ceiling. Scale
+  // independence cannot be asserted as a relationship over a bounded fixture,
+  // because a cap above the fixture size would pass unnoticed, so the fixture
+  // has to cross any ceiling a future change would plausibly introduce: 5,000
+  // entries is well past a round 1,000 or 2,000 cap, and a 4 MiB member is past
+  // a 1 MiB cap. Asserting the absence of a cap at a size far above any
+  // plausible one is what protects the guarantee; the removed 16 MiB and
+  // 10,001-file cases bought the same property at several times the cost.
   it("returns every written entry with complete coverage at any scale", async () => {
     const root = await createTestTempDirectory("rea-reference-scale-");
-    const sizes = [0, 1, 4_097, 65_536];
+    const sizes = [0, 1, 4_097, 65_536, 4_194_304];
     const written = Array.from(
-      { length: 600 },
-      (_, index) => `entry-${String(index).padStart(4, "0")}.txt`,
+      { length: 5_000 },
+      (_, index) => `entry-${String(index).padStart(5, "0")}.txt`,
     );
     await Promise.all(
       written.map((name, index) =>
@@ -152,7 +154,7 @@ describe("reference source import behavior", () => {
     for (const [index, size] of sizes.entries()) {
       expect(result.value.entries).toContainEqual(
         expect.objectContaining({
-          path: `entry-${String(index).padStart(4, "0")}.txt`,
+          path: `entry-${String(index).padStart(5, "0")}.txt`,
           kind: "file",
           size,
           content_state: "hashed",

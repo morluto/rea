@@ -87,7 +87,13 @@ describe("custom protocol capture", () => {
   it("retains every captured frame at any size", () => {
     fc.assert(
       fc.property(
-        fc.array(fc.constant(sampleFrames[0]!), { maxLength: 40 }),
+        // The bound must sit well above any ceiling a future change would
+        // plausibly introduce. A generated length of 40 would pass unnoticed
+        // against a cap at 100, so the generated arrays cross 1,000.
+        fc.array(fc.constant(sampleFrames[0]!), {
+          minLength: 300,
+          maxLength: 1_000,
+        }),
         (frames) => {
           const parsed = customProtocolCaptureSchema.parse({
             transport: "tcp",

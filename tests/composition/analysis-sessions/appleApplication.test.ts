@@ -18,12 +18,15 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 
 // Sized to prove the claims this projection makes -- multiple inventory pages,
 // every component retained, and one bridge candidate per script/native pair --
-// rather than to inflate them. The previous 1_001 frameworks x 101 pages
-// produced 10_201 candidates and cost ~6.4s, roughly half the composition
-// lane, while asserting the same properties.
-const FRAMEWORK_COUNT = 12;
-const SCRIPT_COUNT = 4;
-const NATIVE_COUNT = 4;
+// and to cross any ceiling a truncation regression would plausibly introduce.
+// A fixture of a dozen frameworks and 16 candidates would pass unnoticed
+// against a cap at 100, which is the truncation this guards against. The
+// original 1_001 frameworks x 101 pages produced 10_201 candidates and cost
+// ~6.4s, roughly half the composition lane, to assert the same properties an
+// order of magnitude above the plausible-ceiling range.
+const FRAMEWORK_COUNT = 250;
+const SCRIPT_COUNT = 40;
+const NATIVE_COUNT = 40;
 const INVENTORY_PAGE_COUNT = 3;
 
 async function createCompleteAppleProjection() {
