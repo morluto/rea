@@ -1,5 +1,131 @@
 # Changelog
 
+## [3.2.0](https://github.com/morluto/rea/compare/rea-agents-3.1.0...rea-agents-3.2.0) (2026-10-03)
+
+
+### Features
+
+* **native:** add investigation features ([#486](https://github.com/morluto/rea/issues/486)) ([ed933d1](https://github.com/morluto/rea/commit/ed933d18933814e3957a920972ccf91117d4ed87))
+
+
+### Bug Fixes
+
+* **artifacts:** stabilize extraction approval ([7eb1a95](https://github.com/morluto/rea/commit/7eb1a9500c62b66716878c18ee442c324a715a88))
+* **browser:** reject unknown Electron input fields ([1860d4f](https://github.com/morluto/rea/commit/1860d4f0e531919ee9b10bec7ad8db43e18a291b))
+* **ci:** retain artifacts for delayed reruns ([07888ec](https://github.com/morluto/rea/commit/07888ec096f69753a1535703fb7b3c3070e786b7))
+* **cli:** remove ignored result limits ([f3645aa](https://github.com/morluto/rea/commit/f3645aa51e55c5207f7b9b1f0156ffaef7aaed42))
+* consolidate boundary ownership and cleanup failure paths ([#477](https://github.com/morluto/rea/issues/477)) ([2160d4f](https://github.com/morluto/rea/commit/2160d4fae581243990e539a9c401d1b8824e1763))
+* **contracts:** align byte read schema with provider ([f580d9d](https://github.com/morluto/rea/commit/f580d9d07382bc9642bce896d431c827955339e4))
+* **ghidra:** return complete native analysis results ([a66e43a](https://github.com/morluto/rea/commit/a66e43a99dda1604c8250c9eb73aa8ef000371c9))
+* **managed:** retain every source location ([33b2099](https://github.com/morluto/rea/commit/33b20991c455306d66f8687a9f80ea22073d4207))
+* **process:** capture complete host probe output ([6c68ff5](https://github.com/morluto/rea/commit/6c68ff565fe1196fd8c7a63598e8bd94098abc3c))
+* **runtime:** make observed target role optional ([593a8e1](https://github.com/morluto/rea/commit/593a8e12ceac1cfe350493cfe6b0d1360eb85f7c))
+* **runtime:** retain complete reconciled graph content ([bedd55a](https://github.com/morluto/rea/commit/bedd55a4b4ccc9a0c1441d3836138b323de6d126))
+
+
+### Code Refactoring
+
+* **analysis:** remove caller-selected result caps ([a8c58c6](https://github.com/morluto/rea/commit/a8c58c6605ac37a8b504167732affc5ce4fc772f))
+* **analysis:** remove fixed result quotas ([20152a9](https://github.com/morluto/rea/commit/20152a9872dd035714beb5ef5b8898a9b4d1d6c4))
+* **artifacts:** consolidate inventory into inspection ([0fe96d9](https://github.com/morluto/rea/commit/0fe96d92dfefbaf28d2abfd5e237f6d0e82eee7b))
+* **artifact:** simplify extraction and inventory results ([07ff8b3](https://github.com/morluto/rea/commit/07ff8b30ee497d9f4477a0a9ae97f3f5addbb45a))
+* **artifacts:** remove duplicate inventory wrapper ([aa6eee1](https://github.com/morluto/rea/commit/aa6eee1a712d1a319bbaed5387aa5f4429755a1f))
+* **artifacts:** remove selectors and traversal quotas ([8c24272](https://github.com/morluto/rea/commit/8c24272ee7e6d30b1493ee7ccd63e45734fe2f95))
+* **artifacts:** select extraction by logical path ([7ba3580](https://github.com/morluto/rea/commit/7ba3580c860463adcd5edc73b7a80f34b92480cf))
+* **browser:** remove arbitrary capture ceilings ([5dd3b46](https://github.com/morluto/rea/commit/5dd3b4655e21222a6598bf8cbc0be90f3cbf5e0f))
+* **browser:** return complete observation evidence ([0e2738f](https://github.com/morluto/rea/commit/0e2738ffb6aa35bb06fe01d0af864aec968570cf))
+* **browser:** return complete scenario observations ([e80fe41](https://github.com/morluto/rea/commit/e80fe414b13294446f959b382cb240c806cfe000))
+* **browser:** share authorized main-frame polling ([eec75ce](https://github.com/morluto/rea/commit/eec75ce918cbac576fd217847911793331aa32a0))
+* **browser:** share canonical identity digest ([a6d9e49](https://github.com/morluto/rea/commit/a6d9e49ab46150c8b757f5bdd5f80d3a8ff52f26))
+* **contracts:** remove duplicate schema aliases ([4593c29](https://github.com/morluto/rea/commit/4593c29b64d3f6c43ddb19228da6231f1055eba4))
+* **contracts:** simplify workflows and drop readiness tool ([7acac61](https://github.com/morluto/rea/commit/7acac615ca2b8e3f4edd65fd8a08b237f85b5ac7))
+* **coverage:** evaluate inline without workspaces ([9e76054](https://github.com/morluto/rea/commit/9e7605482acf2de77ad04c5c5e03ac4280a11d7f))
+* **domain:** encode comparison and lifecycle states exactly ([#473](https://github.com/morluto/rea/issues/473)) ([d65730c](https://github.com/morluto/rea/commit/d65730c4c24ab6183426516d4564e6c25294b35d))
+* **domain:** share AST property name reader ([4f4cc59](https://github.com/morluto/rea/commit/4f4cc59873ec704811649aeca8a49e3bcdbdf324))
+* **electron:** retain complete active observations ([e8c56e0](https://github.com/morluto/rea/commit/e8c56e0c0aeb114e09636ad1841d8fd73720b5cc))
+* **errors:** remove stale workspace failures ([f570d40](https://github.com/morluto/rea/commit/f570d40f50bc8621b32ba4e255660ed1b1398356))
+* **evidence:** remove obsolete ID resolvers ([a3920e2](https://github.com/morluto/rea/commit/a3920e2abd915eba31b59413710315a85caf1afa))
+* **evidence:** remove session ledger quotas ([dca293a](https://github.com/morluto/rea/commit/dca293a446fa86767fb4bed6fe734f09b6cfafde))
+* **files:** use caller paths for local evidence files ([c34efca](https://github.com/morluto/rea/commit/c34efca4cd322d4816ab4cd526a7475489edc814))
+* **ghidra:** remove redundant schema markers ([c2a6f4b](https://github.com/morluto/rea/commit/c2a6f4bc437671c25ba318d21b82818c8e6bf2ce))
+* **javascript:** remove analysis ceilings ([9aec690](https://github.com/morluto/rea/commit/9aec6908b5c7ad50da6882415700cbe53c3f62ed))
+* **managed:** derive inspection from PE CLI extents ([dfad09e](https://github.com/morluto/rea/commit/dfad09e3b5769b079bf2d07382aee310d682724f))
+* **mcp:** simplify evidence and workflows ([6740ed5](https://github.com/morluto/rea/commit/6740ed5215578eaaf33c785d6245649d76a0411c))
+* **mcp:** simplify tool inputs and inline results ([f55c2b9](https://github.com/morluto/rea/commit/f55c2b92676e4a7eb06efbc8d9a908a7de62541a))
+* **mcp:** simplify workflow and observation scope ([34d00fd](https://github.com/morluto/rea/commit/34d00fd323c793278c6ed126308c58e2fc7efd54))
+* **observation:** internalize capture budgets ([7b3c797](https://github.com/morluto/rea/commit/7b3c7972377c7f77b1328e7d1de3f54835bc1397))
+* **observation:** retain complete tool results ([fa2b6c5](https://github.com/morluto/rea/commit/fa2b6c5a61adcb75c4c2773ed1c9f7dba83fc1d3))
+* **observation:** return complete inventories ([c523c38](https://github.com/morluto/rea/commit/c523c38027f536e8319eb2acc1840274c5bc5986))
+* **permission:** remove unused authorization helpers ([1b0ab75](https://github.com/morluto/rea/commit/1b0ab75a84ccdcf036ccfc019d1890b2d626699a))
+* **process:** remove fixed scenario ceilings ([abf7c11](https://github.com/morluto/rea/commit/abf7c1142e759a291d2267fedf15b0dd444a5684))
+* **process:** remove redundant schema version markers ([b3aca52](https://github.com/morluto/rea/commit/b3aca5289bf973ffb4072253eebe86e0acced347))
+* **process:** remove request count ceilings ([f2dc749](https://github.com/morluto/rea/commit/f2dc749c862a16d056de53e95914a9a411592583))
+* **process:** remove unused paired experiment ([e1d755f](https://github.com/morluto/rea/commit/e1d755f7cd574860f59965a6244dbd43f5032f2c))
+* **prompts:** make tool workflows optional ([3fd9650](https://github.com/morluto/rea/commit/3fd96506f223889a2d327cc7c97a95bf48ccb594))
+* **reference:** share graph index projections ([6ee87fb](https://github.com/morluto/rea/commit/6ee87fbf2defcb10a17352b36ebeed67c6ce6dc5))
+* remove cross-version investigation workflow ([81996df](https://github.com/morluto/rea/commit/81996df7a59ae6efb0f7be6687af89e66c64cdcb))
+* **replay:** share sandbox probe arguments ([9fca6c0](https://github.com/morluto/rea/commit/9fca6c0296ac360f9d2c838440b24d2ea79234b5))
+* **replay:** simplify runtime value checks ([60cb68a](https://github.com/morluto/rea/commit/60cb68a276b012964b08c18e9d60af22e64c468f))
+* return complete analysis results inline ([a2a3243](https://github.com/morluto/rea/commit/a2a3243ea874ee1662c62a83ced63be218e0218e))
+* return complete tool results inline ([0d96275](https://github.com/morluto/rea/commit/0d96275b6887b72519d2bc54f72012db6a8e482c))
+* **runtime:** retain complete reconciliation outputs ([79ea571](https://github.com/morluto/rea/commit/79ea571512a1f55200eb5520d6c56104dba54e5b))
+* **schema:** remove data-only version markers ([5457f4a](https://github.com/morluto/rea/commit/5457f4a2bceccb9c40e19a9986964025f279fc91))
+* **server:** remove registration alias ([8097ec4](https://github.com/morluto/rea/commit/8097ec456a14992b578057438be8a6e89a076cdf))
+* **server:** use canonical elicitation type ([bb6a58c](https://github.com/morluto/rea/commit/bb6a58c2a7eec15fb5f224376230398b51d1b952))
+* **test:** colocate pure-domain tests and reduce test debt ([#471](https://github.com/morluto/rea/issues/471)) ([e91c8c3](https://github.com/morluto/rea/commit/e91c8c39c2acddc4389ed0d01950d1954c472e47))
+* **test:** keep coverage at behavioral boundaries ([#474](https://github.com/morluto/rea/issues/474)) ([d4dc940](https://github.com/morluto/rea/commit/d4dc940bd871089ffa1b42d3475798b2f4f9c992))
+* **tools:** remove arbitrary workflow ceilings ([5f73cb0](https://github.com/morluto/rea/commit/5f73cb061b6fec532d1cccf5a8bce59855823fa4))
+* **tools:** remove artificial analysis ceilings ([2f08c7c](https://github.com/morluto/rea/commit/2f08c7c932d3619a481709935f07da59de3d3b27))
+* **tools:** remove redundant limits and acknowledgements ([bd0e341](https://github.com/morluto/rea/commit/bd0e34157239613aed7aa9315df0e97d03d8636c))
+* **tools:** remove remaining arbitrary workflow caps ([ecf3ed8](https://github.com/morluto/rea/commit/ecf3ed8bdb9ef7a83e7a2fb23443eced6c3824b0))
+* **tools:** return complete analysis results inline ([2a6eb41](https://github.com/morluto/rea/commit/2a6eb41147e496b9e044011fa3b755ef74388c51))
+* **workflows:** simplify evidence reference inputs ([24e1fa9](https://github.com/morluto/rea/commit/24e1fa9a76e447cff318da9f48c7adb659a1f8ab))
+
+
+### Documentation
+
+* add REA tool design guidance ([#485](https://github.com/morluto/rea/issues/485)) ([36aeec9](https://github.com/morluto/rea/commit/36aeec95863ca28d3e3aa5bec75a45d3824e17f5))
+* clarify aggregate context tools ([c7e207c](https://github.com/morluto/rea/commit/c7e207c290e376db5c2f210f9ac08fe170ef3ec4))
+* clarify MCP tool design guidance ([36aeec9](https://github.com/morluto/rea/commit/36aeec95863ca28d3e3aa5bec75a45d3824e17f5))
+* correct inline evidence and Hopper behavior ([bf9cce1](https://github.com/morluto/rea/commit/bf9cce1aef89a769320d217e82b895b086880e69))
+* describe complete application analysis outputs ([271b162](https://github.com/morluto/rea/commit/271b1620e68f3a6bbc69f28aa4c4d18d5c453baf))
+* generalize reverse-engineering workflow ([#488](https://github.com/morluto/rea/issues/488)) ([4ecc7a7](https://github.com/morluto/rea/commit/4ecc7a72f2d6d78b8d9c59a146e532fe552c40bb))
+* improve GitHub issue and pull request templates ([c490d85](https://github.com/morluto/rea/commit/c490d85045de07488e01747db9c9f77d264b2e36))
+* prioritize reusable analysis primitives ([#493](https://github.com/morluto/rea/issues/493)) ([9dd72c4](https://github.com/morluto/rea/commit/9dd72c4911841671594570677f5ba6e3992d076d))
+* refresh managed conformance manifest ([23e56c5](https://github.com/morluto/rea/commit/23e56c517c08abcafe3a81919215433458aef27e))
+* refresh tool catalog and cleanup audit fixtures ([53db3a4](https://github.com/morluto/rea/commit/53db3a476b2881f498a5d6c87195e783268c1988))
+* regenerate tool and evidence catalogs ([2f604a3](https://github.com/morluto/rea/commit/2f604a3c3ad037a68da4c33a30cb5316983b070f))
+* regenerate tool and evidence catalogs ([f2bbd59](https://github.com/morluto/rea/commit/f2bbd5957eccac6164b3f12db87921ffb09bdcf2))
+* **tools:** clarify complete inline results ([3b64c81](https://github.com/morluto/rea/commit/3b64c813cf8bcd0cdd262d0a3d5950819f320a12))
+* **tools:** clarify complete inline workflows ([4168174](https://github.com/morluto/rea/commit/41681742ccea83a7956e7bc303da4aa223ed4877))
+* **tools:** describe uncapped tool behavior accurately ([4cea84d](https://github.com/morluto/rea/commit/4cea84d7cbb0508e6c0dde36a2a0542855681f95))
+* **tools:** update inline workflow guidance ([4ad937c](https://github.com/morluto/rea/commit/4ad937c6caeec89ded592ea82dec4fa13ea17d8c))
+
+
+### Tests
+
+* **artifacts:** exercise argument-free extraction preflight ([a6d5b3e](https://github.com/morluto/rea/commit/a6d5b3ea9d1f53afeda33ef53fe50f42feac2343))
+* **browser:** assert strict inputs without legacy fields ([9ddf22e](https://github.com/morluto/rea/commit/9ddf22e1962803bf06d54b2e577a0c03a3f3ad48))
+* **browser:** cover complete screenshot output ([3f547ea](https://github.com/morluto/rea/commit/3f547eafa4c6f27b8264025c754392161687908e))
+* **browser:** remove stale input field assertion ([60c110d](https://github.com/morluto/rea/commit/60c110d97b1b22c010b8597965b3ad09f4f51480))
+* **cli:** consolidate duplicate setup journey ([9bd7e2c](https://github.com/morluto/rea/commit/9bd7e2cb459d0354ee2c406555de9e427c549086))
+* **cli:** remove duplicate browser discovery case ([dcb0362](https://github.com/morluto/rea/commit/dcb036292e975c81780dbf7a711fd1a565a13a10))
+* **conformance:** remove fixture generator test option ([ea853ce](https://github.com/morluto/rea/commit/ea853cebde5641dc9c12ef59005de84197463467))
+* **contracts:** remove duplicate tool inventories ([0ae3c08](https://github.com/morluto/rea/commit/0ae3c0837b387e53686bcd6e8aa03cb29f80458a))
+* **hopper:** name regex search assertion accurately ([9240bd8](https://github.com/morluto/rea/commit/9240bd8d166ffee93a90fd55c5de4b58d8ff6ad4))
+* **hopper:** remove dossier identity assertion ([b5c0b5b](https://github.com/morluto/rea/commit/b5c0b5b53e2d15dd6da9d4e8b1d3c3c21a16c409))
+* **mcp:** align workflow assertions with current guidance ([f8bb113](https://github.com/morluto/rea/commit/f8bb113c22cf23916a8cd8a5d77734ccaf63fd08))
+* **mcp:** consolidate catalog inventory checks ([3afcd64](https://github.com/morluto/rea/commit/3afcd641462bbd99ebdc3bf2fc8264e2c3344c09))
+* **mcp:** validate defaults at tool boundary ([21241d2](https://github.com/morluto/rea/commit/21241d2323d323f405b3cff4692e01364b6ddbde))
+* remove duplicate export schema acceptance ([b783e7f](https://github.com/morluto/rea/commit/b783e7febef8c22b41817a61a7f8293393ac6425))
+* remove obsolete schema version assertions ([fe342fa](https://github.com/morluto/rea/commit/fe342faa832ec9b17a6fb1dd85b1cf269b33cf1b))
+* remove stale limits and handoff expectations ([acf33d6](https://github.com/morluto/rea/commit/acf33d6df272873728aaa7527c5d43fa2a13132b))
+* remove vacuous and duplicate assertions ([56e2bf7](https://github.com/morluto/rea/commit/56e2bf7696e6ccbc3e4b5baf9249c6d4152f4a43))
+* remove Vitest config test exports ([d6e545c](https://github.com/morluto/rea/commit/d6e545cc4832ed47cc98d974aa8e4aa9453afb98))
+* replace brittle workflow and readme checks ([b3529aa](https://github.com/morluto/rea/commit/b3529aa327026472798a5f0971dcb325d221ddc6))
+* replace implementation lock-in with behavioural assertions ([#498](https://github.com/morluto/rea/issues/498)) ([7ee3f23](https://github.com/morluto/rea/commit/7ee3f236a9f753dfc90d84f95f20598e4e45fd0d))
+* **replay:** remove duplicate schema coverage ([4ec2343](https://github.com/morluto/rea/commit/4ec2343d91925e583b15d5404af2eabaf6ffed0f))
+
 ## [3.1.0](https://github.com/morluto/rea/compare/rea-agents-3.0.0...rea-agents-3.1.0) (2026-08-09)
 
 
