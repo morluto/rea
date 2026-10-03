@@ -136,18 +136,27 @@ interface StartCaptureRuntimeOptions {
  * awaitable read, so after the child exits there can still be chunks in flight
  * that have not yet been journalled. Yielding to the event loop until the
  * journal length holds steady lets those land before the caller decides the
- * target is gone. The bound keeps a pathological stream from stalling exit.
+ * target is gone.
+ *
+ * Returning on the first unchanged sample would only grant a single turn of
+ * grace, and a chunk queued on a later iteration would still be missed. Require
+ * several consecutive unchanged turns instead, so a callback arriving on any of
+ * the next few iterations still lands before the caller proceeds. `maxTicks`
+ * bounds the total turns spent waiting so a pathological stream cannot stall
+ * exit.
  */
 const settleTrailingJournal = async (
   journal: readonly ProcessCaptureEventJournalEntry[],
+  quietTurns = 4,
   maxTicks = 64,
 ): Promise<void> => {
-  for (let tick = 0; tick < maxTicks; tick += 1) {
+  let settled = 0;
+  for (let tick = 0; tick < maxTicks && settled < quietTurns; tick += 1) {
     const before = journal.length;
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
-    if (journal.length === before) return;
+    settled = journal.length === before ? settled + 1 : 0;
   }
 };
 
