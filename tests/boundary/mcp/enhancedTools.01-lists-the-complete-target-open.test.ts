@@ -1,7 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { PROCEDURES, inventory } from "./enhancedToolsHarness.js";
+import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managedWorkflowToolContracts.js";
@@ -10,10 +9,7 @@ import {
   SESSION_TOOL_CONTRACTS,
   TOOL_CONTRACTS,
 } from "../../../src/contracts/toolContracts.js";
-import {
-  jsonValueSchema,
-  type JsonValue,
-} from "../../../src/domain/jsonValue.js";
+import {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
@@ -168,37 +164,6 @@ const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   return client;
-};
-
-const jsonResult = (result: CallToolResult): JsonValue => {
-  if (result.structuredContent === undefined)
-    throw new Error("Tool result omitted structured content");
-  const structured = jsonValueSchema.safeParse(result.structuredContent);
-  if (!structured.success)
-    throw new Error("Tool structured result was not JSON");
-  if (
-    typeof structured.data === "object" &&
-    structured.data !== null &&
-    !Array.isArray(structured.data) &&
-    "normalized_result" in structured.data
-  ) {
-    return structured.data.normalized_result ?? null;
-  }
-  if (
-    typeof structured.data === "object" &&
-    structured.data !== null &&
-    !Array.isArray(structured.data) &&
-    "evidence_id" in structured.data &&
-    "result" in structured.data
-  )
-    return structured.data.result ?? null;
-  const text = result.content.find((item) => item.type === "text");
-  if (text?.type !== "text")
-    throw new Error("Tool result omitted text content");
-  const decoded: unknown = JSON.parse(text.text);
-  const parsed = jsonValueSchema.safeParse(decoded);
-  if (!parsed.success) throw new Error("Tool result was not JSON");
-  return parsed.data;
 };
 
 // oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.
