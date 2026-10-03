@@ -29,9 +29,137 @@ const GROUPS = {
   session: SESSION_TOOL_CONTRACTS,
 } as const;
 
+/**
+ * Published tool names that must remain in the inventory.
+ *
+ * This is a floor, not an equality. Structural invariants already prove every
+ * group member is published, so on their own a contract removed from both its
+ * group and the aggregate would regenerate the catalog with no failing test.
+ * These names catch that removal. Adding a tool needs no edit here; removing
+ * one is a deliberate API change that must delete its name deliberately.
+ */
+const PUBLISHED_TOOL_NAME_FLOOR = [
+  "address_name",
+  "address_to_file_offset",
+  "analyze_function",
+  "analyze_javascript_application",
+  "analyze_swift_types",
+  "analyze_web_bundle",
+  "batch_decompile",
+  "binary_overview",
+  "binary_session",
+  "build_call_path",
+  "build_reconstruction_obligation_ledger",
+  "capture_browser_scenario",
+  "capture_electron_scenario",
+  "capture_process_scenario",
+  "capture_web_screenshot",
+  "close_binary",
+  "comment",
+  "compare_application_versions",
+  "compare_artifacts",
+  "compare_bundles",
+  "compare_functions",
+  "compare_javascript_export_shapes",
+  "compare_managed_members",
+  "compare_process_captures",
+  "compare_source_to_bundle",
+  "compare_web_captures",
+  "compare_web_screenshots",
+  "correlate_static_and_runtime",
+  "current_address",
+  "current_document",
+  "current_procedure",
+  "decode_interface_builder",
+  "demangle_swift",
+  "discover_webmcp_tools",
+  "evaluate_reconstruction_coverage",
+  "execute_node_characterization",
+  "export_evidence_bundle",
+  "extract_artifact",
+  "find_changed_behavior",
+  "find_code_for_string",
+  "find_xrefs_to_name",
+  "get_call_graph",
+  "get_evidence_bundle",
+  "get_navigation_context",
+  "get_objc_classes",
+  "get_objc_protocols",
+  "goto_address",
+  "import_evidence_bundle",
+  "import_managed_reconstruction",
+  "inline_comment",
+  "inspect_address_context",
+  "inspect_artifact",
+  "inspect_electron_page",
+  "inspect_macho",
+  "inspect_managed_artifact",
+  "inspect_managed_members",
+  "inspect_managed_native_boundaries",
+  "inspect_native_api",
+  "inspect_native_dispatch_metadata",
+  "inspect_plist",
+  "inspect_signature",
+  "inspect_web_page",
+  "list_architectures",
+  "list_bookmarks",
+  "list_browser_targets",
+  "list_documents",
+  "list_electron_targets",
+  "list_javascript_runtime_targets",
+  "list_names",
+  "list_procedures",
+  "list_segments",
+  "list_strings",
+  "list_unknowns",
+  "next_address",
+  "observe_javascript_runtime",
+  "observe_web_session",
+  "open_binary",
+  "plan_managed_runtime_correlation",
+  "prepare_node_characterization",
+  "prev_address",
+  "procedure_address",
+  "procedure_assembly",
+  "procedure_callees",
+  "procedure_callers",
+  "procedure_info",
+  "procedure_pseudo_code",
+  "procedure_references",
+  "project_managed_application_graph",
+  "read_bytes",
+  "read_function_instructions",
+  "reconcile_javascript_runtime",
+  "record_unknown",
+  "resolve_containing_procedure",
+  "run_controlled_replay",
+  "run_replay_machine",
+  "search_procedures",
+  "search_strings",
+  "set_address_name",
+  "set_addresses_names",
+  "set_bookmark",
+  "set_comment",
+  "set_current_document",
+  "set_inline_comment",
+  "trace_application_feature",
+  "trace_call_path",
+  "trace_feature",
+  "trace_javascript_semantics",
+  "trace_native_ui_action",
+  "unset_bookmark",
+  "update_unknown",
+  "verify_managed_native_boundaries",
+  "verify_reconstruction",
+  "verify_unknown_resolution",
+  "xrefs",
+] as const;
+
 // These assertions are deliberately structural rather than numeric. Pinning
-// group sizes or literal tool-name arrays made every additive catalog change
-// require a test edit, which blocked additive change without catching defects.
+// group sizes made every additive catalog change require a test edit, which
+// blocked additive change without catching defects. Removal is still covered:
+// the floor above catches a contract dropped from both its group and the
+// aggregate.
 describe("tool contract inventory", () => {
   it("assigns every published tool a unique name", () => {
     const names = TOOL_CONTRACTS.map(({ name }) => name);
@@ -48,6 +176,17 @@ describe("tool contract inventory", () => {
         ).toBe(true);
       }
     }
+  });
+
+  it("keeps every published tool name in the declared floor", () => {
+    const published = new Set(TOOL_CONTRACTS.map(({ name }) => name));
+    const removed = PUBLISHED_TOOL_NAME_FLOOR.filter(
+      (name) => !published.has(name),
+    );
+    expect(
+      removed,
+      "published tool names were removed; deleting one is a deliberate API change",
+    ).toEqual([]);
   });
 
   it("keeps groups mutually disjoint", () => {
