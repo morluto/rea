@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.2.1](https://github.com/morluto/rea/compare/rea-agents-3.2.0...rea-agents-3.2.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **release:** tolerate npm registry propagation delay ([726b730](https://github.com/morluto/rea/commit/726b730b84830b208725df50fa0251ece1fa199f))
+
+
+### Tests
+
+* **release:** accept guarded npm publishing ([b7bc855](https://github.com/morluto/rea/commit/b7bc8554928c8eca9c29842c77e4021c1e42e054))
+
 ## [3.2.0](https://github.com/morluto/rea/compare/rea-agents-3.1.0...rea-agents-3.2.0) (2026-10-03)
 
 
