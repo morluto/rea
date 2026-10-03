@@ -22,6 +22,10 @@ const COVERAGE_SHARD = process.argv.some((argument) =>
 // because they schedule actions by `at_ms` instead of observed output.
 const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
 
+// Cross-project scheduling is a local-host concern only. CI shards projects
+// across separate runners and already proves this concurrency green.
+const LOCAL_ONLY = process.env.CI !== "true";
+
 const TEST_PROJECTS = [
   {
     name: "domain",
@@ -113,12 +117,16 @@ const TEST_PROJECTS = [
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
   },
-  // Acceptance and process-global declare `fileParallelism: false` above because
-  // they own host-level process, stdio, and terminal state. Every other project
-  // is independent, so the blanket local override is removed.
-].map((project) => ({
+  // Acceptance, process-boundary, and process-global declare
+  // `fileParallelism: false` above because they own host-level process, stdio,
+  // and terminal state. That flag only serialises files inside one project, so
+  // each project also needs its own `sequence.groupOrder` locally: without it
+  // Vitest runs projects concurrently and a project that mutates host process
+  // or terminal state overlaps with projects that observe it.
+].map((project, groupOrder) => ({
   ...project,
   maxWorkers: MAX_TEST_WORKERS,
+  ...(LOCAL_ONLY ? { sequence: { groupOrder } } : {}),
 }));
 
 const ZERO_COVERAGE_THRESHOLDS = {
