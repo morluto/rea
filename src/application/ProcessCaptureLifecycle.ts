@@ -394,8 +394,10 @@ export const captureTerminalFrames = (options: {
       at_ms: atMs,
       data: normalized,
     });
-    options.recordEvent("frames", sequence);
+    // Queue the observed output before publishing it: reactive subscribers may
+    // synchronously resize the terminal in response to this journal entry.
     options.renderer.write(data, atMs);
+    options.recordEvent("frames", sequence);
     options.checkpoints.observeTerminal(normalized);
   });
   return () => truncated;
