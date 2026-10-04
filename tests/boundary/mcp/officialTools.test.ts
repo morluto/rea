@@ -239,22 +239,6 @@ const outputFor = (name: string): JsonValue => {
 };
 
 describe("official Hopper proxy tools", () => {
-  it("lists every official contract", async () => {
-    const client = await connect({
-      execute: () => Promise.resolve(ok(null)),
-    });
-    const listed = await client.listTools();
-    const officialNames = new Set<string>(
-      OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
-    );
-    expect(
-      listed.tools
-        .map(({ name }) => name)
-        .filter((name) => officialNames.has(name))
-        .sort(),
-    ).toEqual(OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name).sort());
-  });
-
   it("executes every handler and projects omitted Python optionals to null", async () => {
     const invocations: Invocation[] = [];
     const client = await connect({

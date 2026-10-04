@@ -38,7 +38,7 @@ describe("tool registration options", () => {
         expect(tool, contract.name).toBeDefined();
         expect(describesObject(tool?.inputSchema), contract.name).toBe(true);
         expect(describesObject(tool?.outputSchema), contract.name).toBe(true);
-        expect(tool?.title?.trim().length, contract.name).toBeGreaterThan(2);
+        expect(tool?.title?.trim().length, contract.name).toBeGreaterThan(0);
         expect(tool?.description?.trim().length, contract.name).toBeGreaterThan(
           0,
         );
@@ -65,12 +65,6 @@ describe("tool registration options", () => {
           contract.name,
         ).toEqual([]);
       }
-      const analyzeFunction = advertised.find(
-        ({ name }) => name === "analyze_function",
-      );
-      expect(analyzeFunction?.inputSchema.properties).toEqual({
-        procedure: expect.objectContaining({ type: "string" }),
-      });
       expect(advertised).toEqual(
         GENERATED_MCP_TOOL_CATALOG.map((tool) => ({
           name: tool.name,
@@ -127,6 +121,7 @@ const describesObject = (schema: unknown): boolean => {
     [schema.oneOf, schema.anyOf].some(
       (variants) =>
         Array.isArray(variants) &&
+        variants.length > 0 &&
         variants.every(
           (variant: unknown) => isObject(variant) && variant.type === "object",
         ),

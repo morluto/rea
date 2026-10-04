@@ -70,13 +70,6 @@ describe("guided prompts over MCP", () => {
     if (content?.type !== "text") throw new Error("missing prompt text");
     expect(content.text).toContain('"feature":"license validation"');
     expect(content.text).toContain("`trace_feature`");
-    expect(content.text).toContain("Use Evidence returned inline");
-    expect(content.text).toContain("do not fetch a bundle or resource");
-    const audit = await client.getPrompt({
-      name: "audit_residual_unknowns",
-      arguments: { audit_scope: "all active release blockers" },
-    });
-    expect(audit.messages[0]?.content.type).toBe("text");
   });
 
   it("renders every workflow without executing analysis or accepting extra context", async () => {

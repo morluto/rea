@@ -129,7 +129,6 @@ describe("process reactive scenario schema", () => {
     expect(processReactiveScenarioSchema.parse(baseScenario())).toMatchObject({
       initial_state: "starting",
     });
-    expect(PROCESS_REACTIVE_LIMITS.triggerDepth).toBe(256);
   });
 
   it("accepts caller-defined scenario sizes without count ceilings", () => {

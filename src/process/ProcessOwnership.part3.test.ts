@@ -66,6 +66,5 @@ describe("owned process-group cleanup discovery", () => {
         ],
       },
     });
-    expect(environment.mock.calls.map(([pid]) => pid)).toEqual([100, 101, 102]);
   });
 });

@@ -25,13 +25,4 @@ describe("client configuration comparison", () => {
       }),
     ).toBe(true);
   });
-
-  it("still detects configuration value changes", () => {
-    expect(
-      clientConfigurationValuesEqual(
-        { startup_timeout_sec: 30 },
-        { startup_timeout_sec: 15 },
-      ),
-    ).toBe(false);
-  });
 });

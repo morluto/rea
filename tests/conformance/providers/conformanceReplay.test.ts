@@ -96,6 +96,11 @@ describe("conformance CI replay", () => {
     expect(result.passed).toBe(1);
     expect(result.failed).toBe(0);
     expect(result.errored).toBe(0);
+    expect(result.drift_detected).toBe(false);
+    expect(
+      packageReplayResultSchema.safeParse({ ...result, drift_detected: true })
+        .success,
+    ).toBe(false);
     expect(
       packageReplayResultSchema.safeParse({ ...result, passed: 0 }).success,
     ).toBe(false);
@@ -109,21 +114,6 @@ describe("conformance CI replay", () => {
     );
     expect(result.failed).toBe(1);
     expect(result.passed).toBe(0);
-  });
-
-  it("does not detect drift when expected and actual match", async () => {
-    const result = await replayConformancePackage(
-      validPackage,
-      {},
-      passingRunner,
-    );
-    expect(
-      packageReplayResultSchema.safeParse({
-        ...result,
-        drift_detected: true,
-      }).success,
-    ).toBe(false);
-    expect(result.drift_detected).toBe(false);
   });
 
   it("retains the observed Evidence ID on the first drift", async () => {

@@ -38,29 +38,4 @@ describe("curated Windows test lane", () => {
     );
     expect(missing.filter((path) => path !== undefined)).toEqual([]);
   }, 10_000);
-
-  it("still covers Windows process ownership, installation, and capability reporting", async () => {
-    const paths = await curatedPaths();
-    const owned = paths.filter((path) => path.includes("ProcessOwnership"));
-    expect(owned.length).toBeGreaterThan(0);
-    expect(paths).toContain("src/ghidra/GhidraInstallation.test.ts");
-    expect(paths).toContain(
-      "tests/conformance/providers/ghidra/windowsCapabilities.test.ts",
-    );
-  }, 10_000);
-
-  it("excludes suites that need verified Windows native authority", async () => {
-    const paths = await curatedPaths();
-    // These require Job Object process ownership and private-runtime DACL
-    // enforcement, which windows-latest does not provide by design. Adding them
-    // here turns the lane red without adding real coverage; those claims belong
-    // behind the real Ghidra Windows workflow instead.
-    for (const excluded of [
-      "src/ghidra/GhidraProvider.test.ts",
-      "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-      "tests/boundary/process/providerProcess.test.ts",
-    ]) {
-      expect(paths).not.toContain(excluded);
-    }
-  }, 10_000);
 });

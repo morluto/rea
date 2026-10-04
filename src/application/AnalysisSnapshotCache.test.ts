@@ -31,16 +31,15 @@ describe("analysis snapshot cache partitioning", () => {
       createEvidenceBundle([]),
     );
     expect(exported.ok).toBe(true);
-    if (!exported.ok) return;
+    if (!exported.ok) throw new Error("snapshot export failed");
     const entry = exported.value.entries[0];
-    if (entry !== undefined) {
-      Reflect.set(entry.execution, "provider", {
-        id: "forged",
-        name: "Forged",
-        version: "9",
-      });
-      entry.execution.limitations.push("forged");
-    }
+    if (entry === undefined) throw new Error("exported snapshot entry missing");
+    Reflect.set(entry.execution, "provider", {
+      id: "forged",
+      name: "Forged",
+      version: "9",
+    });
+    entry.execution.limitations.push("forged");
 
     expect(
       cache.lookup(

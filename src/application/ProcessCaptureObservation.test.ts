@@ -43,8 +43,13 @@ it("returns detached terminal and filesystem checkpoint observations", async () 
   expect(frames).toHaveLength(22);
   expect(frames.slice(0, 2).map(({ at_ms }) => at_ms)).toEqual([20, 10]);
   expect(observed).toHaveLength(22);
-  if (frames[0] !== undefined) Reflect.set(frames[0], "cursor_x", 999);
-  expect((await renderer.frames())[0]?.cursor_x).not.toBe(999);
+  const frame = frames[0];
+  if (frame === undefined) throw new Error("expected observed frame");
+  const originalCursor = frame.cursor_x;
+  Reflect.set(frame, "cursor_x", 999);
+  const reread = await renderer.frames();
+  expect(reread).toHaveLength(frames.length);
+  expect(reread[0]?.cursor_x).toBe(originalCursor);
   await renderer.dispose();
 
   const scenario = parseProcessScenario(base);
@@ -55,7 +60,9 @@ it("returns detached terminal and filesystem checkpoint observations", async () 
     { signal: undefined },
   );
   const first = await checkpoints.finish({ files: [], truncated: false });
-  if (first[0] !== undefined) Reflect.set(first[0], "name", "tampered");
+  const checkpoint = first[0];
+  if (checkpoint === undefined) throw new Error("expected checkpoint");
+  Reflect.set(checkpoint, "name", "tampered");
   const second = await checkpoints.finish({ files: [], truncated: false });
   expect(second[0]?.name).toBe("before");
   await checkpoints.dispose();

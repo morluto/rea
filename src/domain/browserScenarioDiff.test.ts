@@ -244,7 +244,7 @@ describe("browser scenario comparison validation", () => {
     });
   });
 
-  it("rejects ambiguous input pairs and duplicate normalization rule IDs", () => {
+  it("rejects duplicate normalization rule IDs", () => {
     const capture = scenarioCapture({});
     expect(
       compareBrowserScenariosInputSchema.safeParse({

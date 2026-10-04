@@ -89,34 +89,47 @@ it("lets the SDK validate a tool call before invoking its handler", async () => 
   expect(invocations).toBe(1);
 });
 
-it("preserves interleaved results across concurrent tool calls", async () => {
-  const invocations: string[] = [];
-  // Each handler awaits before mutating shared session-scoped state, so a lost
-  // update or crossed result would corrupt the final ordering.
-  const appendOrder: string[] = [];
-  const append = async (name: string) => {
-    await new Promise((resolve) => setImmediate(resolve));
-    appendOrder.push(name);
-    return ok([]);
+it("preserves distinct results across concurrent tool calls", async () => {
+  const payloads = new Map([
+    ["list_procedures", [{ address: "0x1000", value: "fixture_main" }]],
+    ["list_strings", [{ address: "0x2000", value: "fixture text" }]],
+    ["list_names", [{ address: "0x3000", value: "fixture_global" }]],
+  ]);
+  const pending = new Map<string, () => void>();
+  let allStarted: () => void = () => {
+    throw new Error("start gate missing");
   };
+  const started = new Promise<void>((resolve) => {
+    allStarted = resolve;
+  });
   const client = await connect({
-    execute: (name) => {
-      invocations.push(name);
-      return append(name);
+    execute: async (name) => {
+      const payload = payloads.get(name);
+      if (payload === undefined)
+        throw new Error(`Unexpected operation: ${name}`);
+      await new Promise<void>((resolve) => {
+        pending.set(name, resolve);
+        if (pending.size === payloads.size) allStarted();
+      });
+      return ok(payload);
     },
   });
-
-  const results = await Promise.all([
-    client.callTool({ name: "list_procedures", arguments: {} }),
-    client.callTool({ name: "list_segments", arguments: {} }),
-    client.callTool({ name: "list_strings", arguments: {} }),
-  ]);
-
-  expect(results.every((result) => !result.isError)).toBe(true);
-  expect(invocations).toHaveLength(3);
-  expect(new Set(invocations).size).toBe(3);
-  // Every invocation appears exactly once in the shared append log, so no
-  // concurrent call was dropped or recorded twice.
-  expect(appendOrder).toHaveLength(3);
-  expect([...appendOrder].sort()).toEqual([...invocations].sort());
+  const names = [...payloads.keys()];
+  const requests = names.map((name) =>
+    client.callTool({ name, arguments: {} }),
+  );
+  await started;
+  for (const name of [...names].reverse()) {
+    const release = pending.get(name);
+    if (release === undefined)
+      throw new Error("request did not reach provider");
+    release();
+  }
+  const results = await Promise.all(requests);
+  results.forEach((result, index) => {
+    expect(result.isError).not.toBe(true);
+    expect(structured(result)).toMatchObject({
+      result: payloads.get(names[index] ?? ""),
+    });
+  });
 });

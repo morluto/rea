@@ -92,7 +92,6 @@ describe("setup workflow", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.appliedActions).toEqual(["installed_skill"]);
-    expect(result.remediation).toContain("--install-hopper");
     expect(result.remediation).toBe(
       "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis.",
     );

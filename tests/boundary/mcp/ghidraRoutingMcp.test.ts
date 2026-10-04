@@ -23,6 +23,17 @@ describe("Ghidra MCP capability routing", () => {
         ({ name }) => name,
       );
       expect(availableNames).toContain("set_comment");
+      const denied = await mcp.callTool({
+        name: "set_comment",
+        arguments: { address: "0x1000", comment: "must not mutate" },
+      });
+      expect(denied.isError).toBe(true);
+      expect(denied.structuredContent).toMatchObject({
+        error: {
+          code: "capability_unavailable",
+          category: "unsupported_provider",
+        },
+      });
       expect(calls).not.toContain("set_comment");
 
       const status = await mcp.callTool({

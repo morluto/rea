@@ -302,6 +302,13 @@ describe("runtime permission configuration", () => {
 });
 
 describe("runtime target configuration", () => {
+  it("rejects invalid target kinds with actionable environment diagnostics", () => {
+    const result = parseConfig({ HOPPER_TARGET_KIND: "archive" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected invalid target kind");
+    expect(result.error.message).toContain("Invalid REA environment");
+  });
+
   it("builds a no-network managed runtime ceiling only when enabled", () => {
     const result = parseConfig({
       REA_MANAGED_RUNTIME_ENABLED: "true",
@@ -361,6 +368,8 @@ describe("runtime target configuration", () => {
   it("parses database kind and loader arguments", () => {
     expect(
       parseConfig({
+        HOPPER_LAUNCHER_PATH: "/custom/hopper",
+        REA_ANALYSIS_PROVIDER: "hopper",
         HOPPER_TARGET_PATH: "/fixture/sample.hop",
         HOPPER_TARGET_KIND: "database",
         HOPPER_LOADER_ARGS_JSON: '["-l","FAT","--aarch64","-l","Mach-O"]',
@@ -368,10 +377,8 @@ describe("runtime target configuration", () => {
     ).toMatchObject({
       ok: true,
       value: {
-        hopperLauncherPath:
-          process.platform === "linux"
-            ? "/opt/hopper/bin/Hopper"
-            : "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+        hopperLauncherPath: "/custom/hopper",
+        analysisProvider: "hopper",
         hopperTargetPath: "/fixture/sample.hop",
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
@@ -389,15 +396,19 @@ describe("runtime target configuration", () => {
 });
 
 describe("runtime collection configuration", () => {
-  it.each(["not-json", "{}", '["ok",1]'])(
+  it.each(["not-json", "{}", '"just a string"', '["ok",1]'])(
     "rejects invalid loader args: %s",
     (encoded) => {
-      expect(
-        parseConfig({
-          HOPPER_TARGET_PATH: "/tmp/a",
-          HOPPER_LOADER_ARGS_JSON: encoded,
-        }).ok,
-      ).toBe(false);
+      const result = parseConfig({
+        HOPPER_TARGET_PATH: "/tmp/a",
+        HOPPER_LOADER_ARGS_JSON: encoded,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok)
+        throw new Error("expected malformed loader arguments to fail");
+      expect(result.error.message).toContain(
+        encoded === "not-json" ? "valid JSON" : "array of strings",
+      );
     },
   );
 

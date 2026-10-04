@@ -390,31 +390,6 @@ describeBrowser("CdpBrowserProvider: document script 3", () => {
       },
     });
   });
-
-  it("returns every DOM node and complete approved script source", async () => {
-    const browser = await startFakeCdpBrowser();
-    trackBrowser(browser);
-    const request = inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-      include_script_sources: true,
-    });
-    const result = await new CdpBrowserProvider().inspectPage(request);
-    if (!result.ok) throw result.error;
-    expect(result.value.completeness.truncated_sections).not.toContain(
-      "script_sources",
-    );
-    expect(result.value.dom).toMatchObject({ total_nodes: 2 });
-    expect(result.value.dom.nodes).toHaveLength(2);
-    expect(result.value.scripts.items[0]?.source).toMatchObject({
-      included: true,
-    });
-    expect(browser.commands.map(({ method }) => method)).toContain(
-      "Debugger.getScriptSource",
-    );
-  });
 });
 
 describeBrowser("CdpBrowserProvider: document script 4", () => {

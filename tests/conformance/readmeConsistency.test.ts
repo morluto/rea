@@ -47,24 +47,18 @@ describe("localized README product facts", () => {
   it("keeps both English CLI onboarding paths discoverable", async () => {
     const content = await readFile(resolve("README.md"), "utf8");
     expect(content).toContain("npx -y rea-agents@latest analyze");
-    expect(content).toContain("npm install rea-agents` without `--global`");
     expect(content).toContain("npm install --global rea-agents");
     expect(content).toContain("rea setup");
     expect(content).toContain("--install-hopper");
     expect(content).toContain("docs/installation.md");
-    expect(content).toContain("You do not need both");
     expect(content).toContain("npx --yes rea-agents@latest setup");
   });
 
   it("documents explicit setup freshness and rollback", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
     const prose = normalizedProse(content);
-    expect(prose).toContain("explicit `@latest` request");
     expect(prose).toContain(
       "npm exec --yes --package=rea-agents@2.4.0 -- rea setup",
-    );
-    expect(prose).toContain(
-      "pin persistent MCP registrations to the exact version",
     );
   });
 

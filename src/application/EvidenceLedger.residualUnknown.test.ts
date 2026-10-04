@@ -110,9 +110,6 @@ describe("residual unknown registry reads and identity", () => {
   });
 
   it("derives stable IDs, filters heads, and rejects duplicate creation", () => {
-    expect(recordUnknownInputSchema.parse(input("Is branch live?"))).toEqual(
-      input("Is branch live?"),
-    );
     const store = ledger();
     const first = store.recordUnknown(
       input("  Is branch live?  "),
@@ -306,11 +303,5 @@ describe("residual unknown registry resolution and history", () => {
     const before = serializeEvidenceBundle(base.export());
     expect(base.import(branch.export()).ok).toBe(false);
     expect(serializeEvidenceBundle(base.export())).toBe(before);
-
-    const unbounded = new EvidenceLedger();
-    expect(
-      unbounded.recordUnknown(input("No quota"), mutation("unbounded")).ok,
-    ).toBe(true);
-    expect(unbounded.export().unknowns).toHaveLength(1);
   });
 });

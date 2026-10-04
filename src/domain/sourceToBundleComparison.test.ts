@@ -90,6 +90,7 @@ describe("historical source to bundle comparison", () => {
     expect(item(first, "src/merged-b.ts").status).toBe("merged");
     expect(item(first, "src/duplicated.ts")).toMatchObject({
       status: "duplicated",
+      candidates: [{}, {}],
       confidence: "exact",
       current_node_ids: [expect.any(String), expect.any(String)],
     });
@@ -115,22 +116,6 @@ describe("historical source to bundle comparison", () => {
       confidence: "unknown",
     });
     expect(result.coverage.status).toBe("partial");
-  });
-
-  it("retains every candidate without caller-selected caps", () => {
-    const result = compareSourceToBundle({
-      reference: historicalGraph("complete"),
-      application: {
-        evidenceId: EVIDENCE_ID,
-        rootArtifactSha256: HASH.artifact,
-        graph: applicationGraph("complete"),
-      },
-    });
-
-    expect(item(result, "src/duplicated.ts")).toMatchObject({
-      status: "duplicated",
-      candidates: [{}, {}],
-    });
   });
 
   it("evaluates all indexed candidates for each source file", () => {

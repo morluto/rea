@@ -132,7 +132,7 @@ describe("JavaScript semantic analysis: calls 1", () => {
       ({ method }) => method === "all",
     );
     expect(aggregate?.sourcePromiseIds).toHaveLength(2);
-    expect(aggregate?.returnSiteId).not.toBeNull();
+    expect(aggregate?.returnSiteId).toBeTypeOf("string");
   });
 });
 

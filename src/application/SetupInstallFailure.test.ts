@@ -26,7 +26,6 @@ describe("setup installer failure projection", () => {
   ] as const)("maps %s to %s", (reason, code) => {
     const result = setupInstallFailure(reason as HopperInstallFailureReason);
     expect(result).toMatchObject({ status: "failed", code });
-    if (result.status === "failed")
-      expect(result.remediation.length).toBeGreaterThan(20);
+    expect(result).toMatchObject({ remediation: expect.stringMatching(/\S/u) });
   });
 });

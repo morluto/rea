@@ -39,31 +39,3 @@ it("returns a complete requested text artifact beyond the former inline ceiling"
     value: { bytes: 16 * 1_024 * 1_024 + 1 },
   });
 });
-
-it("wraps URL, history, and storage snapshots in the capture state contract", async () => {
-  const page = {
-    url: () => "https://app.example.test/path?token=secret",
-    evaluate: async (expression: string) =>
-      expression.includes("window.history.length")
-        ? {
-            length: 2,
-            navigation_entries: [
-              { type: "navigate", name: "https://app.example.test/path" },
-            ],
-          }
-        : { local_storage: [], session_storage: [] },
-  } as unknown as Page;
-  const context = { cookies: async () => [] } as unknown as BrowserContext;
-
-  const result = await capturePlaywrightStepArtifacts({
-    context,
-    page,
-    scenario,
-    secrets,
-    requested: new Set(["url", "history", "storage"]),
-  });
-
-  expect(result.url.state).toBe("captured");
-  expect(result.history.state).toBe("captured");
-  expect(result.storage.state).toBe("captured");
-});

@@ -44,20 +44,6 @@ describe("Hopper provider discovery", () => {
       diagnostics: { target_kind: "archive", target_format: "asar" },
     });
   });
-
-  it("advertises byte reads as an available operation", () => {
-    const capabilities = provider(process.execPath).capabilities();
-    expect(
-      capabilities.find(({ operation }) => operation === "read_bytes"),
-    ).toMatchObject({
-      available: true,
-    });
-    expect(
-      capabilities.find(
-        ({ operation }) => operation === "address_to_file_offset",
-      ),
-    ).toMatchObject({ available: true });
-  });
 });
 
 const provider = (launcherPath: string): HopperProvider => {

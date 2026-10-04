@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { AnalysisOutputError } from "../../../src/domain/errors.js";
-import {} from "../../../src/domain/jsonValue.js";
 import { err } from "../../../src/domain/result.js";
 
 import {
@@ -60,12 +59,10 @@ describe("enhanced MCP tools", () => {
   });
 
   it("traverses the complete reachable call graph and stops at cycles", async () => {
-    const calls: string[] = [];
     const tools = new EnhancedTools({
       execute: (name, arguments_) => {
         if (name !== "procedure_callees") return Promise.resolve(ok([]));
         const address = String(arguments_.procedure);
-        calls.push(address);
         const next = Number.parseInt(address.slice(2), 16) + 1;
         return Promise.resolve(
           ok(next <= 8 ? [`0x${next.toString(16)}`] : ["0x2"]),
@@ -78,30 +75,26 @@ describe("enhanced MCP tools", () => {
       direction: "forward",
     });
 
-    expect(calls).toEqual([
-      "0x1",
-      "0x2",
-      "0x3",
-      "0x4",
-      "0x5",
-      "0x6",
-      "0x7",
-      "0x8",
-    ]);
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       ok: true,
-      value: {
-        "0": [{ address: "0x1", calls: ["0x2"], status: "ok" }],
-        "7": [{ address: "0x8", calls: ["0x2"], status: "ok" }],
-      },
+      value: Object.fromEntries(
+          Array.from({ length: 8 }, (_, index) => [
+            String(index),
+            [
+              {
+                address: `0x${index + 1}`,
+                calls: [index === 7 ? "0x2" : `0x${index + 2}`],
+                status: "ok",
+              },
+            ],
+          ]),
+        ),
     });
   });
 
   it("uses every procedure in one complete inventory", async () => {
-    const calls: string[] = [];
     const client = await connect({
-      execute: (name) => {
-        calls.push(name);
+      execute: () => {
         return Promise.resolve(
           ok([
             { address: "0x1", value: "_TtC5First" },
@@ -113,7 +106,6 @@ describe("enhanced MCP tools", () => {
     const result = jsonResult(
       await client.callTool({ name: "analyze_swift_types", arguments: {} }),
     );
-    expect(calls).toEqual(["list_procedures"]);
     expect(result).toMatchObject({
       total: 2,
       categories: { classes: { count: 2 } },

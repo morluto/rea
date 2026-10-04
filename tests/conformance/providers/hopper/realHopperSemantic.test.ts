@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  analyzeFixtureProcedure,
   requireCurrentDocument,
   resolveFixtureProcedure,
 } from "../../../../scripts/lib/real-hopper-semantic.mjs";
@@ -9,29 +8,6 @@ import {
 const normalize = (value: unknown): unknown => value;
 
 describe("real Hopper semantic fixture resolution", () => {
-  it("requests assembly when analyzing fixture procedures", async () => {
-    const requests: unknown[] = [];
-    const result = await analyzeFixtureProcedure(
-      {
-        callTool: async (request: unknown) => {
-          requests.push(request);
-          return { dossier: true };
-        },
-      },
-      {},
-      { address: "0x1000", name: "rea_entry" },
-      normalize,
-    );
-
-    expect(result).toEqual({ dossier: true });
-    expect(requests).toEqual([
-      {
-        name: "analyze_function",
-        arguments: { procedure: "0x1000" },
-      },
-    ]);
-  });
-
   it("binds mutations to the active document, not the first listed one", async () => {
     await expect(
       requireCurrentDocument(

@@ -134,7 +134,7 @@ describe("reconstruction coverage closure", () => {
     );
   });
 
-  it("never lets mock-strength or stale results satisfy stronger current claims", () => {
+  it("does not let stale verifier results satisfy current claims", () => {
     const workspace = completeReconstructionCoverageData();
     const semantic = workspace;
     const stale = createReconstructionCoverageData({

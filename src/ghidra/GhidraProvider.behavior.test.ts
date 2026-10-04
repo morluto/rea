@@ -60,7 +60,6 @@ describe("Ghidra provider", () => {
     expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
       GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
     );
-    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(22);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -253,7 +252,9 @@ describe("Ghidra client projection", () => {
     );
 
     expect(resolved.ok).toBe(true);
-    if (!resolved.ok || resolved.value.profile === null) return;
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("Expected a bound Ghidra profile");
     expect(resolved.value.profile).toMatchObject({
       provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
       parameters: {
@@ -310,7 +311,9 @@ describe("Ghidra result projection", () => {
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
     );
-    if (!resolved.ok || resolved.value.profile === null) return;
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("Expected a bound Ghidra profile");
 
     await expect(
       ghidra
@@ -348,7 +351,9 @@ describe("Ghidra result projection", () => {
       const resolved = await ghidra.resolveAnalysisProfile(
         executableTarget("elf", "x86_64"),
       );
-      if (!resolved.ok || resolved.value.profile === null) return;
+      if (!resolved.ok) throw resolved.error;
+      if (resolved.value.profile === null)
+        throw new Error("Expected a bound Ghidra profile");
 
       await expect(
         ghidra
@@ -382,7 +387,9 @@ describe("Ghidra result projection", () => {
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
     );
-    if (!resolved.ok || resolved.value.profile === null) return;
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("Expected a bound Ghidra profile");
 
     const result = await ghidra
       .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)

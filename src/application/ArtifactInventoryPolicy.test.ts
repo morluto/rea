@@ -18,12 +18,6 @@ describe("artifact inventory policy resolution", () => {
     });
   });
 
-  it("projects strict integrity without dormant continuation state", () => {
-    expect(resolveArtifactIntegrityPolicy({ mode: "fail" }, true)).toEqual({
-      mode: "fail",
-    });
-  });
-
   it("admits parsed continuation intent only under operator policy", () => {
     expect(() =>
       resolveArtifactIntegrityPolicy({ mode: "record-and-continue" }, false),

@@ -26,7 +26,7 @@ describe("reconstruction readiness report", () => {
     expect(parsed.capabilities).toHaveLength(1_001);
   });
 
-  it("passes the complete repository conformance journey deterministically", () => {
+  it("projects the complete conformance report deterministically", () => {
     const first = createReconstructionReadinessReport(input());
     const second = createReconstructionReadinessReport(input());
 

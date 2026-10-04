@@ -107,7 +107,6 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
         { pid: 101, reason: "run-token-mismatch" },
       ],
     });
-    expect(environment.mock.calls.map(([pid]) => pid)).toEqual([100, 101, 102]);
     expect(signalGroup).not.toHaveBeenCalled();
   });
   it("accepts a member that exits during ownership revalidation", async () => {

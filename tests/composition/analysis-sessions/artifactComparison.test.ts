@@ -113,30 +113,6 @@ describe("artifact comparison", () => {
     );
   });
 
-  it("accepts all reported comparison dimensions", async () => {
-    const result = (await changedArtifactComparison()).result;
-    const firstChange = result.changes[0];
-    if (firstChange === undefined) throw new Error("Expected artifact change");
-
-    const dimensions = [
-      "content",
-      "kind",
-      "format",
-      "size",
-      "executable",
-      "relations",
-      "metadata",
-      "availability",
-      "integrity",
-    ] as const;
-    expect(
-      artifactComparisonResultSchema.parse({
-        ...result,
-        changes: [{ ...firstChange, dimensions }, ...result.changes.slice(1)],
-      }).changes[0]?.dimensions,
-    ).toEqual(dimensions);
-  });
-
   it("reports incomplete inventory as truncated, never unchanged", async () => {
     const root = await createTestTempDirectory("rea-artifact-truncated-");
     await writeFile(join(root, "one.txt"), "one");

@@ -1,4 +1,3 @@
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { evidenceBundleSchema } from "./evidenceBundle.js";
@@ -298,16 +297,3 @@ export type ReviewedReconstructionObligation = z.infer<
 export type ReconstructionObligationManifest = z.infer<
   typeof reconstructionObligationManifestSchema
 >;
-
-/** Parse and canonically serialize one complete reconstruction obligation ledger. */
-export const serializeReconstructionObligationLedger = (
-  input: unknown,
-): string => {
-  const ledger = reconstructionObligationLedgerSchema.parse(input);
-  const encoded = canonicalize(ledger);
-  if (encoded === undefined)
-    throw new TypeError(
-      "Reconstruction obligation ledger is not canonical JSON",
-    );
-  return encoded;
-};

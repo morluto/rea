@@ -2,17 +2,22 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config.js";
 import { silentLogger } from "../logger.js";
-import { HopperProvider } from "./HopperProvider.js";
+import {
+  HopperProvider,
+  HOPPER_PROVIDER_TOOL_CONTRACTS,
+} from "./HopperProvider.js";
 
 describe("Hopper provider capabilities", () => {
   it("publishes deterministic descriptors and resists caller mutation", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);
-    if (!config.ok) return;
+    if (!config.ok) throw new Error("expected valid configuration");
     const provider = new HopperProvider(config.value, silentLogger);
     const capabilities = provider.capabilities();
     const published = structuredClone(capabilities);
-    expect(capabilities).toHaveLength(37);
+    expect(capabilities.map(({ operation }) => operation)).toEqual(
+      HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
+    );
     expect(new Set(capabilities.map(({ operation }) => operation)).size).toBe(
       capabilities.length,
     );

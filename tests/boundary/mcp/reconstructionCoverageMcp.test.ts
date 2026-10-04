@@ -20,16 +20,18 @@ describe("reconstruction coverage MCP", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      const boundaryId = "replacement.cli";
       const result = await client.callTool({
         name: "evaluate_reconstruction_coverage",
         arguments: {
-          coverage: currentFixtureCoverage(),
-          boundary_id: "replacement.cli",
+          coverage: currentFixtureCoverage(boundaryId),
+          boundary_id: boundaryId,
         },
       });
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         status: "ready",
+        boundary_id: boundaryId,
         summary: { reasons: 0 },
       });
     } finally {
@@ -40,10 +42,14 @@ describe("reconstruction coverage MCP", () => {
   });
 });
 
-const currentFixtureCoverage = () => {
+const currentFixtureCoverage = (boundaryId: string) => {
   const coverage = completeReconstructionCoverageData();
   return createReconstructionCoverageData({
     ...coverage,
+    boundaries: coverage.boundaries.map((boundary) => ({
+      ...boundary,
+      boundary_id: boundaryId,
+    })),
     verifier_results: coverage.verifier_results.map((result) => ({
       ...result,
       observed_at: new Date().toISOString(),

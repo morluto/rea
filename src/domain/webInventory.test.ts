@@ -48,7 +48,19 @@ describe("stable web inventory", () => {
   };
 
   it("excludes transient CDP and target identity from script keys", () => {
-    expect(stableWebScriptKey(script)).toBe(stableWebScriptKey({ ...script }));
+    const first = {
+      ...script,
+      script_id: "session-one-script",
+      target_id: "tab-one",
+      capture_id: "capture-one",
+    };
+    const second = {
+      ...script,
+      script_id: "session-two-script",
+      target_id: "tab-two",
+      capture_id: "capture-two",
+    };
+    expect(stableWebScriptKey(first)).toBe(stableWebScriptKey(second));
     expect(stableWebScriptKey({ ...script, length: 1_025 })).not.toBe(
       stableWebScriptKey(script),
     );

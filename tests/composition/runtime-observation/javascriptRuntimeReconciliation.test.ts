@@ -56,6 +56,11 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
   expect(() =>
     javascriptRuntimeReconciliationResultSchema.parse(result),
   ).not.toThrow();
+  expect(result.source_map_authority).toMatchObject({
+    used_for_primary_matching: false,
+    static_layer_count: 1,
+    runtime_script_declarations: 0,
+  });
   expect(result.summary).toMatchObject({
     runtime_targets: 1,
     runtime_frames: 1,
@@ -151,22 +156,6 @@ it("reports a captured digest disagreement instead of accepting a path match", a
     reason: "captured-content-disagrees-with-static-location",
   });
   expect(script?.candidate_static_nodes).toHaveLength(1);
-});
-
-it("keeps source-map declarations outside primary matching authority", async () => {
-  const fixture = await applicationFixture();
-  const staticEvidence = await analyzeFixture(fixture);
-  const runtimeEvidence = electronRuntimeEvidence(fixture, SOURCE);
-  const result = reconcileJavaScriptRuntime({
-    static_layers: [{ role: "application", analysis: staticEvidence }],
-    runtime_observations: [runtimeEvidence],
-  });
-
-  expect(result.source_map_authority).toMatchObject({
-    used_for_primary_matching: false,
-    static_layer_count: 1,
-    runtime_script_declarations: 0,
-  });
 });
 
 it("reconciles active Electron as a partial target-only runtime capture", async () => {

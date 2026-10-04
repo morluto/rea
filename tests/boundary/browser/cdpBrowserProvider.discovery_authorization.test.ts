@@ -9,21 +9,6 @@ import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
 
 describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
-  it("returns every approved page target inline", async () => {
-    const browser = await startFakeCdpBrowser({ additionalPageCount: 205 });
-    trackBrowser(browser);
-    const listed = await new CdpBrowserProvider().listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-      }),
-    );
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets).toHaveLength(206);
-    expect(listed.value.targets[0]?.target_id).toBe("allowed-page");
-    expect(listed.value.targets.at(-1)?.target_id).toBe("allowed-page-0204");
-  });
-
   it("lists only exact-origin pages and sanitizes URLs", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);

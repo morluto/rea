@@ -514,6 +514,7 @@ describe("typed unavailability without dispatching", () => {
     const session = createTestBinarySession(() => client());
     expect((await session.execute("binary_overview", {})).ok).toBe(false);
     expect(await session.close()).toEqual({ ok: true, value: null });
+    expect(await session.close()).toEqual({ ok: true, value: null });
   });
 
   it("keeps the active client when a switch fails", async () => {
@@ -622,14 +623,14 @@ describe("active client replacement", () => {
       clients.push(value);
       return value;
     });
-    await session.open(first);
+    expect((await session.open(first)).ok).toBe(true);
     const call = session.execute("procedure_pseudo_code", {});
     const switching = session.open(second);
     await Promise.resolve();
     expect(clients[0]?.closed).toBe(0);
     active.resolve(ok(null));
-    await call;
-    await switching;
+    expect((await call).ok).toBe(true);
+    expect((await switching).ok).toBe(true);
     expect(clients[0]?.closed).toBe(1);
   });
 
@@ -744,8 +745,9 @@ describe("cancellation during profile resolution", () => {
       clients.push(value);
       return value;
     });
-    await session.open(first);
-    await session.open(second);
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.open(second)).ok).toBe(false);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
@@ -770,10 +772,12 @@ describe("cancellation during profile resolution", () => {
         return Promise.resolve();
       },
     }));
-    await session.open(first);
-    await session.open(second);
+    expect((await session.open(first)).ok).toBe(true);
+    expect((await session.open(second)).ok).toBe(true);
+    expect(liveClients).toBe(1);
     expect(overlapped).toBe(false);
     await session.close();
+    expect(liveClients).toBe(0);
   });
 
   it("clears session state while preserving a typed provider cleanup failure", async () => {

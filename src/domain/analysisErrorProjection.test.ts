@@ -124,7 +124,7 @@ describe("analysis error projection: provider failures", () => {
         code: "provider_unavailable",
         details: { failure_code: code, exit_code: exitCode },
       });
-      expect(projected.message.length).toBeGreaterThan(20);
+      expect(projected.message).toMatch(/\S/u);
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
   });

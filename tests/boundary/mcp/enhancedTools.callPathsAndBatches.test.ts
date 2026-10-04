@@ -35,31 +35,39 @@ describe("enhanced MCP tools", () => {
     });
   });
 
-  it("dispatches every batch item without an artificial concurrency cap", async () => {
-    let active = 0;
-    let maximum = 0;
+  it("returns every batch item in caller order with its own result", async () => {
+    const addresses = Array.from(
+      { length: 37 },
+      (_, index) => `0x${index.toString(16)}`,
+    );
     const analysis: AnalysisOperationPort = {
-      execute: async (name) => {
-        if (name !== "procedure_pseudo_code") return ok(null);
-        active += 1;
-        maximum = Math.max(maximum, active);
-        await new Promise((resolve) => setTimeout(resolve, 2));
-        active -= 1;
-        return ok("pseudo");
+      execute: async (name, arguments_) => {
+        if (name !== "procedure_pseudo_code")
+          throw new Error(`Unexpected operation: ${name}`);
+        await new Promise((resolve) => setImmediate(resolve));
+        return ok(`pseudo for ${String(arguments_.procedure)}`);
       },
     };
     const client = await connect(analysis);
     const result = await client.callTool({
       name: "batch_decompile",
       arguments: {
-        addresses: Array.from(
-          { length: 37 },
-          (_, index) => `0x${String(index)}`,
-        ),
+        addresses,
       },
     });
     expect(result.isError).not.toBe(true);
-    expect(maximum).toBe(37);
+    expect(result.structuredContent).toMatchObject({
+      result: {
+        items: addresses.map((address) => ({
+          address,
+          status: "ok",
+          pseudocode: `pseudo for ${address}`,
+        })),
+        total: addresses.length,
+        succeeded: addresses.length,
+        failed: 0,
+      },
+    });
   });
 
   it("returns ordered typed batch failures and zero counts for empty input", async () => {

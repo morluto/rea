@@ -20,6 +20,6 @@ describe("Hopper response stream", () => {
     stream.push(`${line}\n`);
 
     expect(failures).toEqual([]);
-    expect(messages).toHaveLength(1);
+    expect(messages).toEqual([JSON.parse(line)]);
   });
 });

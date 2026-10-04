@@ -106,10 +106,9 @@ describe("passive V8 Inspector provider", () => {
           origin: null,
         },
       ]);
-      expect(fake.commands.map(({ method }) => method)).toEqual([
-        "Runtime.enable",
-        "Debugger.enable",
-      ]);
+      expect(new Set(fake.commands.map(({ method }) => method))).toEqual(
+        new Set(["Runtime.enable", "Debugger.enable"]),
+      );
       expect(JSON.stringify(result.value)).toContain(outside);
       expect(result.value.unavailable_without_instrumentation).toContain(
         "Electron IPC messages and handlers",

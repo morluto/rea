@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence, evidenceSchema } from "../domain/evidence.js";
+import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../domain/residualUnknown.js";
 import { EvidenceLedger } from "./EvidenceLedger.js";
@@ -41,27 +41,29 @@ describe("evidence ledger recording", () => {
       value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
     });
     expect(ledger.export().records).toEqual([evidence]);
-    ledger.clear();
-    expect(ledger.export().records).toEqual([]);
-  });
-
-  it("treats canonical JSON key order as semantically irrelevant", () => {
-    const evidence = createEvidence(TARGET, PROVIDER, {
+    const ordered = createEvidence(TARGET, PROVIDER, {
       operation: "health",
       parameters: { alpha: 1, beta: 2 },
       result: { alpha: 1, beta: 2 },
     });
-    const reordered = evidenceSchema.parse({
-      ...evidence,
-      parameters: { beta: 2, alpha: 1 },
-      normalized_result: { beta: 2, alpha: 1 },
-    });
-    const ledger = new EvidenceLedger();
-    expect(ledger.record(evidence)).toEqual({ ok: true, value: "added" });
-    expect(ledger.record(reordered)).toEqual({
+    expect(ledger.record(ordered)).toMatchObject({ ok: true, value: "added" });
+    const reorderedBundle: unknown = JSON.parse(
+      JSON.stringify(
+        createEvidenceBundle([
+          {
+            ...ordered,
+            parameters: { beta: 2, alpha: 1 },
+            normalized_result: { beta: 2, alpha: 1 },
+          },
+        ]),
+      ),
+    );
+    expect(ledger.import(reorderedBundle)).toEqual({
       ok: true,
-      value: "duplicate",
+      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
     });
+    ledger.clear();
+    expect(ledger.export().records).toEqual([]);
   });
 
   it("retains more than ten thousand inline evidence records", () => {
@@ -86,41 +88,6 @@ describe("evidence ledger recording", () => {
     });
     expect(ledger.record(record)).toEqual({ ok: true, value: "added" });
     expect(ledger.get(record.evidence_id)).toEqual(record);
-  });
-
-  it("retains Evidence alongside unknown revisions without a record quota", () => {
-    const ledger = new EvidenceLedger();
-    const mutation = createEvidence(undefined, PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: "record_unknown",
-      parameters: {},
-      result: { action: "record" },
-    });
-    const unknown = recordUnknownInputSchema.parse({
-      approved: true,
-      question: "What remains unresolved?",
-      severity: "high",
-      domain: "record-limit-test",
-      supporting_evidence_ids: [],
-      contradicting_evidence_ids: [],
-      required_authority: "shipped-artifact",
-      required_confidence: "observed",
-      required_environment: null,
-      recommended_probes: [],
-      relationships: [],
-    });
-    expect(ledger.recordUnknown(unknown, mutation).ok).toBe(true);
-
-    const direct = createEvidence(TARGET, PROVIDER, {
-      operation: "health",
-      parameters: {},
-      result: true,
-    });
-    expect(ledger.record(direct)).toEqual({ ok: true, value: "added" });
-    expect(ledger.export()).toMatchObject({
-      records: expect.arrayContaining([mutation, direct]),
-      unknowns: [expect.objectContaining({ domain: "record-limit-test" })],
-    });
   });
 });
 

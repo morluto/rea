@@ -103,7 +103,9 @@ describe("analysis provider registry: discovery and selection", () => {
 
     const selected = await registry.select(DATABASE_TARGET);
     expect(selected.ok).toBe(true);
-    if (!selected.ok || selected.value.binding === null) return;
+    if (!selected.ok) throw new Error("provider selection failed");
+    if (selected.value.binding === null)
+      throw new Error("expected a bound provider");
     expect(bindingProjection(selected.value.binding)).toEqual({
       id: "alpha",
       source: "auto-single-candidate",
@@ -198,6 +200,9 @@ describe("analysis provider registry: binding failures and cancellation", () => 
       candidate("alpha", { available: false }).provider,
     ]).select(ARTIFACT_TARGET, "alpha");
     expect(unsupported.ok).toBe(false);
+    if (unsupported.ok)
+      throw new Error("expected unsupported target rejection");
+    expect(unsupported.error).toBeInstanceOf(ProviderSelectionError);
     if (
       !unsupported.ok &&
       unsupported.error instanceof ProviderSelectionError
@@ -237,7 +242,9 @@ describe("analysis provider registry: binding failures and cancellation", () => 
     }
     const explicit = await automatic.select(ARTIFACT_TARGET, "alpha");
     expect(explicit.ok).toBe(false);
-    if (!explicit.ok && explicit.error instanceof ProviderSelectionError)
+    if (explicit.ok) throw new Error("expected provider selection rejection");
+    expect(explicit.error).toBeInstanceOf(ProviderSelectionError);
+    if (explicit.error instanceof ProviderSelectionError)
       expect(explicit.error.reason).toBe("target_unsupported");
   });
 
@@ -267,7 +274,9 @@ describe("analysis provider registry: binding failures and cancellation", () => 
       failed.provider,
     ]).select(DATABASE_TARGET, "failed");
     expect(explicit.ok).toBe(false);
-    if (!explicit.ok && explicit.error instanceof ProviderSelectionError)
+    if (explicit.ok) throw new Error("expected provider selection rejection");
+    expect(explicit.error).toBeInstanceOf(ProviderSelectionError);
+    if (explicit.error instanceof ProviderSelectionError)
       expect(explicit.error.rejections).toMatchObject([
         {
           providerId: "failed",

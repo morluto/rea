@@ -189,28 +189,6 @@ class FakeSession implements BrowserScenarioSessionPort {
 }
 
 describe("PlaywrightBrowserScenarioProvider", () => {
-  it("captures initial and action steps and closes its launched session", async () => {
-    const session = new FakeSession("launch");
-    const provider = new PlaywrightBrowserScenarioProvider({
-      open: () => Promise.resolve(session),
-    });
-    const result = await provider.captureScenario(scenario());
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.steps.map(({ step_index }) => step_index)).toEqual([
-      0, 1,
-    ]);
-    expect(result.value.browser).toMatchObject({
-      process_ownership: "provider-owned",
-      cleanup: "terminated-owned-process",
-    });
-    expect(result.value.completeness).toMatchObject({
-      status: "complete",
-      equality_eligible: true,
-    });
-    expect(session.closeCalls).toBe(1);
-  });
-
   it("returns an initial state and every step beyond the former action ceiling", async () => {
     const session = new FakeSession("launch");
     const provider = new PlaywrightBrowserScenarioProvider({

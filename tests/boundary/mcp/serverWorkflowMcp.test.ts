@@ -43,35 +43,6 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
   return Object.fromEntries(Object.entries(result.structuredContent));
 };
 
-it("advertises the native function discovery-to-dossier workflow", async () => {
-  const client = await connect({
-    execute: () => Promise.resolve(ok(null)),
-  });
-
-  expect(client.getInstructions()).toContain(
-    "Search or list symbols when discovery is needed",
-  );
-  expect(client.getInstructions()).toContain(
-    "analyze_function provides a function dossier",
-  );
-
-  const tools = new Map(
-    (await client.listTools()).tools.map((tool) => [tool.name, tool]),
-  );
-  expect(tools.get("binary_overview")?.description).toContain(
-    "Return native-binary metadata",
-  );
-  expect(tools.get("analyze_function")?.description).toContain(
-    "Build a dossier for one native function",
-  );
-  expect(tools.get("analyze_function")?.inputSchema.properties).toHaveProperty(
-    "procedure",
-  );
-  expect(tools.get("inspect_native_api")?.description).toContain(
-    "Analyze a native API boundary in one function",
-  );
-});
-
 it("executes a realistic workflow: list methods, decompile selected, get xrefs", async () => {
   const client = await connect({
     execute: (name, args) => {

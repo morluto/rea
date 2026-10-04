@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GHIDRA_INVENTORY_OPERATIONS,
   isGhidraInventoryOperation,
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
@@ -33,7 +32,6 @@ describe("Ghidra inventory boundary values", () => {
   });
 
   it("keeps the admitted operation set closed", () => {
-    expect(GHIDRA_INVENTORY_OPERATIONS).toHaveLength(10);
     expect(isGhidraInventoryOperation("list_names")).toBe(true);
     expect(isGhidraInventoryOperation("goto_address")).toBe(false);
     expect(isGhidraInventoryOperation("set_comment")).toBe(false);

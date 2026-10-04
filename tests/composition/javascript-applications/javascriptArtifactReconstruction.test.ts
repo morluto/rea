@@ -127,7 +127,6 @@ it("produces deterministic ASAR graphs with unpacked native linkage and complete
 
   expect(first.graph).toEqual(second.graph);
   expect(first.inventory_graph_sha256).toBe(second.inventory_graph_sha256);
-  expect(first.graph.graph_id).toBe(second.graph.graph_id);
   expect(first.graph.nodes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({

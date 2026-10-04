@@ -12,7 +12,6 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { processCaptureSchema } from "../domain/processCapture.js";
 import {
   reconstructionObligationLedgerSchema,
-  serializeReconstructionObligationLedger,
   type ReconstructionObligationLedgerInput,
   type ReconstructionObligationLedger,
   type ReviewedReconstructionObligation,
@@ -153,13 +152,8 @@ describe("reconstruction obligation ledger", () => {
     );
     expect(first.obligations).toHaveLength(2);
     expect(first).toEqual(second);
-    expect(second.ledger_id).toBe(first.ledger_id);
-    expect(second.closure_digest).toBe(first.closure_digest);
     expect(first.obligations[0]?.source_state).toBe("reviewed");
     expect(first.status).toBe("open");
-    expect(serializeReconstructionObligationLedger(first)).toBe(
-      serializeReconstructionObligationLedger(second),
-    );
   });
 
   it("does not let green unit evidence close a packaged-process obligation", () => {

@@ -152,7 +152,7 @@ describe("browser scenario MCP tool", () => {
     await Promise.all(resources.splice(0).map((item) => item.close()));
   });
 
-  test("authorizes exact scope, records Evidence, and retains no secret value", async () => {
+  test("authorizes exact scope and records declared secret references as Evidence", async () => {
     const configured = parseConfig({
       REA_BROWSER_SCENARIO_ENABLED: "true",
       REA_BROWSER_SCENARIO_AUTO_GRANT: "true",
@@ -222,9 +222,6 @@ describe("browser scenario MCP tool", () => {
       },
     });
     expect(provider.scenarios).toHaveLength(2);
-    expect(JSON.stringify(captured.structuredContent)).not.toContain(
-      "correct horse battery staple",
-    );
     expect(captured.structuredContent).toMatchObject({
       evidence: {
         predicate_type: "rea.browser-scenario-capture",

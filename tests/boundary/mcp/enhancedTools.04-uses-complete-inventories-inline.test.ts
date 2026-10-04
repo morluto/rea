@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import {} from "../../../src/domain/jsonValue.js";
-
 import {
   closeEnhancedToolResources,
   connect,
@@ -13,11 +11,9 @@ afterEach(closeEnhancedToolResources);
 
 describe("enhanced MCP tools", () => {
   it("discovers every Objective-C class from one complete inventory", async () => {
-    const calls: string[] = [];
     const client = await connect({
       execute: (name) => {
         expect(name).toBe("list_names");
-        calls.push(name);
         return Promise.resolve(
           ok([
             { address: "0x1", value: "_OBJC_CLASS_$_First" },
@@ -29,12 +25,10 @@ describe("enhanced MCP tools", () => {
     const result = jsonResult(
       await client.callTool({ name: "get_objc_classes", arguments: {} }),
     );
-    expect(calls).toEqual(["list_names"]);
     expect(result).toMatchObject({ count: 2 });
   });
 
   it("returns the complete overview inline with exhaustive totals", async () => {
-    const inventoryCalls: string[] = [];
     const client = await connect({
       execute: (name) => {
         switch (name) {
@@ -48,7 +42,6 @@ describe("enhanced MCP tools", () => {
           case "list_documents":
             return Promise.resolve(ok(["fixture"]));
           case "list_strings":
-            inventoryCalls.push(name);
             return Promise.resolve(
               ok(
                 Array.from({ length: 700 }, (_, index) => ({
@@ -58,7 +51,6 @@ describe("enhanced MCP tools", () => {
               ),
             );
           case "list_procedures": {
-            inventoryCalls.push(name);
             return Promise.resolve(
               ok([
                 { address: "0x1", value: "first" },
@@ -77,7 +69,6 @@ describe("enhanced MCP tools", () => {
         arguments: {},
       }),
     );
-    expect(inventoryCalls).toEqual(["list_procedures", "list_strings"]);
     expect(result).toEqual({
       document: "fixture",
       segments: [

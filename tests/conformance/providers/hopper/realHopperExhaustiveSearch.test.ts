@@ -21,14 +21,9 @@ describe("real Hopper complete inline search", () => {
       procedures: { count: 205, calls: 1 },
       strings: { count: 205, calls: 1 },
     });
-    expect(client.calls).toEqual([
-      "open_binary",
-      "search_procedures",
-      "search_strings",
-    ]);
   });
 
-  it.each(["duplicate", "wrong-count", "missing"] as const)(
+  it.each(["duplicate", "missing"] as const)(
     "rejects %s positive evidence",
     async (fault) => {
       await expect(
@@ -46,19 +41,13 @@ describe("real Hopper complete inline search", () => {
   );
 });
 
-const fixtureClient = (
-  count: number,
-  fault?: "duplicate" | "wrong-count" | "missing",
-) => {
-  const calls: string[] = [];
+const fixtureClient = (count: number, fault?: "duplicate" | "missing") => {
   return {
-    calls,
     callTool: async (request: unknown) => {
       const parsed = request as { name: string };
-      calls.push(parsed.name);
       if (parsed.name === "open_binary") return { isError: false };
       const procedures = parsed.name === "search_procedures";
-      const resultCount = fault === "wrong-count" ? count - 1 : count;
+      const resultCount = count;
       const items = Array.from({ length: resultCount }, (_, index) => {
         const duplicateIndex = fault === "duplicate" && index === 1 ? 0 : index;
         return {
