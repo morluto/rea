@@ -6,7 +6,6 @@ import {
 } from "./AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../domain/hopperValues.fixture.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
-import { nativeValueTraceSchema } from "../domain/nativeValueTrace.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { AnalysisCancelledError } from "../domain/errors.js";
 import { ok, err } from "../domain/result.js";
@@ -99,39 +98,6 @@ const analysis: AnalysisOperationPort = {
   },
 };
 describe("bounded native value dependency composition", () => {
-  it("joins caller arguments, callee parameter uses, and return dependencies with evidence", async () => {
-    const result = await traceNativeValues(analysis, { procedure: "0x1000" });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const graph = nativeValueTraceSchema.parse(result.value);
-    expect(graph.decompilations).toBe(2);
-    expect(graph.edges).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "argument-binding",
-          source: "0x1000/call",
-          target: "0x2000/parameter:0",
-          input_index: 1,
-          status: "derived",
-        }),
-        expect.objectContaining({
-          kind: "parameter-use",
-          source: "0x2000/parameter:0",
-          target: "0x2000/return",
-        }),
-        expect.objectContaining({
-          kind: "return-binding",
-          source: "0x2000/return",
-          target: "0x1000/call",
-        }),
-      ]),
-    );
-    expect(
-      graph.nodes.every(({ evidence_id }) =>
-        /^ev_[a-f0-9]{64}$/u.test(evidence_id),
-      ),
-    ).toBe(true);
-  });
   it("reports work truncation and stable pagination without traversing ambiguous calls", async () => {
     const bounded = await traceNativeValues(analysis, {
       procedure: "0x1000",

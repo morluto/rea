@@ -71,6 +71,7 @@ type AvailabilityContext = {
 };
 
 const ENHANCED_REQUIREMENTS: Readonly<Record<string, readonly string[]>> = {
+  trace_native_values: ["analyze_function", "resolve_native_call_targets"],
   trace_native_ui_action: [
     "decode_interface_builder",
     "list_names",

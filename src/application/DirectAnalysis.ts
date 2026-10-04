@@ -289,6 +289,7 @@ const executeAnalysisTool = async (input: {
     tool === "inspect_native_api" ||
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
+    tool === "trace_native_values" ||
     tool === "trace_native_ui_action"
   ) {
     const result = await new EnhancedTools(session).execute(
@@ -411,7 +412,9 @@ const isWorkflowEvidenceTool = (
 ): boolean =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
+  tool === "inspect_native_dispatch_metadata" ||
   tool === "trace_feature" ||
+  tool === "trace_native_values" ||
   tool === "trace_native_ui_action";
 
 const fileExists = async (path: string): Promise<boolean> => {

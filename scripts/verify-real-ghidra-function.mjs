@@ -6,9 +6,7 @@ import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
-import { traceNativeValues } from "../dist/application/NativeValueTrace.js";
-import { createAnalysisExecution } from "../dist/application/AnalysisProvider.js";
-import { ok } from "../dist/domain/result.js";
+import { verifyNativeValueE2e } from "./lib/native-value-e2e.mjs";
 
 import {
   assertDenseSwitchDossier,
@@ -606,59 +604,12 @@ export async function verifyRelativeSwitch(client, procedures, entrySize) {
   };
 }
 
-export async function verifyNativeValueTrace(
-  client,
-  procedures,
-  target,
-  profile,
-) {
+export async function verifyNativeValueTrace(client, procedures, target) {
   const entry = requireProcedure(procedures, "rea_ghidra_inventory_entry");
-  const graph = await traceNativeValues(
-    {
-      execute: async (operation, parameters) => {
-        const result = await functionCall(client, operation, parameters);
-        return ok(
-          createAnalysisExecution(
-            result,
-            { id: "ghidra", name: "Ghidra", version: "12.1.4" },
-            {
-              subject: {
-                path: target.path,
-                sha256: target.sha256,
-                format: target.format,
-                architecture: target.architecture,
-              },
-              analysisProfile: profile,
-            },
-          ),
-        );
-      },
-    },
-    { procedure: entry.address, max_depth: 2, max_functions: 8, limit: 5000 },
-  );
-  if (!graph.ok) throw graph.error;
-  for (const kind of ["argument-binding", "parameter-use", "return-binding"])
-    if (!graph.value.edges.some((edge) => edge.kind === kind))
-      throw new Error(
-        `Real native value trace lacks ${kind}: ${JSON.stringify({ unknowns: graph.value.unknowns, nodes: graph.value.nodes.map((node) => ({ procedure: node.procedure, opcode: node.operation?.opcode })), edges: graph.value.edges })}`,
-      );
   const names = await inventoryCall(client, "list_names", {
     document: null,
     address: null,
   });
   const global = requireProcedure(names, "rea_ghidra_inventory_global");
-  if (
-    !graph.value.nodes.some((node) =>
-      node.operation?.inputs.some((value) => value.location === global.address),
-    )
-  )
-    throw new Error(
-      "Source-owned global storage operand is absent from native dependency graph",
-    );
-  return {
-    nodes: graph.value.total_nodes,
-    edges: graph.value.total_edges,
-    decompilations: graph.value.decompilations,
-    unknowns: graph.value.unknowns.length,
-  };
+  return verifyNativeValueE2e(target, entry.address, global.address);
 }

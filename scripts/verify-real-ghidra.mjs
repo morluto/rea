@@ -282,6 +282,7 @@ try {
       native_api_cli: aarch64JumpTableOnly
         ? (crossResults[0]?.native_api_cli ?? null)
         : debug.native_api_cli,
+      native_value_e2e: debug.native_values,
       custom_target: custom === null ? null : summary(custom),
       cleanup: "complete",
     })}\n`,
@@ -485,12 +486,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
             });
     const nativeValues =
       variant === "debug"
-        ? await verifyNativeValueTrace(
-            client,
-            procedures,
-            parsedTarget.value,
-            profile.value.profile,
-          )
+        ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)
         : null;
     return {
       variant,
