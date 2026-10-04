@@ -26,6 +26,9 @@ class FakeDocument:
     def getCurrentAddress(self):
         return 0x401000
 
+    def getSegmentsList(self):
+        return [FakeInventorySegment()]
+
 
 class FakeDocumentProvider:
     document = FakeDocument()
@@ -47,8 +50,31 @@ class FakeStringSegment:
 
 
 class FakeStringAddress:
+    def __init__(self, value="0x401234"):
+        self.value = value
+
     def __str__(self):
-        return "0x401234"
+        return self.value
+
+
+class FakeInventorySegment:
+    addresses = [FakeStringAddress("0x10"), 0x100, 0x2]
+
+    def getStringsList(self):
+        return [
+            ("string-" + str(self.number(address)), address)
+            for address in self.addresses
+        ]
+
+    def getNamedAddresses(self):
+        return self.addresses
+
+    def getNameAtAddress(self, address):
+        return "name-" + str(self.number(address))
+
+    @staticmethod
+    def number(address):
+        return address if isinstance(address, int) else int(str(address), 16)
 
 
 class FakeStringsDocument:
@@ -64,6 +90,42 @@ def load_bridge(path):
     source = Path(path).read_text(encoding="utf-8")
     exec(compile(source, path, "exec"), namespace)
     return namespace
+
+
+def inventory_replies(bridge):
+    server_socket, client_socket = socket.socketpair()
+    worker = threading.Thread(
+        target=bridge["_serve_connection"], args=(server_socket,)
+    )
+    worker.start()
+    replies = []
+    client_file = client_socket.makefile("rwb")
+    try:
+        for index, (method, params) in enumerate([
+            ("list_strings", {}),
+            ("list_names", {}),
+            ("list_strings", {"address": "0x10"}),
+            ("list_names", {"address": "0x10"}),
+            ("list_strings", {"address": "0xff"}),
+            ("list_names", {"address": "0xff"}),
+        ], 1):
+            request = {
+                "id": index,
+                "token": "probe-token",
+                "method": method,
+                "params": params,
+            }
+            client_file.write((json.dumps(request) + "\n").encode("utf-8"))
+            client_file.flush()
+            messages = [
+                json.loads(client_file.readline().decode("utf-8")) for _ in range(3)
+            ]
+            replies.append(messages[-1])
+    finally:
+        client_file.close()
+        client_socket.close()
+        worker.join(timeout=1)
+    return replies
 
 
 def main():
@@ -98,6 +160,9 @@ def main():
         }
 
     bridge["REA_TOKEN"] = "probe-token"
+    FakeDocumentProvider.document.analysis_active = False
+    FakeDocumentProvider.current.analysis_active = False
+    inventories = inventory_replies(bridge)
     bridge["_dispatch"] = lambda method, params: (
         (_ for _ in ()).throw(RuntimeError("credential=supersecret"))
         if method == "fail"
@@ -132,6 +197,7 @@ def main():
                 "current_document": current,
                 "current_address": current_address,
                 "strings": strings,
+                "inventory_replies": inventories,
                 "session_document_reused": selected,
                 "shared_document_shutdown": retained,
                 "analysis_guard": analysis_guard,

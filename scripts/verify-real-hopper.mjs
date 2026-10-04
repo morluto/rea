@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -310,6 +311,42 @@ try {
     options,
   );
   requireSuccessfulTool(overview, "binary_overview");
+  const inventoryCounts = {};
+  for (const operation of ["list_strings", "list_names"]) {
+    const called = await client.callTool(
+      { name: operation, arguments: {} },
+      options,
+    );
+    const inventory = requireSuccessfulTool(called, operation);
+    requireEvidenceProvider(called, operation, HOPPER_PROVIDER_IDENTITY.id);
+    assert.ok(
+      Array.isArray(inventory) && inventory.length > 0,
+      `${operation} omitted the real fixture inventory`,
+    );
+    let previous = -1n;
+    for (const item of inventory) {
+      assert.match(item.address, /^0x[0-9a-f]+$/u);
+      assert.equal(typeof item.value, "string");
+      const address = BigInt(item.address);
+      assert.ok(
+        address > previous,
+        `${operation} is not numerically address-sorted`,
+      );
+      previous = address;
+    }
+    const filtered = requireSuccessfulTool(
+      await client.callTool(
+        {
+          name: operation,
+          arguments: { address: inventory[0].address },
+        },
+        options,
+      ),
+      operation,
+    );
+    assert.deepEqual(filtered, [inventory[0]]);
+    inventoryCounts[operation] = inventory.length;
+  }
   requireEvidenceProvider(
     documents,
     "list_documents",
@@ -442,6 +479,7 @@ try {
     segmentCount: firstOverview.segment_count,
     analyses: [firstAnalysis, secondAnalysis],
     fixtureAnalysis,
+    inventoryCounts,
     largeInventory,
     fixtureManifest: fixtureTargets.manifestPath,
     bundledMcpRunning,

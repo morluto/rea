@@ -734,14 +734,14 @@ def _dispatch(method, params):
         if requested is not None:
             key = _hex(_address(document, requested))
             values = {key: values[key]} if key in values else {}
-        return [{"address": _hex(address), "value": value} for address, value in sorted(values.items())]
+        return [{"address": address, "value": value} for address, value in values.items()]
     if method == "list_names":
         result = dict(_search_inventory(document, "name"))
         requested = params.get("address")
         if requested is not None:
             key = _hex(_address(document, requested))
             result = {key: result[key]} if key in result else {}
-        return [{"address": _hex(address), "value": value} for address, value in sorted(result.items(), key=lambda item: int(item[0]))]
+        return [{"address": address, "value": value} for address, value in result.items()]
     if method in ("search_procedures", "search_strings"):
         kind = "procedure" if method == "search_procedures" else "string"
         return _search_results(document, kind, params)
