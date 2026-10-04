@@ -128,6 +128,10 @@ class CapabilityUnavailableError(Exception):
     """The active Hopper build lacks one admitted public API operation."""
 
 
+class InvalidRequestError(Exception):
+    """Caller input failed bridge request or operation validation."""
+
+
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
     (
         "analyze_function",
@@ -182,8 +186,8 @@ def _document(name=None):
             current = api.current_document()
             if current is not None and current.getDocumentName() == name:
                 return current
-            raise ValueError("Hopper document name is ambiguous")
-        raise ValueError("Unknown Hopper document")
+            raise InvalidRequestError("Hopper document name is ambiguous")
+        raise InvalidRequestError("Unknown Hopper document")
     if _selected_document is not None:
         for candidate in documents:
             if candidate.getDocumentName() == _selected_document:
@@ -193,7 +197,7 @@ def _document(name=None):
         return session_document
     current = api.current_document()
     if current is None:
-        raise ValueError("No Hopper document is loaded")
+        raise CapabilityUnavailableError("No Hopper document is loaded")
     return current
 
 
@@ -202,20 +206,20 @@ def _address(document, value=None):
     if value is None:
         return document.getCurrentAddress()
     if not isinstance(value, str):
-        raise ValueError("Address must be a string")
+        raise InvalidRequestError("Address must be a string")
     try:
         return int(value, 16)
     except ValueError:
         result = document.getAddressForName(value)
         if result in BAD_ADDRESSES:
-            raise ValueError("Unknown Hopper address or name")
+            raise InvalidRequestError("Unknown Hopper address or name")
         return result
 
 
 def _segment(document, address):
     result = document.getSegmentAtAddress(address)
     if result is None:
-        raise ValueError("Address is outside every segment")
+        raise InvalidRequestError("Address is outside every segment")
     return result
 
 
@@ -223,7 +227,7 @@ def _procedure(document, value=None):
     address = document.getCurrentAddress() if value is None else _address(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise ValueError("No procedure exists at the requested address")
+        raise InvalidRequestError("No procedure exists at the requested address")
     return result
 
 
@@ -283,7 +287,7 @@ def _procedure_references(document, params):
     procedure = _procedure(document, params.get("procedure"))
     direction = params.get("direction", "outgoing")
     if direction not in ("incoming", "outgoing"):
-        raise ValueError("direction must be incoming or outgoing")
+        raise InvalidRequestError("direction must be incoming or outgoing")
     addresses = _instruction_addresses(procedure)
     edges = set()
     for address in addresses:
@@ -371,13 +375,13 @@ def _search_inventory(document, kind):
 def _search_results(document, kind, params):
     pattern = params.get("pattern")
     if not isinstance(pattern, str) or not pattern:
-        raise ValueError("pattern must be a non-empty string")
+        raise InvalidRequestError("pattern must be a non-empty string")
     mode = params.get("mode", "literal")
     if mode not in ("literal", "regex"):
-        raise ValueError("mode must be literal or regex")
+        raise InvalidRequestError("mode must be literal or regex")
     case_sensitive = params.get("case_sensitive", False)
     if not isinstance(case_sensitive, bool):
-        raise ValueError("case_sensitive must be a boolean")
+        raise InvalidRequestError("case_sensitive must be a boolean")
 
     if mode == "literal":
         needle = pattern if case_sensitive else pattern.casefold()
@@ -386,7 +390,7 @@ def _search_results(document, kind, params):
         try:
             expression = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
         except (re.error, OverflowError) as error:
-            raise ValueError("Invalid regex pattern") from error
+            raise InvalidRequestError("Invalid regex pattern") from error
         matches = lambda value: expression.search(value) is not None
 
     selected = []
@@ -623,9 +627,9 @@ def _dispatch(method, params):
     if method == "read_bytes":
         length = params.get("length", 256)
         if isinstance(length, bool) or not isinstance(length, int):
-            raise ValueError("Byte-read length must be an integer")
+            raise InvalidRequestError("Byte-read length must be an integer")
         if length < 1:
-            raise ValueError("Byte-read length must be at least 1")
+            raise InvalidRequestError("Byte-read length must be at least 1")
         reader = getattr(document, "readBytes", None)
         if not callable(reader):
             raise CapabilityUnavailableError(
@@ -659,7 +663,7 @@ def _dispatch(method, params):
             or offset in BAD_ADDRESSES
             or offset < 0
         ):
-            raise ValueError("Address has no authoritative file-offset mapping")
+            raise InvalidRequestError("Address has no authoritative file-offset mapping")
         return {"address": _hex(address), "file_offset": offset}
     if method == "resolve_containing_procedure":
         address = _address(document, params.get("address"))
@@ -695,7 +699,7 @@ def _dispatch(method, params):
         else:
             result = document.getInstructionStart(max(0, target - 1))
         if result in BAD_ADDRESSES:
-            raise ValueError("No adjacent address")
+            raise InvalidRequestError("No adjacent address")
         return _hex(result)
     if method == "list_segments":
         result = []
@@ -794,7 +798,7 @@ def _dispatch(method, params):
         address = _address(document, params.get("address"))
         document.removeBookmarkAtAddress(address)
         return not document.hasBookmarkAtAddress(address)
-    raise ValueError("Unknown bridge method")
+    raise InvalidRequestError("Unknown bridge method")
 
 
 def _serve_connection(connection):
@@ -808,13 +812,24 @@ def _serve_connection(connection):
         authenticated = False
         should_stop = False
         try:
-            request = json.loads(line.decode("utf-8"))
-            if set(request) != {"id", "token", "method", "params"}:
-                raise ValueError("Invalid bridge request shape")
+            try:
+                request = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise InvalidRequestError("Invalid bridge request JSON") from error
+            if not isinstance(request, dict) or set(request) != {"id", "token", "method", "params"}:
+                raise InvalidRequestError("Invalid bridge request shape")
             request_id = request["id"]
             if isinstance(request_id, bool) or not isinstance(request_id, int) or request_id < 0:
-                raise ValueError("Invalid bridge request id")
-            if not isinstance(request["token"], str) or not hmac.compare_digest(request["token"], REA_TOKEN):
+                raise InvalidRequestError("Invalid bridge request id")
+            if (
+                not isinstance(request["method"], str) or not request["method"]
+                or not isinstance(request["params"], dict)
+            ):
+                raise InvalidRequestError("Invalid bridge method or parameters")
+            if (
+                not isinstance(request["token"], str) or not request["token"].isascii()
+                or not hmac.compare_digest(request["token"], REA_TOKEN)
+            ):
                 raise PermissionError("Invalid bridge capability")
             authenticated = True
             _write_message(file, {"id": request_id, "event": {
@@ -869,7 +884,7 @@ def _diagnostic_type(error):
         return "capability_unavailable"
     if isinstance(error, PermissionError):
         return "authorization"
-    if isinstance(error, (ValueError, TypeError, KeyError)):
+    if isinstance(error, InvalidRequestError):
         return "invalid_request"
     return "bridge_exception"
 

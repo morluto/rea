@@ -30,6 +30,17 @@ const probeResultSchema = z.strictObject({
       ),
     }),
   ),
+  provider_faults: z.array(
+    z.strictObject({
+      id: z.literal(1),
+      error: z.strictObject({
+        code: z.literal(-32000),
+        message: z.string(),
+        type: z.literal("bridge_exception"),
+      }),
+    }),
+  ),
+  malformed_requests: z.array(z.unknown()),
   session_document_reused: z.literal(true),
   shared_document_shutdown: z.strictObject({
     shutdown: z.literal(true),
@@ -95,6 +106,30 @@ describe("Hopper API facade", () => {
       },
     );
     const result = probeResultSchema.parse(JSON.parse(stdout));
+    expect(result.provider_faults.map((reply) => reply.error.message)).toEqual([
+      "TypeError: Hopper bridge operation failed",
+      "ValueError: Hopper bridge operation failed",
+      "KeyError: Hopper bridge operation failed",
+    ]);
+    expect(result.malformed_requests).toEqual([
+      ...[0, 0, 0, 0, 0, 2, 3, 0, 4, 5, 6, 7].map((id) => ({
+        id,
+        error: {
+          code: -32000,
+          type: "invalid_request",
+          message: "Invalid Hopper bridge request",
+        },
+      })),
+      {
+        id: 8,
+        error: {
+          code: -32000,
+          type: "authorization",
+          message: "Invalid bridge capability",
+        },
+      },
+      { id: 9, result: "0x401000" },
+    ]);
     expect(result.inventory_replies).toEqual([
       {
         id: 1,

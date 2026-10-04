@@ -10,6 +10,7 @@ import threading
 class FakeDocument:
     def __init__(self):
         self.analysis_active = True
+        self.address_error = None
 
     def getDocumentName(self):
         return "fixture"
@@ -24,6 +25,8 @@ class FakeDocument:
         return self.analysis_active
 
     def getCurrentAddress(self):
+        if self.address_error is not None:
+            raise self.address_error
         return 0x401000
 
     def getSegmentsList(self):
@@ -92,7 +95,7 @@ def load_bridge(path):
     return namespace
 
 
-def inventory_replies(bridge):
+def bridge_replies(bridge, requests):
     server_socket, client_socket = socket.socketpair()
     worker = threading.Thread(
         target=bridge["_serve_connection"], args=(server_socket,)
@@ -101,31 +104,24 @@ def inventory_replies(bridge):
     replies = []
     client_file = client_socket.makefile("rwb")
     try:
-        for index, (method, params) in enumerate([
-            ("list_strings", {}),
-            ("list_names", {}),
-            ("list_strings", {"address": "0x10"}),
-            ("list_names", {"address": "0x10"}),
-            ("list_strings", {"address": "0xff"}),
-            ("list_names", {"address": "0xff"}),
-        ], 1):
-            request = {
-                "id": index,
-                "token": "probe-token",
-                "method": method,
-                "params": params,
-            }
-            client_file.write((json.dumps(request) + "\n").encode("utf-8"))
+        for request in requests:
+            line = request if isinstance(request, bytes) else json.dumps(request).encode("utf-8")
+            client_file.write(line + b"\n")
             client_file.flush()
-            messages = [
-                json.loads(client_file.readline().decode("utf-8")) for _ in range(3)
-            ]
-            replies.append(messages[-1])
+            while True:
+                response = json.loads(client_file.readline().decode("utf-8"))
+                if "event" not in response:
+                    replies.append(response)
+                    break
     finally:
         client_file.close()
         client_socket.close()
         worker.join(timeout=1)
     return replies
+
+
+def request(method, params, request_id=1):
+    return {"id": request_id, "token": "probe-token", "method": method, "params": params}
 
 
 def main():
@@ -162,7 +158,33 @@ def main():
     bridge["REA_TOKEN"] = "probe-token"
     FakeDocumentProvider.document.analysis_active = False
     FakeDocumentProvider.current.analysis_active = False
-    inventories = inventory_replies(bridge)
+    inventories = bridge_replies(bridge, [
+        request(method, params, index)
+        for index, (method, params) in enumerate([
+            ("list_strings", {}),
+            ("list_names", {}),
+            ("list_strings", {"address": "0x10"}),
+            ("list_names", {"address": "0x10"}),
+            ("list_strings", {"address": "0xff"}),
+            ("list_names", {"address": "0xff"}),
+        ], 1)
+    ])
+    provider_faults = []
+    for error_type in (TypeError, ValueError, KeyError):
+        FakeDocumentProvider.current.address_error = error_type("credential=supersecret")
+        provider_faults.extend(bridge_replies(bridge, [request("current_address", {})]))
+    FakeDocumentProvider.current.address_error = None
+    malformed_requests = bridge_replies(bridge, [
+        b"not-json", b"\xff", None, 42, [],
+        request([], {}, 2), request("current_address", [], 3),
+        request("current_address", {}, True),
+        request("list_strings", {"address": True}, 4),
+        request("read_bytes", {"length": True}, 5),
+        request("search_strings", {"pattern": "a", "case_sensitive": 1}, 6),
+        request("unknown_method", {}, 7),
+        {**request("current_address", {}, 8), "token": "\u2603"},
+        request("current_address", {}, 9),
+    ])
     bridge["_dispatch"] = lambda method, params: (
         (_ for _ in ()).throw(RuntimeError("credential=supersecret"))
         if method == "fail"
@@ -198,6 +220,8 @@ def main():
                 "current_address": current_address,
                 "strings": strings,
                 "inventory_replies": inventories,
+                "provider_faults": provider_faults,
+                "malformed_requests": malformed_requests,
                 "session_document_reused": selected,
                 "shared_document_shutdown": retained,
                 "analysis_guard": analysis_guard,
