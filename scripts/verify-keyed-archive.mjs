@@ -1,11 +1,16 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { silentLogger } from "../dist/logger.js";
-import { runProviderAnalysis } from "../dist/application/DirectAnalysis.js";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import {
+  artifactCli,
+  artifactMcpResult,
+  withArtifactMcp,
+} from "./lib/artifact-e2e.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -26,15 +31,70 @@ try {
     ),
     archive,
   ]);
-  const observation = await runProviderAnalysis(
+  const graph = await artifactCli("inspect-keyed-archive", archive);
+  const digest = createHash("sha256")
+    .update(await readFile(archive))
+    .digest("hex");
+  assert.equal(graph.archive_sha256, digest);
+  assert.equal(graph.target_sha256, digest);
+  await withArtifactMcp(archive, async (client) => {
+    assert.deepEqual(
+      await artifactMcpResult(client, "inspect_keyed_archive"),
+      graph,
+    );
+    const page = await artifactMcpResult(client, "inspect_keyed_archive", {
+      offset: 1,
+      limit: 1,
+    });
+    assert.deepEqual(page.objects, [graph.objects[1]]);
+    assert.equal(page.next_offset, 2);
+    const invalid = await client.callTool({
+      name: "inspect_keyed_archive",
+      arguments: { path: "../other.plist" },
+    });
+    assert.equal(invalid.isError, true);
+  });
+  const xml = join(root, "model.xml.plist");
+  await promisify(execFile)("/usr/bin/plutil", [
+    "-convert",
+    "xml1",
+    "-o",
+    xml,
     archive,
-    "inspect_keyed_archive",
-    {},
-    silentLogger,
+  ]);
+  const xmlGraph = await artifactCli("inspect-keyed-archive", xml);
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../tests/fixtures/golden/keyed-archive/graph.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   );
-  if (observation.error !== undefined)
-    throw new Error(JSON.stringify(observation.error));
-  const graph = observation.normalized_result;
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(xmlGraph).filter(
+        ([key]) =>
+          !["archive_path", "archive_sha256", "target_sha256"].includes(key),
+      ),
+    ),
+    expected,
+  );
+  assert.deepEqual(
+    graph.references.map(({ source, path, target, status }) => ({
+      source,
+      path,
+      target,
+      status,
+    })),
+    xmlGraph.references.map(({ source, path, target, status }) => ({
+      source,
+      path,
+      target,
+      status,
+    })),
+  );
   if (
     graph?.archive_format !== "binary-plist" ||
     !graph.references.some(
@@ -46,7 +106,7 @@ try {
     !graph.objects.some((item) => item.class_name?.includes("ReaArchiveRecord"))
   )
     throw new Error(
-      `Real Foundation archive graph drifted: ${JSON.stringify(observation)}`,
+      `Real Foundation archive graph drifted: ${JSON.stringify(graph)}`,
     );
   const record = graph.objects.find((item) =>
     item.class_name?.includes("ReaArchiveRecord"),
@@ -58,7 +118,7 @@ try {
   )
     throw new Error("Real shared object identity was not preserved");
   process.stdout.write(
-    `${JSON.stringify({ ok: true, format: graph.archive_format, objects: graph.total_objects, references: graph.total_references, shared_identity: true, cyclic_identity: true, target_classes_instantiated_by_reader: false })}\n`,
+    `${JSON.stringify({ ok: true, mocked: false, cli: true, stdio_mcp: true, xml_golden: true, format: graph.archive_format, objects: graph.total_objects, references: graph.total_references, shared_identity: true, cyclic_identity: true, target_classes_instantiated_by_reader: false })}\n`,
   );
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -216,7 +216,7 @@ jobs:
         run: npm run verify:fixtures
 
   package-e2e:
-    name: Package E2E (${{ matrix.os }})
+    name: Package/install integration (${{ matrix.os }})
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
@@ -232,6 +232,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify:package
+
+  apple-artifacts:
+    name: Real Apple artifact CLI/MCP E2E
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:keyed-archive
+      - run: npm run verify:asset-catalog
+      - name: Real binary metadata and Interface Builder integration
+        run: npm run verify:apple-dispatch && npm run verify:interface-builder
 
   reconstruction-readiness:
     name: Reconstruction readiness

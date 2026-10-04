@@ -154,7 +154,9 @@
     "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-mcp-tool-catalog.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "npm run build:cached && node scripts/generate-error-schema.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "prepare": "node scripts/prepare.mjs"
+    "prepare": "node scripts/prepare.mjs",
+    "verify:asset-catalog": "npm run build:cached && node scripts/verify-asset-catalog.mjs",
+    "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

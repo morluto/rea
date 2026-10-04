@@ -22,45 +22,13 @@ const archive = {
   $top: { root: { UID: 1 }, other: { UID: 2 } },
 };
 describe("inert keyed archive decoding", () => {
-  it.each(["binary", "xml"])(
-    "preserves shared, cyclic, nil, unresolved, and class identities in %s",
-    (format) => {
-      const bytes =
-        format === "binary"
-          ? Buffer.from(buildBinary(archive))
-          : Buffer.from(build(archive));
-      const graph = decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 20000 });
-      expect(graph.total_objects).toBe(5);
-      expect(graph.objects[1]).toMatchObject({
-        id: 1,
-        class_id: 4,
-        class_name: "UnknownModel",
-        status: "unknown-class",
-      });
-      expect(
-        graph.references.filter(
-          ({ source, target }) => source === 1 && target === 2,
-        ),
-      ).toHaveLength(2);
-      expect(graph.references).toContainEqual(
-        expect.objectContaining({ source: 1, target: 1, status: "resolved" }),
-      );
-      expect(graph.references).toContainEqual(
-        expect.objectContaining({ target: 0, status: "nil" }),
-      );
-      expect(graph.references).toContainEqual(
-        expect.objectContaining({ target: 90, status: "unresolved" }),
-      );
-      expect(graph.objects[1]?.value).not.toHaveProperty("missing");
-    },
-  );
   it("preserves CF$UID, malformed references and original pagination identities", () => {
     const bytes = Buffer.from(
       build({
         ...archive,
         $objects: [
           "$null",
-          { bad: { CF$UID: -1 }, valid: { CF$UID: 2 } },
+          { bad: { CF$UID: -1 }, valid: { CF$UID: 2 }, broken: { CF$UID: 90 } },
           "value",
         ],
       }),
@@ -73,6 +41,9 @@ describe("inert keyed archive decoding", () => {
     expect(graph.roots).toEqual({ root: { UID: 1 } });
     expect(graph.objects.map(({ id }) => id)).toEqual([1]);
     expect(graph.next_offset).toBe(2);
+    expect(graph.references).toContainEqual(
+      expect.objectContaining({ source: 1, target: 90, status: "unresolved" }),
+    );
     expect(graph.references).toContainEqual(
       expect.objectContaining({ source: 1, target: null, status: "malformed" }),
     );

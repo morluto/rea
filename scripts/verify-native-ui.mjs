@@ -67,6 +67,10 @@ try {
     )
   )
     throw observation.error;
+  if (!observation.ok && !process.argv.includes("--allow-permission-denial"))
+    throw new Error(
+      `Native UI E2E requires successful capture; permissions prevented coverage: ${observation.error.message}. Use --allow-permission-denial only for the separate permission diagnostic lane.`,
+    );
   let scenarioStatus = "not-run-permission-denied";
   if (observation.ok) {
     const button = observation.value.initial.nodes.find(
@@ -143,7 +147,7 @@ try {
   if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
     throw new Error("Real helper did not reject changed target bytes");
   process.stdout.write(
-    `${JSON.stringify({ ok: true, observation: observation.ok ? "captured-selected-fixture-window" : "os-permission-denial-verified", scenario: scenarioStatus, permission_failure: observation.ok ? null : observation.error.message, mismatch_rejected: true, target_owned: true })}\n`,
+    `${JSON.stringify({ ok: true, verification_status: observation.ok ? "passed" : "permission-boundary-only", positive_e2e: observation.ok, observation: observation.ok ? "captured-selected-fixture-window" : "os-permission-denial-verified", scenario: scenarioStatus, permission_failure: observation.ok ? null : observation.error.message, mismatch_rejected: true, target_owned: true })}\n`,
   );
 } finally {
   if (fixturePid !== undefined) {

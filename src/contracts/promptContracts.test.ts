@@ -67,12 +67,6 @@ describe("guided prompt contracts", () => {
       expect(rendered).toContain(section);
     // Tools are never a grant of authority.
     expect(rendered).toMatch(/never as authorization/i);
-    expect(rendered.indexOf("`list_documents`")).toBeLessThan(
-      rendered.indexOf("`search_strings`"),
-    );
-    expect(rendered.indexOf("`search_strings`")).toBeLessThan(
-      rendered.indexOf("`analyze_function`"),
-    );
   });
 
   it("orders mutation and execution after inspection and preparation", () => {

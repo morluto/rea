@@ -1,8 +1,15 @@
 # Testing REA
 
-REA's test suite follows one rule: use the lowest behavioral depth that can
-prove a claim. Tests are grouped into native Vitest projects so ownership,
-allowed dependencies, and runtime cost are visible from their paths.
+Prefer evidence in this order: full end-to-end workflows with real production
+providers, integration tests across data/API boundaries, then golden regressions
+from real captured inputs. Keep focused module tests for distinct failure or
+semantic cases that these workflows cannot reliably reproduce. A test's path
+or suite name does not establish its behavioral depth.
+
+Tests are grouped into Vitest projects so ownership, allowed dependencies and
+runtime cost are visible from their paths. Before pruning a test, identify the
+replacement scenario and its assertions; passing success journeys do not
+replace malformed input, cancellation, permission or cleanup coverage.
 
 ## Behavioral depths
 
@@ -12,7 +19,7 @@ allowed dependencies, and runtime cost are visible from their paths.
 | Composition  | `tests/composition/**`  | Provider-neutral session and registry wiring; filesystem access is limited to fixture materialization |
 | Boundary     | `tests/boundary/**`     | Exactly one production filesystem, process, network, browser, CLI, or provider boundary               |
 | MCP boundary | `tests/boundary/mcp/**` | MCP transport and tool-contract boundaries with isolated sessions and explicit cleanup                |
-| Acceptance   | `tests/acceptance/**`   | A complete compiled CLI or MCP workflow                                                               |
+| Acceptance   | `tests/acceptance/**`   | A compiled CLI or MCP journey; injected providers still make it integration                           |
 | Conformance  | `tests/conformance/**`  | Shared provider contracts, parameterized by declared capabilities and explicit opt-outs               |
 | Evaluation   | `tests/evaluation/**`   | Deterministic evaluator parsing, scoring, and report generation                                       |
 
@@ -42,6 +49,34 @@ Real Hopper, Ghidra, browser, package, managed-code, and controlled-replay
 claims belong to their explicit `npm run verify:*` lanes. They are not inferred
 from mocks or folded into the deterministic local gate. Real model trials are
 manual; Vitest covers only deterministic evaluator logic.
+
+## End-to-end, integration and golden evidence
+
+Full E2E tests invoke the production command dispatcher and real providers,
+without fake launchers, runners or responses. `verify:keyed-archive` writes an
+actual Foundation binary archive, runs the CLI and a separate stdio MCP
+subprocess, checks parity and pagination, rejects an escaping path and checks
+an XML graph golden. `verify:asset-catalog` compiles source-owned colors with
+`actool`, invokes real `assetutil`, then checks CLI/MCP results, exact catalog
+digest, every raw metadata field, pagination and malformed input rejection.
+Neither artifact workflow requires Hopper or launches it. Both run in macOS CI.
+
+MCP SDK transport tests with recording providers remain integration tests.
+They are useful for schema drift and failure projection but do not prove that
+Hopper, Ghidra or another substituted engine works. `verify:package` proves
+packaging/install behavior and fake-provider integration; use the corresponding
+real-provider lanes for engine claims. Real Apple dispatch and Interface
+Builder verifiers currently prove format integration through production readers.
+
+Golden tests use immutable captured text inputs with producer/source provenance
+under `tests/fixtures/golden/`. Expected results are reviewed for the semantic
+claim; capture commands do not automatically approve new expected outputs.
+Do not call handcrafted utility output or synthetic binary builders real-data
+goldens. Keep unsupported binary layouts and malformed boundaries as targeted
+regressions until a real fixture establishes equivalent coverage.
+
+The [test suite audit](test-suite-audit.md) records the pruning decisions,
+replacement evidence and remaining priorities.
 
 ## Real-toolchain verification lanes
 
@@ -98,9 +133,10 @@ miss behavior connected through runtime registration, generated data, shell
 entrypoints, or other relationships that are absent from the import graph.
 Use `npm run check:pr` before handing off a contribution.
 
-Local full-suite Vitest runs are intentionally capped at one worker and one
-project at a time. Boundary fixtures own real subprocesses, and this local cap
-keeps aggregate memory predictable; CI retains the existing two-worker budget.
+Local full-suite Vitest runs use up to two workers and schedule projects one
+at a time. Process, acceptance and process-global projects serialize their
+files to prevent competing lifecycle observations. CI retains its two-worker
+budget.
 The pure domain/contracts and recording-port service projects share one worker
 module context because their tests own no mutable runtime resources. MCP
 boundary files also share the immutable server module graph while creating and
@@ -153,7 +189,10 @@ behavior also requires `npm run verify:package` and the applicable
 conformance/vtable fixtures, inspects their bytes and repeats after stripping
 local symbols. It requires macOS and the host Xcode toolchain; targets are not
 executed. `npm run verify:native-ui` launches exactly one source-owned fixture
-window, captures that selected window or reports OS permission denial, rejects
-a changed executable digest and cleans up the fixture process and helper. It
-requires an interactive macOS desktop. See [native investigation](native-investigation.md)
+window and requires successful selected-window capture and approved actions.
+Permission denial fails the positive lane. `npm run verify:native-ui:permissions`
+allows a permission-boundary-only result and explicitly reports
+`positive_e2e: false`; it must not be reported as capture/action proof.
+Both commands reject a changed executable digest and clean up the fixture
+process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
 for the exact ABI, authority, graph and observation boundaries.

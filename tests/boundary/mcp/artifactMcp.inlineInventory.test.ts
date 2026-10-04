@@ -1,11 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
-import { buildBinary } from "plist";
 import { keyedArchiveResultSchema } from "../../../src/domain/keyedArchive.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -18,13 +17,11 @@ it("inspects a standalone keyed archive through MCP with original object identit
   const path = join(directory, "archive.plist");
   await writeFile(
     path,
-    Buffer.from(
-      buildBinary({
-        $archiver: "NSKeyedArchiver",
-        $version: 100000,
-        $top: { root: { UID: 1 } },
-        $objects: ["$null", { cycle: { UID: 1 }, missing: { UID: 20 } }],
-      }),
+    await readFile(
+      new URL(
+        "../../fixtures/golden/keyed-archive/foundation.xml",
+        import.meta.url,
+      ),
     ),
   );
   const session = createTestBinarySession(new ArtifactProvider());
@@ -52,11 +49,11 @@ it("inspects a standalone keyed archive through MCP with original object identit
     );
     expect(graph.references).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ source: 1, target: 1, status: "resolved" }),
+        expect.objectContaining({ source: 2, target: 2, status: "resolved" }),
         expect.objectContaining({
           source: 1,
-          target: 20,
-          status: "unresolved",
+          target: 2,
+          status: "resolved",
         }),
       ]),
     );

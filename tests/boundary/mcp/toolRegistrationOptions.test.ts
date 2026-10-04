@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 describe("tool registration options", () => {
@@ -34,6 +35,28 @@ describe("tool registration options", () => {
       }));
       for (const contract of TOOL_CONTRACTS) {
         const tool = advertised.find(({ name }) => name === contract.name);
+        expect(tool, contract.name).toBeDefined();
+        expect(describesObject(tool?.inputSchema), contract.name).toBe(true);
+        expect(describesObject(tool?.outputSchema), contract.name).toBe(true);
+        expect(tool?.title?.trim().length, contract.name).toBeGreaterThan(2);
+        expect(tool?.description?.trim().length, contract.name).toBeGreaterThan(
+          0,
+        );
+        expect(JSON.stringify(tool?.outputSchema), contract.name).not.toContain(
+          '"result":{}',
+        );
+        expect(tool?.annotations, contract.name).toEqual(
+          annotationsFromEffects(contract.effects),
+        );
+        expect(contract.examples.length, contract.name).toBeGreaterThan(0);
+        for (const example of contract.examples) {
+          expect(example.title.trim().length, contract.name).toBeGreaterThan(0);
+          expect(
+            contract.inputSchema.safeParse(example.input).success,
+            `${contract.name}: ${example.title}`,
+          ).toBe(true);
+        }
+
         expect(tool?.inputSchema.examples, contract.name).toEqual(
           contract.examples.map(({ input }) => input),
         );
@@ -96,3 +119,17 @@ const missingPropertyDescriptions = (
 
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const describesObject = (schema: unknown): boolean => {
+  if (!isObject(schema)) return false;
+  return (
+    schema.type === "object" ||
+    [schema.oneOf, schema.anyOf].some(
+      (variants) =>
+        Array.isArray(variants) &&
+        variants.every(
+          (variant: unknown) => isObject(variant) && variant.type === "object",
+        ),
+    )
+  );
+};

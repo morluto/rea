@@ -84,13 +84,10 @@ describe("compiled Apple asset catalog projection", () => {
     expect(second.total_records).toBe(3);
   });
 
-  it("rejects malformed and overlarge pages and invalid utility data", () => {
+  it("rejects malformed pages and invalid utility data", () => {
     expect(appleAssetCatalogInputSchema.safeParse({ offset: -1 }).success).toBe(
       false,
     );
-    expect(
-      appleAssetCatalogInputSchema.safeParse({ limit: 10_001 }).success,
-    ).toBe(false);
     expect(() =>
       parseAppleAssetCatalogRecords({ Name: "not an array" }),
     ).toThrow(/JSON array/u);

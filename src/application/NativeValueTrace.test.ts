@@ -147,6 +147,7 @@ describe("bounded native value dependency composition", () => {
       procedure: "0x1000",
       limit: 1,
     });
+    expect(page.ok).toBe(true);
     if (page.ok)
       expect(page.value).toMatchObject({ total_nodes: 3, next_offset: 1 });
     const ambiguous = await traceNativeValues(
@@ -180,6 +181,7 @@ describe("bounded native value dependency composition", () => {
       },
       { procedure: "0x1000" },
     );
+    expect(ambiguous.ok).toBe(true);
     if (ambiguous.ok)
       expect(ambiguous.value).toMatchObject({
         decompilations: 1,

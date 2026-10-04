@@ -5,7 +5,6 @@ import {
   ENHANCED_TOOL_CONTRACTS,
   OFFICIAL_TOOL_CONTRACTS,
   SESSION_TOOL_CONTRACTS,
-  TOOL_CONTRACTS,
 } from "./toolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
@@ -16,47 +15,10 @@ import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.
 import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
-import {
-  enhancedOutputSchemas,
-  managedOutputSchemas,
-  managedWorkflowOutputSchemas,
-  officialOutputSchemas,
-  sessionOutputSchemas,
-} from "./toolOutputSchemas.js";
-import { annotationsFromEffects, TOOL_EFFECTS } from "./toolEffects.js";
+import { TOOL_EFFECTS } from "./toolEffects.js";
 
-const convertContractJsonSchema = (schema: z.ZodType) =>
-  z.toJSONSchema(schema, {
-    target: "draft-07",
-    unrepresentable: "any",
-  });
-
-const jsonSchemaCache = new WeakMap<
-  z.ZodType,
-  ReturnType<typeof convertContractJsonSchema>
->();
-
-const contractJsonSchema = (schema: z.ZodType) => {
-  const cached = jsonSchemaCache.get(schema);
-  if (cached !== undefined) return cached;
-  const converted = convertContractJsonSchema(schema);
-  jsonSchemaCache.set(schema, converted);
-  return converted;
-};
-
-const describesObject = (schema: ReturnType<typeof contractJsonSchema>) =>
-  schema.type === "object" ||
-  [schema.oneOf, schema.anyOf].some(
-    (variants) =>
-      Array.isArray(variants) &&
-      variants.every(
-        (variant) =>
-          typeof variant === "object" &&
-          variant !== null &&
-          "type" in variant &&
-          variant.type === "object",
-      ),
-  );
+const contractJsonSchema = (schema: z.ZodType) =>
+  z.toJSONSchema(schema, { target: "draft-07", unrepresentable: "any" });
 
 describe("tool contract surface", () => {
   it("advertises capture comparison alternatives on an object root", () => {
@@ -96,32 +58,6 @@ describe("tool contract surface", () => {
       Object.entries(example.input).filter(([key]) => key !== "after_scenario"),
     );
     expect(contract.inputSchema.safeParse(incomplete).success).toBe(false);
-  });
-
-  it("advertises complete typed schemas and annotations for every public tool", () => {
-    const contracts = TOOL_CONTRACTS;
-    for (const contract of contracts) {
-      const inputSchema = contractJsonSchema(contract.inputSchema);
-      const outputSchema = contractJsonSchema(contract.outputSchema);
-      expect(describesObject(inputSchema), contract.name).toBe(true);
-      expect(describesObject(outputSchema)).toBe(true);
-      expect(contract.title.length).toBeGreaterThan(2);
-      expect(contract.annotations).toEqual(
-        annotationsFromEffects(contract.effects),
-      );
-      expect(typeof contract.annotations.idempotentHint).toBe("boolean");
-      expect(typeof contract.annotations.openWorldHint).toBe("boolean");
-      expect(typeof contract.annotations.readOnlyHint).toBe("boolean");
-      expect(typeof contract.annotations.destructiveHint).toBe("boolean");
-      expect(contract.examples.length).toBeGreaterThan(0);
-      for (const example of contract.examples) {
-        expect(example.title.trim().length).toBeGreaterThan(0);
-        expect(
-          contract.inputSchema.safeParse(example.input).success,
-          `${contract.name}: ${example.title}`,
-        ).toBe(true);
-      }
-    }
   });
 
   it("audits every tool effect explicitly with no heuristic fallback", () => {
@@ -165,35 +101,5 @@ describe("tool contract surface", () => {
       readOnlyHint: false,
       destructiveHint: false,
     });
-  });
-
-  it("publishes a dedicated output schema and agent guidance for every tool", () => {
-    expect(Object.keys(officialOutputSchemas).sort()).toEqual(
-      OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-    expect(Object.keys(enhancedOutputSchemas).sort()).toEqual(
-      ENHANCED_TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-    expect(Object.keys(sessionOutputSchemas).sort()).toEqual(
-      SESSION_TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-    expect(Object.keys(managedOutputSchemas).sort()).toEqual(
-      MANAGED_TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-    expect(Object.keys(managedWorkflowOutputSchemas).sort()).toEqual(
-      MANAGED_WORKFLOW_TOOL_CONTRACTS.map(({ name }) => name).sort(),
-    );
-
-    for (const contract of [
-      ...OFFICIAL_TOOL_CONTRACTS,
-      ...ENHANCED_TOOL_CONTRACTS,
-      ...MANAGED_TOOL_CONTRACTS,
-      ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
-      ...SESSION_TOOL_CONTRACTS,
-    ]) {
-      const schema = contractJsonSchema(contract.outputSchema);
-      expect(JSON.stringify(schema)).not.toContain('"result":{}');
-      expect(contract.description.trim().length).toBeGreaterThan(0);
-    }
   });
 });
