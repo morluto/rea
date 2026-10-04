@@ -56,15 +56,17 @@ it("aggregates comparison Evidence and records an approved runtime gap", async (
   }
 }, 10_000);
 
-it("builds a zero-hop exact-address path with dossier citations", async () => {
+it("builds exact-address paths with qualified callees and dossier citations", async () => {
   const { session, server, client } = await connected();
-  expect(session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.left).ok).toBe(
-    true,
-  );
+  const dossier = dossierWithCallees(["EXTERNAL:0x1000"]);
+  expect(session.recordEvidence(dossier).ok).toBe(true);
   try {
     const response = await client.callTool({
       name: "build_call_path",
-      arguments: INVESTIGATION_EXAMPLES.build_call_path,
+      arguments: {
+        ...INVESTIGATION_EXAMPLES.build_call_path,
+        functions: [dossier],
+      },
     });
     expect(response.isError).not.toBe(true);
     const evidence = inlineEvidence(response.structuredContent);
@@ -75,18 +77,43 @@ it("builds a zero-hop exact-address path with dossier citations", async () => {
         shortest_hops: 0,
         paths: [expect.objectContaining({ hops: 0 })],
       },
-      evidence_links: [FUNCTION_COMPARISON_EXAMPLE.left.evidence_id],
+      evidence_links: [dossier.evidence_id],
+    });
+    const externalPath = await client.callTool({
+      name: "build_call_path",
+      arguments: {
+        functions: [dossier],
+        start: { address: "0x1000" },
+        goal: { address: "EXTERNAL:0X001000" },
+      },
+    });
+    expect(externalPath.isError, JSON.stringify(externalPath)).not.toBe(true);
+    expect(inlineEvidence(externalPath.structuredContent)).toMatchObject({
+      normalized_result: {
+        status: "found",
+        shortest_hops: 1,
+        paths: [
+          {
+            nodes: [
+              { address: "0x1000", evidence_links: [dossier.evidence_id] },
+              {
+                address: "EXTERNAL:0x1000",
+                evidence_links: [dossier.evidence_id],
+              },
+            ],
+          },
+        ],
+      },
     });
   } finally {
     await close(session, server, client);
   }
 });
 
-it("records a safe unresolved call-path question", async () => {
-  const { session, server, client } = await connected();
+const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
   if (base.subject === null) throw new Error("missing dossier subject");
-  const dossier = createEvidence(
+  return createEvidence(
     {
       path: base.subject.local_path,
       sha256: base.subject.digest.sha256,
@@ -102,7 +129,7 @@ it("records a safe unresolved call-path question", async () => {
       parameters: base.parameters,
       result: jsonValueSchema.parse({
         ...jsonObjectSchema.parse(base.normalized_result),
-        callees: [{ address: "0x2000", name: "next" }],
+        callees: addresses.map((address) => ({ address, name: "next" })),
       }),
       rawResult: base.raw_result,
       confidence: base.confidence,
@@ -112,6 +139,11 @@ it("records a safe unresolved call-path question", async () => {
       evidenceLinks: base.evidence_links,
     },
   );
+};
+
+it("records a safe unresolved call-path question", async () => {
+  const { session, server, client } = await connected();
+  const dossier = dossierWithCallees(["0x2000"]);
   expect(session.recordEvidence(dossier).ok).toBe(true);
   try {
     const response = await client.callTool({

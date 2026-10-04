@@ -147,6 +147,26 @@ describe("call path reconstruction", () => {
     );
   });
 
+  it("preserves address spaces and encoded names when normalizing offsets", () => {
+    const result = run(
+      [
+        observe("0x1000", ["EXTERNAL:0x001000"]),
+        observe("EXTERNAL:0x1000", ["overlay%3Atext:0x00004000"]),
+      ],
+      {
+        goal: { address: "overlay%3Atext:0X004000" },
+      },
+    );
+    expect(
+      result.paths.map((path) => path.nodes.map(({ address }) => address)),
+    ).toEqual([["0x1000", "EXTERNAL:0x1000", "overlay%3Atext:0x4000"]]);
+    expect(() =>
+      run([observe("0x1000", [])], {
+        goal: { address: "overlay%ZZ:0x4000" },
+      }),
+    ).toThrow();
+  });
+
   it("requires an observed start function", () => {
     expect(() => run([observe("0x2000", [])])).toThrow(
       /supplied for start 0x1000/u,

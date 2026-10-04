@@ -2,14 +2,22 @@ import { z } from "zod";
 
 import { evidenceSchema } from "./evidence.js";
 
-const addressSchema = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]*)$/u);
+const addressSchema = z
+  .string()
+  .regex(/^(?:(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+:)?0x(?:0|[1-9a-f][0-9a-f]*)$/u);
 const inputAddressSchema = z
   .string()
-  .regex(/^0[xX][0-9a-fA-F]+$/u)
-  .transform((address) => `0x${BigInt(address).toString(16)}`);
+  .regex(/^(?:(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:)?0[xX][0-9a-fA-F]+$/u)
+  .transform((address) => {
+    const separator = address.lastIndexOf(":") + 1;
+    const space = address
+      .slice(0, separator)
+      .replace(/%[0-9a-fA-F]{2}/gu, (escape) => escape.toUpperCase());
+    return `${space}0x${BigInt(address.slice(separator)).toString(16)}`;
+  });
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
 
-/** Parse a caller-supplied hexadecimal address into canonical form. */
+/** Normalize a hexadecimal offset while preserving its optional address space. */
 export const parseCallPathAddress = (input: unknown): string =>
   inputAddressSchema.parse(input);
 
