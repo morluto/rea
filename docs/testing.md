@@ -75,6 +75,11 @@ Do not call handcrafted utility output or synthetic binary builders real-data
 goldens. Keep unsupported binary layouts and malformed boundaries as targeted
 regressions until a real fixture establishes equivalent coverage.
 
+`verify:browser` also captures a source-owned noise canvas as a real PNG above
+8 MiB through the CLI and stdio MCP, with complete byte/digest parity and real PNG
+decoding. Its SDK client explicitly permits the larger inline JSON response;
+this lane does not establish large image-comparison request transport coverage.
+
 The [test suite audit](test-suite-audit.md) records the pruning decisions,
 replacement evidence and remaining priorities.
 
@@ -93,6 +98,11 @@ that a host or target is covered when it was skipped.
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain    |
+
+The host-native Ghidra lane also verifies native value tracing through the
+production CLI and a separate stdio MCP process. It compares complete dependency
+graphs, validates Evidence and upstream/workflow profiles, checks capability
+discovery, and closes the MCP session. No provider or transport is mocked.
 
 The cross-format Ghidra lane also analyzes an optimized AArch64 ELF switch
 fixture. It checks the recovered case values against the source cases and

@@ -169,8 +169,7 @@ describe("conformance trust gates", () => {
       { exit_code: 1, stdout: "hello" },
     );
     expect(result.verdict).toBe("fail");
-    expect(result.first_divergence).not.toBeNull();
-    expect(result.first_divergence!.dimension).toBe("exit_code");
+    expect(result.first_divergence).toMatchObject({ dimension: "exit_code" });
   });
 
   it("reports unknown when both dimensions are undefined", () => {

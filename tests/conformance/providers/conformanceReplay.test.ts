@@ -157,70 +157,82 @@ describe("conformance CI replay", () => {
     );
   });
 
-  it("counts all result types", async () => {
+  it("counts pass, fail, error and skipped results without losing runner diagnostics", async () => {
+    const cases = [
+      { id: "s1", status: "pass" },
+      { id: "s2", status: "fail" },
+      { id: "s3", status: "error" },
+      { id: "s4", status: "skipped" },
+    ] as const;
     const multiPackage = createConformancePackage({
       ...validPackageInput,
-      scenarios: [
-        ...validPackage.scenarios,
-        {
-          scenario_id: "s2",
-          name: "Second scenario",
-          description: "Second",
-          fixture_path: "tests/conformance/c/fixture2.c",
-          expected_exit_code: 1,
-          expected_patterns: [],
-        },
-      ],
-      replay_plans: [
-        ...validPackage.replay_plans,
-        {
-          scenario_id: "s2",
-          steps: [
-            {
-              step_id: "step1",
-              action: "run",
-              arguments: [],
-              timeout_ms: 1000,
-            },
-          ],
-          environment: {},
-        },
-      ],
-      expected_evidence: [
-        ...validPackage.expected_evidence,
-        {
-          scenario_id: "s2",
-          envelopes: [],
-          bundle: null,
-          required_dimensions: [],
-        },
-      ],
-      verifier_contracts: [
-        ...validPackage.verifier_contracts,
-        {
-          scenario_id: "s2",
-          dimensions: [
-            { name: "exit_code", required: true, comparison: "exact" },
-          ],
-          timing_tolerance_ms: 0,
-        },
-      ],
+      scenarios: cases.flatMap(({ id }) =>
+        validPackage.scenarios.map((scenario) => ({
+          ...scenario,
+          scenario_id: id,
+        })),
+      ),
+      replay_plans: cases.flatMap(({ id }) =>
+        validPackage.replay_plans.map((plan) => ({ ...plan, scenario_id: id })),
+      ),
+      expected_evidence: cases.flatMap(({ id }) =>
+        validPackage.expected_evidence.map((evidence) => ({
+          ...evidence,
+          scenario_id: id,
+        })),
+      ),
+      verifier_contracts: cases.flatMap(({ id }) =>
+        validPackage.verifier_contracts.map((contract) => ({
+          ...contract,
+          scenario_id: id,
+        })),
+      ),
     });
     const result = await replayConformancePackage(
       multiPackage,
       {},
-      async (scenarioId) => ({
-        scenario_id: scenarioId,
-        status: scenarioId === "s1" ? "pass" : "fail",
-        exit_code: scenarioId === "s1" ? 0 : 1,
+      async (scenarioId) => {
+        const item = cases.find(({ id }) => id === scenarioId);
+        if (item === undefined)
+          throw new Error(`Unexpected scenario: ${scenarioId}`);
+        return {
+          scenario_id: scenarioId,
+          status: item.status,
+          exit_code:
+            item.status === "pass" ? 0 : item.status === "fail" ? 1 : null,
+          duration_ms: 10,
+          output: "",
+          error:
+            item.status === "error"
+              ? "fixture runner failed"
+              : item.status === "skipped"
+                ? "fixture prerequisite unavailable"
+                : null,
+        };
+      },
+    );
+    expect(result).toMatchObject({
+      total_scenarios: cases.length,
+      passed: 1,
+      failed: 1,
+      errored: 1,
+      skipped: 1,
+    });
+    expect(result.scenario_results).toEqual(
+      cases.map(({ id, status }) => ({
+        scenario_id: id,
+        status,
+        exit_code: status === "pass" ? 0 : status === "fail" ? 1 : null,
         duration_ms: 10,
         output: "",
-        error: null,
-      }),
+        error:
+          status === "error"
+            ? "fixture runner failed"
+            : status === "skipped"
+              ? "fixture prerequisite unavailable"
+              : null,
+      })),
     );
-    expect(result.total_scenarios).toBe(2);
-    expect(result.passed).toBe(1);
-    expect(result.failed).toBe(1);
   });
 });
 

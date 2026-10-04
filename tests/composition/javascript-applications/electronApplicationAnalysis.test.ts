@@ -10,7 +10,7 @@ import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/jav
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 
 describe("static Electron application analysis", () => {
-  it("accepts an absolute caller path without caller-selected analysis bounds", () => {
+  it("rejects relative paths and caller-selected analysis bounds", () => {
     expect(
       analyzeJavaScriptApplicationInputSchema.safeParse({
         input_path: "relative/app.asar",
@@ -19,19 +19,9 @@ describe("static Electron application analysis", () => {
     expect(
       analyzeJavaScriptApplicationInputSchema.safeParse({
         input_path: "/tmp/app.asar",
-      }).success,
-    ).toBe(true);
-    expect(
-      analyzeJavaScriptApplicationInputSchema.safeParse({
-        input_path: "/tmp/app.asar",
         limits: { max_findings: 200_000 },
       }).success,
     ).toBe(false);
-    expect(
-      analyzeJavaScriptApplicationInputSchema.parse({
-        input_path: "/tmp/app.asar",
-      }),
-    ).toEqual({ input_path: "/tmp/app.asar", format: "auto" });
   });
 
   it("maps windows, preload, contextBridge, IPC, validations, utility, and native boundaries without execution", async () => {

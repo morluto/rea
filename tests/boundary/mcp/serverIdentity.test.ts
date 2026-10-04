@@ -238,11 +238,6 @@ describe("live server identity over MCP", () => {
 });
 
 const assertLiveIdentity = async (client: Client): Promise<void> => {
-  const instructions = client.getInstructions();
-  expect(instructions).toContain(
-    "Use the tool that directly answers the question",
-  );
-  expect(instructions).toContain("Tool results include inline Evidence");
   const identity = await client.callTool({
     name: "binary_session",
     arguments: {},

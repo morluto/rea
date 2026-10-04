@@ -157,10 +157,9 @@ describe("JavaScript runtime observation MCP tools", () => {
         parameters: expect.any(Object),
       },
     });
-    expect(inspector.commands.map(({ method }) => method)).toEqual([
-      "Runtime.enable",
-      "Debugger.enable",
-    ]);
+    expect(new Set(inspector.commands.map(({ method }) => method))).toEqual(
+      new Set(["Runtime.enable", "Debugger.enable"]),
+    );
     const direct = await observeDirectly(root, inspector, authority);
     expect(direct.ok).toBe(true);
     if (direct.ok) expect(evidenceId).toBe(direct.value.evidence_id);

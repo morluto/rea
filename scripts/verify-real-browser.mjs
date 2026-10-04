@@ -33,6 +33,7 @@ import {
   scenarioProfiles,
 } from "./lib/browser-scenario-verifier.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 
 const SECRET_VALUES = [
   "network-secret-value",
@@ -297,6 +298,7 @@ try {
     )
       throw new Error(`Browser scenario retained sensitive value: ${secret}`);
 
+  const largeScreenshot = await verifyLargeScreenshotE2e(endpoint, site.origin);
   process.stdout.write(
     `${JSON.stringify({
       verifier_run: await completeVerifierRun(verifierRun),
@@ -314,6 +316,7 @@ try {
       sessionEvents: session.value.timeline.length,
       pageScopedTransport: true,
       screenshotBytes: screenshot.value.artifact.bytes,
+      largeScreenshot,
       browserScenarioCli: true,
       browserScenarioAttachCleanup: "disconnected-external",
       browserScenarioLaunchCleanup: "terminated-owned-process",

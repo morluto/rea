@@ -283,7 +283,7 @@ it("cancels filesystem snapshots before traversing declared roots", async () => 
 });
 
 it("parses bounded scenarios and rejects unordered events", () => {
-  expect(parseProcessScenario(base).timeout_ms).toBe(30_000);
+  const timeoutMs = parseProcessScenario(base).timeout_ms;
   expect(() =>
     parseProcessScenario({
       ...base,
@@ -302,7 +302,7 @@ it("parses bounded scenarios and rejects unordered events", () => {
   expect(() =>
     parseProcessScenario({
       ...base,
-      events: [{ type: "input", at_ms: 31_000, data: "late" }],
+      events: [{ type: "input", at_ms: timeoutMs + 1, data: "late" }],
     }),
   ).toThrow(/after the scenario timeout/);
 });

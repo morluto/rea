@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("compiled Interface Builder bundle reader", () => {
-  it("reads nib plist archives without following symlinks and reports provenance", async () => {
+  it("reads nib plist archives and reports provenance", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-ib-test-"));
     roots.push(root);
     const bundle = join(root, "Example.app");

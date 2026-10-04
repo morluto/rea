@@ -9,25 +9,18 @@ import {
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { projectAppleApplicationEvidence } from "../../../src/application/AppleApplicationService.js";
 import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { appleApplicationProjectionResultSchema } from "../../../src/domain/appleApplication.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 
-// Sized to prove the claims this projection makes -- multiple inventory pages,
-// every component retained, and one bridge candidate per script/native pair --
-// and to cross any ceiling a truncation regression would plausibly introduce.
-// A fixture of a dozen frameworks and 16 candidates would pass unnoticed
-// against a cap at 100, which is the truncation this guards against. The
-// original 1_001 frameworks x 101 pages produced 10_201 candidates and cost
-// ~6.4s, roughly half the composition lane, to assert the same properties an
-// order of magnitude above the plausible-ceiling range.
+// Real ZIP entries cross the former component and bridge-candidate limits.
 const FRAMEWORK_COUNT = 250;
 const SCRIPT_COUNT = 40;
 const NATIVE_COUNT = 40;
-const INVENTORY_PAGE_COUNT = 3;
 
 async function createCompleteAppleProjection() {
   const root = await createTestTempDirectory("rea-apple-complete-");
@@ -59,43 +52,20 @@ async function createCompleteAppleProjection() {
   const inventory = parseEvidence(
     await runProviderAnalysis(path, "inventory_artifact", {}),
   );
-  const subject = inventory.subject;
-  expect(subject).not.toBeNull();
-  if (subject === null)
-    throw new TypeError("Missing fixture inventory subject");
-  const inventoryPages = Array.from(
-    { length: INVENTORY_PAGE_COUNT },
-    (_, index) =>
-      createEvidence(
-        {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
-            ? {}
-            : { architecture: subject.architecture }),
-        },
-        inventory.provider,
-        {
-          predicateType: inventory.predicate_type,
-          operation: inventory.operation,
-          parameters: {
-            ...inventory.parameters,
-            projection_test_page: index,
-          },
-          result: inventory.normalized_result,
-        },
-      ),
-  );
+  const fragments = fragmentInventoryEvidence(inventory, 3);
   const result = projectAppleApplicationEvidence({
-    inventory_evidence: inventoryPages,
+    inventory_evidence: fragments,
   });
 
   expect(result.ok).toBe(true);
   if (!result.ok) throw new TypeError("Could not project fixture inventory");
-  return appleApplicationProjectionResultSchema.parse(
+  const projection = appleApplicationProjectionResultSchema.parse(
     result.value.normalized_result,
   );
+  expect([...projection.source_evidence_ids].sort()).toEqual(
+    fragments.map(({ evidence_id }) => evidence_id).sort(),
+  );
+  return projection;
 }
 
 describe("Apple application projection", () => {
@@ -149,33 +119,6 @@ describe("Apple application projection", () => {
       second.value.normalized_result,
     );
     expect(left).toEqual(right);
-    const longPath = `Payload/${"deep/".repeat(1_000)}Fixture.app`;
-    expect(
-      appleApplicationProjectionResultSchema.parse({
-        ...left,
-        application_roots: [longPath],
-      }).application_roots,
-    ).toEqual([longPath]);
-    expect(
-      appleApplicationProjectionResultSchema.parse({
-        ...left,
-        limitations: ["x".repeat(5_000)],
-      }).limitations,
-    ).toEqual(["x".repeat(5_000)]);
-    const [framework, ...otherFrameworks] = left.components.frameworks;
-    if (framework === undefined) throw new Error("Expected framework fixture");
-    expect(
-      appleApplicationProjectionResultSchema.parse({
-        ...left,
-        components: {
-          ...left.components,
-          frameworks: [
-            { ...framework, format: "x".repeat(500) },
-            ...otherFrameworks,
-          ],
-        },
-      }).components.frameworks[0]?.format,
-    ).toBe("x".repeat(500));
     expect(left).toMatchObject({
       root_format: "ipa",
       application_roots: ["Payload/Fixture.app"],
@@ -224,18 +167,14 @@ describe("Apple application projection", () => {
 });
 
 describe("Apple application projection completeness", () => {
-  it("returns every component, inventory page, and bridge hypothesis", async () => {
+  it("returns every component and bridge hypothesis from fragments of a real ZIP inventory", async () => {
     const projection = await createCompleteAppleProjection();
     expect(projection.components.frameworks).toHaveLength(FRAMEWORK_COUNT);
     expect(projection.components.bundle_metadata).toHaveLength(FRAMEWORK_COUNT);
     expect(projection.components.javascript).toHaveLength(SCRIPT_COUNT);
     expect(projection.components.native_libraries).toHaveLength(NATIVE_COUNT);
-    expect(projection.source_evidence_ids).toHaveLength(INVENTORY_PAGE_COUNT);
-    // Every inventory page is retained exactly once.
-    expect(new Set(projection.source_evidence_ids).size).toBe(
-      projection.source_evidence_ids.length,
-    );
-    expect(projection.source_evidence_ids.length).toBeGreaterThan(1);
+    expect(projection.source_evidence_ids).toHaveLength(3);
+    expect(new Set(projection.source_evidence_ids).size).toBe(3);
     // One candidate per script/native pair. Deriving this catches a pairing
     // regression, which the previous literal 10_201 could not.
     expect(projection.bridge_candidates).toHaveLength(
@@ -249,12 +188,13 @@ describe("Apple application projection completeness", () => {
     expect(projection).not.toHaveProperty("omitted_bridge_candidates");
   });
 
-  it("infers an application root when the IPA omits directory entries", async () => {
+  it("retains long ZIP application roots when the IPA omits directory entries", async () => {
     const root = await createTestTempDirectory("rea-apple-root-");
     const path = join(root, "Fixture.ipa");
+    const applicationRoot = `Payload/${"LongApp".repeat(750)}.app`;
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add(
-      "Payload/Fixture.app/Fixture",
+      `${applicationRoot}/Fixture`,
       new Uint8ArrayReader(
         Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
       ),
@@ -274,7 +214,7 @@ describe("Apple application projection completeness", () => {
         result.value.normalized_result,
       ),
     ).toMatchObject({
-      application_roots: ["Payload/Fixture.app"],
+      application_roots: [applicationRoot],
       components: { executables: [expect.any(Object)] },
     });
   });

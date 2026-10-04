@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -111,5 +111,9 @@ const chunk = (type: string, data: Buffer): Buffer => {
   result.writeUInt32BE(data.byteLength, 0);
   result.write(type, 4, 4, "ascii");
   data.copy(result, 8);
+  result.writeUInt32BE(
+    crc32(result.subarray(4, 8 + data.byteLength)),
+    8 + data.byteLength,
+  );
   return result;
 };

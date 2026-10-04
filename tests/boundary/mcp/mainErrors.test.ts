@@ -102,7 +102,7 @@ describe("MCP runtime errors", () => {
     await nextTurn();
 
     expect(closeCalls).toBe(1);
-    expect(unregistrations).toEqual(["reload", "shutdown"]);
+    expect([...unregistrations].sort()).toEqual(["reload", "shutdown"]);
   });
 
   it("reports transport startup failure without its cause", async () => {

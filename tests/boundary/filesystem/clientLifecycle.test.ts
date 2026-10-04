@@ -115,6 +115,7 @@ describe("client configuration filesystem lifecycle", () => {
       `[mcp_servers.rea]\ncommand = "rea"\nargs = ["mcp"]\nstartup_timeout_sec = 30\n\n[mcp_servers.rea.env]\nJAVA_HOME = "/opt/jdk-21"\nHOPPER_LAUNCHER_PATH = "/Hopper Path"\nGHIDRA_INSTALL_DIR = "/opt/ghidra"\n`,
     );
 
+    const original = await readFile(configPath, "utf8");
     expect(
       await configureTomlClient(
         { name: "codex", configPath, format: "toml" },
@@ -126,6 +127,7 @@ describe("client configuration filesystem lifecycle", () => {
         ["rea", "mcp"],
       ),
     ).toEqual({ status: "unchanged" });
+    expect(await readFile(configPath, "utf8")).toBe(original);
     await expect(
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();

@@ -78,17 +78,17 @@ describe("enhanced MCP tools", () => {
     expect(result).toEqual({
       ok: true,
       value: Object.fromEntries(
-          Array.from({ length: 8 }, (_, index) => [
-            String(index),
-            [
-              {
-                address: `0x${index + 1}`,
-                calls: [index === 7 ? "0x2" : `0x${index + 2}`],
-                status: "ok",
-              },
-            ],
-          ]),
-        ),
+        Array.from({ length: 8 }, (_, index) => [
+          String(index),
+          [
+            {
+              address: `0x${index + 1}`,
+              calls: [index === 7 ? "0x2" : `0x${index + 2}`],
+              status: "ok",
+            },
+          ],
+        ]),
+      ),
     });
   });
 

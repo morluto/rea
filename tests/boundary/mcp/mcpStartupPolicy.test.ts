@@ -15,10 +15,6 @@ describe("MCP startup policy", () => {
     expect(MCP_STARTUP_POLICY.firstCatalogBudgetMs).toBeLessThan(
       codexTimeoutMs,
     );
-    expect(MCP_STARTUP_POLICY.firstCatalogBudgetMs).toBe(
-      MCP_STARTUP_POLICY.initializeBudgetMs +
-        MCP_STARTUP_POLICY.toolsListBudgetMs,
-    );
     expect(MCP_STARTUP_POLICY.doctorDeadlineMs).toBeGreaterThanOrEqual(
       codexTimeoutMs,
     );

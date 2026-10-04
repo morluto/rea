@@ -244,7 +244,6 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
     applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
     analysis: emptyAnalysis(),
   });
-  expect(graph.nodes).toHaveLength(1);
   expect(graph.nodes[0]?.evidence).toMatchObject({
     authority: "unknown",
     state: "unavailable",

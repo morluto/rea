@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
@@ -38,26 +39,6 @@ const observe = async (path: string) => {
     },
   );
 };
-
-const evidencePages = (
-  inventory: Awaited<ReturnType<typeof observe>>,
-  side: string,
-) =>
-  Array.from({ length: 101 }, (_, index) =>
-    createEvidence(
-      {
-        path: `${side}-${String(index)}`,
-        sha256: inventory.subject?.digest.sha256 ?? "0".repeat(64),
-        format: inventory.subject?.format ?? "directory",
-      },
-      PROVIDER,
-      {
-        operation: "inventory_artifact",
-        parameters: { page: index, side },
-        result: jsonValueSchema.parse(inventory.normalized_result),
-      },
-    ),
-  );
 
 const changedArtifactComparison = async () => {
   const parent = await createTestTempDirectory("rea-artifact-compare-");
@@ -196,27 +177,63 @@ describe("artifact comparison completeness", () => {
     });
   }, 15_000);
 
-  it("retains every inventory citation when comparing many evidence pages", async () => {
-    const parent = await createTestTempDirectory(
-      "rea-artifact-pages-evidence-",
-    );
+  it("assembles real inventory fragments and retains every citation", async () => {
+    const parent = await createTestTempDirectory("rea-artifact-fragments-");
     const leftPath = join(parent, "left.app");
     const rightPath = join(parent, "right.app");
     await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
-    await Promise.all([
-      writeFile(join(leftPath, "main.js"), "left();"),
-      writeFile(join(rightPath, "main.js"), "right();"),
-    ]);
-
-    const leftInventory = await observe(leftPath);
-    const rightInventory = await observe(rightPath);
-    const comparison = compareArtifacts(
-      evidencePages(leftInventory, "left"),
-      evidencePages(rightInventory, "right"),
+    // Cross the former 100-citation limit with distinct, real graph members.
+    const fragmentCount = 101;
+    await Promise.all(
+      Array.from({ length: fragmentCount }, async (_, index) => {
+        await Promise.all([
+          writeFile(join(leftPath, `file-${index}.js`), `left(${index});`),
+          writeFile(join(rightPath, `file-${index}.js`), `right(${index});`),
+        ]);
+      }),
     );
-
-    expect(comparison.changes[0]?.evidence_links).toHaveLength(202);
-  });
+    const left = await observe(leftPath);
+    const right = await observe(rightPath);
+    const leftFragments = fragmentInventoryEvidence(left, fragmentCount);
+    const rightFragments = fragmentInventoryEvidence(right, fragmentCount);
+    const citations = [...leftFragments, ...rightFragments]
+      .map(({ evidence_id }) => evidence_id)
+      .sort();
+    expect(new Set(citations).size).toBe(fragmentCount * 2);
+    const comparison = compareArtifacts(leftFragments, rightFragments);
+    const complete = compareArtifacts(left, right);
+    expect(
+      comparison.changes
+        .filter(({ logical_path }) => logical_path !== ".")
+        .map(({ logical_path, classification }) => ({
+          logical_path,
+          classification,
+        }))
+        .sort((left, right) =>
+          left.logical_path.localeCompare(right.logical_path),
+        ),
+    ).toEqual(
+      Array.from({ length: fragmentCount }, (_, index) => ({
+        logical_path: `file-${index}.js`,
+        classification: "changed",
+      })).sort((left, right) =>
+        left.logical_path.localeCompare(right.logical_path),
+      ),
+    );
+    expect({
+      ...comparison,
+      changes: comparison.changes.map((change) => ({
+        ...change,
+        evidence_links: [...change.evidence_links].sort(),
+      })),
+    }).toEqual({
+      ...complete,
+      changes: complete.changes.map((change) => ({
+        ...change,
+        evidence_links: citations,
+      })),
+    });
+  }, 15_000);
 
   it("rejects non-inventory and tampered Evidence", async () => {
     const root = await createTestTempDirectory("rea-artifact-invalid-");

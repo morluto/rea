@@ -4,18 +4,9 @@ import {
   captureWebScreenshotInputSchema,
   compareWebScreenshotsInputSchema,
   createWebScreenshotArtifact,
-  webScreenshotArtifactSchema,
 } from "./webScreenshot.js";
 
 describe("inline web screenshots", () => {
-  it("accepts complete inline image artifacts above the former size ceiling", () => {
-    const artifact = createWebScreenshotArtifact(
-      Buffer.alloc(8 * 1_024 * 1_024 + 1),
-    );
-
-    expect(webScreenshotArtifactSchema.parse(artifact)).toEqual(artifact);
-  });
-
   it("rejects removed screenshot size and pixel controls", () => {
     expect(
       captureWebScreenshotInputSchema.safeParse({

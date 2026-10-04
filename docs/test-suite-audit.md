@@ -7,7 +7,7 @@ present at its start: 82 domain/contracts, 56 application/composition, 147
 adapter/configuration/process/filesystem/CLI files, and 70 MCP/acceptance/
 conformance/evaluation files. Three review passes checked the proposed removals
 against existing stronger coverage and checked the final changes for lost
-assertions. The remaining suite has 352 files.
+assertions. The remaining suite has 351 files.
 
 Prefer full real-provider E2E, then integration across schemas and transports,
 then real-data goldens. Remove lower-level duplication once the replacement
@@ -66,6 +66,44 @@ unique tests. Test-only domain scaffolding also stays pending a separate decisio
 about the corresponding source behavior; deleting those tests alone would leave
 unverified code and fail unused-export checks.
 
+## Stronger replacements from the closing pass
+
+Three more synthetic success cases were removed. Native value composition now
+runs through the production CLI and a separate stdio MCP subprocess with real
+Ghidra, using a source-built native fixture. It checks argument/parameter/return
+relationships, the fixture's global operand, authenticated Evidence, upstream
+and workflow analysis profiles, identical CLI/MCP graphs, discovery availability
+and successful MCP session closure. Ambiguity, cancellation, target changes,
+missing flow and bounded-work regressions remain in the focused suite.
+
+That replacement found missing CLI workflow routing for `trace_native_values`
+and missing workflow profile classification. The routing and discovery now use
+the composed operation's actual provider prerequisites; workflow Evidence commits
+to the upstream Ghidra profile.
+
+The lone hand-built client-document equality test is replaced by a real TOML
+filesystem transaction: reversed environment keys leave the original bytes
+unchanged and create no backup. A real ZIP entry with an application root longer
+than 5,000 characters replaces injected schema-only positive data. Inventory
+completeness tests partition actual scans into authenticated partial observations
+and require exact assembled results and every source citation, including more
+than 100 citations. These are consumer merge tests, not provider pagination
+claims. Replay aggregation now covers all four statuses and retains actual runner
+diagnostics; it does not claim to execute a real sandbox. Retained pixel-metric
+fixtures now write correct PNG chunk checksums.
+
+The all-zero screenshot buffer is replaced by a real Chromium PNG of 9,467,940
+bytes, transported intact through CLI and stdio MCP and decoded by the production
+pixel comparator. The verifier configures the SDK client's receive buffer because
+its 10 MiB default is smaller than the inline JSON response. This does not claim
+large comparison-request transport coverage. A real SDK initialize request,
+captured during a successful production stdio handshake, replaces the JSON-RPC
+decoder's field-count-only oracle with exact field/value expectations.
+
+The closing pass also removed assertions tied to internal call order, defaults,
+private cache sizes, duplicated polling and fabricated schema extensions. Unique
+malformed-input, security-capacity and cleanup regressions remain.
+
 ## Real process regression found
 
 The full suite exposed a renderer ordering race. Publishing a terminal output
@@ -86,9 +124,9 @@ relative-list fixtures establish equivalent assertions.
 
 ## Remaining priorities
 
-1. Real Ghidra → CLI and stdio MCP value/dispatch/UI-handler journeys before
-   pruning hand-authored composition success cases. Current Ghidra verifier
-   proves provider behavior but not every new workflow's transport parity.
+1. Extend the real Ghidra CLI/stdio MCP journey from value tracing to dispatch
+   and UI handlers before pruning their hand-authored composition success cases.
+   Native value tracing now establishes full transport parity.
 2. Real binary dispatch and nib → full product transports, with normalized
    semantic goldens. The compiler-backed readers already run in the new Apple
    CI lane; synthetic pointer/layout rejection tests remain useful.
@@ -109,11 +147,15 @@ behavior. Keep these few guards explicit and separate from E2E evidence.
 
 ## Verification after the expanded audit
 
-- `npm run check:pr`: 352 files passed; 1,797 tests passed and two skipped.
+- `npm run check:pr`: 351 files passed; 1,794 tests passed and two skipped.
   Typecheck, lint, formatting, unused-code and generated-document gates passed.
-- `npm run check:fast`: passed; 69 lint warnings and zero errors.
+- `npm run check:fast`: passed; 70 lint warnings and zero errors.
 - `npm run verify:browser`: actual Chromium observation and scenario CLI routes,
-  retained artifacts and owned/external lifecycle checks passed.
+  retained artifacts, owned/external lifecycle checks and large CLI/stdio MCP PNG
+  capture passed.
+- `npm run verify:ghidra`: macOS ARM64 with Ghidra 12.1.4/JDK 21 passed, including
+  real native value tracing through CLI and stdio MCP: 171 nodes, 298 edges and
+  six decompilations.
 - `npm run verify:asset-catalog`: real actool/assetutil → CLI and stdio MCP,
   complete records, pagination and malformed input checks passed.
 - `npm run verify:keyed-archive`: real Foundation binary/XML → CLI and stdio MCP,
@@ -122,6 +164,6 @@ behavior. Keep these few guards explicit and separate from E2E evidence.
 - `npm run verify:fixtures`: seven source-built host fixtures, source/artifact
   digests and exhaustive inventory checks passed.
 
-No Hopper windows were opened for this audit. Real Hopper/Ghidra verification
-from the feature work remains separate evidence; this cleanup does not claim a
-new native provider run or new hosted CI success.
+No Hopper windows were opened for this audit. The closing pass runs real Ghidra
+on macOS ARM64; earlier Hopper evidence remains separate. No new hosted CI success
+is claimed.

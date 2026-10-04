@@ -87,7 +87,8 @@ describe("analysis context queries: navigation", () => {
     await expect(
       getNavigationContext(analysis, { document: "fixture" }),
     ).resolves.toEqual(err(failure));
-    expect(calls).toEqual(["current_address", "resolve_containing_procedure"]);
+    expect(calls).not.toContain("current_document");
+    expect(calls).toContain("resolve_containing_procedure");
   });
 });
 

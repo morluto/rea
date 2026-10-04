@@ -120,7 +120,6 @@ describe("runtime permission reload", () => {
     runtime.reload();
     await expect.poll(() => reads).toBe(2);
 
-    expect(reads).toBe(2);
     expect(runtime.options.processPolicy?.().status).toBe("enabled");
     expect(runtime.options.artifactIntegrityContinueEnabled?.()).toBe(true);
     expectOptionalPolicies(runtime.options, {

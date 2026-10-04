@@ -7,6 +7,21 @@ export async function startBrowserVerifierSite() {
   let port = 0;
   let sessionGeneration = 0;
   const server = createServer((request, response) => {
+    if (request.url === "/screenshot-noise") {
+      response.setHeader("content-type", "text/html");
+      response.end(`<!doctype html><html><body style="margin:0"><canvas width="2048" height="1536"></canvas><script>
+        const context = document.querySelector('canvas').getContext('2d');
+        const image = context.createImageData(2048, 1536);
+        let state = 0x6d2b79f5;
+        for (let index = 0; index < image.data.length; index++) {
+          state ^= state << 13; state ^= state >>> 17; state ^= state << 5;
+          image.data[index] = index % 4 === 3 ? 255 : state & 255;
+        }
+        context.putImageData(image, 0, 0);
+        document.body.dataset.ready = 'true';
+      </script></body></html>`);
+      return;
+    }
     if (request.url === "/app.js.map") {
       response.setHeader("content-type", "application/source-map+json");
       response.end(sourceMap());

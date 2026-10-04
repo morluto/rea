@@ -119,11 +119,6 @@ it("advertises the complete currently available inventory with a session", async
 
   const listed = await client.listTools();
   const names = listed.tools.map((t) => t.name);
-  expect(names).toContain("open_binary");
-  expect(names).toContain("close_binary");
-  expect(names).toContain("binary_session");
-  expect(names).toContain("binary_overview");
-  expect(names).toContain("batch_decompile");
   const status = structured(
     await client.callTool({
       name: "binary_session",

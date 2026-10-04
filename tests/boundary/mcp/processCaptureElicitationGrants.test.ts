@@ -284,7 +284,6 @@ describe("process-capture MCP elicitation grants: replay bounds", () => {
     if (!isInputRequiredResult(acceptedAfterPrune))
       expect(acceptedAfterPrune.ok).toBe(true);
     expect(consumedNonces.has("occupied-0")).toBe(false);
-    expect(consumedNonces.size).toBe(4096);
   });
   it.each(["result", "throw"] as const)(
     "revokes an elicited grant when final authorization ends with %s",

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -79,18 +80,36 @@ describe("protocol capture", () => {
 });
 
 describe("JSON-RPC decoding", () => {
-  it("decodes a simple JSON-RPC request", () => {
-    const payload = new TextEncoder().encode(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        method: "add",
-        params: [1, 2],
-        id: 1,
-      }),
+  it("decodes the captured MCP SDK initialize request with exact field values", async () => {
+    const payload = await readFile(
+      new URL(
+        "../../tests/fixtures/golden/mcp-initialize.json",
+        import.meta.url,
+      ),
     );
-    const result = decodeJsonRpc(payload);
-    expect(result.decoded_fields.length).toBe(4);
-    expect(result.truncated).toBe(false);
+    expect(decodeJsonRpc(payload)).toEqual({
+      decoded_fields: [
+        {
+          path: "method",
+          wire_type: "json",
+          value: "initialize",
+          inferred: false,
+        },
+        {
+          path: "params",
+          wire_type: "json",
+          inferred: false,
+          value: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "rea-protocol-golden", version: "1" },
+          },
+        },
+        { path: "jsonrpc", wire_type: "json", value: "2.0", inferred: false },
+        { path: "id", wire_type: "json", value: 0, inferred: false },
+      ],
+      truncated: false,
+    });
   });
 
   it("redacts credential-like fields", () => {

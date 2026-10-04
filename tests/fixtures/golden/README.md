@@ -1,4 +1,4 @@
-# Captured Apple format fixtures
+# Captured format and protocol fixtures
 
 These are actual tool outputs, not records assembled to match the parser.
 `provenance.json` records the capture host, producer versions, source digests
@@ -53,3 +53,16 @@ rm -rf "$capture_root"
 The real E2E lane builds fresh catalogs and compares all their metadata against
 the live utility output. It does not compare volatile timestamps or producer
 versions against this historical capture.
+
+## MCP JSON-RPC request
+
+`mcp-initialize.json` captures the `initialize` request emitted by the pinned
+`@modelcontextprotocol/client` 2.0.0 SDK on 2026-10-04. The client connected to
+the actual `scripts/rea.mjs mcp` subprocess and completed `listTools` (122 tools).
+The recorder intercepted `transport.send`, serialized the message, and delegated
+the unchanged message to the real SDK transport. The committed JSON is formatted
+for review; whitespace is not a wire identity claim. No provider was launched.
+
+The decoder expectation separately specifies every field path, JSON value and
+observed-versus-inferred status. It is a captured decoder regression, not proof
+of a live protocol-capture product workflow.

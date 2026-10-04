@@ -6,7 +6,7 @@ import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./NativeApiInspection.js";
 
 describe("native API inspection", () => {
-  it("projects structured boundary evidence through inspectable substeps", () => {
+  it("preserves structured type and jump-table boundary evidence", () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
 
     expect(projectNativeApiInspection(dossier)).toMatchObject({
@@ -26,11 +26,6 @@ describe("native API inspection", () => {
           },
         ],
       },
-      substeps: [
-        { operation: "analyze_function", status: "completed" },
-        { operation: "project_native_api_boundary", status: "completed" },
-        { operation: "preserve_residual_unknowns", status: "completed" },
-      ],
       unsupported_branches: [],
       residual_unknowns: [],
     });
