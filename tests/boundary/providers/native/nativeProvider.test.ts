@@ -115,6 +115,42 @@ describe("native macOS provider inspection", () => {
     });
   });
 
+  it("preserves 64-bit addresses and alignment from captured otool output", async () => {
+    const runner = new FixtureRunner({
+      otool: await fixture("otool-high-address.txt"),
+    });
+    const client = new NativeMacOSProvider(runner, "darwin").createClient(
+      machoTarget("/private/fixture"),
+    );
+
+    const execution = await client.execute("inspect_macho", {});
+
+    expect(execution.ok).toBe(true);
+    if (!execution.ok) return;
+    expect(execution.value.result).toMatchObject({
+      segments: {
+        items: [
+          {
+            vm_address: "0xfffffff007004001",
+            vm_size: 4096,
+            file_offset: 0,
+            file_size: 185,
+            sections: {
+              items: [
+                {
+                  address: "0xfffffff0070040b9",
+                  size: 1,
+                  file_offset: 184,
+                  alignment: 1,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  });
+
   it("keeps Mach-O inspection available when optional vtool is unavailable", async () => {
     const client = new NativeMacOSProvider(
       new VtoolFailingRunner("unavailable"),

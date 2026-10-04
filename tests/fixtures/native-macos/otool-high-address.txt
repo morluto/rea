@@ -1,0 +1,25 @@
+fixture:
+Load command 0
+      cmd LC_SEGMENT_64
+  cmdsize 152
+  segname __TEXT
+   vmaddr 0xfffffff007004001
+   vmsize 0x0000000000001000
+  fileoff 0
+ filesize 185
+  maxprot 0x00000005
+ initprot 0x00000005
+   nsects 1
+    flags 0x0
+Section
+  sectname __text
+   segname __TEXT
+      addr 0xfffffff0070040b9
+      size 0x0000000000000001
+    offset 184
+     align 2^0 (1)
+    reloff 0
+    nreloc 0
+     flags 0x80000400
+ reserved1 0
+ reserved2 0

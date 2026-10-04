@@ -207,7 +207,7 @@ const parseSections = (block: string): ParsedSection[] =>
         address: hexField(fields, "addr"),
         size: numberField(fields, "size"),
         file_offset: numberField(fields, "offset"),
-        alignment: sectionAlignment(numberField(fields, "align")),
+        alignment: sectionAlignment(stringField(fields, "align")),
         flags: (stringField(fields, "flags") ?? "")
           .split(/\s+/u)
           .filter((flag) => flag.length > 0),
@@ -285,12 +285,16 @@ const hexField = (
   fields: Readonly<Record<string, string | number | null>>,
   name: string,
 ): string | null => {
-  const value = numberField(fields, name);
-  return value === null ? null : `0x${value.toString(16)}`;
+  const value = stringField(fields, name);
+  if (value === null || !/^(?:0x[a-fA-F0-9]+|\d+)$/u.test(value)) return null;
+  return `0x${BigInt(value).toString(16)}`;
 };
 
 const stripOffsetSuffix = (value: string | null): string =>
   value?.replace(/\s+\(offset\s+\d+\)$/u, "") ?? "unknown";
 
-const sectionAlignment = (exponent: number | null): number | null =>
-  exponent === null || exponent > 52 ? null : 2 ** exponent;
+const sectionAlignment = (raw: string | null): number | null => {
+  if (raw === null) return null;
+  const exponent = numeric(/^2\^(\d+)(?:\s+\(\d+\))?$/u.exec(raw)?.[1] ?? raw);
+  return exponent === null || exponent > 52 ? null : 2 ** exponent;
+};
