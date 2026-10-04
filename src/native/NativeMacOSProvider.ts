@@ -1,3 +1,5 @@
+import { inspectAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { observeNativeUi } from "./NativeUiObservation.js";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 
@@ -67,7 +69,10 @@ export class NativeMacOSProvider implements AnalysisProvider {
   ) {
     const available = platform === "darwin";
     this.#capabilities = Object.freeze(
-      NATIVE_TOOL_CONTRACTS.map((contract): CapabilityDescriptor => {
+      [
+        ...NATIVE_TOOL_CONTRACTS,
+        { name: "inspect_native_dispatch_metadata" as const },
+      ].map((contract): CapabilityDescriptor => {
         const availability = available
           ? ({ available: true, reason: null } as const)
           : ({
@@ -81,10 +86,13 @@ export class NativeMacOSProvider implements AnalysisProvider {
           ...availability,
           effects: Object.freeze({
             mutatesArtifact: false,
-            launchesProcess: true,
-            mayShowUi: false,
-            mayAccessNetwork: false,
-            mayWriteFilesystem: false,
+            launchesProcess:
+              contract.name !== "inspect_native_dispatch_metadata",
+            mayShowUi: contract.name === "capture_native_ui_scenario",
+            mayAccessNetwork: contract.name === "capture_native_ui_scenario",
+            mayWriteFilesystem:
+              contract.name === "capture_native_ui_scenario" ||
+              contract.name === "observe_native_ui",
             changesPermissions: false,
             requiresRoot: false,
           }),
@@ -124,6 +132,50 @@ class NativeMacOSClient implements AnalysisClient {
       return err(new AnalysisCancelledError(operation));
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
+    if (operation === "inspect_native_dispatch_metadata") {
+      if (this.target.kind !== "executable" || this.target.format !== "mach-o")
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            IDENTITY.id,
+            operation,
+            "Binary Apple metadata requires Mach-O; other providers can report symbol-only metadata",
+          ),
+        );
+      try {
+        const maxRecords = z
+          .number()
+          .int()
+          .min(1)
+          .max(20000)
+          .parse(parameters.max_records ?? 5000);
+        const result = await inspectAppleDispatchMetadata(
+          this.target,
+          maxRecords,
+          options?.signal,
+        );
+        return ok(
+          createAnalysisExecution(result, result.provider, {
+            locations: [{ kind: "artifact-path", path: this.target.path }],
+            limitations: result.result.coverage.flatMap(({ reason }) =>
+              reason === null ? [] : [reason],
+            ),
+          }),
+        );
+      } catch (cause) {
+        return err(
+          options?.signal?.aborted
+            ? new AnalysisCancelledError(operation)
+            : new ProviderAdapterError(IDENTITY.id, operation, {
+                cause,
+                diagnostics: {
+                  target_path: this.target.path,
+                  reason:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
+              }),
+        );
+      }
+    }
     if (!isNativeOperation(operation))
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -132,6 +184,21 @@ class NativeMacOSClient implements AnalysisClient {
           "Operation is not implemented by native macOS tools.",
         ),
       );
+    if (
+      operation === "observe_native_ui" ||
+      operation === "capture_native_ui_scenario"
+    ) {
+      const result = await observeNativeUi(this.target, operation, parameters, {
+        signal: options?.signal,
+      });
+      return result.ok
+        ? ok(
+            createAnalysisExecution(result.value, IDENTITY, {
+              limitations: result.value.limitations,
+            }),
+          )
+        : result;
+    }
     try {
       const observation = await this.#dispatch(
         operation,
@@ -166,6 +233,17 @@ class NativeMacOSClient implements AnalysisClient {
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     switch (operation) {
+      case "observe_native_ui":
+      case "capture_native_ui_scenario":
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              IDENTITY.id,
+              operation,
+              "UI observation uses its explicit authority boundary",
+            ),
+          ),
+        );
       case "inspect_macho":
         return this.#inspectMacho(signal);
       case "inspect_signature":

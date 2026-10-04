@@ -10,12 +10,12 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 114,
+    "total": 122,
     "families": [
       {
         "id": "direct",
         "surface": "official-proxy",
-        "count": 36,
+        "count": 39,
         "tools": [
           "address_name",
           "address_to_file_offset",
@@ -25,6 +25,8 @@
           "current_procedure",
           "goto_address",
           "inline_comment",
+          "inspect_native_data_type",
+          "inspect_native_instruction",
           "list_bookmarks",
           "list_documents",
           "list_names",
@@ -43,6 +45,7 @@
           "read_bytes",
           "read_function_instructions",
           "resolve_containing_procedure",
+          "resolve_native_call_targets",
           "search_procedures",
           "search_strings",
           "set_address_name",
@@ -58,7 +61,7 @@
       {
         "id": "enhanced",
         "surface": "enhanced",
-        "count": 14,
+        "count": 15,
         "tools": [
           "analyze_function",
           "analyze_swift_types",
@@ -73,29 +76,34 @@
           "inspect_native_dispatch_metadata",
           "trace_call_path",
           "trace_feature",
-          "trace_native_ui_action"
+          "trace_native_ui_action",
+          "trace_native_values"
         ]
       },
       {
         "id": "native",
         "surface": "native-provider",
-        "count": 5,
+        "count": 7,
         "tools": [
+          "capture_native_ui_scenario",
           "demangle_swift",
           "inspect_macho",
           "inspect_plist",
           "inspect_signature",
-          "list_architectures"
+          "list_architectures",
+          "observe_native_ui"
         ]
       },
       {
         "id": "artifact",
         "surface": "artifact-provider",
-        "count": 3,
+        "count": 5,
         "tools": [
           "decode_interface_builder",
           "extract_artifact",
-          "inspect_artifact"
+          "inspect_artifact",
+          "inspect_asset_catalog",
+          "inspect_keyed_archive"
         ]
       },
       {
@@ -206,6 +214,8 @@
       "capabilities": [
         "address_name",
         "analyze_function",
+        "inspect_native_data_type",
+        "inspect_native_instruction",
         "list_documents",
         "list_names",
         "list_procedures",
@@ -220,6 +230,7 @@
         "procedure_references",
         "read_function_instructions",
         "resolve_containing_procedure",
+        "resolve_native_call_targets",
         "search_procedures",
         "search_strings",
         "xrefs"
@@ -274,11 +285,13 @@
       "name": "macOS native inspection utilities",
       "version": null,
       "capabilities": [
+        "capture_native_ui_scenario",
         "demangle_swift",
         "inspect_macho",
         "inspect_plist",
         "inspect_signature",
-        "list_architectures"
+        "list_architectures",
+        "observe_native_ui"
       ]
     },
     {
@@ -288,7 +301,9 @@
       "capabilities": [
         "decode_interface_builder",
         "extract_artifact",
-        "inspect_artifact"
+        "inspect_artifact",
+        "inspect_asset_catalog",
+        "inspect_keyed_archive"
       ]
     },
     {
@@ -430,7 +445,7 @@
     }
   ],
   "cli": {
-    "primary_count": 67,
+    "primary_count": 75,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -439,6 +454,7 @@
       "capabilities",
       "capture-browser-scenario",
       "capture-electron-scenario",
+      "capture-native-ui-scenario",
       "capture-process",
       "capture-web-screenshot",
       "compare",
@@ -464,13 +480,17 @@
       "import-reference-source",
       "inspect",
       "inspect-artifact",
+      "inspect-asset-catalog",
       "inspect-electron-page",
+      "inspect-keyed-archive",
       "inspect-macho",
       "inspect-managed-artifact",
       "inspect-managed-members",
       "inspect-managed-native-boundaries",
       "inspect-native-api",
+      "inspect-native-data-type",
       "inspect-native-dispatch-metadata",
+      "inspect-native-instruction",
       "inspect-plist",
       "inspect-signature",
       "inspect-web-page",
@@ -480,6 +500,7 @@
       "list-electron-targets",
       "list-javascript-runtime-targets",
       "observe-javascript-runtime",
+      "observe-native-ui",
       "observe-web-session",
       "plan-managed-runtime-correlation",
       "policy",
@@ -487,6 +508,7 @@
       "project-managed-application-graph",
       "providers",
       "reconcile-javascript-runtime",
+      "resolve-native-call-targets",
       "run-controlled-replay",
       "run-replay-machine",
       "search",
@@ -495,6 +517,7 @@
       "trace-application-feature",
       "trace-javascript-semantics",
       "trace-native-ui-action",
+      "trace-native-values",
       "uninstall",
       "upgrade",
       "verify-managed-native-boundaries",
@@ -509,15 +532,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 67,
-      "mcp_tools": 114,
+      "cli_commands": 75,
+      "mcp_tools": 122,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "eb79567cc08f4afec223254c3977dc167d498f766b920077db0e1eead8be67b9",
+      "tools_sha256": "d3d6a83063a35a555ecf939e16383822c948081435ffc020bab23786515cf78d",
       "prompts_sha256": "fa889fc671185ac9c968c6dc8309cf609e709cdc837dbbf39b7cdfadb84ac2d7",
-      "combined_sha256": "3e9ab4e05563ea2609b7cf4db67638a79cd8a74188c292718d99a63451d5b9db",
-      "providers_sha256": "03498d8adb7d941f8293eea8d71375871fb30a278e310fdc19b98df6781fc1a7"
+      "combined_sha256": "fd9ccf3ce95e870cf24abb98e8aca444ec3035de1f358765c5a4e2d1ea280c48",
+      "providers_sha256": "c5a88a49990fafc8244972ee8ff543fc19995eb79db960da55f6a311e15340d1"
     }
   }
 }

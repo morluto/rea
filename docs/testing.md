@@ -54,8 +54,8 @@ that a host or target is covered when it was skipped.
 
 | Ghidra lane                                | Supported runner/target                                                            | Additional local tools                                              |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `npm run verify:ghidra`                    | Linux x64 with x86-64 ELF                                                          | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
-| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 Linux ELF relocatable fixture                   | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
+| `npm run verify:ghidra`                    | Linux x64 ELF or macOS x64/arm64 Mach-O                                            | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
+| `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain    |
 
@@ -146,3 +146,14 @@ minutes across three warm-build runs on the benchmark host. Keep Vitest caches
 cold unless separately identified. A PR that touches packaging or real-system
 behavior also requires `npm run verify:package` and the applicable
 `verify:*` lanes.
+
+## Apple native metadata and UI
+
+`npm run verify:apple-dispatch` compiles Objective-C class/protocol and Swift
+conformance/vtable fixtures, inspects their bytes and repeats after stripping
+local symbols. It requires macOS and the host Xcode toolchain; targets are not
+executed. `npm run verify:native-ui` launches exactly one source-owned fixture
+window, captures that selected window or reports OS permission denial, rejects
+a changed executable digest and cleans up the fixture process and helper. It
+requires an interactive macOS desktop. See [native investigation](native-investigation.md)
+for the exact ABI, authority, graph and observation boundaries.

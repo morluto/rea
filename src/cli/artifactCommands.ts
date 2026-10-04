@@ -14,6 +14,83 @@ export const registerArtifactCommands = (
   registerInspectionCommand(cli, logger);
   registerExtractionCommand(cli, logger);
   registerInterfaceBuilderCommand(cli, logger);
+  registerAssetCatalogCommand(cli, logger);
+  cli.command(CLI_COMMANDS.inspectKeyedArchive, {
+    description:
+      "Inspect a Foundation keyed archive as an object-reference graph",
+    args: z.object({
+      path: z.string().describe("Foundation plist archive or Apple app bundle"),
+      archive: z
+        .string()
+        .default(".")
+        .describe("Relative archive path when the target is a bundle"),
+    }),
+    options: z.object({
+      root: z.string().optional().describe("Named $top archive root"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("First original object-table index"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(20000)
+        .default(20000)
+        .describe("Maximum object-table entries to return"),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.inspectKeyedArchive, () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_keyed_archive",
+          {
+            path: args.archive,
+            offset: options.offset,
+            limit: options.limit,
+            ...(options.root === undefined ? {} : { root: options.root }),
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerAssetCatalogCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.inspectAssetCatalog, {
+    description: "Inspect compiled Apple asset catalog metadata",
+    args: z.object({ path: z.string().describe("Apple .app bundle path") }),
+    options: z.object({
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("First metadata record"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(10_000)
+        .default(1_000)
+        .describe("Maximum records to return"),
+    }),
+    alias: {},
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.inspectAssetCatalog, () =>
+        runProviderAnalysis(
+          args.path,
+          "inspect_asset_catalog",
+          { offset: options.offset, limit: options.limit },
+          logger,
+        ),
+      ),
+  });
 };
 
 const registerInterfaceBuilderCommand = (

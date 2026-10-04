@@ -276,6 +276,8 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_artifact"
       | "extract_artifact"
       | "decode_interface_builder"
+      | "inspect_asset_catalog"
+      | "inspect_keyed_archive"
       | "analyze_javascript_application",
     readonly reason:
       | "cancelled"

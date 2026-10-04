@@ -168,6 +168,7 @@ describe("Interface Builder dispatch joins", () => {
       objc_protocols: [],
       swift_decls: [],
       objc_ivars: [],
+      objc_protocol_records: [],
       objc_dispatch_implementations: [
         {
           class_name: "BuildViewController",
@@ -189,7 +190,7 @@ describe("Interface Builder dispatch joins", () => {
     expect(joined.edges).toContainEqual(
       expect.objectContaining({
         relation: "objc_dispatch",
-        resolution: "inferred",
+        resolution: "resolved",
         to: "native:function:0x1000",
       }),
     );
@@ -228,6 +229,7 @@ describe("Interface Builder dispatch joins", () => {
       objc_protocols: [],
       swift_decls: [],
       objc_ivars: [],
+      objc_protocol_records: [],
       objc_dispatch_implementations: [
         {
           class_name: "BuildViewController",
@@ -260,7 +262,7 @@ describe("Interface Builder dispatch joins", () => {
     expect(joined.edges).toContainEqual(
       expect.objectContaining({
         relation: "objc_dispatch",
-        resolution: "inferred",
+        resolution: "resolved",
         to: "native:function:0x1000",
       }),
     );
@@ -304,6 +306,7 @@ describe("placeholder dispatch joins", () => {
       objc_protocols: [],
       swift_decls: [],
       objc_ivars: [],
+      objc_protocol_records: [],
       objc_dispatch_implementations: [
         {
           class_name: "BuildViewController",

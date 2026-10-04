@@ -38,6 +38,8 @@ export class ArtifactReaderFailure extends Error {
       | "cancelled"
       | "format"
       | "integrity"
+      | "io"
+      | "limit"
       | "path"
       | "policy"
       | "unavailable",

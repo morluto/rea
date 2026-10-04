@@ -14,7 +14,10 @@ import {
 } from "../domain/nativeInvestigationGraph.js";
 import { err, ok } from "../domain/result.js";
 import type { Result } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/errors.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/errors.js";
 
 const target = "a".repeat(64);
 const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -138,6 +141,30 @@ const testAnalysis = (
     const override = overrides[operation];
     if (override !== undefined) return override(parameters);
     switch (operation) {
+      case "procedure_address":
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "Seed not available",
+          ),
+        );
+      case "procedure_references":
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "No typed reference reader in fixture",
+          ),
+        );
+      case "inspect_native_dispatch_metadata":
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "fixture",
+            operation,
+            "No binary metadata reader in fixture",
+          ),
+        );
       case "decode_interface_builder":
         return execution(operation, {
           target_sha256: target,
@@ -170,6 +197,22 @@ const testAnalysis = (
 });
 
 describe("native UI action trace", () => {
+  it("accepts an explicit native seed without an authored UI connection", async () => {
+    const result = await new EnhancedTools(
+      testAnalysis({
+        procedure_address: () => execution("procedure_address", "0x1000"),
+      }),
+    ).execute("trace_native_ui_action", { action: "0x1000" });
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        start: "native:function:0x1000",
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ id: "native:function:0x2000" }),
+        ]),
+      },
+    });
+  });
   it("builds the evidence path from the active app and native provider", async () => {
     const tools = new EnhancedTools(testAnalysis());
     const result = await tools.execute("trace_native_ui_action", {
@@ -189,7 +232,7 @@ describe("native UI action trace", () => {
     );
     expect(trace.edges).toContainEqual(
       expect.objectContaining({
-        relation: "direct_call",
+        relation: "provider_call",
         to: "native:function:0x2000",
       }),
     );
@@ -416,7 +459,7 @@ describe("native UI query outcomes", () => {
     expect(result.value).toMatchObject({
       coverage: expect.arrayContaining([
         expect.objectContaining({
-          facet: "direct_native_calls",
+          facet: "static_native_calls",
           status: "partial",
           omitted: 1,
         }),

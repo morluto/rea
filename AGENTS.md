@@ -2,7 +2,7 @@
 
 ## Product Direction
 
-REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra is supported on Linux x64 and has an experimental Windows x64 P0 boundary for approved native x86-64 PE applications; it supplies admitted read-only inventory and function-analysis operations but no GUI or mutation authority. Keep provider-specific code out of the domain and application layers.
+REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra is supported on Linux x64 and macOS x64/arm64 with matching native decompiler tools, and has an experimental Windows x64 P0 boundary for approved native x86-64 PE applications; it supplies admitted read-only inventory and function-analysis operations but no GUI or mutation authority. Keep provider-specific code out of the domain and application layers.
 
 Prioritize:
 

@@ -1,0 +1,255 @@
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import type { BinaryTarget } from "../domain/binaryTarget.js";
+import {
+  nativeUiObservationInputSchema,
+  nativeUiScenarioInputSchema,
+  nativeUiSnapshotSchema,
+  nativeUiResultSchema,
+} from "../domain/nativeUiObservation.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  ProviderAdapterError,
+  type AnalysisError,
+} from "../domain/errors.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
+
+const helper = fileURLToPath(
+  new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+);
+const responseSchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), result: nativeUiSnapshotSchema }),
+  z.strictObject({
+    ok: z.literal(false),
+    code: z.string(),
+    message: z.string(),
+  }),
+]);
+/** Narrow process seam preserves the native helper's permission and target failures. */
+export type NativeUiHelper = (
+  parameters: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal,
+) => Promise<unknown>;
+
+/** Capture a selected existing app window, with separately approved bounded scenarios. */
+export const observeNativeUi = async (
+  target: BinaryTarget,
+  operation: "observe_native_ui" | "capture_native_ui_scenario",
+  parameters: unknown,
+  options: { signal?: AbortSignal | undefined; invoke?: NativeUiHelper } = {},
+): Promise<Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>> => {
+  const runtime = createNativeUiHelperRuntime();
+  try {
+    return await observeWithHelper(target, operation, parameters, {
+      ...options,
+      invoke: options.invoke ?? runtime.invoke,
+    });
+  } finally {
+    await runtime.close();
+  }
+};
+
+const observeWithHelper = async (
+  target: BinaryTarget,
+  operation: "observe_native_ui" | "capture_native_ui_scenario",
+  parameters: unknown,
+  options: { signal?: AbortSignal | undefined; invoke: NativeUiHelper },
+): Promise<Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>> => {
+  const parsed = (
+    operation === "observe_native_ui"
+      ? nativeUiObservationInputSchema
+      : nativeUiScenarioInputSchema
+  ).safeParse(parameters);
+  if (!parsed.success)
+    return err(new AnalysisInputError(operation, { cause: parsed.error }));
+  if (target.kind !== "executable" || target.format !== "mach-o")
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "native-macos",
+        operation,
+        "Native UI observation requires an active Mach-O executable or app target",
+      ),
+    );
+  const input = parsed.data;
+  if (!input.screenshot && !input.accessibility)
+    return err(
+      new AnalysisInputError(operation, {
+        cause: new Error("Enable screenshot or accessibility capture"),
+      }),
+    );
+  const steps =
+    operation === "capture_native_ui_scenario"
+      ? nativeUiScenarioInputSchema.parse(parameters).steps
+      : [];
+  const waitMs = steps.reduce(
+    (sum, step) => sum + (step.kind === "wait" ? step.milliseconds : 0),
+    0,
+  );
+  if (waitMs > 30_000)
+    return err(
+      new AnalysisInputError(operation, {
+        cause: new Error("Scenario waits may total at most 30000 ms"),
+      }),
+    );
+  const signal =
+    options.signal === undefined
+      ? AbortSignal.timeout(180_000)
+      : AbortSignal.any([options.signal, AbortSignal.timeout(180_000)]);
+  const invoke = options.invoke;
+  let launchTime: number | undefined;
+  let outputBytes = 0;
+  const take = async (
+    action?: unknown,
+  ): Promise<Result<z.infer<typeof nativeUiSnapshotSchema>, AnalysisError>> => {
+    if (signal.aborted) return err(new AnalysisCancelledError(operation));
+    try {
+      const response = responseSchema.parse(
+        await invoke(
+          {
+            pid: input.pid,
+            window_id: input.window_id,
+            executable: target.path,
+            sha256: target.sha256,
+            ...(launchTime === undefined ? {} : { launch_time: launchTime }),
+            screenshot: input.screenshot,
+            accessibility: input.accessibility,
+            max_nodes: input.max_nodes,
+            ...(action === undefined ? {} : { action }),
+          },
+          signal,
+        ),
+      );
+      if (!response.ok)
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "native-macos",
+            operation,
+            `${response.code}: ${response.message}`,
+          ),
+        );
+      if (
+        response.result.window.pid !== input.pid ||
+        response.result.window.window_id !== input.window_id ||
+        response.result.window.executable !== target.path ||
+        (launchTime !== undefined &&
+          response.result.window.launch_time !== launchTime)
+      )
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "native-macos",
+            operation,
+            "Native helper returned a different target process or window",
+          ),
+        );
+      launchTime = response.result.window.launch_time;
+      outputBytes += 2 * Buffer.byteLength(JSON.stringify(response.result));
+      if (outputBytes > 64 * 1024 * 1024)
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            "native-macos",
+            operation,
+            "Scenario captures exceeded the 64 MiB output budget",
+          ),
+        );
+      return ok(response.result);
+    } catch (cause) {
+      return err(
+        signal.aborted
+          ? new AnalysisCancelledError(operation)
+          : new ProviderAdapterError("native-macos", operation, {
+              cause,
+              diagnostics: {
+                helper_path: helper,
+                reason:
+                  "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
+              },
+            }),
+      );
+    }
+  };
+  const initial = await take();
+  if (!initial.ok) return initial;
+  const results: z.infer<typeof nativeUiResultSchema>["steps"] = [];
+  let before = initial.value;
+  for (const [index, step] of steps.entries()) {
+    if (signal.aborted) {
+      results.push({
+        index,
+        kind: step.kind,
+        before,
+        after: null,
+        outcome: "cancelled",
+        reason: "Scenario cancelled before action",
+      });
+      break;
+    }
+    if (step.kind === "wait") {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            clearTimeout(timer);
+            reject(new Error("cancelled"));
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener("abort", abort);
+            resolve();
+          }, step.milliseconds);
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        });
+      } catch {
+        results.push({
+          index,
+          kind: step.kind,
+          before,
+          after: null,
+          outcome: "cancelled",
+          reason: "Scenario cancelled during wait",
+        });
+        break;
+      }
+    }
+    const after = await take(step.kind === "wait" ? undefined : step);
+    if (!after.ok) {
+      results.push({
+        index,
+        kind: step.kind,
+        before,
+        after: null,
+        outcome:
+          after.error._tag === "AnalysisCancelledError"
+            ? "cancelled"
+            : "failed",
+        reason: after.error.message,
+      });
+      break;
+    }
+    results.push({
+      index,
+      kind: step.kind,
+      before,
+      after: after.value,
+      outcome: "completed",
+      reason: null,
+    });
+    before = after.value;
+  }
+  return ok(
+    nativeUiResultSchema.parse({
+      target_sha256: target.sha256,
+      initial: initial.value,
+      steps: results,
+      restore: "leave-as-is",
+      limitations: [
+        "Only the explicitly selected already-running process/window is admitted. REA starts no target process and does not change permissions, foreground applications, or restore application data.",
+        "Click uses AXPress; scroll uses AXIncrement/AXDecrement; key-entry sets the selected element's AXValue. Unsupported elements fail without global event fallback.",
+        "Each completed action is followed immediately by capture; delayed UI changes require explicit wait steps. A failed after-capture can follow a completed action, so failure does not prove absence of application effects.",
+        "Scenarios can change app data, cause app network activity and persist changes. The caller explicitly chooses leave-as-is; automatic restoration is unsupported.",
+        "Window matching uses exact PID and window ID for screenshots and unique accessibility geometry. Accessibility paths can change as the UI changes; stale or ambiguous paths fail. Screenshots are scaled to at most 2048 pixels, each PNG to 8 MiB, total captures to 64 MiB, and scenario duration to 180 seconds.",
+      ],
+    }),
+  );
+};

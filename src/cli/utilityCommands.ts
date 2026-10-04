@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 
 import {
   runCapabilityStatus,
@@ -21,6 +22,95 @@ export const registerUtilityCommands = (
 ): void => {
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
+  for (const [command, operation] of [
+    [CLI_COMMANDS.observeNativeUi, "observe_native_ui"],
+    [CLI_COMMANDS.captureNativeUiScenario, "capture_native_ui_scenario"],
+  ] as const) {
+    cli.command(command, {
+      description:
+        "Observe or run an approved scenario in one exact native application window",
+      args: z.object({
+        path: z.string().describe("Local native executable or app path"),
+      }),
+      options: z.object({
+        pid: z
+          .number()
+          .int()
+          .positive()
+          .describe("Approved existing application PID"),
+        windowId: z
+          .number()
+          .int()
+          .positive()
+          .describe("Exact selected application window ID"),
+        observationApproved: z
+          .boolean()
+          .default(false)
+          .describe("Approve passive observation of this PID/window"),
+        actionsApproved: z
+          .boolean()
+          .default(false)
+          .describe("Independently approve scenario actions"),
+        restore: z
+          .enum(["leave-as-is"])
+          .optional()
+          .describe("Explicit choice to leave application state as-is"),
+        steps: z
+          .string()
+          .optional()
+          .describe("JSON array of approved declarative AX actions or waits"),
+        screenshot: z
+          .boolean()
+          .default(true)
+          .describe("Capture only the selected window"),
+        accessibility: z
+          .boolean()
+          .default(true)
+          .describe("Read the selected window accessibility tree"),
+        maxNodes: z
+          .number()
+          .int()
+          .min(1)
+          .max(2000)
+          .default(500)
+          .describe("Maximum accessibility nodes per capture"),
+      }),
+      alias: {
+        windowId: "window-id",
+        observationApproved: "observation-approved",
+        actionsApproved: "actions-approved",
+        maxNodes: "max-nodes",
+      },
+      run: ({ args, options }) =>
+        logCliCommand(logger, command, () =>
+          runProviderAnalysis(
+            args.path,
+            operation,
+            {
+              pid: options.pid,
+              window_id: options.windowId,
+              observation_approved: options.observationApproved,
+              screenshot: options.screenshot,
+              accessibility: options.accessibility,
+              max_nodes: options.maxNodes,
+              ...(operation === "capture_native_ui_scenario"
+                ? {
+                    actions_approved: options.actionsApproved,
+                    ...(options.restore === undefined
+                      ? {}
+                      : { restore: options.restore }),
+                    steps:
+                      options.steps === undefined
+                        ? []
+                        : jsonValueSchema.parse(JSON.parse(options.steps)),
+                  }
+                : {}),
+            },
+            logger,
+          ),
+        ),
+    });
+  }
   registerReferenceSourceCommand(cli, logger);
 };
 

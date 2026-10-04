@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
+import {
+  nativeInstructionSchema,
+  nativeCallTargetsSchema,
+} from "../domain/nativeInstruction.js";
 
 import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
 import {
@@ -6,7 +11,7 @@ import {
   functionDossierSchema,
   type FunctionDossier,
 } from "../domain/hopperValues.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "../domain/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -17,6 +22,9 @@ import {
 
 /** Read-only function operations admitted by the Ghidra adapter. */
 export const GHIDRA_FUNCTION_OPERATIONS = [
+  "inspect_native_data_type",
+  "inspect_native_instruction",
+  "resolve_native_call_targets",
   "analyze_function",
   "procedure_assembly",
   "procedure_callees",
@@ -44,6 +52,23 @@ const procedure = ghidraIdentifierSchema;
 const directProcedure = { document, procedure };
 
 const inputSchemas = {
+  inspect_native_data_type: z
+    .object({
+      document,
+      type: z.string().min(1).nullable().default(null),
+      address: ghidraCanonicalAddressSchema.nullable().default(null),
+    })
+    .strict()
+    .refine(
+      (value) => (value.type === null) !== (value.address === null),
+      "Supply exactly one of type or address",
+    ),
+  inspect_native_instruction: z
+    .object({ document, address: ghidraCanonicalAddressSchema })
+    .strict(),
+  resolve_native_call_targets: z
+    .object({ document, address: ghidraCanonicalAddressSchema })
+    .strict(),
   analyze_function: z.object({ procedure }).strict(),
   procedure_assembly: z.object(directProcedure).strict(),
   procedure_callees: z.object(directProcedure).strict(),
@@ -67,7 +92,15 @@ export const parseGhidraFunctionInput = (
 ): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
   const parsed = inputSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(parsed.data)
+    ? ok(
+        jsonObjectSchema.parse(
+          Object.fromEntries(
+            Object.entries(parsed.data).filter(
+              ([, value]) => value !== undefined,
+            ),
+          ),
+        ),
+      )
     : err(new AnalysisInputError(operation, { cause: parsed.error }));
 };
 
@@ -126,6 +159,15 @@ const procedureReferences = z
     procedure: procedureIdentity,
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
+    reference_kinds_available: z.boolean().default(true),
+    unresolved_calls: z
+      .array(
+        z.strictObject({
+          address: ghidraCanonicalAddressSchema,
+          reason: z.string(),
+        }),
+      )
+      .default([]),
   })
   .strict();
 const procedureInfo = z
@@ -305,6 +347,9 @@ const resultSchemas = {
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
+  inspect_native_instruction: nativeInstructionSchema,
+  inspect_native_data_type: nativeDataTypeSchema,
+  resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
   xrefs: z.array(ghidraCanonicalAddressSchema),
 } satisfies Readonly<Record<GhidraFunctionOperation, z.ZodType>>;

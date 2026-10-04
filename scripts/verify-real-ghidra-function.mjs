@@ -6,6 +6,9 @@ import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
+import { traceNativeValues } from "../dist/application/NativeValueTrace.js";
+import { createAnalysisExecution } from "../dist/application/AnalysisProvider.js";
+import { ok } from "../dist/domain/result.js";
 
 import {
   assertDenseSwitchDossier,
@@ -84,6 +87,39 @@ export async function verifyDebugFunctionOperations(
     entryXrefs,
   ] = await collectEntryFunctionData(client, entry);
   assertLocalProcedureInfo(info, entry.address);
+  const instruction = await functionCall(client, "inspect_native_instruction", {
+    document: null,
+    address: entry.address,
+  });
+  if (
+    instruction.status !== "decoded" ||
+    instruction.length < 1 ||
+    instruction.bytes.length !== instruction.length * 2 ||
+    instruction.operands.length === 0
+  )
+    throw new Error("Structured native instruction facts drifted");
+  const directSite = outgoing.references.find(
+    (reference) => reference.kind.call && !reference.kind.computed,
+  );
+  if (directSite === undefined)
+    throw new Error("Direct call fixture site unavailable");
+  const direct = await functionCall(client, "resolve_native_call_targets", {
+    document: null,
+    address: directSite.source_address,
+  });
+  if (
+    direct.status !== "direct" ||
+    !direct.targets.some(
+      (target) => target.address === directSite.target_address,
+    )
+  )
+    throw new Error("Direct call target resolution drifted");
+  const missingType = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: "/REA_MISSING_TYPE",
+  });
+  if (missingType.status !== "unavailable")
+    throw new Error("Missing native type was not explicit");
   assertProviderText(assembly, pseudocode, entry.address);
   if (
     instructionWindow.procedure?.address !== entry.address ||
@@ -474,4 +510,155 @@ async function findCrossBranchAddress(client, variant, callees) {
     if (candidate.basicblock_count > 1) return address;
   }
   throw new Error(`${variant} did not recover the multi-block callee`);
+}
+
+export async function verifyNativeTypeLayout(client, typeNames) {
+  const layoutSymbol = typeNames.find((item) =>
+    matchesSymbol(item.value, "rea_ghidra_inventory_layout"),
+  );
+  if (layoutSymbol === undefined)
+    throw new Error("Native layout fixture symbol unavailable");
+  const layout = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    address: layoutSymbol.address,
+  });
+  if (
+    layout.kind !== "struct" ||
+    layout.fields.length !== 3 ||
+    layout.size_bytes < 12
+  )
+    throw new Error(
+      `Native struct layout unavailable: ${JSON.stringify(layout)}`,
+    );
+  const payloadField = layout.fields.find((field) => field.name === "payload");
+  const stateField = layout.fields.find((field) => field.name === "state");
+  if (payloadField === undefined || stateField === undefined)
+    throw new Error(
+      `Nested layout field identities unavailable: ${JSON.stringify(layout)}`,
+    );
+  const payload = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: payloadField.type_id,
+  });
+  const state = await functionCall(client, "inspect_native_data_type", {
+    document: null,
+    type: stateField.type_id,
+  });
+  if (
+    payload.kind !== "union" ||
+    payload.fields.length !== 2 ||
+    state.kind !== "enum" ||
+    !state.members.some(
+      (member) => member.name === "REA_FIXTURE_READY" && member.value === "3",
+    )
+  )
+    throw new Error("Nested union or enum layout drifted");
+  return { layout, payload, state };
+}
+
+export async function verifyRelativeSwitch(client, procedures, entrySize) {
+  // Relocatable loaders may choose an assembler-generated alias as the function name.
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const procedure = requireProcedure(names, "rea_relative_switch");
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: procedure.address,
+  });
+  const table = dossier.native_api?.jump_tables.find((item) =>
+    item.data_sources.some(
+      (source) =>
+        source.entry_size_bytes === entrySize && source.entry_count === 4,
+    ),
+  );
+  if (table === undefined)
+    throw new Error(
+      `Exact ${entrySize}-byte relative table unavailable: ${JSON.stringify(dossier.native_api)}`,
+    );
+  for (let value = 0; value < 4; value++) {
+    const mapping = table.mappings.find((item) => item.case_value === value);
+    if (mapping === undefined || mapping.confidence !== "high")
+      throw new Error("Relative switch case mapping was not verified");
+    const instruction = await functionCall(
+      client,
+      "inspect_native_instruction",
+      { address: mapping.target_address },
+    );
+    if (
+      instruction.status !== "decoded" ||
+      !instruction.operands.some((operand) =>
+        operand.components.some(
+          (component) =>
+            component.kind === "immediate" &&
+            component.value === `0x${(100 + value).toString(16)}`,
+        ),
+      )
+    )
+      throw new Error(
+        `Relative switch target does not implement source case ${value}: ${JSON.stringify(instruction)}`,
+      );
+  }
+  return {
+    entry_size: entrySize,
+    dispatch_address: table.dispatch_address,
+    mappings: table.mappings.length,
+  };
+}
+
+export async function verifyNativeValueTrace(
+  client,
+  procedures,
+  target,
+  profile,
+) {
+  const entry = requireProcedure(procedures, "rea_ghidra_inventory_entry");
+  const graph = await traceNativeValues(
+    {
+      execute: async (operation, parameters) => {
+        const result = await functionCall(client, operation, parameters);
+        return ok(
+          createAnalysisExecution(
+            result,
+            { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+            {
+              subject: {
+                path: target.path,
+                sha256: target.sha256,
+                format: target.format,
+                architecture: target.architecture,
+              },
+              analysisProfile: profile,
+            },
+          ),
+        );
+      },
+    },
+    { procedure: entry.address, max_depth: 2, max_functions: 8, limit: 5000 },
+  );
+  if (!graph.ok) throw graph.error;
+  for (const kind of ["argument-binding", "parameter-use", "return-binding"])
+    if (!graph.value.edges.some((edge) => edge.kind === kind))
+      throw new Error(
+        `Real native value trace lacks ${kind}: ${JSON.stringify({ unknowns: graph.value.unknowns, nodes: graph.value.nodes.map((node) => ({ procedure: node.procedure, opcode: node.operation?.opcode })), edges: graph.value.edges })}`,
+      );
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const global = requireProcedure(names, "rea_ghidra_inventory_global");
+  if (
+    !graph.value.nodes.some((node) =>
+      node.operation?.inputs.some((value) => value.location === global.address),
+    )
+  )
+    throw new Error(
+      "Source-owned global storage operand is absent from native dependency graph",
+    );
+  return {
+    nodes: graph.value.total_nodes,
+    edges: graph.value.total_edges,
+    decompilations: graph.value.decompilations,
+    unknowns: graph.value.unknowns.length,
+  };
 }

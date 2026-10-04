@@ -5,11 +5,72 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { buildBinary } from "plist";
+import { keyedArchiveResultSchema } from "../../../src/domain/keyedArchive.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+
+it("inspects a standalone keyed archive through MCP with original object identities", async () => {
+  const directory = await createTestTempDirectory("rea-keyed-mcp-");
+  const path = join(directory, "archive.plist");
+  await writeFile(
+    path,
+    Buffer.from(
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $top: { root: { UID: 1 } },
+        $objects: ["$null", { cycle: { UID: 1 }, missing: { UID: 20 } }],
+      }),
+    ),
+  );
+  const session = createTestBinarySession(new ArtifactProvider());
+  const server = createServer(session, session);
+  const client = new Client({ name: "keyed-mcp-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path },
+    });
+    expect(opened.isError).not.toBe(true);
+    const called = await client.callTool({
+      name: "inspect_keyed_archive",
+      arguments: {},
+    });
+    expect(called.isError, JSON.stringify(called.structuredContent)).not.toBe(
+      true,
+    );
+    const graph = keyedArchiveResultSchema.parse(
+      z.object({ result: z.unknown() }).parse(called.structuredContent).result,
+    );
+    expect(graph.references).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 1, target: 1, status: "resolved" }),
+        expect.objectContaining({
+          source: 1,
+          target: 20,
+          status: "unresolved",
+        }),
+      ]),
+    );
+    const rejected = await client.callTool({
+      name: "inspect_keyed_archive",
+      arguments: { path: "other.plist" },
+    });
+    expect(rejected.isError).toBe(true);
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
 
 it("returns every artifact occurrence in one MCP call", async () => {
   const directory = await createTestTempDirectory("rea-artifact-inline-");
@@ -39,6 +100,7 @@ it("returns every artifact occurrence in one MCP call", async () => {
     expect(opened.isError).not.toBe(true);
     const names = (await client.listTools()).tools.map(({ name }) => name);
     expect(names).toContain("inspect_artifact");
+    expect(names).toContain("inspect_asset_catalog");
     expect(names).not.toContain("inventory_artifact");
     const status = await client.callTool({
       name: "binary_session",

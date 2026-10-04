@@ -2,6 +2,16 @@
 
 volatile int rea_ghidra_inventory_global = 7;
 
+enum ReaFixtureState { REA_FIXTURE_IDLE = 0, REA_FIXTURE_READY = 3 };
+union ReaFixturePayload { unsigned int word; unsigned char bytes[4]; };
+struct ReaFixtureLayout {
+  enum ReaFixtureState state;
+  union ReaFixturePayload payload;
+  struct ReaFixtureLayout *next;
+};
+volatile struct ReaFixtureLayout rea_ghidra_inventory_layout = {
+    REA_FIXTURE_READY, {.word = 5}, 0};
+
 __attribute__((noinline, used)) int rea_ghidra_inventory_leaf(int value) {
   puts("REA_GHIDRA_LEAF_VALUE");
   return value + rea_ghidra_inventory_global;

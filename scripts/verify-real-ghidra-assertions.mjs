@@ -249,7 +249,10 @@ export async function assertSession(
     session.read_only !== true ||
     session.analysis_complete !== true ||
     session.analysis_timed_out !== false ||
-    session.capabilities.join(",") !== GHIDRA_SESSION_CAPABILITIES.join(",") ||
+    session.capabilities.length !== GHIDRA_SESSION_CAPABILITIES.length ||
+    GHIDRA_SESSION_CAPABILITIES.some(
+      (name) => !session.capabilities.includes(name),
+    ) ||
     !/^0x[0-9a-f]+$/u.test(session.target.image_base) ||
     session.target.default_address_space.length === 0
   )

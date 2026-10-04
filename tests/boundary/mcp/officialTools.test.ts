@@ -13,6 +13,9 @@ const VALID_INPUTS: Readonly<
   Record<string, Readonly<Record<string, JsonValue>>>
 > = {
   address_name: {},
+  inspect_native_instruction: { address: "0x1000" },
+  resolve_native_call_targets: { address: "0x1000" },
+  inspect_native_data_type: { type: "/Missing" },
   comment: {},
   current_address: {},
   current_procedure: {},
@@ -124,6 +127,58 @@ const connect = async (analysis: AnalysisOperationPort) => {
 const inventory: JsonValue = [];
 
 const outputFor = (name: string): JsonValue => {
+  if (name === "inspect_native_instruction")
+    return {
+      address: "0x1000",
+      status: "decoded",
+      procedure: "0x1000",
+      architecture: "x86:LE:64:default",
+      mode: "default",
+      bytes: "c3",
+      length: 1,
+      mnemonic: "RET",
+      raw_disassembly: "RET",
+      operands: [],
+      flow: {
+        kind: "terminal",
+        conditional: false,
+        computed: false,
+        direct_destinations: [],
+      },
+      references: [],
+      limitations: ["Provider decoder observation"],
+    };
+  if (name === "resolve_native_call_targets")
+    return {
+      call_site: "0x1000",
+      procedure: "0x1000",
+      status: "not-call",
+      mechanism: "unavailable",
+      targets: [],
+      limitations: [],
+    };
+  if (name === "inspect_native_data_type")
+    return {
+      status: "unavailable",
+      reason: "Type absent",
+      id: null,
+      name: null,
+      kind: "unavailable",
+      source: "analysis-database",
+      source_archive: null,
+      address: null,
+      size_bytes: null,
+      alignment_bytes: null,
+      packing_enabled: null,
+      referenced_type: null,
+      array_count: null,
+      array_stride_bytes: null,
+      fields: [],
+      members: [],
+      total_fields: 0,
+      truncated: false,
+      limitations: [],
+    };
   if (["list_procedures", "list_names", "list_strings"].includes(name))
     return inventory;
   if (["address_name", "comment", "inline_comment"].includes(name)) return null;

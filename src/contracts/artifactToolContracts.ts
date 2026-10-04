@@ -5,6 +5,8 @@ import { artifactOutputSchemas } from "./toolOutputSchemas.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
+import { appleAssetCatalogInputSchema } from "../domain/appleAssetCatalog.js";
+import { keyedArchiveInputSchema } from "../domain/keyedArchive.js";
 const integrityInput = {
   fail: {
     integrity_policy: z.literal("fail").default("fail"),
@@ -39,6 +41,8 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_artifact: {},
   extract_artifact: {},
   decode_interface_builder: {},
+  inspect_asset_catalog: { offset: 0, limit: 1000 },
+  inspect_keyed_archive: { path: "Contents/Resources/Model.plist" },
 };
 
 const artifact = <
@@ -86,6 +90,16 @@ export const ARTIFACT_TOOL_CONTRACTS = [
       max_objects: z.number().int().min(1).max(20_000).default(20_000),
       max_connections: z.number().int().min(1).max(40_000).default(40_000),
     }),
+  ),
+  artifact(
+    "inspect_keyed_archive",
+    "Inspect one Foundation NSKeyedArchiver plist in the active app bundle as original object-table nodes, class descriptors, named roots, and UID edges. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
+    keyedArchiveInputSchema,
+  ),
+  artifact(
+    "inspect_asset_catalog",
+    "Inspect compiled Assets.car metadata in an active Apple app bundle. Returns stable paginated catalog and rendition records with raw assetutil metadata and catalog digests; rendition bytes are not extracted.",
+    appleAssetCatalogInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];
 

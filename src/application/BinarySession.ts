@@ -303,7 +303,9 @@ export class BinarySession
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
-        operation === "decode_interface_builder"
+        operation === "decode_interface_builder" ||
+        operation === "inspect_asset_catalog" ||
+        operation === "inspect_keyed_archive"
           ? undefined
           : this.lookupSnapshot(target, profile, operation, parameters),
     });
@@ -324,7 +326,9 @@ export class BinarySession
         profiled.ok &&
         cacheable &&
         profile !== undefined &&
-        name !== "decode_interface_builder"
+        name !== "decode_interface_builder" &&
+        name !== "inspect_asset_catalog" &&
+        name !== "inspect_keyed_archive"
       )
         this.recordSnapshot({
           target: active.target,

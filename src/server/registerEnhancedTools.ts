@@ -62,7 +62,17 @@ export const registerEnhancedTools = (
     codeForString,
     traceCallPath,
     traceNativeUiAction,
+    traceNativeValues,
   ] = ENHANCED_TOOL_CONTRACTS;
+  server.registerTool(
+    traceNativeValues.name,
+    toolRegistrationOptions(traceNativeValues),
+    (input, context) =>
+      executeEnhancedTool(analysis, options, traceNativeValues, {
+        validatedCall: { name: "trace_native_values", input },
+        context,
+      }),
+  );
   server.registerTool(
     nativeDispatchMetadata.name,
     toolRegistrationOptions(nativeDispatchMetadata),

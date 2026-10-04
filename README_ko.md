@@ -151,10 +151,10 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 
 | 도구 그룹           |  수 | 예시                                                                                                                                                                              |
 | ------------------- | --: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 바이너리 검사       |  36 | 프로시저, 의사 코드, 어셈블리, 문자열, 이름, 세그먼트, callers, callees, xrefs, 주석                                                                                              |
-| 합성 분석           |  14 | `binary_overview`, `analyze_function`, `inspect_native_api`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift 및 ObjC 탐색                                        |
-| macOS 네이티브 도구 |   5 | Mach-O 메타데이터, 코드 서명, plist, 아키텍처, Swift 디맹글링. Hopper 실행 불필요                                                                                                 |
-| 아티팩트 그래프     |   3 | 디렉터리와 지원 패키지의 전체 인라인 검사 및 명시적으로 선택한 트랜잭션 추출                                                                                                      |
+| 바이너리 검사       |  39 | 프로시저, 의사 코드, 어셈블리, 문자열, 이름, 세그먼트, callers, callees, xrefs, 주석                                                                                              |
+| 합성 분석           |  15 | `binary_overview`, `analyze_function`, `inspect_native_api`, `batch_decompile`, `get_call_graph`, `find_xrefs_to_name`, Swift 및 ObjC 탐색                                        |
+| macOS 네이티브 도구 |   7 | Mach-O 메타데이터, 코드 서명, plist, 아키텍처, Swift 디맹글링. Hopper 실행 불필요                                                                                                 |
+| 아티팩트 그래프     |   5 | 디렉터리와 지원 패키지 검사, Interface Builder UI 그래프, Apple 에셋 카탈로그 메타데이터, 명시적으로 선택한 추출                                                                  |
 | Managed PE/CLI      |   8 | PE/CLI ID, 메타데이터 멤버, CIL 해시, P/Invoke/네이티브 경계 선언 및 검증, 애플리케이션 그래프 투영, 디컴파일 재구성 가져오기, 구조적 token 재매핑, 런타임 상관 계획, 버전 비교   |
 | 브라우저 관찰       |   9 | origin 제한 CDP 캡처, bundle/source map 분석, WebMCP 검색, 세션 타임라인, capture diff 및 시각 증거                                                                               |
 | Electron 분석       |   5 | canonical 파일 루트 내 수동 관찰, 제한된 정적 앱 매핑, Evidence 기반 정적/런타임 조정                                                                                             |

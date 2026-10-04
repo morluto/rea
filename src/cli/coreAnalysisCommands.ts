@@ -15,6 +15,141 @@ export const registerCoreAnalysisCommands = (
   logger: Logger,
 ): void => {
   registerCoreCommands(cli, logger);
+  cli.command(CLI_COMMANDS.traceNativeValues, {
+    description: "Trace bounded native def-use and call dependencies",
+    args: z.object({
+      path: z.string().describe("Local native executable or app path"),
+      procedure: z
+        .string()
+        .describe("Explicit native procedure symbol or address"),
+    }),
+    options: z.object({
+      maxDepth: z
+        .number()
+        .int()
+        .min(0)
+        .max(16)
+        .default(3)
+        .describe("Maximum call traversal depth"),
+      maxFunctions: z
+        .number()
+        .int()
+        .min(1)
+        .max(64)
+        .default(16)
+        .describe("Maximum function decompilations"),
+      maxCallSites: z
+        .number()
+        .int()
+        .min(1)
+        .max(4096)
+        .default(256)
+        .describe("Maximum static call-site resolutions"),
+      maxNodes: z
+        .number()
+        .int()
+        .min(1)
+        .max(20000)
+        .default(5000)
+        .describe("Maximum retained graph nodes"),
+      maxEdges: z
+        .number()
+        .int()
+        .min(1)
+        .max(40000)
+        .default(10000)
+        .describe("Maximum retained graph edges"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("First graph node index"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(5000)
+        .default(1000)
+        .describe("Maximum nodes on this page"),
+      provider: providerSelectionOption,
+    }),
+    alias: {
+      maxDepth: "max-depth",
+      maxFunctions: "max-functions",
+      maxCallSites: "max-call-sites",
+      maxNodes: "max-nodes",
+      maxEdges: "max-edges",
+    },
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.traceNativeValues, () =>
+        runDirectAnalysis(
+          args.path,
+          "trace_native_values",
+          {
+            procedure: args.procedure,
+            max_depth: options.maxDepth,
+            max_functions: options.maxFunctions,
+            max_call_sites: options.maxCallSites,
+            max_nodes: options.maxNodes,
+            max_edges: options.maxEdges,
+            offset: options.offset,
+            limit: options.limit,
+          },
+          directAnalysisOptions(logger, undefined, options.provider),
+        ),
+      ),
+  });
+  cli.command(CLI_COMMANDS.inspectNativeDataType, {
+    description: "Inspect one recovered database type or typed data object",
+    args: z.object({
+      path: z.string().describe("Local native executable or app path"),
+    }),
+    options: z.object({
+      type: z.string().optional().describe("Exact database type category path"),
+      address: z.string().describe("Exact native address").optional(),
+      provider: providerSelectionOption,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, () =>
+        runDirectAnalysis(
+          args.path,
+          "inspect_native_data_type",
+          {
+            ...(options.type === undefined ? {} : { type: options.type }),
+            ...(options.address === undefined
+              ? {}
+              : { address: options.address }),
+          },
+          directAnalysisOptions(logger, undefined, options.provider),
+        ),
+      ),
+  });
+  for (const [command, operation] of [
+    [CLI_COMMANDS.inspectNativeInstruction, "inspect_native_instruction"],
+    [CLI_COMMANDS.resolveNativeCallTargets, "resolve_native_call_targets"],
+  ] as const) {
+    cli.command(command, {
+      description:
+        operation === "inspect_native_instruction"
+          ? "Inspect one native instruction with decoded operand facts"
+          : "Resolve one static native call site",
+      args: z.object({
+        path: z.string().describe("Local native executable or app path"),
+        address: z.string().describe("Exact native address"),
+      }),
+      options: z.object({ provider: providerSelectionOption }),
+      run: ({ args, options }) =>
+        logCliCommand(logger, command, () =>
+          runDirectAnalysis(
+            args.path,
+            operation,
+            { address: args.address },
+            directAnalysisOptions(logger, undefined, options.provider),
+          ),
+        ),
+    });
+  }
   registerFunctionCommand(cli, logger);
   registerNativeApiCommand(cli, logger);
   registerInstructionsCommand(cli, logger);

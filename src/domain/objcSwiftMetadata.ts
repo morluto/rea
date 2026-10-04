@@ -61,6 +61,34 @@ export const objcClassSchema = z.strictObject({
   protocols: z.array(z.string()).default([]),
   ivar_count: z.number().int().nonnegative().default(0),
   instance_size: z.number().int().nonnegative().nullable(),
+  location: z
+    .object({
+      address: z.string().nullable(),
+      file_offset: z.number().int().nonnegative().nullable(),
+    })
+    .optional(),
+  superclass_address: z.string().nullable().optional(),
+  metaclass_address: z.string().nullable().optional(),
+  decode: z
+    .object({
+      status: z.enum(["decoded", "partial", "unsupported", "invalid"]),
+      reason: z.string().nullable(),
+    })
+    .optional(),
+  evidence: z
+    .array(
+      z.object({
+        kind: z.literal("binary_metadata"),
+        description: z.string(),
+        location: z.object({
+          address: z.string().nullable(),
+          file_offset: z.number().int().nonnegative().nullable(),
+        }),
+        artifact_path: z.string(),
+        artifact_sha256: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type ObjcClass = z.infer<typeof objcClassSchema>;
 
@@ -108,11 +136,24 @@ export const objcIvarSchema = z.strictObject({
   name: z.string().min(1),
   type_encoding: z.string().nullable(),
   offset: z.number().int().nonnegative().nullable(),
+  size: z.number().int().nonnegative().nullable().default(null),
+  alignment: z.number().int().positive().nullable().default(null),
   location: nativeMetadataLocationSchema,
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
 export type ObjcIvar = z.infer<typeof objcIvarSchema>;
+
+/** Encoded Objective-C protocol declaration with required and optional method facts. */
+export const objcProtocolRecordSchema = z.strictObject({
+  name: z.string(),
+  adopted_protocols: z.array(z.string()),
+  methods: z.array(objcMethodSchema),
+  optional_methods: z.array(objcMethodSchema),
+  location: nativeMetadataLocationSchema,
+  decode: nativeMetadataDecodeSchema,
+  evidence: z.array(nativeMetadataEvidenceSchema).min(1),
+});
 
 /** Selector implementation resolved from a class or metaclass method list. */
 export const objcDispatchImplementationSchema = z.strictObject({
@@ -254,6 +295,7 @@ export const objcSwiftMetadataSchema = z.strictObject({
   objc_protocols: z.array(objcProtocolSchema).default([]),
   swift_decls: z.array(swiftDeclSchema).default([]),
   objc_ivars: z.array(objcIvarSchema).default([]),
+  objc_protocol_records: z.array(objcProtocolRecordSchema).default([]),
   objc_dispatch_implementations: z
     .array(objcDispatchImplementationSchema)
     .default([]),

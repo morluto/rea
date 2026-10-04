@@ -1,0 +1,53 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileOutput } from "../process/ExecFileOutput.js";
+import type { NativeUiHelper } from "./NativeUiObservation.js";
+
+/** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
+export const createNativeUiHelperRuntime = () => {
+  let root: string | undefined;
+  let executable: string | undefined;
+  const invoke: NativeUiHelper = async (parameters, signal) => {
+    if (executable === undefined) {
+      root = await mkdtemp(join(tmpdir(), "rea-native-ui-"));
+      const output = join(root, "observer");
+      await execFileOutput(
+        "/usr/bin/xcrun",
+        [
+          "swiftc",
+          "-module-cache-path",
+          join(root, "modules"),
+          fileURLToPath(
+            new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+          ),
+          "-o",
+          output,
+        ],
+        {
+          timeout: 60_000,
+          maxBuffer: 1024 * 1024,
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+      executable = output;
+    }
+    const output = await execFileOutput(
+      executable,
+      [JSON.stringify(parameters)],
+      {
+        timeout: 30_000,
+        maxBuffer: 16 * 1024 * 1024,
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+    return JSON.parse(output.stdout) as unknown;
+  };
+  return {
+    invoke,
+    close: async () => {
+      if (root !== undefined) await rm(root, { recursive: true, force: true });
+    },
+  };
+};

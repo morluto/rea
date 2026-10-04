@@ -58,6 +58,8 @@ import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.lang.Register;
+import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
@@ -75,6 +77,7 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.pcode.FunctionPrototype;
 import ghidra.program.model.pcode.HighFunction;
+import ghidra.program.model.pcode.HighParam;
 import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.pcode.JumpTable;
 import ghidra.program.model.pcode.PcodeOp;
@@ -122,6 +125,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "procedure_info",
         "procedure_pseudo_code",
         "read_function_instructions",
+        "inspect_native_instruction",
+        "inspect_native_data_type",
+        "resolve_native_call_targets",
         "procedure_references",
         "xrefs"
     };
@@ -314,6 +320,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "resolve_containing_procedure" -> containingProcedure(request.params);
             case "search_procedures" -> search(request.params, true);
             case "search_strings" -> search(request.params, false);
+            case "inspect_native_data_type" -> inspectNativeDataType(request.params);
+            case "inspect_native_instruction" -> inspectNativeInstruction(request.params);
+            case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
             case "xrefs" -> xrefs(request.params);
             case "analyze_function" -> analyzeFunction(request.params);
             default -> throw new RequestFailure(
@@ -463,6 +472,224 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("procedure", procedureIdentity(function));
         result.addProperty("direction", direction);
         result.add("references", edges);
+        result.addProperty("reference_kinds_available", true);
+        JsonArray unresolvedCalls = new JsonArray();
+        if (direction.equals("outgoing")) for (Instruction instruction : scan.instructions) {
+            if (!instruction.getFlowType().isCall()) continue;
+            boolean resolved = false;
+            for (Reference reference : instruction.getReferencesFrom()) if (reference.getReferenceType().isCall()) resolved = true;
+            if (!resolved) {
+                JsonObject site = new JsonObject();
+                site.addProperty("address", canonicalAddress(instruction.getAddress()));
+                site.addProperty("reason", "Instruction decoder identifies a call but ReferenceManager supplies no call destination");
+                unresolvedCalls.add(site);
+            }
+        }
+        result.add("unresolved_calls", unresolvedCalls);
+        return result;
+    }
+
+    private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "type", "address"));
+        requireDocument(params);
+        boolean byType = params.has("type") && !params.get("type").isJsonNull();
+        boolean byAddress = params.has("address") && !params.get("address").isJsonNull();
+        if (byType == byAddress) throw new RequestFailure("invalid_request", "Supply exactly one of type or address");
+        DataType type;
+        Address address = null;
+        if (byType) type = currentProgram.getDataTypeManager().getDataType(requireString(params, "type"));
+        else {
+            address = requireAddress(params, "address");
+            Data data = currentProgram.getListing().getDefinedDataAt(address);
+            type = data == null ? null : data.getDataType();
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("status", type == null ? "unavailable" : "available");
+        result.add("reason", type == null ? GSON.toJsonTree("No exact database type or defined typed data exists at the selected identity") : JsonNull.INSTANCE);
+        for (String key : List.of("id", "name", "source_archive", "size_bytes", "alignment_bytes", "packing_enabled", "referenced_type", "array_count", "array_stride_bytes")) result.add(key, JsonNull.INSTANCE);
+        result.add("address", address == null ? JsonNull.INSTANCE : GSON.toJsonTree(canonicalAddress(address)));
+        result.addProperty("source", "analysis-database");
+        result.addProperty("kind", "unavailable");
+        JsonArray fields = new JsonArray();
+        JsonArray members = new JsonArray();
+        int totalFields = 0;
+        if (type != null) {
+            result.addProperty("id", type.getPathName());
+            result.addProperty("name", type.getName());
+            if (type.getSourceArchive() != null) result.addProperty("source_archive", type.getSourceArchive().getName());
+            if (type.getLength() >= 0) result.addProperty("size_bytes", type.getLength());
+            if (type.getAlignment() > 0) result.addProperty("alignment_bytes", type.getAlignment());
+            String kind = type instanceof ghidra.program.model.data.Structure ? "struct" : type instanceof ghidra.program.model.data.Union ? "union" : type instanceof ghidra.program.model.data.Enum ? "enum" : type instanceof ghidra.program.model.data.Pointer ? "pointer" : type instanceof ghidra.program.model.data.Array ? "array" : type instanceof ghidra.program.model.data.TypeDef ? "typedef" : type instanceof ghidra.program.model.data.BuiltInDataType ? "scalar" : "unsupported";
+            result.addProperty("kind", kind);
+            if (type instanceof ghidra.program.model.data.Composite composite) {
+                result.addProperty("packing_enabled", composite.isPackingEnabled());
+                ghidra.program.model.data.DataTypeComponent[] components = composite.getComponents();
+                totalFields = components.length;
+                for (int index = 0; index < Math.min(components.length, 20_000); index++) {
+                    monitor.checkCancelled();
+                    ghidra.program.model.data.DataTypeComponent component = components[index];
+                    JsonObject field = new JsonObject();
+                    field.addProperty("ordinal", component.getOrdinal());
+                    field.add("name", component.getFieldName() == null ? JsonNull.INSTANCE : GSON.toJsonTree(component.getFieldName()));
+                    field.addProperty("offset_bytes", component.getOffset());
+                    field.add("size_bytes", component.getLength() < 0 ? JsonNull.INSTANCE : GSON.toJsonTree(component.getLength()));
+                    field.addProperty("type_id", component.getDataType().getPathName());
+                    field.add("bit_size", JsonNull.INSTANCE);
+                    field.add("bit_offset", JsonNull.INSTANCE);
+                    if (component.getDataType() instanceof ghidra.program.model.data.BitFieldDataType bitfield) {
+                        field.addProperty("bit_size", bitfield.getBitSize());
+                        field.addProperty("bit_offset", bitfield.getBitOffset());
+                    }
+                    field.addProperty("status", "observed");
+                    field.addProperty("flexible_tail", "unknown");
+                    fields.add(field);
+                }
+            } else if (type instanceof ghidra.program.model.data.Enum enumeration) {
+                String[] names = enumeration.getNames();
+                totalFields = names.length;
+                java.util.Arrays.sort(names);
+                for (int index = 0; index < Math.min(names.length, 20_000); index++) {
+                    monitor.checkCancelled();
+                    JsonObject member = new JsonObject();
+                    member.addProperty("name", names[index]);
+                    member.addProperty("value", Long.toString(enumeration.getValue(names[index])));
+                    members.add(member);
+                }
+            } else if (type instanceof ghidra.program.model.data.Pointer pointer) {
+                if (pointer.getDataType() != null) result.addProperty("referenced_type", pointer.getDataType().getPathName());
+            } else if (type instanceof ghidra.program.model.data.Array array) {
+                result.addProperty("referenced_type", array.getDataType().getPathName());
+                result.addProperty("array_count", array.getNumElements());
+                result.addProperty("array_stride_bytes", array.getElementLength());
+            } else if (type instanceof ghidra.program.model.data.TypeDef alias) {
+                result.addProperty("referenced_type", alias.getDataType().getPathName());
+            }
+        }
+        result.add("fields", fields);
+        result.add("members", members);
+        result.addProperty("total_fields", totalFields);
+        result.addProperty("truncated", totalFields > 20_000);
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Nested and recursive types retain category-path identities for separate inspection.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        return result;
+    }
+
+    private JsonObject instructionReference(Reference reference) {
+        JsonObject item = new JsonObject();
+        RefType type = reference.getReferenceType();
+        item.addProperty("target_address", canonicalAddress(reference.getToAddress()));
+        item.addProperty("type", type.getName());
+        item.addProperty("call", type.isCall());
+        item.addProperty("jump", type.isJump());
+        item.addProperty("indirect", type.isIndirect());
+        item.addProperty("computed", type.isComputed());
+        item.addProperty("operand_index", reference.getOperandIndex());
+        return item;
+    }
+
+    private JsonObject inspectNativeInstruction(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        Instruction instruction = currentProgram.getListing().getInstructionAt(address);
+        Function function = currentProgram.getFunctionManager().getFunctionContaining(address);
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(address));
+        result.add("procedure", function == null ? JsonNull.INSTANCE : GSON.toJsonTree(canonicalAddress(function.getEntryPoint())));
+        result.addProperty("architecture", currentProgram.getLanguageID().getIdAsString());
+        result.addProperty("mode", currentProgram.getLanguage().getLanguageDescription().getVariant());
+        JsonArray operands = new JsonArray();
+        JsonArray references = new JsonArray();
+        JsonArray destinations = new JsonArray();
+        JsonObject flow = new JsonObject();
+        flow.addProperty("kind", "unavailable");
+        flow.addProperty("conditional", false);
+        flow.addProperty("computed", false);
+        if (instruction == null) {
+            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
+                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "undecodable");
+            for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
+        } else {
+            result.addProperty("status", "decoded");
+            result.addProperty("bytes", java.util.HexFormat.of().formatHex(instruction.getBytes()));
+            result.addProperty("length", instruction.getLength());
+            result.addProperty("mnemonic", instruction.getMnemonicString());
+            result.addProperty("raw_disassembly", instruction.toString());
+            RefType type = instruction.getFlowType();
+            flow.addProperty("kind", type.isCall() ? "call" : type.isJump() ? "jump" : type.isTerminal() ? "terminal" : "fallthrough");
+            flow.addProperty("conditional", type.isConditional());
+            flow.addProperty("computed", type.isComputed());
+            if (!type.isComputed()) for (Address target : instruction.getFlows()) destinations.add(canonicalAddress(target));
+            for (Reference reference : instruction.getReferencesFrom()) references.add(instructionReference(reference));
+            for (int index = 0; index < instruction.getNumOperands(); index++) {
+                JsonObject operand = new JsonObject();
+                operand.addProperty("index", index);
+                operand.addProperty("raw", instruction.getDefaultOperandRepresentation(index));
+                operand.addProperty("provider_type", instruction.getOperandType(index));
+                operand.addProperty("memory_addressing", "unavailable");
+                JsonArray components = new JsonArray();
+                for (Object object : instruction.getOpObjects(index)) {
+                    JsonObject component = new JsonObject();
+                    component.addProperty("text", object.toString());
+                    component.add("value", JsonNull.INSTANCE);
+                    component.add("bit_width", JsonNull.INSTANCE);
+                    if (object instanceof Register register) {
+                        component.addProperty("kind", "register");
+                        component.addProperty("value", register.getName());
+                        component.addProperty("bit_width", register.getBitLength());
+                    } else if (object instanceof Scalar scalar) {
+                        component.addProperty("kind", "immediate");
+                        component.addProperty("value", "0x" + Long.toUnsignedString(scalar.getUnsignedValue(), 16));
+                        component.addProperty("bit_width", scalar.bitLength());
+                    } else if (object instanceof Address target) {
+                        component.addProperty("kind", "address");
+                        component.addProperty("value", canonicalAddress(target));
+                    } else component.addProperty("kind", "unknown");
+                    components.add(component);
+                }
+                operand.add("components", components);
+                operands.add(operand);
+            }
+        }
+        flow.add("direct_destinations", destinations);
+        result.add("operands", operands);
+        result.add("flow", flow);
+        result.add("references", references);
+        result.add("limitations", GSON.toJsonTree(List.of("Operand components are Ghidra Listing decoder tokens; effective memory base/index/displacement roles and per-instruction context mode are unavailable. The mode field is the program language variant.", "Terminal flow is not classified as a return without provider evidence.")));
+        return result;
+    }
+
+    private JsonObject resolveNativeCallTargets(JsonObject params) throws Exception {
+        JsonObject instruction = inspectNativeInstruction(params);
+        JsonObject result = new JsonObject();
+        result.add("call_site", instruction.get("address"));
+        result.add("procedure", instruction.get("procedure"));
+        JsonArray targets = new JsonArray();
+        JsonObject flow = instruction.getAsJsonObject("flow");
+        boolean decoded = instruction.get("status").getAsString().equals("decoded");
+        boolean call = flow.get("kind").getAsString().equals("call");
+        boolean computed = flow.get("computed").getAsBoolean();
+        Map<String, JsonArray> byTarget = new TreeMap<>();
+        if (call) for (JsonElement element : instruction.getAsJsonArray("references")) {
+            JsonObject reference = element.getAsJsonObject();
+            if (reference.get("call").getAsBoolean())
+                byTarget.computeIfAbsent(reference.get("target_address").getAsString(), ignored -> new JsonArray()).add(reference);
+        }
+        boolean ambiguous = byTarget.size() > 1;
+        for (Map.Entry<String, JsonArray> entry : byTarget.entrySet()) {
+            JsonObject target = new JsonObject();
+            target.addProperty("address", entry.getKey());
+            Address address = tryParseAddress(entry.getKey());
+            Function function = address == null ? null : currentProgram.getFunctionManager().getFunctionAt(address);
+            target.add("procedure", function == null ? JsonNull.INSTANCE : GSON.toJsonTree(canonicalAddress(function.getEntryPoint())));
+            target.addProperty("status", ambiguous ? "candidate" : computed ? "resolved-indirect" : "direct");
+            target.addProperty("basis", "provider-reference");
+            target.add("references", entry.getValue());
+            targets.add(target);
+        }
+        result.addProperty("status", !decoded ? "unavailable" : !call ? "not-call" : ambiguous ? "ambiguous" : targets.size() == 0 ? "unresolved" : computed ? "resolved-indirect" : "direct");
+        result.addProperty("mechanism", !call ? "unavailable" : computed ? "computed" : "direct");
+        result.add("targets", targets);
+        result.add("limitations", GSON.toJsonTree(List.of("Targets are static Ghidra ReferenceManager call-reference observations. Computed calls without call references remain unresolved; a resolved reference is not proof of runtime execution.", "Objective-C, Swift, vtable and closure mechanisms are not identified by this reference-only boundary.")));
         return result;
     }
 
@@ -586,6 +813,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (PcodeOpAST operation : selected) {
             operationIds.put(operation, pcodeOperationId(operation));
         }
+        JsonArray parameterUses = new JsonArray();
+        JsonArray parameterValues = new JsonArray();
+        FunctionPrototype prototype = highFunction.getFunctionPrototype();
+        for (int ordinal = 0; ordinal < prototype.getNumParams(); ordinal++) {
+            HighSymbol parameter = prototype.getParam(ordinal);
+            if (parameter == null) continue;
+            JsonObject value = new JsonObject();
+            value.addProperty("ordinal", ordinal);
+            value.addProperty("name", parameter.getName());
+            value.addProperty("data_type", parameter.getDataType().getPathName());
+            parameterValues.add(value);
+        }
         JsonArray operationValues = new JsonArray();
         JsonArray defUse = new JsonArray();
         JsonArray effects = new JsonArray();
@@ -603,6 +842,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             value.addProperty("sequence", operation.getSeqnum().getTime());
             value.addProperty("opcode", operation.getMnemonic());
             value.addProperty("is_dead", operation.isDead());
+            value.addProperty("block_membership", operation.getParent() == null ? "detached" : "member");
             JsonArray inputs = new JsonArray();
             int inputCount = operation.getNumInputs();
             int capturedInputs = Math.min(inputCount, MAX_HIGH_PCODE_INPUTS_PER_OP);
@@ -610,6 +850,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 Varnode input = operation.getInput(inputIndex);
                 inputs.add(varnodeValue(input));
                 if (input instanceof VarnodeAST astInput) {
+                    if (astInput.getHigh() instanceof HighParam parameter) {
+                        if (parameterUses.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) omittedEdges++;
+                        else {
+                            JsonObject use = new JsonObject();
+                            use.addProperty("ordinal", parameter.getSlot());
+                            use.addProperty("use", operationId);
+                            use.addProperty("input_index", inputIndex);
+                            parameterUses.add(use);
+                        }
+                    }
                     PcodeOp definition = astInput.getDef();
                     if (definition instanceof PcodeOpAST astDefinition) {
                         String definitionId = operationIds.get(astDefinition);
@@ -638,6 +888,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("provenance", "ghidra-high-pcode");
         result.add("operations", operationValues);
         result.add("def_use", defUse);
+        result.add("parameters", parameterValues);
+        result.add("parameter_uses", parameterUses);
         result.add("effects", effects);
         boolean truncated = omittedOperationsLowerBound > 0 ||
             omittedInputs > 0 || omittedEdges > 0;
@@ -650,7 +902,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("known_omitted_edges", omittedEdges);
         JsonArray limitations = new JsonArray();
         limitations.add(
-            "High p-code is a decompiler-derived intra-function representation, not original source or runtime behavior; dead operations are retained and marked."
+            "High p-code is decompiler-derived, not original source or runtime behavior. is_dead preserves the Java AST flag; decoded block members can retain that flag, so block_membership separately reports actual syntax-tree membership."
         );
         limitations.add(
             "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
@@ -1198,9 +1450,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             canonicalAddress(jumpTable.getSwitchAddress())
         );
         JumpTable.LoadTable[] loadTables = jumpTable.getLoadTables();
-        RecoveredAArch64ByteTable recoveredAArch64 =
+        RecoveredAArch64RelativeTable recoveredAArch64 =
             loadTables.length == 0
-                ? recoverAArch64ByteTable(jumpTable)
+                ? recoverAArch64RelativeTable(jumpTable)
                 : null;
         List<Address> referencedDataAddresses = loadTables.length == 0
             ? dispatchPathDataReferences(jumpTable)
@@ -1241,8 +1493,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "address",
                 canonicalAddress(recoveredAArch64.tableAddress)
             );
-            source.addProperty("provenance", "ghidra-aarch64-byte-table");
-            source.addProperty("entry_size_bytes", 1);
+            source.addProperty("provenance", recoveredAArch64.entrySize == 1 ? "ghidra-aarch64-byte-table" : "ghidra-aarch64-halfword-table");
+            source.addProperty("entry_size_bytes", recoveredAArch64.entrySize);
             source.addProperty("entry_count", recoveredAArch64.mappings.size());
             source.addProperty("confidence", "high");
             JsonArray evidence = new JsonArray();
@@ -1251,8 +1503,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "jump-table",
                     "ghidra-instruction-and-memory",
                     "Decoded " + recoveredAArch64.mappings.size() +
-                    " byte entries from " + canonicalAddress(recoveredAArch64.tableAddress) +
-                    "; the AArch64 LDRB/ADR/ADD/BR chain uses a selector guarded by an unsigned upper-bound branch."
+                    " entries of size " + recoveredAArch64.entrySize + " bytes from " + canonicalAddress(recoveredAArch64.tableAddress) +
+                    "; the AArch64 LDRB-or-LDRH/ADR/ADD/BR chain uses a selector guarded by an unsigned upper-bound branch."
                 )
             );
             source.add("evidence", evidence);
@@ -1307,9 +1559,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     inferenceEvidence(
                         "jump-table",
                         "ghidra-instruction-and-memory",
-                        "Case value " + recovered.caseValue + " indexes byte " +
-                        recovered.caseValue + " at " + canonicalAddress(recoveredAArch64.tableAddress) +
-                        "; the loaded byte selects a four-byte instruction offset from " +
+                        "Case value " + recovered.caseValue + (recoveredAArch64.entrySize == 1 ? " indexes byte " : " indexes halfword at byte offset ") +
+                        (recovered.caseValue * recoveredAArch64.entrySize) + " at " + canonicalAddress(recoveredAArch64.tableAddress) +
+                        "; the loaded unsigned entry selects a four-byte instruction offset from " +
                         canonicalAddress(recoveredAArch64.branchBase) + ", reaching " + targetAddress + "."
                     )
                 );
@@ -1384,6 +1636,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Case-label and target counts differ or labels are unavailable; all case values are left unknown because index alignment cannot be established."
             );
         }
+        if (recoveredAArch64 == null && loadTables.length == 0 && currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
+            limitations.add("REA did not verify a supported byte/halfword relative dispatch chain with exact unsigned bounds and register definitions; unsupported encodings and ambiguous bounds remain unknown.");
+        }
         if (targets.length == 0) {
             limitations.add(
                 "Ghidra exposed a jump-table dispatch without recovered case targets."
@@ -1403,27 +1658,30 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private static final class RecoveredAArch64ByteTable {
+    private static final class RecoveredAArch64RelativeTable {
         private final Address tableAddress;
         private final Address branchBase;
+        private final int entrySize;
         private final List<RecoveredAArch64Mapping> mappings;
 
-        private RecoveredAArch64ByteTable(
+        private RecoveredAArch64RelativeTable(
             Address tableAddress,
             Address branchBase,
+            int entrySize,
             List<RecoveredAArch64Mapping> mappings
         ) {
             this.tableAddress = tableAddress;
             this.branchBase = branchBase;
+            this.entrySize = entrySize;
             this.mappings = mappings;
         }
     }
 
     /**
-     * Recover only the directly verified AArch64 byte-indexed relative branch
+     * Recover only the directly verified AArch64 byte/halfword-indexed relative branch
      * table form. Other instruction sequences keep their case labels unknown.
      */
-    private RecoveredAArch64ByteTable recoverAArch64ByteTable(
+    private RecoveredAArch64RelativeTable recoverAArch64RelativeTable(
         JumpTable jumpTable
     ) throws Exception {
         if (!currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
@@ -1452,31 +1710,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> recoveredTargetSet = new HashSet<>();
         for (Address target : recoveredTargets) recoveredTargetSet.add(canonicalAddress(target));
         List<Address> dataAddresses = dispatchPathDataReferences(jumpTable);
-        if (dataAddresses.isEmpty()) return null;
 
         for (int loadIndex = 0; loadIndex < branchIndex; loadIndex += 1) {
             Instruction load = instructions.get(loadIndex);
-            if (!load.getMnemonicString().equalsIgnoreCase("LDRB")) continue;
+            int entrySize = load.getMnemonicString().equalsIgnoreCase("LDRB") ? 1 : load.getMnemonicString().equalsIgnoreCase("LDRH") ? 2 : 0;
+            if (entrySize == 0 || branchIndex != loadIndex + 2 || loadIndex < 3 ||
+                !instructions.get(loadIndex - 1).getMnemonicString().equalsIgnoreCase("ADR") ||
+                !instructions.get(loadIndex - 2).getMnemonicString().equalsIgnoreCase("ADD") ||
+                !instructions.get(loadIndex - 3).getMnemonicString().equalsIgnoreCase("ADRP")) continue;
             String loadOperands = operands(load);
             java.util.regex.Matcher loadMatcher = java.util.regex.Pattern
-                .compile("(?i)^[wx]\\d+,\\s*\\[([wx]\\d+),\\s*([wx]\\d+)\\]$")
+                .compile(entrySize == 1 ? "(?i)^[wx]\\d+,\\s*\\[([wx]\\d+),\\s*([wx]\\d+)\\]$" : "(?i)^[wx]\\d+,\\s*\\[([wx]\\d+),\\s*([wx]\\d+),\\s*LSL\\s*#(?:0x)?1\\]$")
                 .matcher(loadOperands);
             if (!loadMatcher.matches()) continue;
             String loadedRegister = normalizedRegister(loadOperands.substring(0, loadOperands.indexOf(',')));
             String tableBaseRegister = normalizedRegister(loadMatcher.group(1));
             String indexRegister = normalizedRegister(loadMatcher.group(2));
 
-            Address tableAddress = null;
-            for (Address candidate : dataAddresses) {
-                if (currentProgram.getMemory().contains(candidate)) {
-                    tableAddress = candidate;
-                    break;
-                }
-            }
-            if (tableAddress == null) continue;
-
             Address resolvedTableAddress = null;
-            for (int index = 0; index < loadIndex; index += 1) {
+            for (int index = loadIndex - 3; index < loadIndex - 1; index += 1) {
                 Instruction instruction = instructions.get(index);
                 String mnemonic = instruction.getMnemonicString().toUpperCase(Locale.ROOT);
                 String text = operands(instruction);
@@ -1496,18 +1748,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     }
                 }
             }
-            if (!tableAddress.equals(resolvedTableAddress)) continue;
+            if (resolvedTableAddress == null || !currentProgram.getMemory().contains(resolvedTableAddress) ||
+                (!dataAddresses.isEmpty() && !dataAddresses.contains(resolvedTableAddress))) continue;
+            Address tableAddress = resolvedTableAddress;
 
             Address branchBase = null;
             boolean addressChain = false;
-            for (int index = 0; index < branchIndex; index += 1) {
+            for (int index = loadIndex - 1; index < branchIndex; index += 1) {
                 Instruction instruction = instructions.get(index);
                 String mnemonic = instruction.getMnemonicString().toUpperCase(Locale.ROOT);
                 String text = operands(instruction);
                 if (index < loadIndex && mnemonic.equals("ADR") && text.matches("(?i)^[wx]\\d+,\\s*0x[0-9a-f]+$")) {
                     int comma = text.indexOf(',');
                     String destination = normalizedRegister(text.substring(0, comma));
-                    if (destination.equals(tableBaseRegister)) continue;
+                    if (!destination.equals(normalizedRegister(operands(instructions.get(branchIndex))))) continue;
                     branchBase = addressFromOperand(text.substring(comma + 1));
                 }
                 if (index > loadIndex && mnemonic.equals("ADD") && branchBase != null &&
@@ -1543,7 +1797,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (!mnemonic.equals("B.HI")) continue;
                     Address[] flows = guard.getFlows();
                     if (flows.length != 1 || !recoveredTargetSet.contains(canonicalAddress(flows[0]))) continue;
-                    boolean selectorFeedsTable = indexRegister.equals(comparedRegister);
                     boolean supportedSequence = true;
                     for (int sequenceIndex = compareIndex + 1; sequenceIndex < loadIndex; sequenceIndex += 1) {
                         String sequenceMnemonic = instructions.get(sequenceIndex)
@@ -1553,17 +1806,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
                             break;
                         }
                     }
-                    for (int moveIndex = compareIndex + 1; moveIndex < loadIndex && !selectorFeedsTable; moveIndex += 1) {
-                        Instruction move = instructions.get(moveIndex);
-                        if (!move.getMnemonicString().equalsIgnoreCase("MOV")) continue;
-                        String[] moveParts = operands(move).split(",");
-                        if (moveParts.length == 2 &&
-                            normalizedRegister(moveParts[0]).equals(indexRegister) &&
-                            normalizedRegister(moveParts[1]).equals(comparedRegister)) {
-                            selectorFeedsTable = true;
+                    Set<String> selectorAliases = new HashSet<>();
+                    selectorAliases.add(comparedRegister);
+                    Set<String> boundedIndexes = new HashSet<>();
+                    if (compareMatcher.group(1).toLowerCase(Locale.ROOT).startsWith("x")) boundedIndexes.add(comparedRegister);
+                    for (int sequenceIndex = compareIndex + 1; sequenceIndex < loadIndex; sequenceIndex++) {
+                        Instruction instruction = instructions.get(sequenceIndex);
+                        String[] parts = operands(instruction).split(",");
+                        if (parts.length == 0) continue;
+                        if (instruction.getMnemonicString().equalsIgnoreCase("MOV")) {
+                            String destination = normalizedRegister(parts[0]);
+                            String source = parts.length == 2 ? normalizedRegister(parts[1]) : "";
+                            boolean aliasesSelector = selectorAliases.contains(source);
+                            boolean fullWidthBounded = boundedIndexes.contains(source) ||
+                                (parts[0].trim().toLowerCase(Locale.ROOT).startsWith("w") && aliasesSelector);
+                            if (aliasesSelector) selectorAliases.add(destination);
+                            else selectorAliases.remove(destination);
+                            if (fullWidthBounded) boundedIndexes.add(destination);
+                            else boundedIndexes.remove(destination);
+                        } else if (Set.of("ADRP", "ADD", "ADR").contains(instruction.getMnemonicString().toUpperCase(Locale.ROOT))) {
+                            selectorAliases.remove(normalizedRegister(parts[0]));
+                            boundedIndexes.remove(normalizedRegister(parts[0]));
                         }
                     }
-                    if (selectorFeedsTable && supportedSequence) {
+                    boolean selectorFeedsTable = boundedIndexes.contains(indexRegister);
+                    if (compareIndex < loadIndex - 3 && selectorFeedsTable && supportedSequence) {
                         entryCount = (int) upperBound + 1;
                         defaultTarget = flows[0];
                         break;
@@ -1577,7 +1844,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Set<String> mappedTargets = new HashSet<>();
             boolean valid = true;
             for (int caseValue = 0; caseValue < entryCount; caseValue += 1) {
-                int encodedOffset = currentProgram.getMemory().getByte(tableAddress.add(caseValue)) & 0xff;
+                Address entry = tableAddress.add((long) caseValue * entrySize);
+                int encodedOffset = entrySize == 1 ? currentProgram.getMemory().getByte(entry) & 0xff : currentProgram.getMemory().getShort(entry) & 0xffff;
                 Address target = branchBase.add((long) encodedOffset * 4L);
                 String canonicalTarget = canonicalAddress(target);
                 if (!recoveredTargetSet.contains(canonicalTarget)) {
@@ -1591,7 +1859,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Set<String> accountedTargets = new HashSet<>(mappedTargets);
             accountedTargets.add(canonicalAddress(defaultTarget));
             if (!accountedTargets.equals(recoveredTargetSet)) continue;
-            return new RecoveredAArch64ByteTable(tableAddress, branchBase, List.copyOf(mappings));
+            return new RecoveredAArch64RelativeTable(tableAddress, branchBase, entrySize, List.copyOf(mappings));
         }
         return null;
     }

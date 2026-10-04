@@ -60,7 +60,7 @@ describe("Ghidra provider", () => {
     expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
       GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
     );
-    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(19);
+    expect(GHIDRA_PROVIDER_TOOL_CONTRACTS).toHaveLength(22);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

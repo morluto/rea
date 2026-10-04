@@ -1,4 +1,11 @@
 import { z } from "zod";
+import { nativeUiResultSchema } from "../domain/nativeUiObservation.js";
+import { nativeValueTraceSchema } from "../domain/nativeValueTrace.js";
+import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
+import {
+  nativeInstructionSchema,
+  nativeCallTargetsSchema,
+} from "../domain/nativeInstruction.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
@@ -22,6 +29,8 @@ import {
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/interfaceBuilderGraph.js";
+import { keyedArchiveResultSchema } from "../domain/keyedArchive.js";
+import { appleAssetCatalogResultSchema } from "../domain/appleAssetCatalog.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
@@ -93,6 +102,9 @@ const addressedString = z.object({
 
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  inspect_native_data_type: resultOf(nativeDataTypeSchema),
+  inspect_native_instruction: resultOf(nativeInstructionSchema),
+  resolve_native_call_targets: resultOf(nativeCallTargetsSchema),
   address_name: resultOf(nullableText),
   comment: resultOf(nullableText),
   current_address: resultOf(z.string()),
@@ -133,6 +145,10 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     z.object({
       procedure: procedureIdentity,
       direction: z.enum(["incoming", "outgoing"]),
+      reference_kinds_available: z.boolean().optional(),
+      unresolved_calls: z
+        .array(z.object({ address: z.string(), reason: z.string() }))
+        .default([]),
       references: z.array(
         z.object({
           source_address: z.string(),
@@ -225,6 +241,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_native_dispatch_metadata: resultOf(
     nativeDispatchMetadataResultSchema,
   ),
+  trace_native_values: resultOf(nativeValueTraceSchema),
   trace_native_ui_action: resultOf(nativeInvestigationTraceSchema),
   get_objc_classes: symbolDiscoveryOutput("classes"),
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
@@ -302,6 +319,8 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 
 /** Exact Evidence schemas for provider-neutral native inspection. */
 export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  observe_native_ui: resultOf(nativeUiResultSchema),
+  capture_native_ui_scenario: resultOf(nativeUiResultSchema),
   inspect_macho: resultOf(inspectMachoSchema),
   inspect_signature: resultOf(inspectSignatureSchema),
   inspect_plist: resultOf(inspectPlistSchema),
@@ -314,6 +333,8 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_artifact: resultOf(artifactInspectionResultSchema),
   extract_artifact: resultOf(artifactExtractionResultSchema),
   decode_interface_builder: resultOf(interfaceBuilderAnalysisSchema),
+  inspect_keyed_archive: resultOf(keyedArchiveResultSchema),
+  inspect_asset_catalog: resultOf(appleAssetCatalogResultSchema),
 };
 
 /** Exact Evidence schema for execution-free managed static analysis. */

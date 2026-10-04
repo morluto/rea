@@ -34,6 +34,11 @@ import {
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
+import {
+  verifyNativeTypeLayout,
+  verifyRelativeSwitch,
+  verifyNativeValueTrace,
+} from "./verify-real-ghidra-function.mjs";
 const exec = promisify(execFile);
 const verifierRun = createVerifierRun();
 const installDir = process.env.GHIDRA_INSTALL_DIR;
@@ -71,6 +76,7 @@ const crossFormatSourcePath = fileURLToPath(
   new URL("../tests/conformance/ghidra/cross-format.c", import.meta.url),
 );
 const debugPath = join(fixtureRoot, "rea-ghidra-inventory-debug");
+const layoutPath = join(fixtureRoot, "rea-ghidra-layout.o");
 const strippedPath = join(fixtureRoot, "rea-ghidra-inventory-stripped");
 const arm64ElfPath = join(fixtureRoot, "rea-ghidra-cross-arm64");
 const peObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.obj");
@@ -113,12 +119,49 @@ try {
   const common = ["-O0", "-g", "-fno-inline"];
   if (expectedNativeTarget.format === "elf") common.push("-fno-pie", "-no-pie");
   await exec(compiler, [...common, sourcePath, "-o", debugPath]);
+  await exec(compiler, [
+    "-O0",
+    "-g",
+    "-gdwarf-4",
+    "-c",
+    sourcePath,
+    "-o",
+    layoutPath,
+  ]);
   const strippedFlags = [...common, "-s"];
   if (expectedNativeTarget.format === "mach-o")
     strippedFlags.push("-fvisibility=hidden");
   await exec(compiler, [...strippedFlags, sourcePath, "-o", strippedPath]);
   const crossTargets = [];
   if (aarch64JumpTableOnly) {
+    const relativeSource = fileURLToPath(
+      new URL("../tests/conformance/ghidra/relative-switch.S", import.meta.url),
+    );
+    for (const entrySize of [1, 2]) {
+      for (const format of [
+        "elf",
+        ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
+      ]) {
+        const targetPath = join(
+          fixtureRoot,
+          `relative-${entrySize}-${format}.o`,
+        );
+        await exec(clang, [
+          ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
+          `-DREA_ENTRY_BYTES=${entrySize}`,
+          "-c",
+          relativeSource,
+          "-o",
+          targetPath,
+        ]);
+        crossTargets.push([
+          targetPath,
+          `relative-${entrySize}`,
+          { format, architecture: "arm64" },
+        ]);
+      }
+    }
+
     await exec(clang, [
       "--target=aarch64-linux-gnu",
       "-O2",
@@ -197,6 +240,11 @@ try {
 
   const debug = await verifyTarget(debugPath, "debug", expectedNativeTarget);
   assertDebugFixture(debug);
+  const layout = await verifyTarget(
+    layoutPath,
+    "type-layout",
+    expectedNativeTarget,
+  );
   const stripped = await verifyTarget(
     strippedPath,
     "stripped",
@@ -206,7 +254,8 @@ try {
   const crossResults = [];
   for (const [targetPath, variant, expectedTarget] of crossTargets) {
     const result = await verifyTarget(targetPath, variant, expectedTarget);
-    if (variant !== "aarch64-jump-table") assertCrossFixture(result);
+    if (variant !== "aarch64-jump-table" && !variant.startsWith("relative-"))
+      assertCrossFixture(result);
     crossResults.push(result);
   }
   await assertMalformedFixture(malformedPath);
@@ -228,7 +277,7 @@ try {
         crossFormat || aarch64JumpTableOnly
           ? [sourcePath, crossFormatSourcePath]
           : [sourcePath],
-      fixtures: [debug, stripped, ...crossResults].map(summary),
+      fixtures: [debug, stripped, layout, ...crossResults].map(summary),
       malformed_target: "rejected-before-provider-start",
       native_api_cli: aarch64JumpTableOnly
         ? (crossResults[0]?.native_api_cli ?? null)
@@ -417,16 +466,32 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
               : "rea_ghidra_inventory_dense_switch",
           )
         : null;
-    const probes =
-      variant === "custom" || variant === "aarch64-jump-table"
-        ? null
-        : await verifyInventoryOperations({
+    const probes = variant.startsWith("relative-")
+      ? await verifyRelativeSwitch(
+          client,
+          procedures,
+          Number(variant.slice(-1)),
+        )
+      : variant === "type-layout"
+        ? await verifyNativeTypeLayout(client, names)
+        : variant === "custom" || variant === "aarch64-jump-table"
+          ? null
+          : await verifyInventoryOperations({
+              client,
+              variant,
+              procedures,
+              names,
+              strings,
+            });
+    const nativeValues =
+      variant === "debug"
+        ? await verifyNativeValueTrace(
             client,
-            variant,
             procedures,
-            names,
-            strings,
-          });
+            parsedTarget.value,
+            profile.value.profile,
+          )
+        : null;
     return {
       variant,
       target: parsedTarget.value,
@@ -439,6 +504,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       strings,
       probes,
       native_api_cli: nativeApiCli,
+      native_values: nativeValues,
     };
   } finally {
     await client.close();

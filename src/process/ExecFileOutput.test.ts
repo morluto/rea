@@ -13,4 +13,14 @@ describe("execFileOutput", () => {
     expect(result.stdout).toHaveLength(2 * 1024 * 1024 + marker.length);
     expect(result.stdout.endsWith(marker)).toBe(true);
   });
+
+  it("enforces a caller supplied output bound", async () => {
+    await expect(
+      execFileOutput(
+        process.execPath,
+        ["-e", 'process.stdout.write("x".repeat(1024))'],
+        { maxBuffer: 64 },
+      ),
+    ).rejects.toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+  });
 });

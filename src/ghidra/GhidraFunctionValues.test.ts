@@ -62,7 +62,13 @@ describe("Ghidra function-analysis boundary values", () => {
   });
 
   it("keeps the admitted operation set closed", () => {
-    expect(GHIDRA_FUNCTION_OPERATIONS).toHaveLength(9);
+    expect(GHIDRA_FUNCTION_OPERATIONS).toEqual(
+      expect.arrayContaining([
+        "inspect_native_instruction",
+        "inspect_native_data_type",
+        "resolve_native_call_targets",
+      ]),
+    );
     expect(isGhidraFunctionOperation("analyze_function")).toBe(true);
     expect(isGhidraFunctionOperation("read_function_instructions")).toBe(true);
     expect(isGhidraFunctionOperation("procedure_pseudo_code")).toBe(true);

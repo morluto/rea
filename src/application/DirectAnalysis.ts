@@ -47,6 +47,9 @@ type DirectAnalysisTool =
   | "binary_overview"
   | "procedure_pseudo_code"
   | "read_function_instructions"
+  | "inspect_native_instruction"
+  | "inspect_native_data_type"
+  | "resolve_native_call_targets"
   | "analyze_function"
   | "inspect_native_api"
   | "inspect_native_dispatch_metadata"
@@ -54,7 +57,8 @@ type DirectAnalysisTool =
   | "search_procedures"
   | "xrefs"
   | "trace_feature"
-  | "trace_native_ui_action";
+  | "trace_native_ui_action"
+  | "trace_native_values";
 
 /**
  * Open one binary, execute one tool, and always release provider resources.

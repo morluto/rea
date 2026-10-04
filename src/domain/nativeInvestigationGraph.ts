@@ -64,6 +64,8 @@ export const nativeInvestigationRelationSchema = z.enum([
   "swift_vtable_dispatch",
   "thunk_to",
   "direct_call",
+  "indirect_call",
+  "provider_call",
   "reads",
   "writes",
   "flows_to",
@@ -83,7 +85,7 @@ export const nativeInvestigationEdgeSchema = z.discriminatedUnion(
       from: z.string().min(1),
       to: z.string().min(1),
       relation: nativeInvestigationRelationSchema,
-      resolution: z.enum(["observed", "inferred"]),
+      resolution: z.enum(["observed", "inferred", "resolved", "ambiguous"]),
       evidence: z.array(nativeMetadataEvidenceSchema).min(1),
       limitations: z.array(z.string()),
     }),
@@ -344,7 +346,7 @@ export const joinInterfaceBuilderDispatch = (
         reason:
           candidates.length > 1
             ? "selector_has_multiple_candidate_implementations"
-            : "implementation_not_resolved_from_provider_symbols",
+            : "implementation_not_resolved_from_binary_metadata_or_provider_symbols",
         evidence: [
           ...action.evidence,
           ...candidates.flatMap(({ evidence }) => evidence),
@@ -378,15 +380,18 @@ export const joinInterfaceBuilderDispatch = (
       from: selectorNodeId,
       to: functionId,
       relation: "objc_dispatch",
-      resolution: "inferred",
+      resolution:
+        className !== null && implementation.decode.status === "decoded"
+          ? "resolved"
+          : "inferred",
       evidence: [...action.evidence, ...implementation.evidence],
       limitations:
         className === null
           ? [
-              "The selector uniquely matches a symbolized method, but the Interface Builder receiver is an unresolved placeholder; runtime dispatch was not observed.",
+              "The selector uniquely matches a encoded or symbolized method, but the Interface Builder receiver is an unresolved placeholder; runtime dispatch was not observed.",
             ]
           : [
-              "The Interface Builder target and symbolized method agree on class and selector; runtime dispatch and dynamically supplied targets were not observed.",
+              "The Interface Builder target and encoded or symbolized method agree on class and selector; runtime dispatch and dynamically supplied targets were not observed.",
             ],
     });
     resolved += 1;

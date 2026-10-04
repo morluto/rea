@@ -14,6 +14,8 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
+import { err } from "../../../src/domain/result.js";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/errors.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -39,6 +41,17 @@ const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
+      case "inspect_native_dispatch_metadata":
+      case "procedure_address":
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              name,
+              "No byte reader or exact native seed in this symbol-only fixture",
+            ),
+          ),
+        );
       case "list_procedures":
         return Promise.resolve(ok(inventory(PROCEDURES)));
       case "list_names":
@@ -122,7 +135,7 @@ const fixturePort = (): AnalysisOperationPort => ({
         return Promise.resolve(ok(inventory({})));
       case "analyze_function":
         return Promise.resolve(
-          ok({
+          targetObservation({
             procedure: {
               address: "0x1",
               name: "entry",
@@ -188,7 +201,7 @@ describe("enhanced MCP tools", () => {
   });
 
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
-  it("executes all fourteen tools through production registration", async () => {
+  it("executes all enhanced tools through production registration", async () => {
     const client = await connect();
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
@@ -205,6 +218,7 @@ describe("enhanced MCP tools", () => {
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
       ["trace_native_ui_action", { action: "missing-selector" }],
       ["inspect_native_dispatch_metadata", { max_records: 100 }],
+      ["trace_native_values", { procedure: "0x1" }],
     ] as const;
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
@@ -312,6 +326,15 @@ describe("enhanced MCP tools", () => {
           expect.objectContaining({ facet: "objc_dispatch_implementations" }),
         ]),
       },
+    });
+    expect(results[14]).toMatchObject({
+      target_sha256: "a".repeat(64),
+      decompilations: 1,
+      unknowns: [
+        expect.objectContaining({
+          reason: "Provider has no native def-use model",
+        }),
+      ],
     });
   });
 });

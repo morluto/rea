@@ -46,6 +46,8 @@ import {
 } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { nativeDataTypeInputSchema } from "../domain/nativeDataType.js";
+import { nativeInstructionInputSchema } from "../domain/nativeInstruction.js";
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
@@ -111,6 +113,21 @@ const session = <Name extends string, Schema extends z.ZodObject>(
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
+  official(
+    "inspect_native_data_type",
+    "Inspect one recovered type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
+    nativeDataTypeInputSchema,
+  ),
+  official(
+    "inspect_native_instruction",
+    "Inspect one exact instruction address: decoded bytes, mnemonic, ordered operand tokens, flow and typed references. Memory addressing decomposition is unavailable when the provider supplies only tokens. Data, interior instruction addresses and undecodable bytes are distinct outcomes.",
+    nativeInstructionInputSchema,
+  ),
+  official(
+    "resolve_native_call_targets",
+    "Resolve one explicit static call site using typed provider call references. Preserves ambiguous targets as candidates and unresolved computed calls as unknown; does not execute code or traverse a call graph.",
+    nativeInstructionInputSchema,
+  ),
   official(
     "address_name",
     "Resolve the primary analyzed name at a code or data address. Headless providers require an explicit address; GUI providers may default to their current cursor. Null means the provider has no primary name at that address.",
@@ -353,8 +370,13 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_native_ui_action",
-    "Trace one unique compiled Interface Builder action selector or object ID through its authored UI connections to symbolized Objective-C handlers and bounded direct callees. REA decodes the active app bundle and reads the selected provider's symbol inventory itself. Authored connections, statically matched handlers, resolved direct calls, and unresolved dynamic dispatch remain distinct; runtime reachability and cross-function value flow are not claimed.",
+    "Trace one unique compiled UI action, object ID, native symbol or exact function address through authored connections, encoded or symbolized Objective-C handlers, and bounded static call references. Typed direct and resolved indirect calls, ambiguous candidates, inferred untyped provider callees, and targetless sites remain distinct. Runtime reachability is unknown; use trace_native_values for recovered value dependencies.",
     enhancedInputSchemas.trace_native_ui_action,
+  ),
+  enhanced(
+    "trace_native_values",
+    "Trace a bounded static dependency graph from one explicit native procedure. Includes high-p-code def-use, constants, operators, memory and branch operations, resolved call edges, and derived argument/parameter and return/output bindings. Missing bindings, alias semantics, persistent state and RNG roles remain unknown. Budgets bound depth, decompilations, graph size and payloads; nodes are paginated.",
+    enhancedInputSchemas.trace_native_values,
   ),
 ] as const satisfies readonly ToolContract[];
 

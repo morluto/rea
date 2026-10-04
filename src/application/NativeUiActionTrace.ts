@@ -10,34 +10,21 @@ import {
   traceNativeInvestigationGraph,
   joinInterfaceBuilderDispatch,
 } from "../domain/nativeInvestigationGraph.js";
-import {
-  inspectNativeDispatchMetadata,
-  nativeDispatchMetadataResultSchema,
-} from "../domain/objcSwiftMetadata.js";
+import { nativeDispatchMetadataResultSchema } from "../domain/objcSwiftMetadata.js";
+import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { parseRelatedAddresses } from "../domain/hopperValues.js";
+import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import { err, ok } from "../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-  projectAnalysisError,
-} from "../domain/errors.js";
+import { AnalysisOutputError, projectAnalysisError } from "../domain/errors.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
-const nativeNameSchema = z.array(
-  z.union([
-    z.strictObject({ address: z.string(), name: z.string() }),
-    z.strictObject({ address: z.string(), value: z.string() }),
-  ]),
-);
-
 /** Build a UI-to-code trace from the active app and selected native provider. */
 export const traceNativeUiAction = async (
   analysis: AnalysisOperationPort,
   input: Input,
   signal?: AbortSignal,
 ): EnhancedResult => {
-  const [uiExecution, namesExecution] = await Promise.all([
+  const [uiExecution, metadataExecution] = await Promise.all([
     analysis.execute(
       "decode_interface_builder",
       {
@@ -47,44 +34,24 @@ export const traceNativeUiAction = async (
       },
       signal === undefined ? {} : { signal },
     ),
-    analysis.execute("list_names", {}, signal === undefined ? {} : { signal }),
+    inspectNativeDispatch(analysis, 20_000, signal),
   ]);
-
   if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
-    return err(new AnalysisCancelledError("decode_interface_builder"));
-  if (!namesExecution.ok) return err(namesExecution.error);
-  const parsedNames = nativeNameSchema.safeParse(namesExecution.value.result);
-  if (!parsedNames.success)
+    return err(uiExecution.error);
+  if (!metadataExecution.ok) return err(metadataExecution.error);
+  const metadata = nativeDispatchMetadataResultSchema.parse(
+    metadataExecution.value,
+  );
+  const targetSha256 = metadata.target_sha256;
+  if (targetSha256 === null)
     return err(
       new AnalysisOutputError(
-        "list_names",
-        "provider returned an invalid name inventory",
-      ),
-    );
-  const targetSha256 = namesExecution.value.subject?.sha256;
-  if (targetSha256 === undefined)
-    return err(
-      new AnalysisOutputError(
-        "list_names",
-        "provider did not bind the name inventory to a target SHA-256",
+        "inspect_native_dispatch_metadata",
+        "Dispatch metadata lacks target identity",
       ),
     );
 
-  const metadata = nativeDispatchMetadataResultSchema.parse({
-    target_sha256: targetSha256,
-    provider: namesExecution.value.provider,
-    analysis_profile_digest:
-      namesExecution.value.analysisProfile?.digest ?? null,
-    result: inspectNativeDispatchMetadata(
-      parsedNames.data.map((entry) => ({
-        address: entry.address,
-        name: "name" in entry ? entry.name : entry.value,
-      })),
-      parsedNames.data.length,
-    ),
-  });
-
-  let graph = emptyGraph(targetSha256, namesExecution.value.provider);
+  let graph = emptyGraph(targetSha256, metadata.provider);
   const coverage = [];
   if (uiExecution.ok) {
     const decoded = interfaceBuilderAnalysisSchema.safeParse(
@@ -136,7 +103,44 @@ export const traceNativeUiAction = async (
     });
   }
 
-  const selected = resolveUiAction(graph, input.action);
+  let selected = resolveUiAction(graph, input.action);
+  if (selected.nodeId === null && selected.candidates.length === 0) {
+    const native = await analysis.execute(
+      "procedure_address",
+      { procedure: input.action },
+      signal === undefined ? {} : { signal },
+    );
+    if (!native.ok && native.error._tag === "AnalysisCancelledError")
+      return err(native.error);
+    if (native.ok) {
+      const address = z.string().safeParse(native.value.result);
+      if (!address.success || native.value.subject?.sha256 !== targetSha256)
+        return err(
+          new AnalysisOutputError(
+            "procedure_address",
+            "Native seed lacks a validated address or matching target identity",
+          ),
+        );
+      const id = `native:function:${address.data}`;
+      graph.nodes.push({
+        id,
+        kind: "function",
+        name: input.action,
+        location: { address: address.data, file_offset: null },
+        attributes: { resolved_by: native.value.provider.id },
+        evidence: [
+          {
+            kind: "reference",
+            description: `Provider resolved the explicit native seed ${input.action}`,
+            location: { address: address.data, file_offset: null },
+            artifact_path: null,
+            artifact_sha256: targetSha256,
+          },
+        ],
+      });
+      selected = { nodeId: id, candidates: [], reason: null };
+    }
+  }
   if (selected.nodeId === null) {
     coverage.push(...graph.coverage);
     const trace = {
@@ -152,7 +156,7 @@ export const traceNativeUiAction = async (
       reason: selected.reason,
       coverage,
       limitations: [
-        "The query did not identify one unique authored UI action; no handler path was inferred.",
+        "The query did not identify one unique authored UI action or native function; no handler path was inferred.",
       ],
     };
     return ok(
@@ -179,9 +183,10 @@ export const traceNativeUiAction = async (
   });
   if (expanded.error !== undefined) return err(expanded.error);
   coverage.push({
-    facet: "direct_native_calls",
+    facet: "static_native_calls",
     status: "partial",
-    reason: "resolved_direct_calls_do_not_cover_all_indirect_dispatch",
+    reason:
+      "typed_direct_and_indirect_references_do_not_cover_all_runtime_dispatch; untyped_provider_callees_remain_inferred",
     examined: expanded.examined,
     omitted: expanded.omitted,
   });
@@ -390,10 +395,10 @@ const addDirectCallees = async (input: {
       omitted += queue.length - queueIndex + 1;
       break;
     }
-    const execution = await input.analysis.execute(
-      "procedure_callees",
-      { procedure: current.address },
-      input.signal === undefined ? {} : { signal: input.signal },
+    const execution = await readNativeCallRoutes(
+      input.analysis,
+      current.address,
+      input.signal,
     );
     examined += 1;
     if (!execution.ok) {
@@ -414,35 +419,45 @@ const addDirectCallees = async (input: {
       });
       continue;
     }
-    const related = parseRelatedAddresses(execution.value.result, "callees");
-    if (!related.ok) {
-      const id = `unknown-callees:${current.address}`;
+    for (const unknown of execution.value.unknowns) {
+      if (edges.size >= input.input.max_edges) {
+        truncated = true;
+        omitted++;
+        break;
+      }
+      const id = `unknown-dispatch:${current.address}:${unknown.address}`;
       edges.set(id, {
         id,
         from: current.node.id,
         to: null,
-        relation: "direct_call",
+        relation: "indirect_call",
         resolution: "unresolved",
-        reason: "provider_returned_unreadable_callee_relationships",
-        evidence: [],
-        limitations: [
-          "The provider result could not be normalized into callee addresses.",
+        reason: unknown.reason,
+        evidence: [
+          {
+            kind: "reference",
+            description: unknown.reason,
+            location: { address: unknown.address, file_offset: null },
+            artifact_path: null,
+            artifact_sha256: input.targetSha256,
+          },
         ],
+        limitations: [],
       });
-      continue;
     }
-    for (const [index, address] of related.value.entries()) {
+    for (const [index, route] of execution.value.routes.entries()) {
+      const address = route.address;
       if (edges.size >= input.input.max_edges) {
         truncated = true;
-        omitted += related.value.length - index;
+        omitted += execution.value.routes.length - index;
         break;
       }
       const targetId = `native:function:${address}`;
       const evidence = [
         {
           kind: "reference" as const,
-          description: `${execution.value.provider.name} resolved a direct callee from ${current.address} to ${address}`,
-          location: { address: current.address, file_offset: null },
+          description: `${execution.value.provider.name} reported ${route.relation} from ${current.address} to ${address}`,
+          location: { address: route.site, file_offset: null },
           artifact_path: null,
           artifact_sha256: input.targetSha256,
         },
@@ -476,13 +491,13 @@ const addDirectCallees = async (input: {
         nodes.set(targetId, node);
         queue.push({ node, address, depth: current.depth + 1 });
       }
-      const edgeId = `call:${current.address}:${address}`;
+      const edgeId = `call:${current.address}:${route.site}:${address}`;
       edges.set(edgeId, {
         id: edgeId,
         from: current.node.id,
         to: targetId,
-        relation: "direct_call",
-        resolution: "observed",
+        relation: route.relation,
+        resolution: route.resolution,
         evidence,
         limitations: [
           "A resolved static call edge does not establish runtime reachability.",

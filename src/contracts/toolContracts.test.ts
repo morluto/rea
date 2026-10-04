@@ -91,6 +91,7 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "inline_comment",
   "inspect_address_context",
   "inspect_artifact",
+  "inspect_asset_catalog",
   "inspect_electron_page",
   "inspect_macho",
   "inspect_managed_artifact",

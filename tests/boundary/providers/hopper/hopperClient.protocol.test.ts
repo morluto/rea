@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/toolContracts.js";
+import { HOPPER_PROVIDER_TOOL_CONTRACTS } from "../../../../src/hopper/HopperProvider.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLauncher,
@@ -123,9 +123,11 @@ describe("HopperClient protocol", () => {
   it("routes every established operation through the authenticated bridge", async () => {
     const client = await startClient();
     const results = await Promise.all(
-      OFFICIAL_TOOL_CONTRACTS.map(({ name }) => client.callTool(name, {})),
+      HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) =>
+        client.callTool(name, {}),
+      ),
     );
-    expect(results).toHaveLength(36);
+    expect(results).toHaveLength(HOPPER_PROVIDER_TOOL_CONTRACTS.length);
     expect(results.every((result) => result.ok)).toBe(true);
   });
 

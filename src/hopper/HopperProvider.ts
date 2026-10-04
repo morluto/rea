@@ -44,7 +44,13 @@ const MUTATING_OPERATIONS = new Set([
 
 /** Tool contracts implemented directly by the Hopper adapter. */
 export const HOPPER_PROVIDER_TOOL_CONTRACTS = Object.freeze([
-  ...GENERATED_MCP_TOOL_CATALOG.filter(({ kind }) => kind === "official-proxy"),
+  ...GENERATED_MCP_TOOL_CATALOG.filter(
+    ({ kind, name }) =>
+      kind === "official-proxy" &&
+      name !== "inspect_native_data_type" &&
+      name !== "inspect_native_instruction" &&
+      name !== "resolve_native_call_targets",
+  ),
   ...GENERATED_MCP_TOOL_CATALOG.filter(
     ({ name }) => name === "analyze_function",
   ),
