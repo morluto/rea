@@ -5,6 +5,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { parseConfig } from "../../../src/config.js";
+import { createBinarySession } from "../../../src/application/runtime.js";
 import { keyedArchiveResultSchema } from "../../../src/domain/keyedArchive.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -82,7 +84,12 @@ it("returns every artifact occurrence in one MCP call", async () => {
   }
   await writeFile(archive, await writer.close());
 
-  const session = createTestBinarySession(new ArtifactProvider());
+  const configured = parseConfig({
+    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+  });
+  expect(configured.ok).toBe(true);
+  if (!configured.ok) throw configured.error;
+  const session = createBinarySession(configured.value);
   const server = createServer(session, session);
   const client = new Client({ name: "artifact-inline-test", version: "1" });
   const [clientTransport, serverTransport] =
@@ -103,16 +110,35 @@ it("returns every artifact occurrence in one MCP call", async () => {
       name: "binary_session",
       arguments: {},
     });
+    expect(status.isError).not.toBe(true);
+    const capabilities = z
+      .object({
+        result: z.object({
+          capabilities: z.array(
+            z.object({
+              operation: z.string(),
+              available: z.boolean(),
+              reason: z.string().nullable(),
+            }),
+          ),
+        }),
+      })
+      .parse(status.structuredContent).result.capabilities;
+    expect(capabilities.map(({ operation }) => operation)).not.toContain(
+      "inventory_artifact",
+    );
     expect(
-      z
-        .object({
-          result: z.object({
-            capabilities: z.array(z.object({ operation: z.string() })),
-          }),
-        })
-        .parse(status.structuredContent)
-        .result.capabilities.map(({ operation }) => operation),
-    ).not.toContain("inventory_artifact");
+      capabilities.find(
+        ({ operation }) => operation === "inspect_asset_catalog",
+      ),
+    ).toMatchObject(
+      process.platform === "darwin"
+        ? { available: true, reason: null }
+        : {
+            available: false,
+            reason: "Apple asset catalogs require macOS assetutil.",
+          },
+    );
     const result = await client.callTool({
       name: "inspect_artifact",
       arguments: {},

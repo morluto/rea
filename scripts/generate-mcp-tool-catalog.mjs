@@ -78,7 +78,7 @@ async function sdkToolCatalog() {
   }
 }
 const auxiliaryProviders = [
-  new ArtifactProvider(false, false),
+  new ArtifactProvider(false, false, CATALOG_PLATFORM),
   new NativeMacOSProvider(undefined, CATALOG_PLATFORM),
   new ManagedStaticProvider(),
 ].map((provider) => ({

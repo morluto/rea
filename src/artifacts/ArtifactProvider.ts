@@ -41,43 +41,47 @@ const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
+  readonly #capabilities: readonly CapabilityDescriptor[];
+
   constructor(
     private readonly nativeMountEnabled = false,
     private readonly integrityContinueEnabled = false,
-  ) {}
-
-  readonly #capabilities: readonly CapabilityDescriptor[] = Object.freeze(
-    ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {
-      const common = {
-        provider: IDENTITY,
-        operation,
-        effects: Object.freeze({
-          mutatesArtifact: false,
-          launchesProcess:
-            operation !== "decode_interface_builder" &&
-            operation !== "inspect_keyed_archive",
-          mayShowUi: false,
-          mayAccessNetwork: false,
-          mayWriteFilesystem: operation === "extract_artifact",
-          changesPermissions: false,
-          requiresRoot: false,
-        }),
-        limitations: Object.freeze([
-          "DMG child inventory is macOS-only and requires per-call approval plus operator policy; PKG remains root-hash-only.",
-          "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
-        ]),
-      };
-      return Object.freeze(
-        operation === "inspect_asset_catalog" && process.platform !== "darwin"
-          ? {
-              ...common,
-              available: false as const,
-              reason: "Apple asset catalogs require macOS assetutil.",
-            }
-          : { ...common, available: true as const, reason: null },
-      );
-    }),
-  );
+    platform: NodeJS.Platform = process.platform,
+  ) {
+    this.#capabilities = Object.freeze(
+      ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {
+        const common = {
+          provider: IDENTITY,
+          operation,
+          effects: Object.freeze({
+            mutatesArtifact: false,
+            launchesProcess:
+              operation !== "decode_interface_builder" &&
+              operation !== "inspect_keyed_archive",
+            mayShowUi: false,
+            mayAccessNetwork: false,
+            mayWriteFilesystem: operation === "extract_artifact",
+            changesPermissions: false,
+            requiresRoot: false,
+          }),
+          limitations: Object.freeze([
+            "DMG child inventory is macOS-only and requires per-call approval plus operator policy; PKG remains root-hash-only.",
+            "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
+          ]),
+        };
+        return Object.freeze(
+          operation === "inspect_asset_catalog" && platform !== "darwin"
+            ? {
+                ...common,
+                available: false as const,
+                availabilityCode: "unsupported_host" as const,
+                reason: "Apple asset catalogs require macOS assetutil.",
+              }
+            : { ...common, available: true as const, reason: null },
+        );
+      }),
+    );
+  }
 
   identity(): ProviderIdentity {
     return IDENTITY;

@@ -6,6 +6,7 @@ import { silentLogger, type Logger } from "../logger.js";
 import { GENERATED_AUXILIARY_PROVIDERS } from "../generatedMcpToolCatalog.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { composeBinarySession } from "./BinarySessionComposition.js";
+import { nativeHostCapabilities } from "../native/NativeHostCapabilities.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
 
 /**
@@ -32,7 +33,11 @@ export const createBinarySession = (
     const generated = auxiliary.get(id);
     if (generated === undefined)
       throw new TypeError(`Missing generated provider metadata for ${id}`);
-    return new LazyAnalysisProvider({ ...generated, load });
+    return new LazyAnalysisProvider({
+      ...generated,
+      capabilities: nativeHostCapabilities(generated.capabilities),
+      load,
+    });
   };
   return composeBinarySession(
     new AnalysisProviderRegistry([hopper, ghidra], config.analysisProvider),
