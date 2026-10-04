@@ -31,23 +31,21 @@ export const verifyHopperFunctionBasics = async (
         arguments: {
           procedure,
           direction: "outgoing",
-          limit: 10,
-          max_instructions: 100,
         },
       },
       options,
     ),
     "procedure_references",
   );
-  if (!Array.isArray(references?.references?.items)) {
-    throw new Error("procedure_references returned an invalid bounded result");
+  if (!Array.isArray(references?.references)) {
+    throw new Error("procedure_references returned an invalid result");
   }
 
   const instructions = requireMcpResult(
     await client.callTool(
       {
         name: "read_function_instructions",
-        arguments: { procedure, limit: 2 },
+        arguments: { procedure },
       },
       options,
     ),
@@ -55,17 +53,14 @@ export const verifyHopperFunctionBasics = async (
   );
   if (
     instructions?.procedure?.address !== procedure ||
-    !Array.isArray(instructions.instructions?.items) ||
-    instructions.instructions.items.length === 0 ||
-    instructions.instructions.items.length > 2
+    !Array.isArray(instructions.instructions) ||
+    instructions.instructions.length === 0
   ) {
-    throw new Error(
-      "read_function_instructions returned an invalid bounded window",
-    );
+    throw new Error("read_function_instructions returned an invalid result");
   }
 
   return {
-    outgoingReferenceCount: references.references.items.length,
-    instructionWindowCount: instructions.instructions.items.length,
+    outgoingReferenceCount: references.references.length,
+    instructionWindowCount: instructions.instructions.length,
   };
 };

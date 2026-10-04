@@ -21,6 +21,7 @@ const probeResultSchema = z.strictObject({
   }),
   current_document: z.literal("fixture"),
   current_address: z.literal("0x401000"),
+  strings: z.strictObject({ "0x401234": z.literal("fixture string") }),
   session_document_reused: z.literal(true),
   shared_document_shutdown: z.strictObject({
     shutdown: z.literal(true),

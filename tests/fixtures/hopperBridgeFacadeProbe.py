@@ -41,6 +41,21 @@ class FakeDocumentProvider:
         return cls.current
 
 
+class FakeStringSegment:
+    def getStringsList(self):
+        return [("fixture string", FakeStringAddress())]
+
+
+class FakeStringAddress:
+    def __str__(self):
+        return "0x401234"
+
+
+class FakeStringsDocument:
+    def getSegmentsList(self):
+        return [FakeStringSegment()]
+
+
 def load_bridge(path):
     namespace = {
         "__file__": path,
@@ -66,6 +81,7 @@ def main():
     bridge["REA_OWNS_PROCESS_LIFETIME"] = False
     bridge["_configure_hopper_api"](FakeDocumentProvider)
     bridge["_bind_session_document"]()
+    strings = bridge["_strings"](FakeStringsDocument())
     current = bridge["_dispatch"]("current_document", {})
     current_address = bridge["_dispatch"]("current_address", {})
     selected = bridge["_session_document"]() is FakeDocumentProvider.current
@@ -115,6 +131,7 @@ def main():
                 "imported_without_hopper": unavailable,
                 "current_document": current,
                 "current_address": current_address,
+                "strings": strings,
                 "session_document_reused": selected,
                 "shared_document_shutdown": retained,
                 "analysis_guard": analysis_guard,

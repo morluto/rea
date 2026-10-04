@@ -150,6 +150,11 @@ EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
 
 
 def _hex(value):
+    if not isinstance(value, int) or isinstance(value, bool):
+        try:
+            value = int(str(value), 16)
+        except ValueError as error:
+            raise ValueError("Hopper returned a non-hexadecimal address") from error
     return "0x%x" % value
 
 

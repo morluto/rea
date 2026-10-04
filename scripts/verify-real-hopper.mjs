@@ -309,6 +309,7 @@ try {
     { name: "binary_overview", arguments: {} },
     options,
   );
+  requireSuccessfulTool(overview, "binary_overview");
   requireEvidenceProvider(
     documents,
     "list_documents",
