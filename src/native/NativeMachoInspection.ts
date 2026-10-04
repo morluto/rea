@@ -89,9 +89,14 @@ const normalizeMacho = (
   const architectures = parseLipoArchitectures(byTool("lipo").stdout);
   const load = parseOtoolLoadCommands(byTool("otool").stdout);
   const imports = parseDyldSymbols(byTool("dyld_info", 0).stdout, "imports");
+  const imageBase =
+    load.segments.find(
+      (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
+    )?.vm_address ?? null;
   const dyldExports = parseDyldSymbols(
     byTool("dyld_info", 1).stdout,
     "exports",
+    imageBase,
   );
   const exports = uniqueSymbols([
     ...dyldExports,
@@ -109,6 +114,12 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
+    ...(imageBase === null &&
+    /^\s*offset\s+symbol\s*$/mu.test(byTool("dyld_info", 1).stdout)
+      ? [
+          "Export virtual addresses are unavailable because no file-backed image base was observed.",
+        ]
+      : []),
   ];
   return inspectMachoSchema.parse({
     format: "mach-o",
@@ -185,7 +196,8 @@ const uniqueSymbols = <Value extends { readonly name: string }>(
   items: readonly Value[],
 ): Value[] => {
   const unique = new Map<string, Value>();
-  for (const item of items) unique.set(item.name, item);
+  for (const item of items)
+    if (!unique.has(item.name)) unique.set(item.name, item);
   return [...unique.values()].sort((left, right) =>
     left.name.localeCompare(right.name),
   );

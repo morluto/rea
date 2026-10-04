@@ -330,23 +330,34 @@ class NativeMacOSClient implements AnalysisClient {
       { signal, acceptNonZero: true },
     );
     if (!display.ok) return display;
+    const unsigned = /not signed at all|code object is not signed/iu.test(
+      `${display.value.stdout}\n${display.value.stderr}`,
+    );
+    if (!unsigned && display.value.exitCode !== 0)
+      return err(
+        translateCommandFailure(
+          "inspect_signature",
+          new NativeCommandFailure(
+            "codesign",
+            "nonzero-exit",
+            display.value.exitCode,
+          ),
+        ),
+      );
     const requirements = await this.#run(
       "inspect_signature",
       "codesign",
       ["-d", "-r-", this.target.path],
-      { signal, acceptNonZero: true },
+      { signal, acceptNonZero: unsigned },
     );
     if (!requirements.ok) return requirements;
     const entitlements = await this.#run(
       "inspect_signature",
       "codesign",
       ["-d", "--entitlements", ":-", this.target.path],
-      { signal, acceptNonZero: true },
+      { signal, acceptNonZero: unsigned },
     );
     if (!entitlements.ok) return entitlements;
-    const unsigned = /not signed at all|code object is not signed/iu.test(
-      `${display.value.stdout}\n${display.value.stderr}`,
-    );
     const parsed = parseCodeSignature(
       `${display.value.stdout}\n${display.value.stderr}`,
       unsigned,

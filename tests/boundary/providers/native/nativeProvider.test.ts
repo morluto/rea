@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,12 +9,16 @@ import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.
 import {
   NativeCommandFailure,
   XcrunCommandRunner,
-  type NativeCommandCapture,
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
-import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoArchitectures } from "../../../../src/native/parsers/lipo.js";
+
+import {
+  NativeFixtureRunner as FixtureRunner,
+  nativeFixture as fixture,
+  nativeMachoTarget as machoTarget,
+} from "../../../fixtures/nativeCommands.js";
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -303,17 +307,6 @@ describe("native macOS provider failures and parsing", () => {
   });
 });
 
-class FixtureRunner implements NativeCommandRunner {
-  constructor(
-    private readonly overrides: Readonly<Record<string, string>> = {},
-  ) {}
-
-  async run(tool: string, arguments_: readonly string[]) {
-    const output = this.overrides[tool] ?? (await outputFor(tool, arguments_));
-    return ok(capture(tool, arguments_, output));
-  }
-}
-
 class FailingRunner implements NativeCommandRunner {
   constructor(private readonly reason: NativeCommandFailure["reason"]) {}
 
@@ -342,68 +335,3 @@ class CountingRunner implements NativeCommandRunner {
     return Promise.resolve(err(new NativeCommandFailure(tool, "unavailable")));
   }
 }
-
-const outputFor = async (
-  tool: string,
-  arguments_: readonly string[],
-): Promise<string> => {
-  if (tool === "lipo") return fixture("lipo-fat.txt");
-  if (tool === "otool") return fixture("otool-load.txt");
-  if (tool === "nm") return "_main\n_$s4Test3fooyyF\n";
-  if (tool === "dyld_info")
-    return fixture(
-      arguments_[0] === "-imports" ? "dyld-imports.txt" : "dyld-exports.txt",
-    );
-  if (tool === "dwarfdump")
-    return "UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) fixture\n";
-  if (tool === "file")
-    return arguments_.at(-1)?.endsWith(".plist") === true
-      ? "XML 1.0 document text\n"
-      : "Mach-O 64-bit executable arm64, little-endian\n";
-  if (tool === "vtool") return "Load command 3 LC_BUILD_VERSION\n";
-  if (tool === "swift-demangle") return fixture("demangle.txt");
-  if (tool === "plutil") return fixture("plist.json");
-  if (tool === "codesign") {
-    if (arguments_.includes("--entitlements"))
-      return fixture("entitlements.xml");
-    if (arguments_.includes("-r-"))
-      return "designated => identifier com.example.fixture\n";
-    return fixture("codesign.txt");
-  }
-  throw new Error(`Unexpected fixture tool ${tool}`);
-};
-
-const capture = (
-  tool: string,
-  arguments_: readonly string[],
-  output: string,
-): NativeCommandCapture => ({
-  tool,
-  executable: `/usr/bin/${tool}`,
-  executableSha256: "a".repeat(64),
-  toolVersion: null,
-  versionReason: "fixture",
-  arguments: [...arguments_],
-  stdout: tool === "codesign" ? "" : output,
-  stderr: tool === "codesign" ? output : "",
-  stdoutBytes: Buffer.byteLength(tool === "codesign" ? "" : output),
-  stderrBytes: Buffer.byteLength(tool === "codesign" ? output : ""),
-  exitCode: 0,
-  signal: null,
-});
-
-const machoTarget = (path: string, sourcePath?: string): BinaryTarget => ({
-  path,
-  ...(sourcePath === undefined ? {} : { sourcePath }),
-  sha256: "0".repeat(64),
-  kind: "executable",
-  format: "mach-o",
-  architecture: "arm64",
-  availableArchitectures: ["x86_64", "arm64"],
-});
-
-const fixture = (name: string): Promise<string> =>
-  readFile(
-    new URL(`../../../fixtures/native-macos/${name}`, import.meta.url),
-    "utf8",
-  );

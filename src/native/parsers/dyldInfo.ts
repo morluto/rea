@@ -1,29 +1,68 @@
-/** Parse bounded imports/exports from dyld_info's line-oriented tables. */
-export const parseDyldSymbols = (output: string, mode: "imports" | "exports") =>
-  output.split(/\r?\n/u).flatMap((rawLine) => {
+interface ParsedDyldSymbol {
+  readonly name: string;
+  readonly address: string | null;
+  readonly weak: boolean | null;
+  readonly reexport: boolean | null;
+  readonly source: string | null;
+}
+
+/** Decode Apple dyld inventory rows, projecting export offsets to VM addresses. */
+export const parseDyldSymbols = (
+  output: string,
+  mode: "imports" | "exports",
+  imageBase: string | null = null,
+) => {
+  const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
+  return output.split(/\r?\n/u).flatMap<ParsedDyldSymbol>((rawLine) => {
     const line = rawLine.trim();
-    if (
-      line.length === 0 ||
-      /^(?:imports|exports|binding|address|segment|ordinal)\b/iu.test(line)
-    )
+    if (mode === "imports") {
+      const imported =
+        /^(?:0x[\da-f]+\s+)?(\S+)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
+          line,
+        );
+      if (imported?.[1] !== undefined)
+        return [
+          {
+            name: imported[1],
+            address: null,
+            weak: /\bweak-import\b/u.test(imported[2] ?? "") ? true : null,
+            reexport: null,
+            source: imported[3] ?? null,
+          },
+        ];
       return [];
-    const tokens = line.split(/\s+/u);
-    const name = tokens.at(-1);
-    if (name === undefined || !/^(?:_|\$s|objc_|swift_)/u.test(name)) return [];
-    const addressToken = tokens.find((token) =>
-      /^0x[a-fA-F0-9]+$/u.test(token),
-    );
+    }
+    const reexport = /^\[re-export\]\s+(\S+)(?:\s+\(from (.+)\))?$/u.exec(line);
+    if (reexport?.[1] !== undefined)
+      return [
+        {
+          name: reexport[1],
+          address: null,
+          weak: null,
+          reexport: true,
+          source: reexport[2] ?? null,
+        },
+      ];
+    const exported = /^(0x[\da-f]+)\s+(\S+)(?:\s+\[([^\]]+)\])?$/iu.exec(line);
+    if (exported?.[1] === undefined || exported[2] === undefined) return [];
+    const absolute = /\babsolute\b/u.test(exported[3] ?? "");
+    const address =
+      offsets && !absolute
+        ? imageBase === null
+          ? null
+          : `0x${(BigInt(imageBase) + BigInt(exported[1])).toString(16)}`
+        : canonicalHex(exported[1]);
     return [
       {
-        name,
-        address: addressToken ?? null,
-        weak: /\bweak\b/iu.test(line) ? true : null,
-        reexport: /\bre-?export\b/iu.test(line)
-          ? true
-          : mode === "exports"
-            ? false
-            : null,
-        source: mode === "imports" ? (tokens.at(-2) ?? null) : null,
+        name: exported[2],
+        address,
+        weak: /\bweak-def\b/u.test(exported[3] ?? "") ? true : null,
+        reexport: false,
+        source: null,
       },
     ];
   });
+};
+
+const canonicalHex = (value: string | undefined): string | null =>
+  value === undefined ? null : `0x${BigInt(value).toString(16)}`;
