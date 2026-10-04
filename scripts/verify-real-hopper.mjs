@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -33,6 +32,7 @@ import { verifyHopperFunctionBasics } from "./lib/real-hopper-function-basics.mj
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-exhaustive-search.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { requireHopperSelection } from "./lib/real-hopper-selection.mjs";
+import { verifyHopperInventories } from "./lib/real-hopper-inventory.mjs";
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
@@ -311,42 +311,7 @@ try {
     options,
   );
   requireSuccessfulTool(overview, "binary_overview");
-  const inventoryCounts = {};
-  for (const operation of ["list_strings", "list_names"]) {
-    const called = await client.callTool(
-      { name: operation, arguments: {} },
-      options,
-    );
-    const inventory = requireSuccessfulTool(called, operation);
-    requireEvidenceProvider(called, operation, HOPPER_PROVIDER_IDENTITY.id);
-    assert.ok(
-      Array.isArray(inventory) && inventory.length > 0,
-      `${operation} omitted the real fixture inventory`,
-    );
-    let previous = -1n;
-    for (const item of inventory) {
-      assert.match(item.address, /^0x[0-9a-f]+$/u);
-      assert.equal(typeof item.value, "string");
-      const address = BigInt(item.address);
-      assert.ok(
-        address > previous,
-        `${operation} is not numerically address-sorted`,
-      );
-      previous = address;
-    }
-    const filtered = requireSuccessfulTool(
-      await client.callTool(
-        {
-          name: operation,
-          arguments: { address: inventory[0].address },
-        },
-        options,
-      ),
-      operation,
-    );
-    assert.deepEqual(filtered, [inventory[0]]);
-    inventoryCounts[operation] = inventory.length;
-  }
+  const inventoryCounts = await verifyHopperInventories(client, options);
   requireEvidenceProvider(
     documents,
     "list_documents",
