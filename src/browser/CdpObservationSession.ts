@@ -20,6 +20,7 @@ import {
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
+import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 
 interface ObservationContext {
   readonly connection: CdpConnection;
@@ -158,13 +159,13 @@ class TimelineCapture {
     if (params === undefined) return;
     switch (event.method) {
       case "Page.frameRequestedNavigation":
-        this.#navigationRequested(params);
+        this.#navigationRequested(event, params);
         break;
       case "Page.frameNavigated":
-        this.#navigationCommitted(params);
+        this.#navigationCommitted(event, params);
         break;
       case "Page.navigatedWithinDocument":
-        this.#sameDocument(params);
+        this.#sameDocument(event, params);
         break;
       case "Network.requestWillBeSent":
         this.#redirect(params);
@@ -212,8 +213,8 @@ class TimelineCapture {
     this.finalUrl = destination.scope === "approved" ? destination.url : null;
   }
 
-  #navigationRequested(params: UnknownRecord): void {
-    if (stringValue(params.frameId) !== this.mainFrameId) return;
+  #navigationRequested(event: CdpEvent, params: UnknownRecord): void {
+    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const reason = safeDetail(params.reason);
     this.#pendingReload = reason === "reload";
     this.#add({
@@ -225,9 +226,9 @@ class TimelineCapture {
     });
   }
 
-  #navigationCommitted(params: UnknownRecord): void {
+  #navigationCommitted(event: CdpEvent, params: UnknownRecord): void {
     const frame = recordValue(params.frame);
-    if (stringValue(frame?.id) !== this.mainFrameId) return;
+    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const rawUrl = stringValue(frame?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
@@ -246,8 +247,8 @@ class TimelineCapture {
     }
   }
 
-  #sameDocument(params: UnknownRecord): void {
-    if (stringValue(params.frameId) !== this.mainFrameId) return;
+  #sameDocument(event: CdpEvent, params: UnknownRecord): void {
+    if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const rawUrl = stringValue(params.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({

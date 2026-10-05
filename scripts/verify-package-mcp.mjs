@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -5,6 +6,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { MCP_STARTUP_POLICY } from "../dist/mcpStartupPolicy.js";
+import { parseEvidence } from "../dist/domain/evidence.js";
 import * as prompts from "./verify-package-prompts.mjs";
 import { json, verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 
@@ -155,8 +157,77 @@ const verifyMcpEvidenceBundle = async (client, mcpOptions, evidenceRoot) => {
     throw new Error("packaged MCP evidence import failed");
 };
 
-/** Connect to the packaged MCP server and exercise the target-free catalog. */
-export async function verifyPackageMcp({ cli, environment, evidenceRoot }) {
+const verifyMcpInlineArtifactEvidence = async (
+  client,
+  mcpOptions,
+  artifactArchive,
+) => {
+  const opened = await client.callTool(
+    { name: "open_binary", arguments: { path: artifactArchive } },
+    mcpOptions,
+  );
+  assert.notEqual(opened.isError, true, JSON.stringify(opened));
+  try {
+    const inspected = await client.callTool(
+      { name: "inspect_artifact", arguments: {} },
+      mcpOptions,
+    );
+    assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
+    const source = parseEvidence(inspected.structuredContent?.evidence);
+    assert.deepEqual(
+      source.normalized_result,
+      inspected.structuredContent?.result,
+    );
+    assert.deepEqual(
+      json(prompts.mcpText(inspected)),
+      inspected.structuredContent,
+    );
+    const compared = await client.callTool(
+      {
+        name: "compare_artifacts",
+        arguments: {
+          left: inspected.structuredContent.evidence,
+          right: inspected.structuredContent.evidence,
+        },
+      },
+      mcpOptions,
+    );
+    assert.notEqual(compared.isError, true, JSON.stringify(compared));
+    const comparison = parseEvidence(compared.structuredContent?.evidence);
+    assert.deepEqual(
+      comparison.normalized_result,
+      compared.structuredContent?.result,
+    );
+    assert.ok(comparison.evidence_links.includes(source.evidence_id));
+    const bundle = await client.callTool(
+      { name: "get_evidence_bundle", arguments: {} },
+      mcpOptions,
+    );
+    assert.notEqual(bundle.isError, true, JSON.stringify(bundle));
+    for (const evidence of [source, comparison]) {
+      assert.deepEqual(
+        bundle.structuredContent?.result?.records.find(
+          (record) => record.evidence_id === evidence.evidence_id,
+        ),
+        evidence,
+      );
+    }
+  } finally {
+    const closed = await client.callTool(
+      { name: "close_binary", arguments: {} },
+      mcpOptions,
+    );
+    assert.notEqual(closed.isError, true, JSON.stringify(closed));
+  }
+};
+
+/** Connect to the packaged MCP server and verify catalog and Evidence composition. */
+export async function verifyPackageMcp({
+  cli,
+  environment,
+  evidenceRoot,
+  artifactArchive,
+}) {
   const diagnosed = json(
     (
       await execute(cli, ["mcp", "doctor", "--json"], {
@@ -191,6 +262,7 @@ export async function verifyPackageMcp({ cli, environment, evidenceRoot }) {
     await verifyMcpTargetFree(client, mcpOptions);
     await verifyMcpUnknownProvider(client, mcpOptions);
     await verifyMcpBinaryLifecycle(client, mcpOptions);
+    await verifyMcpInlineArtifactEvidence(client, mcpOptions, artifactArchive);
     await verifyMcpEvidenceBundle(client, mcpOptions, evidenceRoot);
   } catch (cause) {
     throw new Error(`packaged MCP smoke failed: ${mcpStderr}`, { cause });

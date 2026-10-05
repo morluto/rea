@@ -58,5 +58,7 @@ const splitAlgorithms = (value: string | undefined): string[] =>
 
 const parseRuntime = (value: string | undefined): boolean | null => {
   if (value === undefined) return null;
-  return /\bruntime\b/u.test(value);
+  const flags = /(?:^|\s)flags=[^(]*\(([^)]*)\)/u.exec(value)?.[1];
+  if (flags === undefined) return null;
+  return flags.split(",").some((flag) => flag.trim() === "runtime");
 };

@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
+import { TOOL_EFFECTS } from "../../../../src/contracts/toolEffects.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
@@ -14,6 +15,33 @@ import {
 import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
 
 describe("artifact extraction", () => {
+  it("declares possible native mounts and fresh extraction directories", () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      const provider = new ArtifactProvider(platform);
+      for (const operation of [
+        "inventory_artifact",
+        "inspect_artifact",
+        "extract_artifact",
+      ] as const) {
+        expect(
+          provider
+            .capabilities()
+            .find((capability) => capability.operation === operation)?.effects,
+        ).toMatchObject({ launchesProcess: true, mayWriteFilesystem: true });
+      }
+    }
+    expect(TOOL_EFFECTS.inspect_artifact).toMatchObject({
+      launchesProcess: true,
+      writesFilesystem: true,
+      mutatesTarget: false,
+    });
+    expect(TOOL_EFFECTS.extract_artifact).toMatchObject({
+      launchesProcess: true,
+      writesFilesystem: true,
+      idempotent: false,
+      mutatesTarget: false,
+    });
+  });
   it("extracts all regular occurrences through an exclusively owned output tree", async () => {
     const root = await createTestTempDirectory("rea-extract-");
     const source = join(root, "source");

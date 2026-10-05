@@ -246,6 +246,7 @@ export const JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS = [
   "bound-reached",
   "dynamic-call",
   "dynamic-property",
+  "dynamic-scope",
   "eval-or-generated-code",
   "incomplete-module",
   "missing-source",

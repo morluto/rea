@@ -125,6 +125,13 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<JavaScriptRuntimeObservation, AnalysisError>> {
     let connection: CdpConnection | undefined;
+    let primaryFailure: unknown;
+    let failed = false;
+    let cleanupFailure: unknown;
+    let cleanupFailed = false;
+    let outcome:
+      | Result<JavaScriptRuntimeObservation, AnalysisError>
+      | undefined;
     try {
       const discovery = await discoverV8Inspector(
         input.inspector_endpoint,
@@ -160,14 +167,74 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         target,
         state,
       });
-      return ok(javascriptRuntimeObservationSchema.parse(result));
+      outcome = ok(javascriptRuntimeObservationSchema.parse(result));
     } catch (cause: unknown) {
-      return err(providerError(cause, "observe_javascript_runtime"));
+      failed = true;
+      primaryFailure = cause;
+      outcome = err(providerError(cause, "observe_javascript_runtime"));
     } finally {
-      await connection?.close();
+      if (connection !== undefined)
+        try {
+          await closeInspectorConnection(connection, options.signal);
+        } catch (cause: unknown) {
+          cleanupFailed = true;
+          cleanupFailure = cause;
+        }
     }
+    if (cleanupFailed) {
+      return err(inspectorCleanupError(primaryFailure, cleanupFailure, failed));
+    }
+    return (
+      outcome ??
+      err(
+        new BrowserObservationError(
+          "observe_javascript_runtime",
+          "protocol_error",
+        ),
+      )
+    );
   }
 }
+
+export const closeInspectorConnection = async (
+  connection: Pick<CdpConnection, "close">,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const closing = connection.close();
+  void closing.catch(() => undefined);
+  // CdpConnection.close has its own one second transport bound. Do not make a
+  // cancelled caller wait for that fallback.
+  if (signal === undefined) return await closing;
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<void>((resolve) => {
+    onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try {
+    await Promise.race([closing, cancelled]);
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+  }
+};
+
+export const inspectorCleanupError = (
+  primaryFailure: unknown,
+  cleanupFailure: unknown,
+  hasPrimaryFailure: boolean,
+): BrowserObservationError => {
+  const cause = hasPrimaryFailure
+    ? new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Inspector observation and cleanup both failed",
+      )
+    : cleanupFailure;
+  return new BrowserObservationError(
+    "observe_javascript_runtime",
+    "cleanup_failed",
+    { cause },
+  );
+};
 
 const projectTarget = (target: AuthorizedV8InspectorTarget) => ({
   target_id: target.id,

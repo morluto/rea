@@ -91,6 +91,18 @@ const projectSpawn = (
     relation: "spawns",
     resolution: spawn.resolution === "complete" ? "resolved" : "candidate",
   });
+  for (const projected of spawn.projectedResultBindings)
+    addSemanticGraphRelation(context.state, {
+      source: child,
+      target: context.bindingNodes.get(projected.bindingId),
+      relation: "destructures",
+      resolution:
+        projected.resolution === "complete" ? "resolved" : "candidate",
+      properties: {
+        projection_path: [...projected.projectionPath],
+        projection_resolution: projected.resolution,
+      },
+    });
   if (spawn.argvCount !== null)
     addSemanticGraphRelation(context.state, {
       source: callSite,

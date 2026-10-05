@@ -18,9 +18,7 @@ import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Inline result with its complete Evidence record. */
-export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema.omit({
-  normalized_result: true,
-});
+export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema;
 
 export const evidenceResultOf = (schema: z.ZodType) =>
   z.strictObject({

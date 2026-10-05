@@ -2,7 +2,11 @@ import { constants } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 
 import { err, ok } from "../domain/result.js";
-import { cancelled, failure } from "./ReferenceSourceReaderErrors.js";
+import {
+  cancelled,
+  failure,
+  filesystemFailureDetail,
+} from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import {
   type BigStats,
@@ -30,6 +34,7 @@ export const validateDirectory = async (
   root: string,
   rootIdentity: BigStats,
   path: string,
+  signal?: AbortSignal,
 ): Promise<
   | { readonly ok: true; readonly stats: BigStats }
   | {
@@ -63,11 +68,22 @@ export const validateDirectory = async (
         message: "Directory escaped the reference root",
       };
     return { ok: true, stats };
-  } catch {
+  } catch (cause: unknown) {
+    if (isAborted(signal))
+      return {
+        ok: false,
+        code: "cancelled",
+        message: "Reference source traversal cancelled",
+      };
+    const message = filesystemFailureDetail(
+      cause,
+      "Directory identity could not be verified",
+    );
+    if (message === undefined) throw cause;
     return {
       ok: false,
       code: "io",
-      message: "Directory identity could not be verified",
+      message,
     };
   }
 };
@@ -102,12 +118,13 @@ export const prepareRoot = async (
         ),
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
-  } catch {
-    return err(
-      failure(
-        "invalid-root",
-        `Reference source root could not be resolved: ${root}`,
-      ),
+  } catch (cause: unknown) {
+    if (isAborted(signal)) return err(cancelled());
+    const message = filesystemFailureDetail(
+      cause,
+      "Reference source root could not be resolved",
     );
+    if (message === undefined) throw cause;
+    return err(failure("invalid-root", `${message}: ${root}`));
   }
 };

@@ -42,6 +42,7 @@ export const compareManagedMembersInputSchema = z
 
 const concreteMatchBasisSchema = z.enum([
   "exact-il-signature",
+  "exact-signature",
   "structural-method-shape",
   "field-signature",
 ]);
@@ -85,7 +86,7 @@ const comparisonItemSchema = <
   z.union([
     z.strictObject({
       ...base,
-      status: z.enum(["unchanged", "changed"]),
+      status: z.enum(["unchanged", "changed", "unknown"]),
       left: identity,
       right: identity,
       match: matchedComparisonSchema,
@@ -131,6 +132,7 @@ const methodComparisonItemSchema = comparisonItemSchema(
         "field-shape",
         "exception-shape",
         "availability",
+        "body-coverage",
       ]),
     ),
   },
@@ -151,7 +153,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   algorithm: z.strictObject({
     name: z.literal("rea-managed-member-comparison"),
     token_identity: z.literal("build-local"),
-    name_matching: z.literal("not-used"),
+    name_matching: z.literal("exact-signature-fallback"),
   }),
   left: z.strictObject({
     evidence_id: evidenceIdSchema,
@@ -180,6 +182,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   }),
   matching: z.strictObject({
     exact_il_signature: z.number().int().min(0),
+    exact_signature: z.number().int().min(0),
     structural_method_shape: z.number().int().min(0),
     field_signature: z.number().int().min(0),
     ambiguous: z.number().int().min(0),
@@ -209,7 +212,7 @@ export interface ManagedMemberComparisonSide {
   readonly result: ManagedMemberInspection;
 }
 
-/** Compare two parsed managed member observations without name-based matching. */
+/** Compare managed members with constrained exact and structural identities. */
 export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
   right: ManagedMemberComparisonSide,
@@ -247,7 +250,7 @@ export const compareManagedMembers = (
     algorithm: {
       name: "rea-managed-member-comparison" as const,
       token_identity: "build-local" as const,
-      name_matching: "not-used" as const,
+      name_matching: "exact-signature-fallback" as const,
     },
     left: sideManifest(left),
     right: sideManifest(right),

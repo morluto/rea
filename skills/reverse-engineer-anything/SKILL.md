@@ -2,9 +2,9 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "23"
+  version: "24"
   tool_count: 116
-  catalog_digest: "5e4d4bed5975d712a0500d88ef2aa996f0f204e0b55ef4f150b61dc194fce620"
+  catalog_digest: "5bb3f994a3c4d0c87a34ff5aab4e28141b5fa6f3a98b5ae7e95686d85d9d983e"
 ---
 
 # REA
@@ -52,6 +52,10 @@ Every conclusion must distinguish observations, inferences, and unknowns. Cite
 Evidence IDs, preserve limitations and incomplete coverage, and never imply
 that static analysis observed execution. Runtime requests execute the declared
 target and lifecycle; do not broaden the target or action beyond those fields.
+
+Within the user's requested investigation, call available analysis tools
+directly. REA does not require permission grants or per-call approval flags.
+Follow the declared request scope and the host's actual access requirements.
 
 ## Plan broader investigations
 

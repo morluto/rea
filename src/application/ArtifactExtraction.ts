@@ -25,7 +25,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { scanArtifactInventory } from "./ArtifactInventory.js";
 import { digestCanonical } from "./ArtifactGraphConstruction.js";
 
-/** Already-approved extraction request from a caller-owned policy boundary. */
+/** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
   readonly inputPath: string;
   readonly inputFormat: BinaryTarget["format"];
