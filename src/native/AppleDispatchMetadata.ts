@@ -660,10 +660,9 @@ export const inspectAppleDispatchMetadata = async (
 
 const selectMachoSlice = (bytes: Buffer, architecture: string) => {
   const magic = bytes.readUInt32BE(0);
-  const littleEndian = magic === 0xbebafeca || magic === 0xbfbafeca;
-  if (magic !== 0xcafebabe && magic !== 0xcafebabf && !littleEndian)
-    return { slice: 0, sliceEnd: bytes.length };
-  const fat64 = magic === 0xcafebabf || magic === 0xbfbafeca;
+  const header = fatHeaderFormat(magic);
+  if (header === null) return { slice: 0, sliceEnd: bytes.length };
+  const { littleEndian, fat64 } = header;
   const stride = fat64 ? 32 : 20;
   const readUInt32 = littleEndian
     ? (offset: number) => bytes.readUInt32LE(offset)
@@ -701,4 +700,21 @@ const selectMachoSlice = (bytes: Buffer, architecture: string) => {
   if (selected === undefined)
     throw invalid("Requested FAT architecture is absent");
   return selected;
+};
+
+const fatHeaderFormat = (
+  magic: number,
+): { readonly littleEndian: boolean; readonly fat64: boolean } | null => {
+  switch (magic) {
+    case 0xcafebabe:
+      return { littleEndian: false, fat64: false };
+    case 0xcafebabf:
+      return { littleEndian: false, fat64: true };
+    case 0xbebafeca:
+      return { littleEndian: true, fat64: false };
+    case 0xbfbafeca:
+      return { littleEndian: true, fat64: true };
+    default:
+      return null;
+  }
 };

@@ -253,6 +253,14 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     );
   });
 
+  it("rejects a 32-bit slice payload inside a little-endian container", () => {
+    const bytes = wrapped(false);
+    bytes.writeUInt32BE(0xfeedface, 256);
+    expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
+      "Only little-endian 64-bit Mach-O metadata is supported",
+    );
+  });
+
   it("checks the full little-endian FAT64 slice extent", () => {
     const bytes = wrapped(true);
     bytes.writeBigUInt64LE(0x100000000n, 16);
