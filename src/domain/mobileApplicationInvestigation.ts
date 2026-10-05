@@ -43,7 +43,6 @@ export const iosManifestSchema = z.strictObject({
   ui_required_device_capabilities: z.array(z.string()).default([]),
   app_permissions: z.array(z.string()).default([]),
 });
-export type IosManifest = z.infer<typeof iosManifestSchema>;
 /** Signing information. */
 export const signingInfoSchema = z.strictObject({
   is_signed: z.boolean().default(false),

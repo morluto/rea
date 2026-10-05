@@ -1,6 +1,6 @@
 {
-  "_comment": "Test files are intentionally NOT excluded: the gate used to report zero clones because it skipped **/*.test.ts, hiding all test-tree duplication. Current actual is ~2.6% lines across src+ and tests/, down from 3.4% when tests were included. Lower this as duplication is removed.",
-  "threshold": 2.7,
+  "_comment": "Test files are intentionally NOT excluded: the gate used to report zero clones because it skipped **/*.test.ts, hiding all test-tree duplication. Current actual is ~2.4% lines across src+ and tests/, down from 3.4% when tests were included. Lower this as duplication is removed.",
+  "threshold": 2.5,
   "reporters": ["consoleFull"],
   "ignore": [
     "node_modules/**",

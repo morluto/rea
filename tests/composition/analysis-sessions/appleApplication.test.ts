@@ -11,6 +11,10 @@ import { describe, expect, it } from "vitest";
 
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createNonApplicationZipInventory,
+  requireSuccessfulProjection,
+} from "../../support/applicationSessionFixture.js";
 
 import { projectAppleApplicationEvidence } from "../../../src/application/AppleApplicationService.js";
 import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
@@ -109,14 +113,11 @@ describe("Apple application projection", () => {
     const second = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
     });
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    if (!first.ok || !second.ok) return;
     const left = appleApplicationProjectionResultSchema.parse(
-      first.value.normalized_result,
+      requireSuccessfulProjection(first).normalized_result,
     );
     const right = appleApplicationProjectionResultSchema.parse(
-      second.value.normalized_result,
+      requireSuccessfulProjection(second).normalized_result,
     );
     expect(left).toEqual(right);
     expect(left).toMatchObject({
@@ -149,14 +150,8 @@ describe("Apple application projection", () => {
   });
 
   it("rejects non-IPA Evidence", async () => {
-    const root = await createTestTempDirectory("rea-apple-invalid-");
-    const path = join(root, "fixture.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("one.js", new TextReader("one"));
-    await writeFile(path, await writer.close());
-    const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
-    );
+    const inventory =
+      await createNonApplicationZipInventory("rea-apple-invalid-");
     expect(
       projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
     ).toMatchObject({

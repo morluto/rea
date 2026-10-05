@@ -7,6 +7,7 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "../../scripts/lib/verifier-run.mjs";
+import { waitForExit } from "../support/process/processFixture.js";
 
 const execFileAsync = promisify(execFile);
 const CHILD_SHUTDOWN_GRACE_MS = 1_000;
@@ -153,27 +154,6 @@ const stopChild = async (child: ChildProcess): Promise<void> => {
     );
   }
 };
-
-const waitForExit = (
-  child: ChildProcess,
-  timeoutMs: number,
-): Promise<boolean> =>
-  new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve(true);
-      return;
-    }
-    const timer = setTimeout(() => {
-      child.removeListener("exit", onExit);
-      resolve(false);
-    }, timeoutMs);
-    timer.unref();
-    const onExit = (): void => {
-      clearTimeout(timer);
-      resolve(true);
-    };
-    child.once("exit", onExit);
-  });
 
 const restoreRunId = (runId: string | undefined): void => {
   if (runId === undefined) delete process.env.REA_PROCESS_RUN_ID;

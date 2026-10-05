@@ -10,6 +10,10 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createNonApplicationZipInventory,
+  requireSuccessfulProjection,
+} from "../../support/applicationSessionFixture.js";
 
 import { projectAndroidApplicationEvidence } from "../../../src/application/AndroidApplicationService.js";
 import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
@@ -50,14 +54,11 @@ describe("Android application projection", () => {
     const second = projectAndroidApplicationEvidence({
       inventory_evidence: [inventory],
     });
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    if (!first.ok || !second.ok) return;
     const left = androidApplicationProjectionResultSchema.parse(
-      first.value.normalized_result,
+      requireSuccessfulProjection(first).normalized_result,
     );
     const right = androidApplicationProjectionResultSchema.parse(
-      second.value.normalized_result,
+      requireSuccessfulProjection(second).normalized_result,
     );
     expect(left).toEqual(right);
     expect(left).toMatchObject({
@@ -87,13 +88,8 @@ describe("Android application projection", () => {
   });
 
   it("rejects non-APK inventory Evidence", async () => {
-    const root = await createTestTempDirectory("rea-android-invalid-");
-    const path = join(root, "fixture.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("one.js", new TextReader("one"));
-    await writeFile(path, await writer.close());
-    const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+    const inventory = await createNonApplicationZipInventory(
+      "rea-android-invalid-",
     );
     expect(
       projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),

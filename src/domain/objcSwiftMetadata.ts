@@ -18,7 +18,6 @@ export const objcPropertyAttributeSchema = z.strictObject({
   is_copy: z.boolean().default(false),
   is_strong: z.boolean().default(false),
 });
-export type ObjcPropertyAttribute = z.infer<typeof objcPropertyAttributeSchema>;
 
 /** Objective-C method metadata. */
 export const objcMethodSchema = z.strictObject({
@@ -39,7 +38,6 @@ export const objcPropertySchema = z.strictObject({
   getter: z.string().nullable(),
   setter: z.string().nullable(),
 });
-export type ObjcProperty = z.infer<typeof objcPropertySchema>;
 
 /** Objective-C protocol metadata. */
 export const objcProtocolSchema = z.strictObject({
@@ -48,7 +46,6 @@ export const objcProtocolSchema = z.strictObject({
   optional_methods: z.array(objcMethodSchema).default([]),
   properties: z.array(objcPropertySchema).default([]),
 });
-export type ObjcProtocol = z.infer<typeof objcProtocolSchema>;
 
 /** Objective-C class metadata. */
 export const objcClassSchema = z.strictObject({
@@ -106,7 +103,6 @@ export const nativeMetadataDecodeSchema = z.strictObject({
   status: z.enum(["decoded", "partial", "unsupported", "invalid"]),
   reason: z.string().nullable(),
 });
-export type NativeMetadataDecode = z.infer<typeof nativeMetadataDecodeSchema>;
 
 /** Evidence attached to one dispatch edge or metadata record. */
 export const nativeMetadataEvidenceSchema = z.strictObject({
@@ -142,7 +138,6 @@ export const objcIvarSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type ObjcIvar = z.infer<typeof objcIvarSchema>;
 
 /** Encoded Objective-C protocol declaration with required and optional method facts. */
 export const objcProtocolRecordSchema = z.strictObject({
@@ -179,7 +174,6 @@ export const swiftConformanceSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type SwiftConformance = z.infer<typeof swiftConformanceSchema>;
 
 /** A typed slot in a Swift protocol witness table or class vtable. */
 export const swiftDispatchSlotSchema = z.strictObject({
@@ -194,7 +188,6 @@ export const swiftDispatchSlotSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type SwiftDispatchSlot = z.infer<typeof swiftDispatchSlotSchema>;
 
 /** Signed-relative pointer as stored in an Apple binary metadata structure. */
 export const relativePointerSchema = z.strictObject({
@@ -206,7 +199,6 @@ export const relativePointerSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type RelativePointer = z.infer<typeof relativePointerSchema>;
 
 /** A raw Swift-mangled symbol when a provider has not decoded its metadata. */
 export const swiftSymbolSchema = z.strictObject({
@@ -225,9 +217,6 @@ export const nativeMetadataCoverageSchema = z.strictObject({
   examined: z.number().int().nonnegative(),
   decoded: z.number().int().nonnegative(),
 });
-export type NativeMetadataCoverage = z.infer<
-  typeof nativeMetadataCoverageSchema
->;
 
 /** Swift declaration kind. */
 export const swiftDeclKindSchema = z.enum([
@@ -250,7 +239,6 @@ export const swiftAccessLevelSchema = z.enum([
   "public",
   "open",
 ]);
-export type SwiftAccessLevel = z.infer<typeof swiftAccessLevelSchema>;
 /** Swift declaration metadata. */
 export const swiftDeclSchema = z.strictObject({
   kind: swiftDeclKindSchema,
@@ -275,8 +263,6 @@ export const dbOperationSchema = z.enum([
   "export",
   "import",
 ]);
-export type DbOperation = z.infer<typeof dbOperationSchema>;
-
 /** Database save operation result. */
 export const dbSaveResultSchema = z.strictObject({
   operation: dbOperationSchema,
@@ -322,9 +308,6 @@ export const nativeDispatchMetadataResultSchema = z.strictObject({
   analysis_profile_digest: z.string().min(1).nullable(),
   result: objcSwiftMetadataSchema,
 });
-export type NativeDispatchMetadataResult = z.infer<
-  typeof nativeDispatchMetadataResultSchema
->;
 
 /** Decode only facts visible in a provider's existing name inventory. */
 export const inspectNativeDispatchMetadata = (

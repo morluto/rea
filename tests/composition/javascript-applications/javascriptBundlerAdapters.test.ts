@@ -1,29 +1,43 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { reconstructJavaScriptArtifact } from "../../../src/application/JavaScriptArtifactReconstruction.js";
-import type {
-  ApplicationEdge,
-  ApplicationNode,
-  JavaScriptApplicationGraph,
-} from "../../../src/domain/javascriptApplicationGraph.js";
+import {
+  findChunkNode,
+  findGraphEdge,
+  findModuleNodeByKey,
+  reconstructJavaScriptFixture,
+  writeFixtureFiles,
+} from "../../support/javascriptApplicationFixture.js";
 
 describe("Webpack and Rspack runtime adapters", () => {
   it("recovers runtime entry modules, async chunks, and factory require aliases", async () => {
     const root = await bundlerFixture();
-    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const result = await reconstructJavaScriptFixture(root);
     const graph = result.graph;
 
-    const webpackEntry = chunk(graph, "webpackChunkcustomPortal", "main");
-    const webpackLazy = chunk(graph, "webpackChunkcustomPortal", "lazy");
-    const webpackModule = moduleNode(graph, "10");
-    const rspackEntry = chunk(graph, "rspackChunkcustomPortal", "editor");
-    const rspackModel = chunk(graph, "rspackChunkcustomPortal", "model");
-    const rspackModule = moduleNode(graph, "src/entry.ts");
+    const webpackEntry = findChunkNode(
+      graph,
+      "webpackChunkcustomPortal",
+      "main",
+    );
+    const webpackLazy = findChunkNode(
+      graph,
+      "webpackChunkcustomPortal",
+      "lazy",
+    );
+    const webpackModule = findModuleNodeByKey(graph, "10");
+    const rspackEntry = findChunkNode(
+      graph,
+      "rspackChunkcustomPortal",
+      "editor",
+    );
+    const rspackModel = findChunkNode(
+      graph,
+      "rspackChunkcustomPortal",
+      "model",
+    );
+    const rspackModule = findModuleNodeByKey(graph, "src/entry.ts");
 
     expect(webpackEntry?.observations[0]?.properties).toMatchObject({
       bundler: "webpack",
@@ -49,32 +63,42 @@ describe("Webpack and Rspack runtime adapters", () => {
       runtime_entry: true,
     });
 
-    expect(edge(graph, webpackEntry, webpackModule, "loads")).toMatchObject({
+    expect(
+      findGraphEdge(graph, webpackEntry, webpackModule, "loads"),
+    ).toMatchObject({
       properties: expect.objectContaining({
         kind: "bundler-entry-module",
         resolution_status: "resolved",
       }),
     });
-    expect(edge(graph, webpackEntry, webpackLazy, "imports")).toMatchObject({
+    expect(
+      findGraphEdge(graph, webpackEntry, webpackLazy, "imports"),
+    ).toMatchObject({
       properties: expect.objectContaining({
         kind: "bundler-async-chunk",
         resolution_status: "resolved",
       }),
     });
-    expect(edge(graph, webpackModule, webpackLazy, "imports")).toMatchObject({
+    expect(
+      findGraphEdge(graph, webpackModule, webpackLazy, "imports"),
+    ).toMatchObject({
       properties: expect.objectContaining({
         kind: "dynamic-import",
         specifier: "chunk:lazy",
         resolved_path: "renderer/chunks/runtime.js#chunk:lazy",
       }),
     });
-    expect(edge(graph, rspackEntry, rspackModel, "imports")).toMatchObject({
+    expect(
+      findGraphEdge(graph, rspackEntry, rspackModel, "imports"),
+    ).toMatchObject({
       properties: expect.objectContaining({
         kind: "bundler-async-chunk",
         resolution_status: "resolved",
       }),
     });
-    expect(edge(graph, rspackModule, rspackModel, "imports")).toMatchObject({
+    expect(
+      findGraphEdge(graph, rspackModule, rspackModel, "imports"),
+    ).toMatchObject({
       properties: expect.objectContaining({
         kind: "dynamic-import",
         specifier: "chunk:model",
@@ -103,11 +127,9 @@ describe("Webpack and Rspack runtime adapters", () => {
 
   it("recovers esbuild wrapper modules and Vite preload dependencies", async () => {
     const root = await esmRuntimeFixture();
-    const { graph } = await reconstructJavaScriptArtifact({
-      input_path: root,
-    });
-    const commonJsModule = moduleNode(graph, "src/dep.js");
-    const esmModule = moduleNode(graph, "src/core.js");
+    const { graph } = await reconstructJavaScriptFixture(root);
+    const commonJsModule = findModuleNodeByKey(graph, "src/dep.js");
+    const esmModule = findModuleNodeByKey(graph, "src/core.js");
 
     expect(commonJsModule?.observations[0]?.properties).toMatchObject({
       bundler: "esbuild",
@@ -132,10 +154,8 @@ describe("Webpack and Rspack runtime adapters", () => {
 
 const bundlerFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-bundler-adapters-");
-  await mkdir(join(root, "renderer", "chunks"), { recursive: true });
-  await writeFile(
-    join(root, "renderer", "chunks", "runtime.js"),
-    `
+  await writeFixtureFiles(root, {
+    "renderer/chunks/runtime.js": `
       var __webpack_module_cache__ = {};
       (globalThis["webpackChunkcustomPortal"] = globalThis["webpackChunkcustomPortal"] || []).push([
         ["main"],
@@ -179,15 +199,14 @@ const bundlerFixture = async (): Promise<string> => {
         }
       ]);
     `,
-  );
+  });
   return root;
 };
 
 const esmRuntimeFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-esm-runtime-adapters-");
-  await writeFile(
-    join(root, "main.js"),
-    `
+  await writeFixtureFiles(root, {
+    "main.js": `
       const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
         (map.f || (map.f = ["./feature.js", "./main.css"]))) =>
         indexes.map((index) => dependencies[index]);
@@ -204,51 +223,8 @@ const esmRuntimeFixture = async (): Promise<string> => {
       __vite__mapDeps([0, 1]);
       init_core();
     `,
-  );
-  await writeFile(join(root, "feature.js"), "export const feature = true;");
-  await writeFile(join(root, "main.css"), ".app { color: green; }");
+    "feature.js": "export const feature = true;",
+    "main.css": ".app { color: green; }",
+  });
   return root;
 };
-
-const chunk = (
-  graph: JavaScriptApplicationGraph,
-  runtime: string,
-  chunkKey: string,
-): ApplicationNode | undefined =>
-  graph.nodes.find(
-    ({ kind, observations }) =>
-      kind === "javascript-chunk" &&
-      observations.some(
-        ({ properties }) =>
-          properties.runtime === runtime &&
-          Array.isArray(properties.chunk_keys) &&
-          properties.chunk_keys.includes(chunkKey),
-      ),
-  );
-
-const moduleNode = (
-  graph: JavaScriptApplicationGraph,
-  moduleKey: string,
-): ApplicationNode | undefined =>
-  graph.nodes.find(
-    ({ kind, observations }) =>
-      kind === "javascript-module" &&
-      observations.some(
-        ({ properties }) => properties.module_key === moduleKey,
-      ),
-  );
-
-const edge = (
-  graph: JavaScriptApplicationGraph,
-  source: ApplicationNode | undefined,
-  target: ApplicationNode | undefined,
-  relation: string,
-): ApplicationEdge | undefined =>
-  graph.edges.find(
-    ({ source_node_id, target_node_id, relation: edgeRelation }) =>
-      source !== undefined &&
-      target !== undefined &&
-      source_node_id === source.node_id &&
-      target_node_id === target.node_id &&
-      edgeRelation === relation,
-  );

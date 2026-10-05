@@ -184,26 +184,18 @@ it("keeps suffix-named ASAR directories in the graph and analyzes their files", 
     ),
   ).toBe(true);
 
-  const result = await reconstructJavaScriptArtifact({
-    input_path: archive,
-    format: "asar",
-  });
-
-  expect(result.statistics.parsed_javascript_files).toBeGreaterThan(0);
-  expect(result.graph.nodes).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        kind: "javascript-asset",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              path: "node_modules/@zip.js/entry.js",
-            }),
+  await reconstructAsarArchive(archive, [
+    expect.objectContaining({
+      kind: "javascript-asset",
+      observations: expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            path: "node_modules/@zip.js/entry.js",
           }),
-        ]),
-      }),
-    ]),
-  );
+        }),
+      ]),
+    }),
+  ]);
 });
 
 it("keeps ASAR analysis usable when unpacked native companion bytes are absent", async () => {
@@ -228,17 +220,9 @@ it("keeps ASAR analysis usable when unpacked native companion bytes are absent",
     ]),
   });
 
-  const result = await reconstructJavaScriptArtifact({
-    input_path: archive,
-    format: "asar",
-  });
-
-  expect(result.statistics.parsed_javascript_files).toBeGreaterThan(0);
-  expect(result.graph.nodes).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ kind: "javascript-asset" }),
-    ]),
-  );
+  await reconstructAsarArchive(archive, [
+    expect.objectContaining({ kind: "javascript-asset" }),
+  ]);
 });
 
 it("recurses into filesystem-backed ASAR containers without losing container-relative paths", async () => {
@@ -358,6 +342,21 @@ const assertSemanticLinks = (
     graph.nodes.filter(({ kind }) => kind === "endpoint"),
   );
   expect(endpointJson).toContain("token=fixture-secret");
+};
+
+const reconstructAsarArchive = async (
+  archive: string,
+  expectedNodes: readonly unknown[],
+): Promise<Awaited<ReturnType<typeof reconstructJavaScriptArtifact>>> => {
+  const result = await reconstructJavaScriptArtifact({
+    input_path: archive,
+    format: "asar",
+  });
+  expect(result.statistics.parsed_javascript_files).toBeGreaterThan(0);
+  expect(result.graph.nodes).toEqual(
+    expect.arrayContaining([...expectedNodes]),
+  );
+  return result;
 };
 
 const fixtureDirectory = async (): Promise<string> => {

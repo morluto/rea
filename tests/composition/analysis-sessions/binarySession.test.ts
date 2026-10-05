@@ -2,6 +2,9 @@ import type {
   AnalysisClient,
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
+import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import {
   HopperStartError,
@@ -92,6 +95,44 @@ const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
   close: () => Promise.resolve(),
 });
+
+/** Open a target and run one address_name query, asserting both succeed. */
+const openAndExecuteAddressName = async (
+  session: BinarySession,
+  target: string,
+  parameters: Readonly<Record<string, JsonValue>>,
+): Promise<void> => {
+  expect((await session.open(target)).ok).toBe(true);
+  expect((await session.execute("address_name", parameters)).ok).toBe(true);
+};
+
+/** Shared network-reachability unknown input at one severity. */
+const networkReachabilityUnknown = (
+  severity: "medium" | "high",
+): RecordUnknownInput => ({
+  question: "Does this function reach the network?",
+  severity,
+  domain: "network",
+  supporting_evidence_ids: [],
+  contradicting_evidence_ids: [],
+  required_authority: "shipped-artifact",
+  required_confidence: "observed",
+  required_environment: null,
+  recommended_probes: [
+    { operation: "analyze_function", rationale: "Inspect its callers." },
+  ],
+  relationships: [],
+});
+
+/** Record the shared network-reachability unknown, asserting success. */
+const recordNetworkReachabilityUnknown = (
+  session: BinarySession,
+  severity: "medium" | "high",
+): void => {
+  expect(session.recordUnknown(networkReachabilityUnknown(severity)).ok).toBe(
+    true,
+  );
+};
 
 describe("detached provider and target metadata", () => {
   it("returns detached provider and target metadata", async () => {
@@ -349,31 +390,11 @@ describe("snapshot switch rollback", () => {
     await copyFile(first, second);
     const calls: string[] = [];
     const session = createTestBinarySession(createCacheProvider(calls));
-    expect((await session.open(first)).ok).toBe(true);
-    expect(
-      (
-        await session.execute("address_name", {
-          address: "0x1000",
-          document: "first",
-        })
-      ).ok,
-    ).toBe(true);
-    expect(
-      session.recordUnknown({
-        question: "Does this function reach the network?",
-        severity: "medium",
-        domain: "network",
-        supporting_evidence_ids: [],
-        contradicting_evidence_ids: [],
-        required_authority: "shipped-artifact",
-        required_confidence: "observed",
-        required_environment: null,
-        recommended_probes: [
-          { operation: "analyze_function", rationale: "Inspect its callers." },
-        ],
-        relationships: [],
-      }).ok,
-    ).toBe(true);
+    await openAndExecuteAddressName(session, first, {
+      address: "0x1000",
+      document: "first",
+    });
+    recordNetworkReachabilityUnknown(session, "medium");
     const originalCache = session.exportAnalysisSnapshot();
     expect(originalCache).toMatchObject({
       ok: true,
@@ -382,22 +403,7 @@ describe("snapshot switch rollback", () => {
 
     const conflicting = createTestBinarySession(createCacheProvider([]));
     expect((await conflicting.open(second)).ok).toBe(true);
-    expect(
-      conflicting.recordUnknown({
-        question: "Does this function reach the network?",
-        severity: "high",
-        domain: "network",
-        supporting_evidence_ids: [],
-        contradicting_evidence_ids: [],
-        required_authority: "shipped-artifact",
-        required_confidence: "observed",
-        required_environment: null,
-        recommended_probes: [
-          { operation: "analyze_function", rationale: "Inspect its callers." },
-        ],
-        relationships: [],
-      }).ok,
-    ).toBe(true);
+    recordNetworkReachabilityUnknown(conflicting, "high");
     const conflictingSnapshot = conflicting.exportAnalysisSnapshot();
     expect(conflictingSnapshot.ok).toBe(true);
     if (!conflictingSnapshot.ok || !originalCache.ok) return;
@@ -425,8 +431,7 @@ describe("snapshot cache eligibility", () => {
     const [first] = await createBinarySessionTargets();
     const calls: string[] = [];
     const session = createTestBinarySession(createCacheProvider(calls));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.execute("address_name", {})).ok).toBe(true);
+    await openAndExecuteAddressName(session, first, {});
     expect((await session.execute("address_name", {})).ok).toBe(true);
     expect(calls).toEqual(["health", "address_name", "address_name"]);
     expect(session.exportAnalysisSnapshot()).toMatchObject({

@@ -1,21 +1,10 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "entry": [
-    "src/main.ts",
-    "src/cli.ts",
-    "src/contracts/errorSchemas.ts",
-    "scripts/run-development-tests.mjs"
-  ],
+  "entry": ["src/main.ts", "src/cli.ts", "src/contracts/errorSchemas.ts"],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "ignoreDependencies": ["electron"],
   "ignoreBinaries": ["ps"],
   "ignoreExportsUsedInFile": true,
-  "ignoreIssues": {
-    "src/domain/mobileApplicationInvestigation.ts": ["types"],
-    "src/domain/objcSwiftMetadata.ts": ["types"],
-    "src/domain/interfaceBuilderGraph.ts": ["types"],
-    "src/domain/nativeInvestigationGraph.ts": ["types"]
-  },
   "rules": {
     "files": "error",
     "dependencies": "error",

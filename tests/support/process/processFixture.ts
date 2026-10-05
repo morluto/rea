@@ -1,5 +1,6 @@
 import {
   spawn as nodeSpawn,
+  type ChildProcess,
   type ChildProcessWithoutNullStreams,
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
@@ -37,8 +38,9 @@ export interface TestProcesses {
   shutdown(): Promise<void>;
 }
 
-const waitForExit = (
-  child: ChildProcessWithoutNullStreams,
+/** Wait for a child process to exit within a timeout, reporting completion. */
+export const waitForExit = (
+  child: ChildProcess,
   timeoutMs: number,
 ): Promise<boolean> =>
   new Promise((resolve) => {

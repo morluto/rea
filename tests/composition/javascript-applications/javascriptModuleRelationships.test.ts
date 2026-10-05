@@ -1,31 +1,32 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { reconstructJavaScriptArtifact } from "../../../src/application/JavaScriptArtifactReconstruction.js";
-import type {
-  ApplicationEdge,
-  ApplicationNode,
-  JavaScriptApplicationGraph,
-} from "../../../src/domain/javascriptApplicationGraph.js";
+import {
+  findExportNode,
+  findRelationshipEdge,
+  findSourceModule,
+  reconstructJavaScriptFixture,
+  writeFixtureFiles,
+} from "../../support/javascriptApplicationFixture.js";
 
 describe("CommonJS and ESM module relationships", () => {
   it("composes bindings, re-exports, dynamic imports, and JSON modules", async () => {
     const root = await moduleFixture();
-    const first = await reconstructJavaScriptArtifact({ input_path: root });
-    const second = await reconstructJavaScriptArtifact({ input_path: root });
+    const first = await reconstructJavaScriptFixture(root);
+    const second = await reconstructJavaScriptFixture(root);
     const graph = first.graph;
 
     expect(second.graph).toEqual(graph);
-    expect(sourceModule(graph, "main.cjs")).toBeDefined();
-    expect(sourceModule(graph, "consumer.mjs")).toBeDefined();
-    expect(sourceModule(graph, "dependency.mjs")).toBeDefined();
+    expect(findSourceModule(graph, "main.cjs")).toBeDefined();
+    expect(findSourceModule(graph, "consumer.mjs")).toBeDefined();
+    expect(findSourceModule(graph, "dependency.mjs")).toBeDefined();
 
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "require",
         specifier: "./dependency.mjs",
         resolvedPath: "dependency.mjs",
@@ -46,7 +47,7 @@ describe("CommonJS and ESM module relationships", () => {
       ]),
     );
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "require",
         specifier: "fixture-package",
         resolvedPath: "node_modules/fixture-package/cjs.cjs",
@@ -54,7 +55,7 @@ describe("CommonJS and ESM module relationships", () => {
       }),
     ).toBeDefined();
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "import",
         specifier: "fixture-package",
         resolvedPath: "node_modules/fixture-package/esm.mjs",
@@ -63,7 +64,7 @@ describe("CommonJS and ESM module relationships", () => {
       }),
     ).toBeDefined();
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "import",
         specifier: "./values.js",
         resolvedPath: "values.js",
@@ -72,7 +73,7 @@ describe("CommonJS and ESM module relationships", () => {
       }),
     ).toBeDefined();
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "re-export",
         specifier: "./star.js",
         resolvedPath: "star.js",
@@ -81,7 +82,7 @@ describe("CommonJS and ESM module relationships", () => {
       }),
     ).toBeDefined();
 
-    const forwarded = exportNode(graph, "main.cjs", "forwarded");
+    const forwarded = findExportNode(graph, "main.cjs", "forwarded");
     expect(forwarded).toBeDefined();
     expect(
       graph.edges.some(
@@ -101,11 +102,11 @@ describe("CommonJS and ESM module relationships", () => {
           properties.resolved_path === "lazy.js",
       ),
     ).toMatchObject({
-      source_node_id: sourceModule(graph, "consumer.mjs")?.node_id,
+      source_node_id: findSourceModule(graph, "consumer.mjs")?.node_id,
     });
 
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "require",
         specifier: "./data.json",
         resolvedPath: "data.json",
@@ -115,7 +116,7 @@ describe("CommonJS and ESM module relationships", () => {
       target_json_status: "included",
     });
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "require",
         specifier: "./broken.json",
         resolvedPath: "broken.json",
@@ -125,7 +126,7 @@ describe("CommonJS and ESM module relationships", () => {
       target_json_status: "invalid",
     });
     expect(
-      relationship(graph, {
+      findRelationshipEdge(graph, {
         kind: "require",
         specifier: "electron",
       })?.properties,
@@ -164,8 +165,8 @@ describe("complete static application projections", () => {
       writeFile(join(root, "many.json"), JSON.stringify(jsonKeys)),
     ]);
 
-    const { graph } = await reconstructJavaScriptArtifact({ input_path: root });
-    const module = sourceModule(graph, "many-exports.mjs");
+    const { graph } = await reconstructJavaScriptFixture(root);
+    const module = findSourceModule(graph, "many-exports.mjs");
     const exportObservation = module?.observations.find(
       ({ properties }) => properties.semantic_role === "source-module",
     );
@@ -187,14 +188,9 @@ describe("complete static application projections", () => {
 
 const moduleFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-module-relationships-");
-  await mkdir(join(root, "node_modules", "fixture-package"), {
-    recursive: true,
-  });
-  await Promise.all([
-    writeFile(join(root, "package.json"), '{"main":"main.cjs"}'),
-    writeFile(
-      join(root, "main.cjs"),
-      `
+  await writeFixtureFiles(root, {
+    "package.json": '{"main":"main.cjs"}',
+    "main.cjs": `
         const { value: importedValue } = require("./dependency.mjs");
         const data = require("./data.json");
         const broken = require("./broken.json");
@@ -207,104 +203,32 @@ const moduleFixture = async (): Promise<string> => {
         exports.packageValue = packageValue;
         require(dynamicName);
       `,
-    ),
-    writeFile(
-      join(root, "dependency.mjs"),
-      `
+    "dependency.mjs": `
         export { value } from "./values.js";
         export * from "./star.js";
       `,
-    ),
-    writeFile(
-      join(root, "consumer.mjs"),
-      `
+    "consumer.mjs": `
         import { value as alias } from "./values.js";
         import packageDefault from "fixture-package";
         export { alias as relayed };
         void import("./lazy.js");
         void packageDefault;
       `,
-    ),
-    writeFile(join(root, "values.js"), "export const value = 42;"),
-    writeFile(join(root, "star.js"), "export const extra = true;"),
-    writeFile(join(root, "lazy.js"), "export default 'lazy';"),
-    writeFile(join(root, "data.json"), '{"name":"fixture","value":42}'),
-    writeFile(join(root, "broken.json"), '{"name":'),
-    writeFile(
-      join(root, "node_modules", "fixture-package", "package.json"),
-      JSON.stringify({
-        exports: {
-          ".": {
-            import: "./esm.mjs",
-            require: "./cjs.cjs",
-          },
+    "values.js": "export const value = 42;",
+    "star.js": "export const extra = true;",
+    "lazy.js": "export default 'lazy';",
+    "data.json": '{"name":"fixture","value":42}',
+    "broken.json": '{"name":',
+    "node_modules/fixture-package/package.json": JSON.stringify({
+      exports: {
+        ".": {
+          import: "./esm.mjs",
+          require: "./cjs.cjs",
         },
-      }),
-    ),
-    writeFile(
-      join(root, "node_modules", "fixture-package", "esm.mjs"),
-      "export default 'esm';",
-    ),
-    writeFile(
-      join(root, "node_modules", "fixture-package", "cjs.cjs"),
-      "module.exports = 'cjs';",
-    ),
-  ]);
+      },
+    }),
+    "node_modules/fixture-package/esm.mjs": "export default 'esm';",
+    "node_modules/fixture-package/cjs.cjs": "module.exports = 'cjs';",
+  });
   return root;
 };
-
-interface RelationshipQuery {
-  readonly kind: string;
-  readonly specifier: string;
-  readonly resolvedPath?: string;
-  readonly importedName?: string;
-  readonly localName?: string;
-  readonly exportedName?: string;
-}
-
-const relationship = (
-  graph: JavaScriptApplicationGraph,
-  query: RelationshipQuery,
-): ApplicationEdge | undefined =>
-  graph.edges.find(
-    ({ relation, properties }) =>
-      relation === "imports" &&
-      properties.module_link_kind === query.kind &&
-      properties.specifier === query.specifier &&
-      (query.resolvedPath === undefined ||
-        properties.resolved_path === query.resolvedPath) &&
-      (query.importedName === undefined ||
-        properties.imported_name === query.importedName) &&
-      (query.localName === undefined ||
-        properties.local_name === query.localName) &&
-      (query.exportedName === undefined ||
-        properties.exported_name === query.exportedName),
-  );
-
-const sourceModule = (
-  graph: JavaScriptApplicationGraph,
-  path: string,
-): ApplicationNode | undefined =>
-  graph.nodes.find(
-    (node) =>
-      node.kind === "javascript-module" &&
-      node.observations.some(
-        ({ properties }) => properties.logical_module_key === path,
-      ),
-  );
-
-const exportNode = (
-  graph: JavaScriptApplicationGraph,
-  path: string,
-  name: string,
-): ApplicationNode | undefined =>
-  graph.nodes.find(
-    (node) =>
-      node.kind === "javascript-module" &&
-      node.observations.some(
-        ({ properties }) =>
-          properties.semantic_role === "export-binding" &&
-          properties.module_path === path &&
-          properties.exported_name === name,
-      ),
-  );
