@@ -1,3 +1,5 @@
+// Fake-backed composition coverage; real browser verification lives in
+// `npm run verify:browser`.
 import { describe, expect, it } from "vitest";
 
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";

@@ -28,10 +28,15 @@ export const captureFrames = (
 ): {
   readonly items: WebPageInspection["frames"];
 } => {
-  const root = recordValue(requiredRecord(result).frameTree);
-  if (root === undefined) return { items: [] };
+  const root = recordValue(recordValue(result)?.frameTree);
+  if (root === undefined) {
+    completeness?.exclude("frames", "invalid_protocol_value");
+    return { items: [] };
+  }
   const items: WebPageInspection["frames"] = [];
-  for (const tree of walkFrameTrees(root)) {
+  for (const tree of walkFrameTrees(root, () =>
+    completeness?.exclude("frames", "invalid_protocol_value"),
+  )) {
     const frame = recordValue(tree.frame);
     const frameId = stringValue(frame?.id);
     const sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
@@ -71,10 +76,15 @@ export const captureResources = (
 ): {
   readonly items: readonly CapturedResource[];
 } => {
-  const root = recordValue(requiredRecord(result).frameTree);
-  if (root === undefined) return { items: [] };
+  const root = recordValue(recordValue(result)?.frameTree);
+  if (root === undefined) {
+    completeness?.exclude("resources", "invalid_protocol_value");
+    return { items: [] };
+  }
   const items: CapturedResource[] = [];
-  for (const tree of walkFrameTrees(root)) {
+  for (const tree of walkFrameTrees(root, () =>
+    completeness?.exclude("resources", "invalid_protocol_value"),
+  )) {
     for (const resource of recordsValue(tree.resources)) {
       const url = allowedSanitizedUrl(resource.url, allowedOrigins);
       if (url === undefined || url.origin === null) {
@@ -99,14 +109,24 @@ export const captureResources = (
   return { items };
 };
 
-const walkFrameTrees = function* (
+export const walkFrameTrees = function* (
   root: UnknownRecord,
+  onMalformedChild?: () => void,
 ): Generator<UnknownRecord> {
   const pending = [root];
   while (pending.length > 0) {
     const tree = pending.pop();
     if (tree === undefined) return;
-    const children = recordsValue(tree.childFrames);
+    const rawChildren = tree.childFrames;
+    if (rawChildren !== undefined && !Array.isArray(rawChildren))
+      onMalformedChild?.();
+    const children = Array.isArray(rawChildren)
+      ? rawChildren.flatMap((child) => {
+          const parsed = recordValue(child);
+          if (parsed === undefined) onMalformedChild?.();
+          return parsed === undefined ? [] : [parsed];
+        })
+      : [];
     for (let index = children.length - 1; index >= 0; index -= 1) {
       const child = children[index];
       if (child !== undefined) pending.push(child);

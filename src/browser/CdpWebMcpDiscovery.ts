@@ -19,7 +19,11 @@ import {
   stringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { captureFrames, mainFrameUrl } from "./CdpCaptureDocuments.js";
+import {
+  captureFrames,
+  mainFrameUrl,
+  walkFrameTrees,
+} from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 
 interface DiscoveryContext {
@@ -63,18 +67,16 @@ export const discoverWebMcp = async (
     undefined,
     completeness,
   ).items;
-  const frameUrls = new Map(
-    frames.map((frame) => [
-      frame.frame_id,
-      {
-        url: frame.url,
-        origin: frame.origin,
-        parentFrameId: frame.parent_frame_id,
-      },
-    ]),
-  );
+  const frameUrls = initialFrameScope(frameTree, frames, completeness);
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
-  const frameScope = { origins, frames: frameUrls, tools, completeness };
+  const frameScope = {
+    origins,
+    frames: frameUrls,
+    tools,
+    completeness,
+    transientFrames: new Set<string>(),
+    resolvedTransientFrames: new Set<string>(),
+  };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     if (ingestFrameScopeEvent(event, frameScope)) return;
@@ -84,6 +86,8 @@ export const discoverWebMcp = async (
       frames: frameUrls,
       tools,
       completeness,
+      transientFrames: frameScope.transientFrames,
+      resolvedTransientFrames: frameScope.resolvedTransientFrames,
     });
   });
   await context.progress?.report({
@@ -110,6 +114,8 @@ export const discoverWebMcp = async (
         context.signal,
       );
     await assertStableAuthorizedFrame(context, initialUrl, origins);
+    if (frameScope.transientFrames.size > 0)
+      completeness.attachLimited("webmcp_tools");
     return buildWebMcpResult({
       context,
       frameTree,
@@ -135,13 +141,45 @@ interface FrameScopeState {
   readonly frames: Map<string, FrameScopeFrame>;
   readonly tools: Map<string, WebMcpDiscovery["tools"]["items"][number]>;
   readonly completeness: CdpCaptureCompleteness;
+  readonly transientFrames: Set<string>;
+  readonly resolvedTransientFrames: Set<string>;
 }
 
 interface FrameScopeFrame {
   readonly url: string;
   readonly origin: string | null;
   readonly parentFrameId: string | null;
+  readonly loaderId?: string | undefined;
 }
+
+const initialFrameScope = (
+  frameTree: unknown,
+  frames: ReturnType<typeof captureFrames>["items"],
+  completeness: CdpCaptureCompleteness,
+): Map<string, FrameScopeFrame> => {
+  const scoped = new Map<string, FrameScopeFrame>(
+    frames.map((frame) => [
+      frame.frame_id,
+      {
+        url: frame.url,
+        origin: frame.origin,
+        parentFrameId: frame.parent_frame_id,
+      },
+    ]),
+  );
+  const root = recordValue(recordValue(frameTree)?.frameTree);
+  if (root === undefined) return scoped;
+  for (const tree of walkFrameTrees(root, () =>
+    completeness.exclude("webmcp_tools", "invalid_protocol_value"),
+  )) {
+    const frame = recordValue(tree.frame);
+    const frameId = stringValue(frame?.id);
+    const prior = frameId === undefined ? undefined : scoped.get(frameId);
+    if (frameId !== undefined && prior !== undefined)
+      scoped.set(frameId, { ...prior, loaderId: stringValue(frame?.loaderId) });
+  }
+  return scoped;
+};
 
 const ingestFrameScopeEvent = (
   event: CdpEvent,
@@ -153,9 +191,9 @@ const ingestFrameScopeEvent = (
     case "Page.frameDetached":
       return handleFrameDetached(params, state);
     case "Page.frameNavigated":
-      return handleFrameUpdate(recordValue(params.frame), state);
+      return handleFrameUpdate(recordValue(params.frame), state, true);
     case "Page.navigatedWithinDocument":
-      return handleFrameUpdate(params, state);
+      return handleFrameUpdate(params, state, false);
     default:
       return false;
   }
@@ -171,35 +209,96 @@ const handleFrameDetached = (
     return true;
   }
   removeFrame(frameId, state.frames, state.tools);
+  state.transientFrames.delete(frameId);
+  state.resolvedTransientFrames.delete(frameId);
   return true;
 };
 
 const handleFrameUpdate = (
   frame: UnknownRecord | undefined,
   state: FrameScopeState,
+  documentCommitted: boolean,
 ): boolean => {
+  if (frame === undefined) {
+    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+    return true;
+  }
   const frameId = stringValue(frame?.id) ?? stringValue(frame?.frameId);
   if (frameId === undefined) {
     state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
     return true;
   }
-  const url = allowedSanitizedUrl(frame?.url, state.origins);
-  if (url === undefined || url.origin === null) {
-    removeFrame(frameId, state.frames, state.tools);
-    state.completeness.exclude("webmcp_tools", "out_of_target_scope");
+  const rawUrl = stringValue(frame?.url);
+  // Chromium can briefly commit an inherited, empty document while replacing
+  // a subframe. That intermediate URL says nothing about the frame's eventual
+  // scope or its registered tools; wait for the next committed URL (or the
+  // authoritative frame-tree re-probe at the end of discovery).
+  if (isTransientFrameUrl(rawUrl)) {
+    if (documentCommitted) {
+      removeFrameTools(frameId, state.tools);
+      state.transientFrames.add(frameId);
+      state.resolvedTransientFrames.delete(frameId);
+    }
     return true;
   }
+  updateFrameScope(frame, frameId, state, documentCommitted);
+  return true;
+};
+
+const updateFrameScope = (
+  frame: UnknownRecord,
+  frameId: string,
+  state: FrameScopeState,
+  documentCommitted: boolean,
+): void => {
+  const url = allowedSanitizedUrl(frame?.url, state.origins);
+  if (url === undefined || url.origin === null) {
+    removeFrameTools(frameId, state.tools);
+    state.frames.delete(frameId);
+    state.completeness.exclude("webmcp_tools", "out_of_target_scope");
+    return;
+  }
+  const previous = state.frames.get(frameId);
+  const loaderId = stringValue(frame?.loaderId);
+  if (hasNewDocument(documentCommitted, previous, url.url, loaderId))
+    removeFrameTools(frameId, state.tools);
+  if (documentCommitted && state.transientFrames.has(frameId))
+    state.resolvedTransientFrames.add(frameId);
   state.frames.set(frameId, {
     url: url.url,
     origin: url.origin,
+    ...(loaderId === undefined ? {} : { loaderId }),
     parentFrameId:
       (stringValue(frame?.parentId) ??
         state.frames.get(frameId)?.parentFrameId ??
         "") ||
       null,
   });
-  return true;
 };
+
+const hasNewDocument = (
+  documentCommitted: boolean,
+  previous: FrameScopeFrame | undefined,
+  url: string,
+  loaderId: string | undefined,
+): boolean =>
+  documentCommitted &&
+  previous !== undefined &&
+  (previous.url !== url ||
+    (loaderId !== undefined &&
+      previous.loaderId !== undefined &&
+      previous.loaderId !== loaderId));
+
+const removeFrameTools = (
+  frameId: string,
+  tools: Map<string, WebMcpDiscovery["tools"]["items"][number]>,
+): void => {
+  for (const [key, tool] of tools)
+    if (tool.frame_id === frameId) tools.delete(key);
+};
+
+const isTransientFrameUrl = (url: string | undefined): boolean =>
+  url === "" || url === "about:blank" || url === "about:srcdoc";
 
 const removeFrame = (
   frameId: string,
@@ -247,10 +346,20 @@ interface WebMcpIngestOptions {
   >;
   readonly tools: Map<string, WebMcpDiscovery["tools"]["items"][number]>;
   readonly completeness: CdpCaptureCompleteness;
+  readonly transientFrames: Set<string>;
+  readonly resolvedTransientFrames: Set<string>;
 }
 
 const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
-  const { event, input, frames, tools, completeness } = options;
+  const {
+    event,
+    input,
+    frames,
+    tools,
+    completeness,
+    transientFrames,
+    resolvedTransientFrames,
+  } = options;
   const params = recordValue(event.params);
   if (params === undefined) return;
   if (event.method === "WebMCP.toolsRemoved") {
@@ -265,6 +374,12 @@ const ingestWebMcpEvent = (options: WebMcpIngestOptions): void => {
   }
   if (event.method !== "WebMCP.toolsAdded") return;
   for (const declared of recordsValue(params.tools)) {
+    const frameId = stringValue(declared.frameId);
+    if (frameId !== undefined && transientFrames.has(frameId)) {
+      if (!resolvedTransientFrames.has(frameId)) continue;
+      transientFrames.delete(frameId);
+      resolvedTransientFrames.delete(frameId);
+    }
     const normalized = normalizeTool(declared, input, frames, completeness);
     if (normalized === undefined) continue;
     tools.set(normalized.tool_key, normalized);
