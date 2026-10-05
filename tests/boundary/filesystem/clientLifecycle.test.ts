@@ -41,7 +41,11 @@ describe("client configuration filesystem lifecycle", () => {
       ".cursor",
       ".gemini",
       ".codeium/windsurf",
-      ".devin",
+      ".config/devin",
+      ".config/opencode",
+      ".gemini/config",
+      ".copilot",
+      "Library/Application Support/Code/User",
     ])
       await mkdir(join(home, marker), { recursive: true });
     const detected = await detectClients(home);
@@ -53,13 +57,15 @@ describe("client configuration filesystem lifecycle", () => {
       "gemini_cli",
       "windsurf",
       "devin",
+      "opencode",
+      "antigravity",
+      "copilot_cli",
+      "vscode",
     ]);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
     ).toBe(join(home, ".claude.json"));
-    expect(detected.find(({ name }) => name === "devin")?.format).toBe(
-      "unsupported",
-    );
+    expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
     const emptyHome = await createTestTempDirectory("rea-empty-");
     roots.push(emptyHome);
     expect(await detectClients(emptyHome)).toEqual([]);

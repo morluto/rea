@@ -39,6 +39,9 @@ export async function verifyPackageDiscovery({ cli, environment }) {
   const doctor = json(doctorExecution.stdout);
   const supportedSetupHost =
     doctor.checks?.find(({ name }) => name === "host")?.ok === true;
+  const hopperSetupSupported =
+    supportedSetupHost && process.platform !== "win32";
+  const hopperReady = doctor.checks?.find(({ name }) => name === "hopper")?.ok;
   const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
   const missingHelp = REQUIRED_HELP_COMMANDS.filter(
     (command) => !help.includes(command),
@@ -51,10 +54,10 @@ export async function verifyPackageDiscovery({ cli, environment }) {
     missingLlms.length !== 0 ||
     doctor.healthy !== expectedDoctorHealth ||
     doctorExecution.status !== (expectedDoctorHealth ? 0 : 1) ||
-    doctor.checks?.find(({ name }) => name === "hopper")?.ok !== true
+    (hopperSetupSupported && hopperReady !== true)
   )
     throw new Error(
       `packaged CLI discovery or doctor failed: ${JSON.stringify({ helpSetup: help.includes("setup"), llmsDecompile: llms.includes("decompile"), doctor })}`,
     );
-  return { supportedSetupHost };
+  return { supportedSetupHost, hopperSetupSupported };
 }

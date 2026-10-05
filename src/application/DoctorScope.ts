@@ -7,7 +7,6 @@ import type {
   DoctorProviderInspection,
   DoctorScope,
 } from "./Doctor.js";
-import { doctorHealthy } from "./DoctorDiagnostics.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
@@ -57,9 +56,7 @@ export const scopeDoctorChecks = (
   );
   const coreChecks = input.checks.filter(
     ({ name }) =>
-      !isProviderCheck(name, input.providers.providerInspections) &&
-      name !== "skill:identity" &&
-      !name.startsWith("registration:"),
+      name === "node" || (input.scope.target !== null && name === "target"),
   );
   const clientChecks = input.scope.clients.map((client) =>
     selectedRegistrationCheck(
@@ -70,36 +67,27 @@ export const scopeDoctorChecks = (
   const skillChecks = input.scope.skill
     ? [selectedSkillCheck(input.skillState, input.checks)]
     : [];
-  const selectedProviderChecks =
-    input.scope.providers.length === 0
-      ? configuredProviderChecks(providerChecks, input.providers)
-      : input.scope.providers.flatMap((providerId) =>
-          selectedProviderChecksFor(
-            providerId,
-            providerChecks,
-            input.providers,
-          ),
-        );
+  const selectedProviderChecks = input.scope.providers.flatMap((providerId) =>
+    selectedProviderChecksFor(providerId, providerChecks, input.providers),
+  );
+  const hopperHostChecks = input.scope.providers.includes("hopper")
+    ? input.checks.filter(({ name }) => name === "host")
+    : [];
   const scopeChecks = [
     ...coreChecks,
+    ...hopperHostChecks,
     ...selectedProviderChecks,
     ...clientChecks,
     ...skillChecks,
   ];
-  const providerHealthy =
-    input.scope.providers.length === 0
-      ? doctorHealthy(
-          [...coreChecks, ...providerChecks, ...clientChecks, ...skillChecks],
-          input.providers,
-        )
-      : selectedProviderChecks.every(({ ok }) => ok);
   const selectedNames = new Set(scopeChecks.map(({ name }) => name));
   return {
     healthy:
       coreChecks.every(({ ok }) => ok) &&
+      hopperHostChecks.every(({ ok }) => ok) &&
       clientChecks.every(({ ok }) => ok) &&
       skillChecks.every(({ ok }) => ok) &&
-      providerHealthy,
+      selectedProviderChecks.every(({ ok }) => ok),
     scopeChecks,
     informationalChecks: input.checks.filter(
       ({ name }) => !selectedNames.has(name),
@@ -113,19 +101,6 @@ const isProviderCheck = (
 ): boolean =>
   name.startsWith("hopper") ||
   inspections?.some(({ id }) => doctorProviderCheckName(id, name)) === true;
-
-const configuredProviderChecks = (
-  checks: readonly DoctorCheck[],
-  providers: DoctorProviderState,
-): readonly DoctorCheck[] =>
-  checks.filter(({ name }) =>
-    name.startsWith("hopper")
-      ? providers.hopperConfigured
-      : providers.providerInspections?.some(
-          ({ id, configured }) =>
-            configured && doctorProviderCheckName(id, name),
-        ) === true,
-  );
 
 const selectedProviderChecksFor = (
   providerId: string,

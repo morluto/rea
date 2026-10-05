@@ -61,21 +61,41 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
 
 Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-prompt`, and `--verbose`. Neither `--no-prompt` nor a non-interactive shell grants permission to install external dependencies.
 
+## Supported agents
+
+Setup can configure these clients for REA's local MCP server:
+
+| Client             | `--client` value |
+| ------------------ | ---------------- |
+| Claude Code        | `claude_code`    |
+| Claude Desktop     | `claude_desktop` |
+| Codex              | `codex`          |
+| Cursor             | `cursor`         |
+| Gemini CLI         | `gemini_cli`     |
+| Windsurf           | `windsurf`       |
+| Devin              | `devin`          |
+| OpenCode           | `opencode`       |
+| Antigravity        | `antigravity`    |
+| GitHub Copilot CLI | `copilot_cli`    |
+| VS Code            | `vscode`         |
+
 ## Review setup changes
 
-`rea setup` detects your agents and analysis tools, then asks what to configure:
+`rea setup` first offers the supported agents in a multi-select. Existing REA
+registrations are selected by default. Newly detected clients remain available
+but unselected: detection gives setup context, not permission to add a new
+registration. Clients without a detected configuration can still be selected.
+Explicit `--client` flags skip this question.
 
-1. Choose **Agent integration** to install the guided workflow and configure MCP
-   access. Select the agents that should receive a registration. Detected agents
-   are selected by default; deselect any you do not want to change.
-2. Select **Hopper** if you want setup to connect or install it. Setup can also
-   save verified paths for an existing Ghidra installation.
-3. Review the plan and approve it. The approval prompt defaults to **Yes**, but
-   you must confirm before REA applies changes.
+Setup adds MCP access for selected clients. It installs REA's bundled workflow
+with those integrations by default; use `--skill=false` to omit it. If no agent
+is selected, setup offers the workflow separately for CLI use, with No as the
+default. Hopper is a separate optional choice: setup shows its proposed
+installation or connection and requires its own explicit approval. It can also
+save verified paths for an existing Ghidra installation.
 
-Selecting agent integration installs the bundled workflow even if you deselect
-all agents. Choosing no capabilities exits without changes. You can cancel at
-any prompt.
+After selection, review the plan's exact paths and changes and approve before
+REA writes files or installs Hopper. You can cancel at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
@@ -86,18 +106,19 @@ Before applying changes, REA checks your current configuration. The plan lists:
   commands.
 
 Malformed or unsafe existing configuration blocks the whole transaction before
-Hopper installation or any file write. Declining, pressing Ctrl-C, or selecting
-nothing makes no changes. Agent configuration writes preserve unrelated
+Hopper installation or any file write. Declining or pressing Ctrl-C makes no
+changes. Agent configuration writes preserve unrelated
 entries, create backups, use atomic replacement, and verify their result.
 
 After setup, REA reports which agents, analysis tools, and workflow files passed
 its final checks. Restart any agent named in the completion message, then begin
 your investigation. Failed steps and diagnostics remain in terminal history.
 
-Select exact clients in scripts with repeatable `--client` flags, or retain
-automatic discovery explicitly with `--all-detected`. Use `--skill=false` to
-override the normal bundled-skill installation and `--dry-run` for a read-only
-plan:
+Select exact clients in scripts with repeatable `--client` flags. Each explicit
+client skips interactive selection. Use `--all-detected` only when you intend
+to configure every detected supported client. `--skill=false` omits the
+workflow, and `--dry-run` returns a read-only plan with status `planned` and
+exit code 0:
 
 ```bash
 rea setup --client codex --client cursor --skill=false --dry-run
@@ -105,13 +126,20 @@ rea setup --client codex --client cursor --skill=false --dry-run
 
 Prompt UI and progress are written to stderr so stdout remains available for
 structured results and pipelines. `NO_COLOR=1` disables color. Use
-`--accessible` for sequential, vertically rendered yes/no prompts.
+`--accessible` for sequential, vertically rendered yes/no prompts. Implicit
+interactive setup requires stdin, stdout, and stderr to all be terminals; when
+any stream is redirected, setup stays non-interactive. Declining or cancelling
+returns status `cancelled` with exit code 0.
 
-For automation, `rea setup --json` reports the plan without applying it.
-Prefer pairing `--yes` with explicit scope such as `--client codex`,
-or `--all-detected`. Legacy unscoped `--yes` remains compatible for
-this release but emits a deprecation warning. Installing missing Hopper
-non-interactively additionally requires `--install-hopper`:
+For automation, `rea setup --json` reports the plan and a compact `.doctor`
+readiness projection without applying it. Use `rea doctor --json` for full
+health diagnostics and canonical tool catalog details. Pair
+`--yes` with explicit scope such as `--client codex`, or use
+`--all-detected` when the broad scope is intended. Without a scope flag,
+`--yes` is limited to existing REA-owned registrations; it does not select all
+detected clients. An unapproved actual apply reports `needs_confirmation` and
+exits 1. Installing missing Hopper non-interactively additionally requires
+`--install-hopper`:
 
 ```bash
 rea setup --yes --all-detected --install-hopper --json
@@ -216,10 +244,12 @@ rea doctor --json
 rea providers --json
 ```
 
-`rea setup` does not mutate Windows client configuration or install Hopper,
-Ghidra, Java, Python, or another package. Manual MCP registration does not
-enable the blocked Ghidra operations. See [Windows Ghidra P0](windows-ghidra-p0.md)
-for diagnostics and the proposed registration format.
+`rea setup` can configure supported Windows agents and install the bundled
+REA skill after approval. Direct registrations use Node to launch REA's entry
+script; package-runner registrations use the pinned `npx` command. Hopper
+installation remains unavailable on Windows. Setup never installs Ghidra,
+Java, or Python, and agent registration does not enable blocked Ghidra
+operations. See [Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
 
 Doctor validates the platform, architecture, application version,
 `support/analyzeHeadless` or `support/analyzeHeadless.bat`, Java

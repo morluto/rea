@@ -185,6 +185,7 @@
     "ignore": "7.0.6",
     "incur": "0.4.13",
     "isomorphic-git": "1.38.7",
+    "jsonc-parser": "3.3.1",
     "pino": "9.14.0",
     "playwright-core": "1.58.2",
     "plist": "5.0.0",

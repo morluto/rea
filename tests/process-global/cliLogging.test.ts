@@ -10,6 +10,24 @@ afterEach(() => {
 });
 
 describe("CLI operation status", () => {
+  it("treats a requested setup dry run and cancellation as successful outcomes", async () => {
+    for (const status of ["planned", "cancelled"]) {
+      process.exitCode = undefined;
+      await logCliCommand(silentLogger, "setup", () =>
+        Promise.resolve({ status }),
+      );
+      expect(process.exitCode).toBeUndefined();
+    }
+  });
+
+  it("keeps unapproved setup applications unsuccessful", async () => {
+    process.exitCode = undefined;
+    await logCliCommand(silentLogger, "setup", () =>
+      Promise.resolve({ status: "needs_confirmation" }),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
   it("sets a nonzero process status without replacing structured output", async () => {
     const output = {
       error: "Analysis failed",

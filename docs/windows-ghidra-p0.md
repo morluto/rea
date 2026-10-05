@@ -48,7 +48,9 @@ rea inspect "C:\approved-fixtures\sample.exe" --provider ghidra --format json
 
 `rea doctor` checks the x64 host, exact Ghidra release,
 `support\analyzeHeadless.bat`, `java.exe`, `javac.exe`, JDK bitness, and JDK
-major version. `rea setup` remains unavailable on Windows and makes no changes.
+major version. `rea setup` can configure supported agent integrations and the
+bundled REA skill on Windows after approval. It does not install Hopper, Ghidra,
+or Java, and configuring an agent does not enable the blocked Ghidra operations.
 
 For an MCP client, register the resolved Node entry point and preserve the
 three environment variables above. A representative configuration is:

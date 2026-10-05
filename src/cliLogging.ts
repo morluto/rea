@@ -13,8 +13,7 @@ export const isCliOperationFailure = (value: unknown): boolean => {
   return (
     value.status === "failed" ||
     value.status === "needs_confirmation" ||
-    value.status === "needs_human" ||
-    value.status === "planned"
+    value.status === "needs_human"
   );
 };
 

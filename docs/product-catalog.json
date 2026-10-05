@@ -430,8 +430,32 @@
     {
       "id": "devin",
       "display_name": "Devin",
-      "format": "unsupported",
-      "configuration": "detect-only"
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "opencode",
+      "display_name": "OpenCode",
+      "format": "opencode",
+      "configuration": "managed"
+    },
+    {
+      "id": "antigravity",
+      "display_name": "Antigravity",
+      "format": "json",
+      "configuration": "managed"
+    },
+    {
+      "id": "copilot_cli",
+      "display_name": "GitHub Copilot CLI",
+      "format": "copilot_cli",
+      "configuration": "managed"
+    },
+    {
+      "id": "vscode",
+      "display_name": "VS Code",
+      "format": "vscode",
+      "configuration": "managed"
     }
   ],
   "cli": {

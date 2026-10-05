@@ -87,13 +87,13 @@ REA를 에이전트에 연결하세요.
 npx rea-agents setup
 ```
 
-**Agent Integration**을 선택하고 설정할 에이전트를 고른 뒤 계획을 검토하고 승인하세요. Setup은 MCP 연결과 REA의 조사 워크플로를 설정합니다. 기존 Hopper나 Ghidra에 연결하거나 Hopper 설치를 제안할 수 있습니다.
+Setup은 먼저 연결할 에이전트를 여러 개 선택하도록 안내합니다. 기존 REA 등록은 기본 선택되며, 감지만 된 클라이언트는 자동 선택되지 않습니다. 아직 설정되지 않은 클라이언트도 직접 선택할 수 있습니다. 정확한 경로와 변경 사항을 검토한 뒤 승인하세요. 선택한 에이전트에는 기본적으로 REA 워크플로가 설치됩니다. Hopper는 별도의 선택 사항이며 따로 승인해야 합니다. 기존 Ghidra 경로도 등록할 수 있습니다.
 
 변경 전에 계획을 표시하고 기존 설정을 백업합니다. 요구 사항과 추가 옵션은 [설치 안내](docs/installation.md)를 참고하세요.
 
 ### 에이전트에서 사용하기
 
-설정 후 에이전트를 다시 시작하고 조사할 앱이나 기능을 설명하세요. REA는 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf를 설정할 수 있습니다. Devin은 감지만 합니다. 다른 에이전트는 아래 MCP 설정을 사용할 수 있습니다.
+설정 후 에이전트를 다시 시작하고 조사할 앱이나 기능을 설명하세요. REA는 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 다른 에이전트는 아래 MCP 설정을 사용할 수 있습니다.
 
 Hopper는 데모 모드로 사용할 수 있습니다. 첫 실행 안내가 나오면 데모를 선택하거나 기존 라이선스를 입력하세요.
 
@@ -209,7 +209,7 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 
 ## 다른 코딩 에이전트에서 사용하기
 
-Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf를 설정할 수 있습니다. Devin은 감지 결과만 보고합니다. 로컬 MCP 서버를 지원하는 에이전트는 다음 설정으로 연결할 수 있습니다.
+Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 로컬 MCP 서버를 지원하는 에이전트는 다음 설정으로 연결할 수 있습니다.
 
 <!-- x-release-please-start-version -->
 

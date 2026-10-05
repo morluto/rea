@@ -9,6 +9,32 @@ import { readClientRegistrationStatuses } from "../../../src/application/ClientR
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 describe("client registration status", () => {
+  it("discovers Claude Code from its config file without a marker directory", async () => {
+    const home = await createTestTempDirectory("rea-claude-config-only-");
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "claude_code",
+        config_path: join(home, ".claude.json"),
+        state: "aligned",
+        remediation: null,
+      }),
+    ]);
+  });
+
   it("distinguishes aligned, stale, missing, and invalid registrations", async () => {
     const home = await createTestTempDirectory("rea-registrations-");
     await Promise.all([

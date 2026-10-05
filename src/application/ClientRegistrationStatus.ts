@@ -6,7 +6,9 @@ import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
+import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { supportedClients } from "./SupportedClients.js";
+import type { SetupClient } from "./SupportedClients.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -44,6 +46,10 @@ const registrationSchema = z
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
     startup_timeout_sec: z.number().positive().optional(),
+    type: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+    disabled: z.boolean().optional(),
+    enabled: z.boolean().optional(),
   })
   .passthrough();
 
@@ -54,7 +60,10 @@ export const readClientRegistrationStatuses = async (
 ): Promise<readonly ClientRegistrationStatus[]> => {
   const statuses: ClientRegistrationStatus[] = [];
   for (const client of supportedClients(home)) {
-    if (client.format === "unsupported" || !(await exists(client.markerPath)))
+    if (
+      client.format === "unsupported" ||
+      (!(await exists(client.markerPath)) && !(await exists(client.configPath)))
+    )
       continue;
     try {
       const content = await readFile(client.configPath, "utf8");
@@ -66,7 +75,7 @@ export const readClientRegistrationStatuses = async (
         );
         continue;
       }
-      const registration = registrationSchema.parse(raw);
+      const registration = parseRegistration(raw, client);
       const command: RegistrationCommand = [
         registration.command,
         ...registration.args,
@@ -76,7 +85,7 @@ export const readClientRegistrationStatuses = async (
           client.name,
           client.configPath,
           command,
-          registrationAligned(registration, client.name, currentCommandPath)
+          registrationAligned(registration, client, currentCommandPath)
             ? "aligned"
             : "stale",
         ),
@@ -98,14 +107,32 @@ export const readClientRegistrationStatuses = async (
 
 const registrationAligned = (
   registration: z.output<typeof registrationSchema>,
-  client: string,
+  client: SetupClient,
   currentCommandPath: string,
 ): boolean => {
   const command = [registration.command, ...registration.args];
+  if (registration.disabled === true || registration.enabled === false)
+    return false;
+  if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
+    return false;
   if (
-    client === "codex" &&
+    command.length === 3 &&
+    command[2] === "mcp" &&
+    resolve(command[0] ?? "") === resolve(process.execPath) &&
+    resolve(command[1] ?? "") === currentCommandPath
+  )
+    return true;
+  if (
+    client.name === "codex" &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
+  )
+    return false;
+  if (client.format === "vscode" && registration.type !== "stdio") return false;
+  if (
+    client.format === "copilot_cli" &&
+    (registration.type !== "stdio" ||
+      JSON.stringify(registration.tools) !== JSON.stringify(["*"]))
   )
     return false;
   if (
@@ -121,6 +148,35 @@ const registrationAligned = (
     command[1] === "mcp" &&
     resolve(command[0] ?? "") === currentCommandPath
   );
+};
+
+const parseRegistration = (
+  value: unknown,
+  client: SetupClient,
+): z.output<typeof registrationSchema> => {
+  if (client.format === "opencode") {
+    const entry = z
+      .object({
+        type: z.literal("local"),
+        command: z.array(z.string()).min(1),
+        environment: z.record(z.string(), z.string()).optional(),
+      })
+      .passthrough()
+      .parse(value);
+    const [command = "", ...args] = entry.command;
+    return registrationSchema.parse({
+      ...entry,
+      command,
+      args,
+    });
+  }
+  const registration = registrationSchema.parse(value);
+  if (
+    (client.format === "vscode" || client.format === "copilot_cli") &&
+    registration.type !== "stdio"
+  )
+    throw new TypeError("Expected an stdio registration");
+  return registration;
 };
 
 const remediation =

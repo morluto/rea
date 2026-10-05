@@ -45,7 +45,7 @@ export const registerSetupCommands = (
 
 const registerSetupCommand = (cli: CliInstance, logger: Logger): void => {
   cli.command(CLI_COMMANDS.setup, {
-    description: "Install requirements and configure agents",
+    description: "Configure agent integrations and optional analysis providers",
     outputPolicy: "agent-only",
     options: z.object({
       yes: z
@@ -162,15 +162,12 @@ const runSetupCommand = async (input: {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
-  if (options.yes && !hasExplicitScope)
-    process.stderr.write(
-      "!  Implicit `rea setup --yes` scope is deprecated; use `--all-detected` to retain it.\n",
-    );
   const result = await runSetup(
     setupRunOptions(input, interactive, hasExplicitScope),
     systemSetupHost(createSystemDoctorHost()),
     interactive
-      ? (actions) => confirmInteractiveSetup(actions, options.accessible)
+      ? (actions, context) =>
+          confirmInteractiveSetup(actions, options.accessible, context)
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result);
@@ -193,7 +190,9 @@ const setupRunOptions = (
     approved: options.yes && !options.dryRun,
     installHopper: options.installHopper,
     structured: input.formatExplicit || options.dryRun,
-    proposeHopper: !hasExplicitScope || options.installHopper,
+    dryRun: options.dryRun,
+    allDetectedClients: options.allDetected,
+    proposeHopper: interactive || options.installHopper,
     ...(hasSelectedClients ? { clientIds: options.client } : {}),
     ...(hasExplicitScope
       ? { installSkill: options.skill ?? agentIntegrationSelected }
@@ -219,6 +218,7 @@ const setupIsInteractive = (
   !options.dryRun &&
   !formatExplicit &&
   process.stdin.isTTY === true &&
+  process.stdout.isTTY === true &&
   process.stderr.isTTY === true;
 
 const setupHasExplicitScope = (options: SetupCommandOptions): boolean =>

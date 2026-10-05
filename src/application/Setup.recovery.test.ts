@@ -16,7 +16,10 @@ describe("setup workflow", () => {
     host.clientResults.set("second", { status: "configured" });
     host.clientResults.set("third", { status: "failed", reason: "readback" });
 
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), clientIds: ["first", "second", "third"] },
+      host,
+    );
 
     expect(host.configurations).toBe(3);
     expect(result.clients).toEqual({
@@ -33,7 +36,10 @@ describe("setup workflow", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.skill = "failed";
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), installSkill: true, clientIds: [] },
+      host,
+    );
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(
       "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
@@ -44,7 +50,10 @@ describe("setup workflow", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.doctorHealthy = false;
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), readinessScope: { providers: ["hopper"] } },
+      host,
+    );
     expect(result.remediation).toBe(
       "Run rea doctor and apply each reported remediation.",
     );
@@ -55,6 +64,7 @@ describe("setup workflow", () => {
     host.hopper = "/Applications/Hopper";
     host.doctorHealthy = false;
     host.scopedDoctorHealthy = true;
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
     const readinessScope = {
       clients: ["codex"],
       providers: [] as string[],
@@ -77,12 +87,20 @@ describe("setup workflow", () => {
     });
     expect(host.doctorScopes).toEqual(expect.arrayContaining([readinessScope]));
   });
+});
 
-  it("explains unsupported Node and macOS recovery", async () => {
+describe("setup scoped readiness", () => {
+  it("limits Hopper host checks to workflows that request Hopper", async () => {
     const platformHost = new FakeSetupHost("win32");
-    expect((await runSetup(options(true), platformHost)).remediation).toBe(
-      "REA supports Hopper on macOS and selected 64-bit Linux distributions.",
+    platformHost.hopper = "/Applications/Hopper";
+    platformHost.skill = "unchanged";
+    platformHost.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    const windowsAgent = await runSetup(
+      { ...options(true), clientIds: ["codex"] },
+      platformHost,
     );
+    expect(windowsAgent.status).toBe("ready");
+    expect(platformHost.configurations).toBe(1);
 
     const nodeHost = new FakeSetupHost();
     nodeHost.nodeVersion = "20.0.0";
@@ -92,9 +110,58 @@ describe("setup workflow", () => {
 
     const macHost = new FakeSetupHost();
     macHost.version = "11.7";
-    expect((await runSetup(options(true), macHost)).remediation).toBe(
+    expect((await runSetup(options(true), macHost)).status).toBe("ready");
+    expect((await runSetup(options(true, true), macHost)).remediation).toBe(
       "Upgrade to macOS 12 or newer.",
     );
+  });
+
+  it("keeps an unchanged selected client in final readiness checks", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.productRegistrations = [
+      {
+        client: "codex",
+        config_path: "/codex.toml",
+        command: ["rea", "mcp"],
+        state: "aligned",
+        remediation: null,
+      },
+    ];
+    host.clientInspections.set("codex", { status: "already_current" });
+    host.scopedDoctorHealthy = true;
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions).toEqual([]);
+    expect(host.doctorScopes.at(-1)).toEqual({
+      clients: ["codex"],
+      providers: [],
+      skill: true,
+    });
+  });
+
+  it("does not advertise an unhealthy Hopper in the selected readiness summary", async () => {
+    const host = new FakeSetupHost("win32");
+    host.hopper = "C:\\Hopper\\Hopper.exe";
+    host.unsupportedHopperVersion = true;
+    host.clients = [{ name: "codex", configPath: "C:\\codex.toml" }];
+    host.scopedDoctorHealthy = true;
+
+    const result = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["codex"],
+        installSkill: false,
+      },
+      host,
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.doctor.availableProviders).toEqual([]);
   });
 
   it("rejects unsupported hosts before mutation", async () => {
@@ -127,7 +194,10 @@ describe("setup workflow", () => {
     host.skill = "unchanged";
     host.clients = [{ name: "codex", configPath: "/codex.toml" }];
 
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), clientIds: ["codex"] },
+      host,
+    );
 
     expect(result.status).toBe("ready");
     expect(host.hopperInstalls).toBe(0);

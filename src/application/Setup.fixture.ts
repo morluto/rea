@@ -9,6 +9,9 @@ import {
 } from "./Setup.js";
 import type { DoctorCheck, DoctorReport, DoctorScope } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
+import { CATALOG_IDENTITY } from "../catalogIdentity.js";
+import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 
 /** Recording setup host for service-level planning and recovery tests. */
 export class FakeSetupHost implements SetupHost {
@@ -22,6 +25,8 @@ export class FakeSetupHost implements SetupHost {
   hopperInstallSucceeds = true;
   skill: "installed" | "unchanged" | "failed" = "installed";
   clients: readonly SetupClient[] = [];
+  availableClients: readonly SetupClient[] | undefined;
+  productRegistrations: readonly ClientRegistrationStatus[] = [];
   clientResults = new Map<string, ClientConfigurationResult>();
   clientInspections = new Map<string, ClientConfigurationInspection>();
   hopperInstalls = 0;
@@ -32,6 +37,7 @@ export class FakeSetupHost implements SetupHost {
   doctorScopes: Array<DoctorScope | undefined> = [];
   checkedHopperPaths: Array<string | undefined> = [];
   configuredProviderEnvironments: SetupProviderEnvironment[] = [];
+  configuredCommands: Array<readonly string[]> = [];
   doctorHealthy: boolean | undefined;
   scopedDoctorHealthy: boolean | undefined;
   linuxDemoRuntimeMissing = false;
@@ -75,12 +81,16 @@ export class FakeSetupHost implements SetupHost {
   };
   detectedClients = (): Promise<readonly SetupClient[]> =>
     Promise.resolve(this.clients);
+  supportedClients = (): Promise<readonly SetupClient[]> =>
+    Promise.resolve(this.availableClients ?? this.clients);
   configureClient = (
     client: SetupClient,
     providerEnvironment: SetupProviderEnvironment,
+    command: readonly string[],
   ): Promise<ClientConfigurationResult> => {
     this.configurations += 1;
     this.configuredProviderEnvironments.push(providerEnvironment);
+    this.configuredCommands.push(command);
     return Promise.resolve(
       this.clientResults.get(client.name) ?? { status: "configured" },
     );
@@ -138,7 +148,11 @@ export class FakeSetupHost implements SetupHost {
     const healthy =
       scope === undefined
         ? environmentHealthy
-        : (this.scopedDoctorHealthy ?? environmentHealthy);
+        : (scope.clients?.length ?? 0) === 0 &&
+            (scope.providers?.length ?? 0) === 0 &&
+            scope.skill !== true
+          ? true
+          : (this.scopedDoctorHealthy ?? environmentHealthy);
     return Promise.resolve({
       healthy,
       environment_healthy: environmentHealthy,
@@ -153,6 +167,25 @@ export class FakeSetupHost implements SetupHost {
       informational_checks: [],
       ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
       checks,
+      identity: {
+        cli_package_version: PRODUCT_IDENTITY.packageVersion,
+        expected_skill_version: PRODUCT_IDENTITY.skillVersion,
+        sdk: SDK_IDENTITY,
+        catalog: CATALOG_IDENTITY,
+        live_server: {
+          state: "unknown",
+          remediation: "Inspect the running server.",
+        },
+        installations: { paths: [], state: "unknown" },
+        skill: {
+          installed_version: null,
+          installed_tool_count: null,
+          installed_catalog_digest: null,
+          state: this.skill === "unchanged" ? "aligned" : "missing",
+          remediation: null,
+        },
+        registrations: this.productRegistrations,
+      },
     });
   };
 }

@@ -4,11 +4,17 @@ import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 const decisionMarker = "REA_SETUP_DECISION:";
+const decisionSchema = z.object({
+  approved: z.boolean(),
+  selectedActionIds: z.array(z.string()),
+  cancelled: z.boolean().optional(),
+});
 
 const actions = [
   {
@@ -40,234 +46,222 @@ const actions = [
   },
 ] as const;
 
+const clientStates = [
+  {
+    client: {
+      name: "codex",
+      format: "toml",
+      configPath: [".codex", "config.toml"],
+      marker: [".codex"],
+    },
+    detected: true,
+    configured: false,
+    status: "needs_configuration",
+  },
+  {
+    client: {
+      name: "opencode",
+      format: "opencode",
+      configPath: [".config", "opencode", "opencode.json"],
+      marker: [".config", "opencode"],
+    },
+    detected: false,
+    configured: false,
+    status: "missing",
+  },
+] as const;
+
+const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
+
 describe("interactive setup journey", () => {
-  it("leads with value, a compact detected-target summary, and durable key help", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\u0003"),
-    ]);
-
-    expect(result.output).toContain(
-      "Understand local apps and binaries from your coding agent.",
-    );
-    expect(result.output).toContain(
-      "Trace how a feature works with local evidence.",
-    );
-    expect(result.output).toContain("Found 1 supported agent");
-    expect(result.output).toContain("Codex");
-    expect(result.output).toContain("Hopper deep-analysis provider (provider)");
-    expect(result.output).toContain(
-      "Agent integration (MCP + guided workflow)",
-    );
-    expect(result.output).toContain(
-      "Keys: ↑/↓ navigate · Space toggle · Enter confirm · Ctrl-C cancel",
-    );
-    expect(result.decision.approved).toBe(false);
-  });
-
-  it("allows deselecting the pre-selected agent integration to opt out", async () => {
-    const result = await runJourney([step("What should REA set up?", " \r")]);
-
-    expect(result.output).toContain(
-      "Agent integration (MCP + guided workflow)",
-    );
-    expect(result.output).not.toContain(
-      "REA reverse-engineering skill (skill)",
-    );
-    expect(result.output).toContain("Hopper deep-analysis provider (provider)");
-    expect(result.output).not.toContain("Ready to review");
-    expect(result.output).toContain("Nothing selected. No changes were made.");
-    expect(result.decision).toEqual({
-      approved: false,
-      selectedActionIds: [],
-    });
-  });
-
-  it("pre-selects agent integration and proceeds to the agent picker on Enter", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\r"),
-      step("Which agents should use REA?", "\u0003"),
-    ]);
-
-    expect(result.output).toContain("Codex (detected)");
-    expect(result.output).toContain("Setup cancelled. No changes were made.");
-    expect(result.decision.approved).toBe(false);
-  });
-
-  it("offers one bundled repair when MCP is aligned but the skill is missing", async () => {
+  it("shows detected and absent clients without preselecting detected clients", async () => {
     const result = await runJourney(
-      [step("What should REA set up?", "\r"), step("Apply this change?", "\r")],
+      [step("Which agents should use REA?", "\u001b[B\r")],
       false,
-      actions.filter(({ kind }) => kind !== "configure_client"),
+      [actions[0]],
     );
-
-    expect(result.output).toContain("No agent integrations need configuration");
+    expect(result.output).toContain("Detected: Codex");
     expect(result.output).toContain(
-      "Agent integration (MCP + guided workflow)",
+      "Not detected · configuration is still available",
     );
-    expect(result.output).not.toContain(
-      "REA reverse-engineering skill (skill)",
-    );
-    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
-    expect(result.output).not.toContain("CREATE  Codex");
-    expect(result.output).not.toContain(
-      "INSTALL  Hopper deep-analysis provider",
-    );
-    expect(result.decision).toEqual({
-      approved: true,
-      selectedActionIds: ["install_skill"],
-    });
+    expect(result.output).toContain("Which agents should use REA?");
+    expect(result.output).not.toContain("What should REA set up?");
+    expect(result.decision.selectedActionIds).toEqual([]);
   });
 
-  it("pre-selects all detected agents in the agent picker", async () => {
+  it("selects an absent OpenCode client and bundles its skill", async () => {
     const result = await runJourney(
       [
-        step("What should REA set up?", "\r"),
-        step("Which agents should use REA?", "\u0003"),
+        step("Which agents should use REA?", "\u001b[B \r"),
+        step("Apply these 2 changes?", "\r"),
       ],
       false,
       [
-        actions[0],
         {
           ...actions[0],
-          id: "configure_client:cursor",
-          label: "Cursor",
-          target: "/isolated/.cursor/mcp.json",
+          id: "configure_client:opencode",
+          label: "OpenCode",
+          target: "/isolated/.config/opencode/opencode.json",
         },
-        ...actions.slice(1),
+        actions[1],
       ],
     );
-
-    expect(result.output).toContain("Codex (detected)");
-    expect(result.output).toContain("Cursor (detected)");
-    expect(result.decision.approved).toBe(false);
-  });
-});
-
-describe("interactive setup selection and confirmation", () => {
-  it("retains the bundled skill even when all agents are deselected (#399)", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\r"),
-      step("Which agents should use REA?", " \r"),
-      step("Apply this change?", "\r"),
+    expect(result.output).toContain("CREATE  OpenCode");
+    expect(result.decision.selectedActionIds).toEqual([
+      "configure_client:opencode",
+      "install_skill",
     ]);
-
-    expect(result.output).toContain("Ready to review");
-    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
-    expect(result.output).not.toContain("CREATE  Codex");
-    expect(result.decision).toEqual({
-      approved: true,
-      selectedActionIds: ["install_skill"],
-    });
+    expect(result.decision.approved).toBe(true);
   });
 
-  it("defaults the final confirmation to Yes, apply", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\r"),
-      step("Which agents should use REA?", "\r"),
-      step("Apply these 2 changes?", "\r"),
-    ]);
-
-    expect(result.output).toContain("Ready to review");
-    expect(result.output).toContain("CREATE  Codex");
-    expect(result.output).toContain("/isolated/.codex/config.toml");
-    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
-    expect(result.output).not.toContain(
-      "INSTALL  Hopper deep-analysis provider",
-    );
-    expect(result.output).toContain("Yes, apply");
-    expect(result.decision).toEqual({
-      approved: true,
-      selectedActionIds: ["configure_client:codex", "install_skill"],
-    });
-  });
-
-  it("can still be cancelled at the final confirmation", async () => {
-    const result = await runJourney([
-      step("What should REA set up?", "\r"),
-      step("Which agents should use REA?", "\r"),
-      step("Apply these 2 changes?", "\u001b[D\r"),
-    ]);
-
-    expect(result.output).toContain("Ready to review");
-    expect(result.output).toContain("Setup cancelled. No changes were made.");
-    expect(result.decision).toEqual({
-      approved: false,
-      selectedActionIds: ["configure_client:codex", "install_skill"],
-    });
-  });
-
-  it("defaults accessible agent integration to Yes and others to No", async () => {
+  it("shows the launcher, backup, and path before final approval", async () => {
     const result = await runJourney(
       [
-        step("Set up Agent integration (MCP + guided workflow)?", "\r"),
-        step("Set up Hopper deep-analysis provider (provider)?", "\r"),
+        step("Which agents should use REA?", " \r"),
+        step("Apply these 2 changes?", "\r"),
+      ],
+      false,
+      [
+        {
+          ...actions[0],
+          operation: "update",
+          backupPath: "/isolated/.codex/config.toml.bak",
+          commands: ["npx -y rea-agents@3.2.1 mcp"],
+        },
+        actions[1],
+      ],
+    );
+    expect(result.output).toContain("/isolated/.codex/config.toml.bak");
+    expect(result.output).toContain("command: npx -y rea-agents@3.2.1 mcp");
+    expect(result.output.indexOf("command:")).toBeLessThan(
+      result.output.indexOf("Apply these 2 changes?"),
+    );
+  });
+
+  it("treats final No as cancellation", async () => {
+    const result = await runJourney([
+      step("Which agents should use REA?", " \r"),
+      step("Apply these 2 changes?", "\u001b[D\r"),
+    ]);
+    expect(result.output).toContain("Setup cancelled. No changes were made.");
+    expect(result.decision.cancelled).toBe(true);
+    expect(result.decision.approved).toBe(false);
+  });
+
+  it("restores the terminal after Ctrl-C during selection", async () => {
+    const result = await runJourney([
+      step("Which agents should use REA?", "\u0003"),
+    ]);
+    expect(result.output).toContain("\u001b[?25h");
+    expect(result.decision.cancelled).toBe(true);
+  });
+
+  it("can install the skill for CLI use without an agent registration", async () => {
+    const result = await runJourney([
+      step("Which agents should use REA?", "\r"),
+      step("Install the guided REA skill for CLI use?", "\u001b[D\r"),
+      step("Apply this change?", "\r"),
+    ]);
+    expect(result.decision.selectedActionIds).toEqual(["install_skill"]);
+    expect(result.decision.approved).toBe(true);
+  });
+
+  it("offers Hopper separately and defaults against installing it", async () => {
+    const result = await runJourney(
+      [
+        step("Which agents should use REA?", " \r"),
+        step("Install Hopper for deep binary analysis?", "\r"),
+        step("Apply these 2 changes?", "\r"),
+      ],
+      false,
+      actions,
+    );
+    expect(result.decision.selectedActionIds).toEqual([
+      "configure_client:codex",
+      "install_skill",
+    ]);
+  });
+
+  it("uses sequential prompts without auto-selecting detected agents in accessible mode", async () => {
+    const result = await runJourney(
+      [
+        step("Configure Codex?", "\r"),
+        step("Configure OpenCode?", "\u001b[A\r"),
         step("Apply this change?", "\r"),
       ],
       true,
-      actions.filter(({ kind }) => kind !== "configure_client"),
+      [{ ...actions[0], id: "configure_client:opencode", label: "OpenCode" }],
     );
-
-    expect(result.output).toContain("Ready to review");
-    expect(result.output).toContain("INSTALL  REA reverse-engineering skill");
-    expect(result.decision).toEqual({
-      approved: true,
-      selectedActionIds: ["install_skill"],
-    });
+    expect(result.decision.selectedActionIds).toEqual([
+      "configure_client:opencode",
+    ]);
   });
 
-  it("allows accessible opt-out of the pre-selected agent integration", async () => {
+  it("preselects only a prior REA registration", async () => {
     const result = await runJourney(
       [
-        step("Set up Agent integration (MCP + guided workflow)?", "\u001b[B\r"),
-        step("Set up Hopper deep-analysis provider (provider)?", "\r"),
+        step("Which agents should use REA?", "\r"),
+        step("Apply these 2 changes?", "\r"),
       ],
-      true,
+      false,
+      agentActions,
+      ["codex"],
     );
-
-    expect(result.output).toContain("Nothing selected. No changes were made.");
-    expect(result.decision.selectedActionIds).toEqual([]);
+    expect(result.decision.selectedActionIds).toEqual([
+      "configure_client:codex",
+      "install_skill",
+    ]);
   });
 });
 
 describe("interactive setup completion", () => {
-  it("frames completion around the capabilities that are now ready", async () => {
-    const { stderr } = await execute(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
+  it.each([
+    { npmCommand: "", launcher: "rea" },
+    { npmCommand: "exec", launcher: "npx rea-agents" },
+  ])(
+    "prints an available next command for $launcher invocation",
+    async ({ npmCommand, launcher }) => {
+      const { stderr } = await execute(
+        process.execPath,
         [
-          'import { renderInteractiveSetupResult } from "./dist/cliSetup.js";',
-          "renderInteractiveSetupResult({",
-          '  status: "ready",',
-          "  plannedActions: [],",
-          "  appliedActions: [],",
-          '  clients: { codex: { status: "configured" } },',
-          "  doctor: {",
-          "    healthy: true,",
-          '    hopperPath: "/Applications/Hopper",',
-          "    checks: [],",
-          '    providerInspections: [{ id: "ghidra", available: true }],',
-          '    identity: { skill: { state: "aligned" }, registrations: [{ client: "codex", state: "aligned" }] },',
-          "  },",
-          "});",
-        ].join("\n"),
-      ],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, NO_COLOR: "1" },
-      },
-    );
+          "--input-type=module",
+          "--eval",
+          [
+            'import { renderInteractiveSetupResult } from "./dist/cliSetup.js";',
+            "renderInteractiveSetupResult({",
+            '  status: "ready",',
+            "  plannedActions: [],",
+            "  appliedActions: [],",
+            '  clients: { codex: { status: "configured" } },',
+            "  doctor: {",
+            "    healthy: true,",
+            '    availableProviders: ["hopper", "ghidra"],',
+            '    hopperPath: "/Applications/Hopper",',
+            "    checks: [],",
+            '    providerInspections: [{ id: "ghidra", available: true }],',
+            '    identity: { skill: { state: "aligned" }, registrations: [{ client: "codex", state: "aligned" }] },',
+            "  },",
+            "});",
+          ].join("\n"),
+        ],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, npm_command: npmCommand, NO_COLOR: "1" },
+        },
+      );
 
-    expect(stderr).toContain("What you can do now");
-    expect(stderr).toContain("Deep analysis: Hopper and Ghidra");
-    expect(stderr).toContain("Agent access: Codex");
-    expect(stderr).toContain("Guided reverse-engineering workflows: installed");
-    expect(stderr).toContain("CLI: rea analyze /path/to/app");
-    expect(stderr).toContain(
-      'Try in Codex: "Explain how a feature works in /path/to/app and show the evidence."',
-    );
-  });
+      expect(stderr).toContain("What you can do now");
+      expect(stderr).toContain("Deep analysis: Hopper and Ghidra");
+      expect(stderr).toContain("Agent access: Codex");
+      expect(stderr).toContain(
+        "Guided reverse-engineering workflows: installed",
+      );
+      expect(stderr).toContain(`CLI: ${launcher} analyze /path/to/app`);
+      expect(stderr).toContain(
+        'Try in Codex: "Explain how a feature works in /path/to/app and show the evidence."',
+      );
+    },
+  );
 });
 
 interface JourneyStep {
@@ -277,10 +271,7 @@ interface JourneyStep {
 
 interface JourneyResult {
   readonly output: string;
-  readonly decision: {
-    readonly approved: boolean;
-    readonly selectedActionIds: readonly string[];
-  };
+  readonly decision: z.infer<typeof decisionSchema>;
 }
 
 const step = (prompt: string, input: string): JourneyStep => ({
@@ -291,13 +282,19 @@ const step = (prompt: string, input: string): JourneyStep => ({
 const runJourney = async (
   steps: readonly JourneyStep[],
   accessible = false,
-  journeyActions: readonly object[] = actions,
+  journeyActions: readonly object[] = agentActions,
+  initialClientIds: readonly string[] = [],
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cliSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
-    `const decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)});`,
+    `const context = ${JSON.stringify({ stage: "select", clientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
+    `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
+    "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
+    "  const selected = new Set(decision.selectedActionIds);",
+    `  decision = await confirmInteractiveSetup(actions.filter(({ id }) => selected.has(id)), ${JSON.stringify(accessible)}, { ...context, stage: "confirm", clientSelectionAllowed: false });`,
+    "}",
     `process.stdout.write(${JSON.stringify(`\n${decisionMarker}`)} + JSON.stringify(decision) + "\\n");`,
   ].join("\n");
 
@@ -362,7 +359,7 @@ const runJourney = async (
       try {
         finish(undefined, {
           output,
-          decision: JSON.parse(serialized) as JourneyResult["decision"],
+          decision: decisionSchema.parse(JSON.parse(serialized)),
         });
       } catch (cause: unknown) {
         finish(cause instanceof Error ? cause : new Error(String(cause)));

@@ -7,10 +7,12 @@ describe("setup workflow", () => {
   it("returns a complete plan without mutation", async () => {
     const host = new FakeSetupHost();
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
-    const result = await runSetup(options(false), host);
+    const result = await runSetup(
+      { ...options(false), clientIds: ["cursor"] },
+      host,
+    );
     expect(result.status).toBe("needs_confirmation");
     expect(result.plannedActions.map(({ kind }) => kind)).toEqual([
-      "install_hopper",
       "configure_client",
       "install_skill",
     ]);
@@ -61,7 +63,7 @@ describe("setup workflow", () => {
       host,
       () => Promise.resolve(false),
     );
-    expect(result.status).toBe("planned");
+    expect(result.status).toBe("cancelled");
     expect(result.appliedActions).toEqual([]);
     expect(host.hopperInstalls).toBe(0);
     expect(host.doctorCalls).toBe(1);
@@ -77,24 +79,40 @@ describe("setup workflow", () => {
       () => Promise.resolve({ approved: false, selectedActionIds: [] }),
     );
 
-    expect(result.status).toBe("planned");
+    expect(result.status).toBe("ready");
     expect(result.plannedActions).toEqual([]);
     expect(result.appliedActions).toEqual([]);
     expect(host.configurations).toBe(0);
     expect(host.skillInstalls).toBe(0);
     expect(host.hopperInstalls).toBe(0);
-    expect(host.doctorCalls).toBe(1);
+    expect(host.doctorCalls).toBe(2);
   });
 
   it("requires the Hopper flag for unattended setup", async () => {
     const host = new FakeSetupHost();
     const result = await runSetup(options(true), host);
-    expect(result.status).toBe("needs_human");
+    expect(result.status).toBe("ready");
     expect(host.hopperInstalls).toBe(0);
-    expect(result.appliedActions).toEqual(["installed_skill"]);
-    expect(result.remediation).toBe(
-      "Hopper is optional for non-Hopper providers. Rerun with --yes --install-hopper for deep native analysis.",
+    expect(result.appliedActions).toEqual([]);
+  });
+
+  it("returns an approved planning outcome for explicit dry runs", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+
+    const result = await runSetup(
+      { ...options(false), dryRun: true, clientIds: ["codex"] },
+      host,
     );
+
+    expect(result.status).toBe("planned");
+    expect(result.plannedActions.map(({ id }) => id)).toEqual([
+      "configure_client:codex",
+    ]);
+    expect(host.hopperInstalls).toBe(0);
+    expect(host.configurations).toBe(0);
   });
 
   it("installs Hopper when unattended authorization is explicit", async () => {
@@ -106,16 +124,13 @@ describe("setup workflow", () => {
       supported: true,
     };
     const result = await runSetup(options(true, true), host);
-    expect(result.appliedActions).toEqual([
-      "installed_hopper",
-      "installed_skill",
-    ]);
+    expect(result.appliedActions).toEqual(["installed_hopper"]);
     expect(host.hopperInstalls).toBe(1);
     expect(result.status).toBe("ready");
     expect(result.remediation).toBeUndefined();
   });
 
-  it("reuses existing Hopper and configures detected clients", async () => {
+  it("reuses existing Hopper without selecting every detected client", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.clients = [
@@ -124,11 +139,7 @@ describe("setup workflow", () => {
     ];
     const result = await runSetup(options(true), host);
     expect(result.status).toBe("ready");
-    expect(result.appliedActions).toEqual([
-      "configured_claude",
-      "configured_cursor",
-      "installed_skill",
-    ]);
+    expect(result.appliedActions).toEqual([]);
     expect(host.hopperInstalls).toBe(0);
   });
 });
@@ -142,6 +153,24 @@ describe("setup workflow lifecycle and provider planning", () => {
         name: "codex",
         displayName: "Codex",
         configPath: "/codex.toml",
+      },
+    ];
+    host.productRegistrations = [
+      {
+        client: "codex",
+        config_path: "/codex.toml",
+        command: ["rea", "mcp"],
+        state: "aligned",
+        remediation: null,
+      },
+    ];
+    host.productRegistrations = [
+      {
+        client: "codex",
+        config_path: "/codex.toml",
+        command: ["rea", "mcp"],
+        state: "aligned",
+        remediation: null,
       },
     ];
     const progress: SetupProgressEvent[] = [];
@@ -183,7 +212,10 @@ describe("setup workflow lifecycle and provider planning", () => {
     host.skill = "unchanged";
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
 
-    const plan = await runSetup(options(false), host);
+    const plan = await runSetup(
+      { ...options(false), clientIds: ["cursor"] },
+      host,
+    );
     expect(plan.plannedActions.map(({ kind }) => kind)).toEqual([
       "configure_client",
     ]);
@@ -196,7 +228,10 @@ describe("setup workflow lifecycle and provider planning", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(host.configurations).toBe(0);
 
-    const applied = await runSetup(options(true), host);
+    const applied = await runSetup(
+      { ...options(true), clientIds: ["cursor"] },
+      host,
+    );
     expect(applied.status).toBe("ready");
     expect(host.hopperInstalls).toBe(0);
     expect(host.configuredProviderEnvironments).toContainEqual({
@@ -212,7 +247,10 @@ describe("setup workflow lifecycle and provider planning", () => {
     host.clients = [{ name: "codex", configPath: "/codex.toml" }];
     host.clientResults.set("codex", { status: "unchanged" });
 
-    const result = await runSetup(options(true, true), host);
+    const result = await runSetup(
+      { ...options(true, true), clientIds: ["codex"] },
+      host,
+    );
 
     expect(result.plannedActions.map(({ kind }) => kind)).toEqual([
       "install_hopper",

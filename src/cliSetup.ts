@@ -10,6 +10,8 @@ import {
 import type {
   SetupAction,
   SetupConfirmationDecision,
+  SetupConfirmationContext,
+  SetupClientState,
   SetupProgressEvent,
   SetupResult,
 } from "./application/Setup.js";
@@ -28,47 +30,41 @@ const promptStreams = {
   withGuide: true,
 } as const;
 
-const agentIntegrationCapabilityId = "agent_integration";
-
-interface SetupCapability {
-  readonly id: string;
-  readonly label: string;
-  readonly hint: string;
-}
-
-/** Run the inline setup picker, exact preflight, and explicit consent. */
+/** Select agent targets, then review the resolved plan before consent. */
 export const confirmInteractiveSetup = async (
   actions: readonly SetupAction[],
   accessible: boolean,
+  context?: SetupConfirmationContext,
 ): Promise<SetupConfirmationDecision> => {
-  intro("REA setup", promptStreams);
-  renderValueIntroduction();
-  renderDetectedSummary(actions);
-  renderKeyboardHelp(accessible);
-  const selectedActionIds = await selectSetupActions(actions, accessible);
-  if (selectedActionIds === undefined) return cancelledDecision();
-  if (selectedActionIds.length === 0) {
-    cancel("Nothing selected. No changes were made.", promptStreams);
-    return { approved: false, selectedActionIds };
+  if (context?.stage === "select" || context === undefined) {
+    intro("REA setup", promptStreams);
+    writeLine(
+      "│  Understand local apps and binaries from your terminal or agent.",
+    );
+    renderDetectedSummary(context?.clientStates ?? []);
+    renderKeyboardHelp(accessible);
   }
-  const selected = new Set(selectedActionIds);
-  const selectedActions = actions.filter(({ id }) => selected.has(id));
-  renderPreflight(selectedActions);
+  if (context?.stage === "select") {
+    const selected = await selectSetupActions(actions, accessible, context);
+    return selected === undefined
+      ? cancelledDecision()
+      : { approved: false, selectedActionIds: selected };
+  }
+  if (actions.length === 0) return { approved: true, selectedActionIds: [] };
+  renderPreflight(actions);
   const approved = await confirm({
     ...promptStreams,
     message:
-      selectedActions.length === 1
+      actions.length === 1
         ? "Apply this change?"
-        : `Apply these ${String(selectedActions.length)} changes?`,
+        : `Apply these ${String(actions.length)} changes?`,
     initialValue: true,
     active: "Yes, apply",
     inactive: "No, cancel",
+    vertical: accessible,
   });
-  if (isCancel(approved) || !approved) {
-    cancel("Setup cancelled. No changes were made.", promptStreams);
-    return { approved: false, selectedActionIds };
-  }
-  return { approved: true, selectedActionIds };
+  if (isCancel(approved) || !approved) return cancelledDecision();
+  return { approved: true, selectedActionIds: actions.map(({ id }) => id) };
 };
 
 /** Render stable, append-only progress for real setup operations. */
@@ -101,153 +97,87 @@ export const renderInteractiveSetupResult = (result: SetupResult): void => {
     );
     return;
   }
-  if (result.status === "planned") return;
+  if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
-  outro("Run `rea doctor` for the remaining checks.", promptStreams);
+  outro(
+    `Run \`${cliInvocation()} doctor\` for the remaining checks.`,
+    promptStreams,
+  );
 };
 
 const selectSetupActions = async (
   actions: readonly SetupAction[],
   accessible: boolean,
+  context: SetupConfirmationContext,
 ): Promise<readonly string[] | undefined> => {
-  const clientActions = actions.filter(
-    ({ kind }) => kind === "configure_client",
+  const clientStates = context.clientStates.filter(
+    ({ client }) => client.format !== "unsupported",
   );
-  const componentActions = actions.filter(
-    ({ kind }) => kind !== "configure_client",
+  const initial = new Set(context.selectedClientIds);
+  const selectedClientIds = accessible
+    ? await selectClientsAccessibly(clientStates, initial)
+    : await selectClients(clientStates, initial);
+  if (selectedClientIds === undefined) return undefined;
+  const selectedActionIds = selectedClientIds.map(
+    (id) => `configure_client:${id}`,
   );
-  const capabilities = setupCapabilities(clientActions, componentActions);
-  const preselectedCapabilityIds = defaultCapabilityIds(capabilities);
-  const selectedCapabilities = accessible
-    ? await selectCapabilitiesAccessibly(capabilities, preselectedCapabilityIds)
-    : await selectCapabilities(capabilities, preselectedCapabilityIds);
-  if (selectedCapabilities === undefined) return undefined;
-  const selectedCapabilityIds = new Set(selectedCapabilities);
-  const bundledSkillAction = componentActions.find(
-    ({ kind }) => kind === "install_skill",
-  );
-  const selectedActionIds = componentActions
-    .filter(
-      ({ id }) =>
-        id !== bundledSkillAction?.id && selectedCapabilityIds.has(id),
-    )
-    .map(({ id }) => id);
-  if (!selectedCapabilityIds.has(agentIntegrationCapabilityId))
-    return selectedActionIds;
-  const bundledSkillId =
-    bundledSkillAction === undefined ? undefined : bundledSkillAction.id;
-  if (clientActions.length === 0)
-    return [
-      ...(bundledSkillId === undefined ? [] : [bundledSkillId]),
-      ...selectedActionIds,
-    ];
-  const preselectedClientIds = clientActions.map(({ id }) => id);
-  const selectedClients = accessible
-    ? await selectClientsAccessibly(clientActions, preselectedClientIds)
-    : await selectClients(clientActions, preselectedClientIds);
-  if (selectedClients === undefined) return undefined;
-  return [
-    ...selectedClients,
-    ...(bundledSkillId === undefined ? [] : [bundledSkillId]),
-    ...selectedActionIds,
-  ];
-};
-
-const defaultCapabilityIds = (
-  capabilities: readonly SetupCapability[],
-): readonly string[] => {
-  const hasAgentIntegration = capabilities.some(
-    ({ id }) => id === agentIntegrationCapabilityId,
-  );
-  if (!hasAgentIntegration) return [];
-  return [agentIntegrationCapabilityId];
-};
-
-const setupCapabilities = (
-  clientActions: readonly SetupAction[],
-  componentActions: readonly SetupAction[],
-): readonly SetupCapability[] => [
-  ...(clientActions.length === 0 &&
-  !componentActions.some(({ kind }) => kind === "install_skill")
-    ? []
-    : [
-        {
-          id: agentIntegrationCapabilityId,
-          label: "Agent integration (MCP + guided workflow)",
-          hint:
-            clientActions.length === 0
-              ? "MCP registrations are aligned; installs the matching bundled skill"
-              : `${String(clientActions.length)} detected ${clientActions.length === 1 ? "agent" : "agents"}; installs the bundled skill when needed`,
-        },
-      ]),
-  ...componentActions
-    .filter(({ kind }) => kind !== "install_skill")
-    .map((action) => ({
-      id: action.id,
-      label: `${action.label} (${actionModality(action)})`,
-      hint: `${action.operation} · ${action.target}`,
-    })),
-];
-
-const selectCapabilities = async (
-  capabilities: readonly SetupCapability[],
-  initialValues: readonly string[],
-): Promise<readonly string[] | undefined> => {
-  const selection = await multiselect({
-    ...promptStreams,
-    message: "What should REA set up?",
-    options: capabilities.map((capability) => ({
-      value: capability.id,
-      label: capability.label,
-      hint: capability.hint,
-    })),
-    initialValues: [...initialValues],
-    required: false,
-    maxItems: Math.max(
-      3,
-      Math.min(capabilities.length, (process.stderr.rows ?? 24) - 8),
-    ),
-    showInstructions: true,
-  });
-  return isCancel(selection) ? undefined : selection;
-};
-
-const selectCapabilitiesAccessibly = async (
-  capabilities: readonly SetupCapability[],
-  preselectedIds: readonly string[],
-): Promise<readonly string[] | undefined> => {
-  const preselected = new Set(preselectedIds);
-  const selected: string[] = [];
-  for (const capability of capabilities) {
+  const skill = actions.find(({ kind }) => kind === "install_skill");
+  if (skill !== undefined) {
+    if (selectedClientIds.length > 0) selectedActionIds.push(skill.id);
+    else {
+      const included = await confirm({
+        ...promptStreams,
+        message: "Install the guided REA skill for CLI use?",
+        initialValue: false,
+        vertical: accessible,
+      });
+      if (isCancel(included)) return undefined;
+      if (included) selectedActionIds.push(skill.id);
+    }
+  }
+  const hopper = actions.find(({ kind }) => kind === "install_hopper");
+  if (hopper !== undefined) {
     const included = await confirm({
       ...promptStreams,
-      message: `Set up ${capability.label}? ${capability.hint}`,
-      initialValue: preselected.has(capability.id),
-      vertical: true,
+      message: "Install Hopper for deep binary analysis?",
+      initialValue: false,
+      vertical: accessible,
     });
     if (isCancel(included)) return undefined;
-    if (included) selected.push(capability.id);
+    if (included) selectedActionIds.push(hopper.id);
   }
-  return selected;
+  return selectedActionIds;
 };
 
+const clientHint = (state: SetupClientState): string =>
+  state.configured
+    ? "REA already configured · selected from existing configuration"
+    : state.status === "invalid"
+      ? "Existing configuration needs repair before setup"
+      : state.detected
+        ? "Detected · choose to configure"
+        : "Not detected · configuration is still available";
+
 const selectClients = async (
-  actions: readonly SetupAction[],
-  initialValues: readonly string[],
+  states: readonly SetupClientState[],
+  initial: ReadonlySet<string>,
 ): Promise<readonly string[] | undefined> => {
+  if (states.length === 0) return [];
   const selection = await multiselect({
     ...promptStreams,
     message: "Which agents should use REA?",
-    options: actions.map((action) => ({
-      value: action.id,
-      label: `${action.label} (detected)`,
-      hint: `Configure the REA MCP server for ${action.label}`,
+    options: states.map((state) => ({
+      value: state.client.name,
+      label: clientDisplayNames.get(state.client.name) ?? state.client.name,
+      hint: clientHint(state),
     })),
-    initialValues: [...initialValues],
+    initialValues: states
+      .filter(({ client }) => initial.has(client.name))
+      .map(({ client }) => client.name),
     required: false,
     maxItems: Math.max(
       3,
-      Math.min(actions.length, (process.stderr.rows ?? 24) - 8),
+      Math.min(states.length, (process.stderr.rows ?? 24) - 8),
     ),
     showInstructions: true,
   });
@@ -255,47 +185,31 @@ const selectClients = async (
 };
 
 const selectClientsAccessibly = async (
-  actions: readonly SetupAction[],
-  initialValues: readonly string[],
+  states: readonly SetupClientState[],
+  initial: ReadonlySet<string>,
 ): Promise<readonly string[] | undefined> => {
-  const preselected = new Set(initialValues);
   const selected: string[] = [];
-  for (const action of actions) {
+  for (const state of states) {
     const included = await confirm({
       ...promptStreams,
-      message: `Configure ${action.label}? ${action.target}`,
-      initialValue: preselected.has(action.id),
+      message: `Configure ${clientDisplayNames.get(state.client.name) ?? state.client.name}? ${clientHint(state)}`,
+      initialValue: initial.has(state.client.name),
       vertical: true,
     });
     if (isCancel(included)) return undefined;
-    if (included) selected.push(action.id);
+    if (included) selected.push(state.client.name);
   }
   return selected;
 };
 
-const renderValueIntroduction = (): void => {
-  writeLine("│  Understand local apps and binaries from your coding agent.");
+const renderDetectedSummary = (states: readonly SetupClientState[]): void => {
+  const detected = states.filter(({ detected }) => detected);
   writeLine("│");
-  writeLine("│  • Trace how a feature works with local evidence.");
   writeLine(
-    "│  • Use the same analysis capabilities from REA's CLI and supported agents.",
+    detected.length === 0
+      ? "◆  No agents detected. Choose any supported agent below."
+      : `◆  Detected: ${humanList(detected.map(({ client }) => clientDisplayNames.get(client.name) ?? client.name))}`,
   );
-  writeLine(
-    "│  • Keep analyzed targets on this machine instead of uploading them to a hosted service.",
-  );
-};
-
-const renderDetectedSummary = (actions: readonly SetupAction[]): void => {
-  const clients = actions.filter(({ kind }) => kind === "configure_client");
-  writeLine("│");
-  if (clients.length === 0) {
-    writeLine("◆  No agent integrations need configuration");
-  } else {
-    writeLine(
-      `◆  Found ${String(clients.length)} supported ${clients.length === 1 ? "agent" : "agents"}`,
-    );
-    writeLine(`│  ${humanList(clients.map(({ label }) => label))}`);
-  }
 };
 
 const renderKeyboardHelp = (accessible: boolean): void => {
@@ -306,6 +220,9 @@ const renderKeyboardHelp = (accessible: boolean): void => {
       : "│  Keys: ↑/↓ navigate · Space toggle · Enter confirm · Ctrl-C cancel",
   );
 };
+
+const cliInvocation = (): string =>
+  process.env.npm_command === "exec" ? "npx rea-agents" : "rea";
 
 const renderReadyCapabilities = (
   result: SetupResult,
@@ -319,7 +236,9 @@ const renderReadyCapabilities = (
     writeLine(`│  Agent access: ${humanList(readyClients)}`);
   if (result.doctor.identity?.skill.state === "aligned")
     writeLine("│  Guided reverse-engineering workflows: installed");
-  if (providers.length > 0) writeLine("│  CLI: rea analyze /path/to/app");
+  writeLine(
+    `│  CLI: ${cliInvocation()} ${providers.length > 0 ? "analyze /path/to/app" : "capabilities"}`,
+  );
   const firstClient = readyClients[0];
   if (firstClient !== undefined)
     writeLine(
@@ -337,24 +256,11 @@ const readyAgentClients = (
   return [...new Set([...alignedClients, ...changedClients])];
 };
 
-const readyProviders = (result: SetupResult): readonly string[] => {
-  const providers = [
-    ...(result.doctor.hopperPath === undefined ? [] : ["Hopper"]),
-    ...(result.doctor.providerInspections ?? [])
-      .filter(({ available }) => available)
-      .map(({ id }) => displayProviderId(id)),
-  ];
-  return [...new Set(providers)];
-};
+const readyProviders = (result: SetupResult): readonly string[] =>
+  result.doctor.availableProviders.map(displayProviderId);
 
 const displayProviderId = (id: string): string =>
   id.length === 0 ? id : `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`;
-
-const actionModality = (action: SetupAction): string => {
-  if (action.kind === "configure_client") return "MCP";
-  if (action.kind === "install_hopper") return "provider";
-  return "skill";
-};
 
 const humanList = (values: readonly string[]): string => {
   if (values.length < 2) return values[0] ?? "";
@@ -391,6 +297,7 @@ const cancelledDecision = (): SetupConfirmationDecision => {
   return {
     approved: false,
     selectedActionIds: [],
+    cancelled: true,
   };
 };
 

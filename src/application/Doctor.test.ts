@@ -264,6 +264,46 @@ describe("doctor scoped readiness", () => {
     expect(staleSelected.healthy).toBe(false);
   });
 
+  it("keeps agent readiness independent of Hopper host requirements", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "debian",
+            versionId: "13",
+            packageFamily: "deb",
+            supported: false,
+          }),
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              client: "codex",
+              config_path: "/home/user/.codex/config.toml",
+              command: ["rea", "mcp"],
+              state: "aligned",
+              remediation: null,
+            },
+          ]),
+      }),
+      { clients: ["codex"] },
+    );
+
+    expect(result).toMatchObject({
+      healthy: true,
+      environment_healthy: false,
+      scope: { mode: "explicit", clients: ["codex"], providers: [] },
+    });
+    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+      "node",
+      "registration:codex",
+    ]);
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({ name: "host", ok: false }),
+    );
+  });
+
   it("requires explicitly selected providers instead of any available provider", async () => {
     const ghidra = {
       id: "ghidra",

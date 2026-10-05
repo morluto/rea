@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 
 import { FakeSetupHost, options } from "./Setup.fixture.js";
-import { runSetup } from "./Setup.js";
+import { runSetup, setupRegistrationCommand } from "./Setup.js";
 
 describe("setup workflow", () => {
   it("omits an aligned managed skill from an otherwise empty plan", async () => {
@@ -48,9 +49,14 @@ describe("setup workflow", () => {
     host.hopper = "/custom/Hopper";
     host.unsupportedHopperVersion = true;
     const result = await runSetup(
-      { ...options(false), structured: false },
+      {
+        ...options(true),
+        clientIds: [],
+        installSkill: false,
+        proposeHopper: false,
+        readinessScope: { providers: ["hopper"] },
+      },
       host,
-      () => Promise.resolve(true),
     );
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
@@ -63,7 +69,10 @@ describe("setup workflow", () => {
     const host = new FakeSetupHost();
     host.hopperInstallSucceeds = false;
     host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
-    const result = await runSetup(options(true, true), host);
+    const result = await runSetup(
+      { ...options(true, true), clientIds: [] },
+      host,
+    );
     expect(result.status).toBe("needs_human");
     expect(result.code).toBe("download_failed");
     expect(result.remediation).toBe("Download failed.");
@@ -80,7 +89,10 @@ describe("setup workflow", () => {
       remediation: "Repair the existing TOML.",
     });
 
-    const result = await runSetup(options(true, true), host);
+    const result = await runSetup(
+      { ...options(true, true), clientIds: ["codex"] },
+      host,
+    );
 
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe("Codex: Repair the existing TOML.");
@@ -92,6 +104,7 @@ describe("setup workflow", () => {
   it("blocks malformed configuration before unrelated writes with an existing provider", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
     host.clients = [
       {
         name: "claude_desktop",
@@ -105,7 +118,10 @@ describe("setup workflow", () => {
       remediation: "Repair the existing JSON.",
     });
 
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), clientIds: ["claude_desktop"] },
+      host,
+    );
 
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(
@@ -122,7 +138,10 @@ describe("setup workflow", () => {
     ];
     host.clientInspections.set("codex", { status: "already_current" });
 
-    const result = await runSetup(options(false), host);
+    const result = await runSetup(
+      { ...options(false, true), clientIds: ["codex"] },
+      host,
+    );
 
     expect(
       result.plannedActions.map(({ id, operation }) => ({
@@ -141,6 +160,7 @@ describe("setup workflow action selection", () => {
   it("executes only actions selected by the interactive adapter", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
     host.clients = [
       { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
       { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
@@ -162,6 +182,83 @@ describe("setup workflow action selection", () => {
     expect(result.clients).toEqual({ codex: { status: "configured" } });
     expect(host.configurations).toBe(1);
     expect(host.skillInstalls).toBe(0);
+  });
+
+  it("preflights only selected clients and offers supported clients without markers", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [];
+    host.availableClients = [
+      { name: "codex", displayName: "Codex", configPath: "/codex.toml" },
+      { name: "cursor", displayName: "Cursor", configPath: "/cursor.json" },
+    ];
+    host.clientInspections.set("cursor", {
+      status: "invalid",
+      remediation: "Repair the deselected Cursor configuration.",
+    });
+
+    const result = await runSetup(
+      { ...options(true), clientIds: ["codex"] },
+      host,
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions.map(({ id }) => id)).toEqual([
+      "configure_client:codex",
+    ]);
+    expect(host.configurations).toBe(1);
+    expect(result.clientStates).toMatchObject([
+      { client: { name: "codex" }, detected: false, status: "missing" },
+      { client: { name: "cursor" }, detected: false, status: "missing" },
+    ]);
+  });
+
+  it("does not default to a foreign command registered under the rea key", async () => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.skill = "unchanged";
+    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.productRegistrations = [
+      {
+        client: "codex",
+        config_path: "/codex.toml",
+        command: ["unrelated-agent", "serve"],
+        state: "stale",
+        remediation: "Refresh this registration.",
+      },
+    ];
+
+    const result = await runSetup(options(true), host);
+
+    expect(result.status).toBe("ready");
+    expect(result.plannedActions).toEqual([]);
+    expect(host.configurations).toBe(0);
+    expect(result.clientStates).toMatchObject([
+      { client: { name: "codex" }, configured: false },
+    ]);
+  });
+
+  it("uses a Windows-safe executable command for an explicit client", async () => {
+    const host = new FakeSetupHost("win32");
+    host.scopedDoctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "codex", configPath: "C:\\config\\codex.toml" }];
+
+    const result = await runSetup(
+      { ...options(true), clientIds: ["codex"], installSkill: false },
+      host,
+    );
+
+    expect(result.status).toBe("ready");
+    expect(host.configuredCommands).toEqual([
+      setupRegistrationCommand("win32"),
+    ]);
+    expect(setupRegistrationCommand("win32", false)).toEqual([
+      process.execPath,
+      resolve(process.argv[1] ?? "rea"),
+      "mcp",
+    ]);
   });
 
   it.each([
@@ -186,7 +283,10 @@ describe("setup workflow action selection", () => {
     host.hopper = "/Applications/Hopper";
     host.clients = [{ name: "internal_client_key", configPath: "/agent.json" }];
     host.clientResults.set("internal_client_key", { status: "failed", reason });
-    const result = await runSetup(options(true), host);
+    const result = await runSetup(
+      { ...options(true), clientIds: ["internal_client_key"] },
+      host,
+    );
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(message);
     expect(result.remediation).not.toContain("internal_client_key");

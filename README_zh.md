@@ -86,13 +86,13 @@ REA 让调查始终以二进制证据为依据。它不会声称能恢复原始�
 npx rea-agents setup
 ```
 
-选择 **Agent Integration**，勾选要配置的智能体，然后查看并批准计划。Setup 会配置 MCP 访问并安装 REA 的调查工作流。它可以连接现有的 Hopper 或 Ghidra，也可以提议安装 Hopper。
+Setup 首先让你多选要连接的智能体。已有 REA 注册默认选中；仅被检测到的客户端不会自动选中，也可以手动选择尚未配置的客户端。查看具体路径和变更后再批准。所选智能体默认安装 REA 工作流；Hopper 是单独的可选操作，需要单独批准。Setup 也可以记录现有 Ghidra 的路径。
 
 Setup 会先展示变更并备份已有配置。要求与更多选项见[安装与设置](docs/installation.md)。
 
 ### 使用智能体
 
-设置完成后，重启智能体并描述你想了解的应用或功能。REA 可以配置 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI 和 Windsurf。Devin 只会被检测，不会被自动配置；其他智能体可以使用下方的 MCP 配置。
+设置完成后，重启智能体并描述你想了解的应用或功能。REA 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。其他智能体可以使用下方的 MCP 配置。
 
 Hopper 支持演示模式。如果首次启动时出现提示，选择演示模式或输入已有许可证。
 
@@ -208,7 +208,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 
 ## 与其他编程智能体一起使用
 
-Setup 可以配置 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI 和 Windsurf。Devin 只会被检测，不会被修改。任何支持本地 MCP 服务器的智能体都可以使用以下配置连接 REA。
+Setup 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。任何支持本地 MCP 服务器的智能体都可以使用以下配置连接 REA。
 
 <!-- x-release-please-start-version -->
 

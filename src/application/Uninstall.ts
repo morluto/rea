@@ -1,15 +1,17 @@
 import {
   parseClientConfiguration,
   serializeClientConfiguration,
+  type ClientServersKey,
 } from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 
@@ -123,7 +125,7 @@ const removeClient = async (
         );
   }
   let document: Record<string, unknown>;
-  let key: "mcp_servers" | "mcpServers";
+  let key: ClientServersKey;
   let servers: Record<string, unknown>;
   try {
     ({
@@ -135,13 +137,13 @@ const removeClient = async (
     return item(
       client.name,
       "failed",
-      `Configuration is not valid ${client.format === "toml" ? "TOML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+      `Configuration is not valid ${client.format === "toml" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
   const registration = servers[PRODUCT_IDENTITY.mcpServerKey];
   if (registration === undefined)
     return item(client.name, "skipped", "REA registration is absent.");
-  if (!isOwnedRegistration(registration))
+  if (!isOwnedRegistration(registration, client))
     return item(
       client.name,
       "retained",
@@ -163,7 +165,12 @@ const removeClient = async (
   try {
     await fileSystem.writeText(
       transactionPath,
-      serializeClientConfiguration(document, client.format),
+      serializeClientConfiguration(
+        document,
+        client.format,
+        original,
+        PRODUCT_IDENTITY.mcpServerKey,
+      ),
     );
     const readback = parseClientConfiguration(
       await fileSystem.readText(transactionPath),
@@ -215,27 +222,20 @@ const resolveUninstallConfigPath = async (
 };
 
 /** Ownership rule for persistent MCP registrations created by REA setup. */
-const isOwnedRegistration = (value: unknown): boolean => {
+const isOwnedRegistration = (value: unknown, client: SetupClient): boolean => {
+  if (client.format === "opencode") {
+    const parsed = z
+      .object({ type: z.literal("local"), command: z.array(z.string()).min(1) })
+      .passthrough()
+      .safeParse(value);
+    if (!parsed.success) return false;
+    const command = parsed.data.command;
+    return isOwnedClientRegistrationCommand(command);
+  }
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return false;
   const { command, args } = parsed.data;
-  return (
-    ((command === "rea" ||
-      (isAbsolute(command) && basename(command) === "rea")) &&
-      args.length === 1 &&
-      args[0] === "mcp") ||
-    (command === "npx" &&
-      (JSON.stringify(args) ===
-        JSON.stringify([
-          "-y",
-          PRODUCT_IDENTITY.registrationPackageSpecifier,
-          "mcp",
-        ]) ||
-        JSON.stringify(args) ===
-          JSON.stringify(["-y", PRODUCT_IDENTITY.packageSpecifier, "mcp"]) ||
-        JSON.stringify(args) ===
-          JSON.stringify(["-y", PRODUCT_IDENTITY.packageName, "mcp"])))
-  );
+  return isOwnedClientRegistrationCommand([command, ...args]);
 };
 
 const removeManagedPath = async (

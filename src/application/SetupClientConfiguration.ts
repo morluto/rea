@@ -1,4 +1,5 @@
 import {
+  clientRegistrationEntry,
   clientConfigurationValuesEqual,
   parseClientConfiguration,
   serializeClientConfiguration,
@@ -42,11 +43,22 @@ export const configureTomlClient = (
 ): Promise<ClientConfigurationResult> =>
   configureClientDocument(client, environment, command, "toml");
 
+/** Configure one supported client's native stdio MCP registration shape. */
+export const configureClientConfiguration = (
+  client: SetupClient,
+  environment: SetupProviderEnvironment = {},
+  command: readonly string[] = defaultCommand(),
+): Promise<ClientConfigurationResult> => {
+  if (client.format === undefined || client.format === "unsupported")
+    return Promise.resolve({ status: "failed", reason: "readback" });
+  return configureClientDocument(client, environment, command, client.format);
+};
+
 const configureClientDocument = async (
   client: SetupClient,
   environment: SetupProviderEnvironment,
   command: readonly string[],
-  format: "json" | "toml",
+  format: NonNullable<SetupClient["format"]>,
 ): Promise<ClientConfigurationResult> => {
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
@@ -69,7 +81,12 @@ const configureClientDocument = async (
     return { status: "failed", reason: "readback" };
   }
   const { document, servers, serversKey } = parsed;
-  const desired = clientConfigurationDesired(client, environment, command);
+  const desired = clientConfigurationDesired(
+    client,
+    environment,
+    command,
+    format,
+  );
   if (
     clientConfigurationValuesEqual(
       servers[PRODUCT_IDENTITY.mcpServerKey],
@@ -92,7 +109,12 @@ const configureClientDocument = async (
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFileAtomic(
       transactionPath,
-      serializeClientConfiguration(document, format),
+      serializeClientConfiguration(
+        document,
+        format,
+        original,
+        PRODUCT_IDENTITY.mcpServerKey,
+      ),
       {
         encoding: "utf8",
         mode: 0o600,
@@ -135,6 +157,7 @@ export const clientConfigurationAligned = async (
     client,
     providerEnvironment,
     command,
+    client.format,
   );
   try {
     const original = await readFile(client.configPath, "utf8");
@@ -179,6 +202,7 @@ export const inspectClientConfiguration = async (
     client,
     providerEnvironment,
     command,
+    client.format,
   );
   try {
     const { servers } = parseClientConfiguration(original, client.format);
@@ -232,20 +256,24 @@ const clientConfigurationDesired = (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
+  format: NonNullable<SetupClient["format"]> | undefined,
 ) => {
   const environment = Object.fromEntries(
     Object.entries(providerEnvironment).sort(([left], [right]) =>
       left.localeCompare(right),
     ),
   );
+  const registration = clientRegistrationEntry(
+    format ?? "json",
+    command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command,
+    environment,
+  );
   return {
-    command: command[0] ?? PRODUCT_IDENTITY.cliBinary,
-    args: command.slice(1),
+    ...registration,
     ...(client.name === "codex"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }
       : {}),
-    ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
   };
 };

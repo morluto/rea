@@ -15,7 +15,6 @@ describe("CLI operation status classification", () => {
     ["failed status", { status: "failed" }],
     ["confirmation requirement", { status: "needs_confirmation" }],
     ["human remediation", { status: "needs_human" }],
-    ["unapplied plan", { status: "planned" }],
   ])("classifies %s as failure", (_label, value) => {
     expect(isCliOperationFailure(value)).toBe(true);
   });
@@ -31,6 +30,8 @@ describe("CLI operation status classification", () => {
         result: projectAnalysisError(new ConfigurationError("source setting")),
       },
     ],
+    ["requested dry run", { status: "planned" }],
+    ["cancelled setup", { status: "cancelled" }],
     ["ready setup", { status: "ready" }],
     ["complete uninstall", { status: "complete" }],
     ["current version", { status: "current" }],
