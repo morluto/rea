@@ -252,8 +252,11 @@ const htmlCandidate = (
  * segments are dropped rather than stepped through.
  */
 const htmlBaseDirectory = (base: string, basePath: string): string =>
-  base.endsWith("/") || base.endsWith("/.") || base.endsWith("/..") ||
-    base === "." || base === ".."
+  base.endsWith("/") ||
+  base.endsWith("/.") ||
+  base.endsWith("/..") ||
+  base === "." ||
+  base === ".."
     ? basePath
     : posix.dirname(basePath);
 
