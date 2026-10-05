@@ -109,6 +109,8 @@ const canonicalizeJson = (value) => {
 
 const payloadJson = JSON.stringify(
   canonicalizeJson({ catalog, auxiliaryProviders }),
+  null,
+  2,
 );
 const source = await formatGeneratedFile(
   "src/generatedMcpToolCatalog.ts",

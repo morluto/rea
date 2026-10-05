@@ -24,6 +24,8 @@ graph TD
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
+        DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
+        REFERENCE["src/reference/<br/>Filesystem reference-source reader<br/>bounded traversal, validation, errors"]
     end
 
     subgraph "Provider Process Foundation"
@@ -32,6 +34,7 @@ graph TD
 
     subgraph "Contracts Layer"
         CONTRACTS["src/contracts/<br/>Caller-visible schemas for analysis, managed, browser, Electron, application, and session tools"]
+        ERRORS["src/contracts/errorSchemas.ts<br/>Shared analysis error schemas<br/>CLI diagnostics, generated error catalog"]
     end
 
     subgraph "Domain Layer"
@@ -46,12 +49,17 @@ graph TD
         TESTS["tests/<br/>Vitest suite<br/>fixtures/ holds fake launcher, bridge, and CDP seams"]
     end
 
+    subgraph "Evaluation"
+        EVALUATION["src/evaluation/<br/>Agent release evaluation<br/>session transcript scoring"]
+    end
+
     DISPATCH --> CLI
     DISPATCH --> MAIN
     MAIN --> CONFIG
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    CLI --> ERRORS
     APP --> SESSION
     SESSION --> REGISTRY
     REGISTRY --> HOPPER
@@ -62,7 +70,8 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> BROWSER
-    APP --> REPLAY
+    APP --> DOTNET
+    DOTNET --> DOMAIN
     HOPPER --> HOPPER_BRIDGE
     GHIDRA --> GHIDRA_BRIDGE
     HOPPER --> PROCESS
@@ -71,16 +80,18 @@ graph TD
     APP --> DOMAIN
     JS_RECON --> AUX
     JS_RECON --> DOMAIN
+    APP --> REFERENCE
+    REFERENCE --> DOMAIN
     CONTRACTS --> DOMAIN
     HOPPER --> DOMAIN
     GHIDRA --> DOMAIN
     AUX --> DOMAIN
     BROWSER --> DOMAIN
-    REPLAY --> DOMAIN
     PROCESS --> DOMAIN
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
     TESTS -.-> GHIDRA
     TESTS -.-> PROCESS
     TESTS -.-> BROWSER
-    TESTS -.-> REPLAY
+    TESTS -.-> EVALUATION
+    TESTS -.-> ERRORS
