@@ -253,9 +253,9 @@ const permissions = (raw: string | null) => {
   const numericValue = numeric(raw);
   if (numericValue !== null)
     return {
-      read: (numericValue & 4) !== 0,
+      read: (numericValue & 1) !== 0,
       write: (numericValue & 2) !== 0,
-      execute: (numericValue & 1) !== 0,
+      execute: (numericValue & 4) !== 0,
       raw,
     };
   if (/^[r-][w-][x-]$/u.test(raw))
