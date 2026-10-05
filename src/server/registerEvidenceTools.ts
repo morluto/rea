@@ -1,4 +1,3 @@
-import { projectPermissionFailure } from "../application/PermissionFailure.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type {
@@ -6,27 +5,21 @@ import type {
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { err } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
-import {
-  artifactExtractionPermissionRequest,
-  createArtifactExtractionDestination,
-} from "../application/ArtifactExtractionDestination.js";
+import { createArtifactExtractionDestination } from "../application/ArtifactExtractionDestination.js";
 
 interface EvidenceToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
-  readonly permissionAuthority?: PermissionAuthority;
   readonly sourceEvidence?: (
     operation: Exclude<AnalysisOperation, "health">,
     result: import("../domain/jsonValue.js").JsonValue,
@@ -60,20 +53,6 @@ export const registerEvidenceTools = (
                 output_root: createArtifactExtractionDestination(),
               }
             : parameters;
-        if (options.permissionAuthority !== undefined) {
-          const request = permissionRequest(contract.name, executionParameters);
-          if (request !== undefined) {
-            const authorized = await options.permissionAuthority.authorize(
-              request,
-              contract.name === "extract_artifact" ? "write" : "read",
-            );
-            if (!authorized.ok)
-              return toCallToolResult(
-                err(projectPermissionFailure(authorized.error)),
-                contract,
-              );
-          }
-        }
         const execution = await logToolExecution(
           options.logger,
           contract.name,
@@ -100,6 +79,9 @@ export const registerEvidenceTools = (
             operation: contract.name,
             parameters,
             result: execution.value.result,
+            ...(execution.value.analysisProfile === undefined
+              ? {}
+              : { analysisProfile: execution.value.analysisProfile }),
             rawResult: execution.value.rawResult,
             limitations: execution.value.limitations,
             locations: execution.value.locations,
@@ -118,31 +100,4 @@ export const registerEvidenceTools = (
       },
     );
   }
-};
-
-const permissionRequest = (
-  operation: string,
-  parameters: Readonly<
-    Record<string, import("../domain/jsonValue.js").JsonValue>
-  >,
-) => {
-  if (
-    operation === "extract_artifact" &&
-    typeof parameters.output_root === "string"
-  )
-    return artifactExtractionPermissionRequest();
-  if (
-    operation === "inspect_artifact" &&
-    parameters.native_mount_approved === true
-  )
-    return {
-      capability: "native_mount" as const,
-      roots: [],
-      executables: [],
-      environment_names: [],
-      network: "none" as const,
-      mount: true,
-      operation_identity: `${operation}:native_mount`,
-    };
-  return undefined;
 };

@@ -6,11 +6,9 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { observeJavaScriptRuntime } from "../../../src/application/JavaScriptRuntimeObservationService.js";
 import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
 import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascriptRuntimeObservation.js";
-import { parseConfig } from "../../../src/config.js";
 import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -41,10 +39,7 @@ describe("JavaScript runtime observation CLI parity", () => {
         targetUrl: pathToFileURL(entry).href,
       });
       resources.push(inspector);
-      const environment = {
-        ...process.env,
-        REA_V8_INSPECTOR_OBSERVE_ENABLED: "true",
-      };
+      const environment = { ...process.env };
 
       const listed = await runCli(
         ["list-javascript-runtime-targets", inspector.endpoint, "--json"],
@@ -85,13 +80,8 @@ describe("JavaScript runtime observation CLI parity", () => {
           },
         },
       });
-      const config = parseConfig(environment);
-      if (!config.ok) throw config.error;
-      const authority = await loadConfiguredPermissionAuthority(config.value);
-      if (!authority.ok) throw authority.error;
       const direct = await observeJavaScriptRuntime(
         new V8InspectorProvider(),
-        authority.value,
         observeJavaScriptRuntimeInputSchema.parse({
           inspector_endpoint: inspector.endpoint,
           target_id: inspector.targetId,

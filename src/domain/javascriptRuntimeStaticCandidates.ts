@@ -1,6 +1,5 @@
-import { posix, relative } from "node:path";
+import { posix, relative, win32 } from "node:path";
 
-import { isPathWithinRoot } from "./localPath.js";
 import {
   compareCodePoints,
   type ApplicationNode,
@@ -208,14 +207,31 @@ const candidateDigests = (
 };
 
 const pathBelowRoot = (root: string, value: string): string | null => {
-  const remainder = relative(root, value);
+  const rootStyle = absoluteFilePathStyle(root);
+  if (rootStyle === null || rootStyle !== absoluteFilePathStyle(value))
+    return null;
+  const remainder =
+    rootStyle === "windows"
+      ? win32.relative(root, value)
+      : relative(root, value);
+  const portableRemainder = remainder.replaceAll("\\", "/");
   if (
     remainder === "" ||
-    !isPathWithinRoot(root, value) ||
-    remainder.includes("\\")
+    (rootStyle === "windows" && win32.isAbsolute(remainder)) ||
+    portableRemainder === ".." ||
+    portableRemainder.startsWith("../")
   )
     return null;
-  return normalizeArtifactPath(remainder);
+  return normalizeArtifactPath(portableRemainder);
+};
+
+const absoluteFilePathStyle = (path: string): "posix" | "windows" | null => {
+  if (
+    /^[a-z]:[\\/]/iu.test(path) ||
+    /^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/u.test(path)
+  )
+    return "windows";
+  return path.startsWith("/") ? "posix" : null;
 };
 
 const pathBelowUrlPrefix = (prefix: string, value: string): string | null => {

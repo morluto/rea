@@ -1,6 +1,6 @@
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   chromium,
@@ -142,8 +142,8 @@ export const openPlaywrightScenarioBrowser = async (
   await chmod(profilePath, 0o700);
   try {
     const context = await chromium.launchPersistentContext(profilePath, {
-      executablePath: scenario.browser.executable_path,
-      headless: true,
+      executablePath: resolve(scenario.browser.executable_path),
+      headless: scenario.browser.headless,
       acceptDownloads: false,
       viewport: {
         width: scenario.environment.viewport.width,
@@ -154,7 +154,7 @@ export const openPlaywrightScenarioBrowser = async (
       timezoneId: scenario.environment.timezone,
       colorScheme: scenario.environment.color_scheme,
       reducedMotion: scenario.environment.reduced_motion,
-      serviceWorkers: "block",
+      serviceWorkers: scenario.environment.service_workers,
       env: allowedBrowserEnvironment(environment),
       handleSIGHUP: false,
       handleSIGINT: false,

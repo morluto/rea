@@ -1,9 +1,16 @@
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "./cli.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { captureProcessScenarioFile } from "./application/ProcessCli.js";
 import { runCapabilityStatus } from "./application/DirectAnalysisStatus.js";
+import { probeProcessCaptureCapability } from "./application/ProcessHarness.js";
+import { parseEvidence } from "./domain/evidence.js";
+import { parseProcessCapture } from "./domain/processCapture.js";
 
 describe("the CLI takes its environment as an input", () => {
   it("builds from an explicitly supplied environment", () => {
@@ -21,10 +28,51 @@ describe("the CLI takes its environment as an input", () => {
     expect(createSystemDoctorHost({})).toBeDefined();
   });
 
-  it("drives a process scenario failure from the supplied environment", async () => {
-    await expect(
-      captureProcessScenarioFile("/nonexistent/scenario.json", {}),
-    ).resolves.toBeDefined();
+  it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
+    skip,
+  }) => {
+    const capability = await probeProcessCaptureCapability();
+    if (!capability.available) {
+      skip("Process capture is unavailable on this host");
+      return;
+    }
+
+    const root = await mkdtemp(join(tmpdir(), "rea-cli-env-process-"));
+    const bin = join(root, "bin");
+    const executable = join(bin, "rea-injected-process-probe");
+    const scenarioPath = join(root, "scenario.json");
+    try {
+      await mkdir(bin);
+      await writeFile(
+        executable,
+        [
+          "#!/bin/sh",
+          'printf "%s|%s\\n" "$REA_CAPTURE_INJECTED_MARKER" "$REA_CAPTURE_SCENARIO_OVERRIDE"',
+        ].join("\n"),
+      );
+      await chmod(executable, 0o755);
+      await writeFile(
+        scenarioPath,
+        JSON.stringify({
+          executable: "rea-injected-process-probe",
+          working_directory: root,
+          environment: { REA_CAPTURE_SCENARIO_OVERRIDE: "scenario-value" },
+        }),
+      );
+
+      const result = await captureProcessScenarioFile(scenarioPath, {
+        PATH: bin,
+        REA_CAPTURE_INJECTED_MARKER: "injected-value",
+        REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
+      });
+      const evidence = parseEvidence(result);
+      const capture = parseProcessCapture(evidence.normalized_result);
+      expect(capture.frames.map(({ data }) => data).join("")).toContain(
+        "injected-value|scenario-value",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("reports session status from a supplied environment", async () => {

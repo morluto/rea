@@ -6,21 +6,15 @@ import {
 } from "./application/ElectronObservationService.js";
 import { captureElectronScenario } from "./application/ElectronActiveObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./application/JavaScriptRuntimeReconciliationService.js";
-import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
 import { PlaywrightElectronActiveProvider } from "./browser/PlaywrightElectronActiveProvider.js";
 import { logCliCommand } from "./cliLogging.js";
-import { parseConfig } from "./config.js";
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
 } from "./domain/electronObservation.js";
 import { electronActiveObservationInputSchema } from "./domain/electronActiveObservation.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  projectAnalysisError,
-} from "./domain/errors.js";
+import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
@@ -35,10 +29,9 @@ import { runCliJavaScriptApplicationAnalysis } from "./cli/javascriptApplication
 export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerElectronObservationCommands(cli, logger);
-  registerElectronActiveCommand(cli, logger, environment);
+  registerElectronActiveCommand(cli, logger);
   registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
@@ -46,10 +39,9 @@ export const registerElectronCommands = (
 const registerElectronActiveCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.captureElectronScenario, {
-    description: "Run one approved, bounded owned Electron scenario",
+    description: "Run one bounded owned Electron scenario",
     args: z.object({
       inputJson: z
         .string()
@@ -68,11 +60,9 @@ const registerElectronActiveCommand = (
           input.value,
         );
         if (!parsed.success) return inputError("capture_electron_scenario");
-        const context = await electronContext(environment);
-        if (!context.ok) return context.error;
+        const context = await electronContext();
         const result = await captureElectronScenario(
           context.activeProvider,
-          context.authority,
           parsed.data,
         );
         return result.ok ? result.value : cliError(result.error);
@@ -124,25 +114,19 @@ const registerElectronTargetList = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.listElectronTargets, {
-    description: "List local file pages exposed by Electron CDP",
+    description:
+      "List local file pages exposed by the selected Electron CDP endpoint",
     args: z.object({
       endpoint: z.string().describe("Literal-loopback Electron CDP endpoint"),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "list-electron-targets", async () => {
-        const context = await electronObservationContext(
-          "list_electron_targets",
-        );
-        if (!context.ok) return context.error;
+        const context = await electronObservationContext();
         const parsed = listElectronTargetsInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
         });
         if (!parsed.success) return inputError("list_electron_targets");
-        const result = await listElectronTargets(
-          context.provider,
-          context.authority,
-          parsed.data,
-        );
+        const result = await listElectronTargets(context.provider, parsed.data);
         return result.ok ? result.value : cliError(result.error);
       }),
   });
@@ -161,10 +145,7 @@ const registerElectronPageInspection = (
     options: electronPageInspectionOptions,
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-electron-page", async () => {
-        const context = await electronObservationContext(
-          "inspect_electron_page",
-        );
-        if (!context.ok) return context.error;
+        const context = await electronObservationContext();
         const parsed = inspectElectronPageInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
           target_id: args.targetId,
@@ -172,11 +153,7 @@ const registerElectronPageInspection = (
           include_script_sources: options.includeScriptSources,
         });
         if (!parsed.success) return inputError("inspect_electron_page");
-        const result = await inspectElectronPage(
-          context.provider,
-          context.authority,
-          parsed.data,
-        );
+        const result = await inspectElectronPage(context.provider, parsed.data);
         return result.ok ? result.value : cliError(result.error);
       }),
   });
@@ -190,7 +167,7 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("Absolute ASAR or extracted application path"),
+      path: z.string().describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -203,42 +180,15 @@ const registerJavaScriptApplicationCommand = (
   });
 };
 
-const electronContext = async (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-) => {
-  const config = parseConfig(environment);
-  if (!config.ok) return { ok: false as const, error: cliError(config.error) };
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok)
-    return { ok: false as const, error: cliError(authority.error) };
+const electronContext = async () => {
   return {
     ok: true as const,
-    authority: authority.value,
     provider: new CdpElectronProvider(),
     activeProvider: new PlaywrightElectronActiveProvider(),
-    observationPolicy: config.value.electronObservationPolicy,
   };
 };
 
-const electronObservationContext = async (
-  operation: string,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-) => {
-  const context = await electronContext(environment);
-  if (!context.ok) return context;
-  if (context.observationPolicy.status === "disabled")
-    return {
-      ok: false as const,
-      error: cliError(
-        new AnalysisCapabilityUnavailableError(
-          "rea-cdp-electron",
-          operation,
-          "Electron observation is disabled; enable REA_ELECTRON_OBSERVE_ENABLED to authorize loopback endpoints",
-        ),
-      ),
-    };
-  return context;
-};
+const electronObservationContext = electronContext;
 
 const inputError = (operation: string): JsonValue =>
   cliError(new AnalysisInputError(operation));

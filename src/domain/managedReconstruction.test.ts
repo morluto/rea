@@ -29,9 +29,7 @@ describe("managed reconstruction import input", () => {
       static_members: evidence,
       decompiler: {
         name: "Fixture decompiler",
-        version: null,
         family: "other",
-        executable_sha256: null,
         options: Array.from({ length: 51 }, (_, index) => `option-${index}`),
       },
       methods: Array.from({ length: 51 }, (_, index) => ({
@@ -44,6 +42,10 @@ describe("managed reconstruction import input", () => {
 
     expect(parsed.methods).toHaveLength(51);
     expect(parsed.decompiler.options).toHaveLength(51);
+    expect(parsed.decompiler).toMatchObject({
+      version: null,
+      executable_sha256: null,
+    });
     expect(parsed.notes).toHaveLength(101);
   });
 

@@ -154,8 +154,9 @@ const sanitizeSameOriginTitleUrl = (candidate: string, target: URL): string => {
   } catch {
     return candidate;
   }
-  return parsed.origin === target.origin && parsed.search !== ""
-    ? sanitizeBrowserUrl(parsed.href).url
+  return parsed.origin === target.origin &&
+    (parsed.username !== "" || parsed.password !== "")
+    ? sanitizeBrowserUrl(candidate).url
     : candidate;
 };
 

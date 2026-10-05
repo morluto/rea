@@ -8,7 +8,7 @@ describe("projected CLI failures", () => {
     async ({ cli }) => {
       const result = await cli.run({
         arguments: ["run-controlled-replay", "{}", "--json"],
-        environment: { REA_JAVASCRIPT_REPLAY_ENABLED: "not-a-bool" },
+        environment: { REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" },
       });
       expect(result.json).toMatchObject({
         code: "configuration_invalid",

@@ -8,7 +8,6 @@ import { captureProcessScenario } from "../../../src/application/ProcessHarness.
 import {
   digestProcessCommitment,
   parseProcessScenario,
-  type ProcessExecutionPolicy,
 } from "../../../src/domain/processCapture.js";
 
 itWithCaptureCapability(
@@ -117,13 +116,7 @@ itWithCaptureCapability(
       },
     });
     try {
-      const capture = await captureProcessScenario(scenario, {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [root],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      });
+      const capture = await captureProcessScenario(scenario);
       expect(capture.ok).toBe(true);
       if (!capture.ok) throw capture.error;
       expect(
@@ -158,7 +151,7 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
-  "captures PTY, filesystem, descendants, HTTP replay, and redacts environment",
+  "captures PTY, filesystem, descendants, and HTTP replay with local values",
   async () => {
     const root = await createTestTempDirectory("rea-harness-test-");
     const script = join(root, "fixture.mjs");
@@ -176,26 +169,18 @@ itWithCaptureCapability(
         "child.kill();",
       ].join("\n"),
     );
-    const policy: ProcessExecutionPolicy = {
-      status: "enabled",
-      executableRoots: [dirname(process.execPath)],
-      workingRoots: [root],
-      allowedEnvironment: ["SECRET"],
-      networkAccess: "external",
-    };
     const scenario = parseProcessScenario({
       executable: process.execPath,
       arguments: [script],
       working_directory: root,
-      filesystem_roots: [root],
+      filesystem_observation_paths: [root],
       environment: { SECRET: "do-not-record" },
-      secret_aliases: ["SECRET"],
       replay: {
         http: [{ method: "GET", path: "/probe", status: 200, body: "ok" }],
       },
     });
     try {
-      const capture = await captureProcessScenario(scenario, policy);
+      const capture = await captureProcessScenario(scenario);
       expect(capture.ok).toBe(true);
       if (!capture.ok) throw capture.error;
       expect(
@@ -203,7 +188,7 @@ itWithCaptureCapability(
       ).toContain("reply:ok");
       expect(
         capture.value.frames.map((frame) => frame.data).join(""),
-      ).toContain("sensitive:<redacted>");
+      ).toContain("sensitive:do-not-record");
       expect(
         capture.value.files_after.some((file) =>
           file.path.endsWith("result.txt"),
@@ -220,7 +205,7 @@ itWithCaptureCapability(
           (event) => event.protocol === "http" && event.path === "/probe",
         ),
       ).toBe(true);
-      expect(JSON.stringify(capture.value)).not.toContain("do-not-record");
+      expect(JSON.stringify(capture.value)).toContain("do-not-record");
       expect(await readFile(join(root, "result.txt"), "utf8")).toBe("created");
       expect(JSON.stringify(capture.value.files_after)).not.toContain(root);
     } finally {

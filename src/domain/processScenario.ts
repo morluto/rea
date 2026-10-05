@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isPathWithinRoot } from "./localPath.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 import {
@@ -10,10 +9,10 @@ import { replayMachineSchema } from "./replayMachine.js";
 
 const positiveBudget = z.number().int().safe().positive();
 const timedEventBase = { at_ms: z.number().int().safe().nonnegative() };
-const environmentName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+const environmentName = z
+  .string()
+  .regex(/^[^=\0]+$/u, "Environment names cannot contain '=' or NUL");
 const reservedEnvironment = new Set([
-  "HOME",
-  "TERM",
   "REA_PROCESS_RUN_ID",
   "REA_REPLAY_HTTP_URL",
   "REA_REPLAY_WEBSOCKET_URL",
@@ -70,34 +69,46 @@ const reactiveScenarioCommitment = (
         })),
       };
 
-/** Build the secret-safe scenario projection committed by process-capture Evidence. */
+const committedScenarioEvents = (
+  events: ProcessScenario["events"],
+  includeSensitiveInputLength: boolean,
+): ProcessScenario["events"] =>
+  events.map((event) =>
+    event.type === "input" && event.sensitive
+      ? {
+          ...event,
+          data: includeSensitiveInputLength
+            ? `<redacted-input:${String(Buffer.byteLength(event.data))}-bytes>`
+            : "<redacted-input>",
+        }
+      : event,
+  );
+
+/** Build the caller-selected scenario projection committed by process-capture Evidence. */
 export const processScenarioCommitment = (
   scenario: ProcessScenario,
   executableSha256?: string,
 ): Readonly<Record<string, unknown>> => ({
   ...scenario,
-  environment: Object.fromEntries(
-    Object.entries(scenario.environment).map(([name, value]) => [
-      name,
-      scenario.secret_aliases.includes(name) ? "<redacted-secret>" : value,
-    ]),
-  ),
+  events: committedScenarioEvents(scenario.events, true),
   reactive: reactiveScenarioCommitment(scenario.reactive),
   executable_sha256: executableSha256 ?? null,
 });
 
-/** Project observation settings shared by authority and reconstruction. */
+/** Project observation settings shared by capture and reconstruction. */
 export const processComparisonContract = (
   scenario: ProcessScenario,
 ): Readonly<Record<string, unknown>> => ({
   working_directory: scenario.working_directory,
-  inherit_environment: scenario.inherit_environment,
-  secret_aliases: scenario.secret_aliases,
-  network_access: scenario.network_access,
-  filesystem_roots: scenario.filesystem_roots,
+  environment: scenario.environment,
+  ambient_environment: "unknown",
+  filesystem_observation_paths: scenario.filesystem_observation_paths,
   terminal: scenario.terminal,
   checkpoints: scenario.checkpoints,
-  events: scenario.events,
+  // Input bytes are intentionally absent from compatibility identity. Their
+  // redacted observations remain unknown, so equal commitments never imply
+  // that two secret values were the same.
+  events: committedScenarioEvents(scenario.events, false),
   timeout_ms: scenario.timeout_ms,
   idle_timeout_ms: scenario.idle_timeout_ms,
   settle_ms: scenario.settle_ms,
@@ -109,43 +120,16 @@ export const processComparisonContract = (
 });
 
 /**
- * True when `value` is an absolute path for *any* supported host.
- *
- * `node:path`'s `isAbsolute` answers for the machine running it: on Linux
- * `C:\tools` is not absolute. A boundary schema must not vary with the host
- * that evaluates it — a scenario captured on Windows has to stay valid when it
- * is replayed, compared, or validated by a test on Linux. So this accepts the
- * POSIX form, a Windows drive path, and a UNC share, on every host.
- */
-export const isAbsoluteScenarioPath = (value: string): boolean =>
-  value.startsWith("/") ||
-  /^[A-Za-z]:[\\/]/u.test(value) ||
-  value.startsWith("\\\\");
-
-/**
- * An absolute path for the host that will run the scenario. The message names
- * the constraint so a rejected path is actionable, instead of leaving the
- * caller to infer it from a generic "invalid request".
- */
-const absoluteScenarioPath = z.string().refine(isAbsoluteScenarioPath, {
-  message:
-    "Path must be absolute: a POSIX path such as /usr/bin/node, a Windows path such as C:\\tools\\node.exe, or a UNC path such as \\\\server\\share",
-});
-
-/**
  * Boundary schema for one bounded process experiment.
  * Defaults are part of the evidence contract and must remain deterministic.
  */
 export const processScenarioSchema = z
   .object({
-    executable: absoluteScenarioPath,
+    executable: z.string().min(1),
     arguments: z.array(z.string()).default([]),
-    working_directory: absoluteScenarioPath,
+    working_directory: z.string().default("."),
     environment: z.record(environmentName, z.string()).default({}),
-    inherit_environment: z.array(environmentName).default([]),
-    secret_aliases: z.array(environmentName).default([]),
-    network_access: z.literal("host").default("host"),
-    filesystem_roots: z.array(absoluteScenarioPath).default([]),
+    filesystem_observation_paths: z.array(z.string().min(1)).default([]),
     terminal: z
       .object({
         columns: z.number().int().min(1).max(65_535).default(80),
@@ -249,7 +233,7 @@ export const processScenarioSchema = z
       }),
     normalization: z
       .object({
-        paths: z.boolean().default(true),
+        paths: z.boolean().default(false),
         pids: z.boolean().default(true),
         ports: z.boolean().default(true),
         time_bucket_ms: positiveBudget.default(10),
@@ -263,7 +247,7 @@ export const processScenarioSchema = z
           .default([]),
       })
       .default({
-        paths: true,
+        paths: false,
         pids: true,
         ports: true,
         time_bucket_ms: 10,
@@ -324,32 +308,13 @@ export const processScenarioSchema = z
         });
       }
     }
-    const secrets = new Set(scenario.secret_aliases);
-    for (const alias of secrets) {
-      if (!(alias in scenario.environment)) {
-        context.addIssue({
-          code: "custom",
-          message: "secret alias has no environment value",
-          path: ["secret_aliases"],
-        });
-      }
-    }
     const explicit = new Set(Object.keys(scenario.environment));
-    for (const name of [...explicit, ...scenario.inherit_environment]) {
+    for (const name of explicit) {
       if (reservedEnvironment.has(name)) {
         context.addIssue({
           code: "custom",
           message: `${name} is reserved by the process adapter`,
           path: ["environment", name],
-        });
-      }
-    }
-    for (const name of scenario.inherit_environment) {
-      if (explicit.has(name)) {
-        context.addIssue({
-          code: "custom",
-          message: "an environment name cannot be explicit and inherited",
-          path: ["inherit_environment"],
         });
       }
     }
@@ -410,86 +375,3 @@ export type ProcessScenario = z.infer<typeof processScenarioSchema>;
 /** Parse untrusted process scenario input and apply safe default budgets. */
 export const parseProcessScenario = (input: unknown): ProcessScenario =>
   processScenarioSchema.parse(input);
-
-/** Complete operator-owned ceiling for enabled process capture. */
-export interface EnabledProcessExecutionPolicy {
-  readonly status: "enabled";
-  readonly executableRoots: readonly [string, ...string[]];
-  readonly workingRoots: readonly [string, ...string[]];
-  readonly allowedEnvironment: readonly string[];
-  readonly networkAccess: "none" | "external";
-}
-
-/** Parsed operator-owned process-capture policy. */
-export type ProcessExecutionPolicy =
-  | { readonly status: "disabled" }
-  | EnabledProcessExecutionPolicy;
-
-/** Explicit authorization result; denial reasons are safe to show callers. */
-export type ProcessPolicyDecision =
-  | { readonly allowed: true }
-  | {
-      readonly allowed: false;
-      readonly reason:
-        | "process capture is disabled"
-        | "host network access is not approved by operator policy"
-        | "executable is outside approved roots"
-        | "working directory is outside approved roots"
-        | "scenario requests an environment variable not allowed by policy"
-        | "filesystem root is outside approved roots";
-    };
-
-/** Evaluate scenario authority before any process or filesystem side effect occurs. */
-export const authorizeProcessScenario = (
-  scenario: ProcessScenario,
-  policy: ProcessExecutionPolicy,
-): ProcessPolicyDecision => {
-  if (policy.status === "disabled")
-    return { allowed: false, reason: "process capture is disabled" };
-  if (scenario.network_access === "host" && policy.networkAccess === "none")
-    return {
-      allowed: false,
-      reason: "host network access is not approved by operator policy",
-    };
-  if (
-    !policy.executableRoots.some((root) =>
-      isPathWithinRoot(root, scenario.executable),
-    )
-  ) {
-    return { allowed: false, reason: "executable is outside approved roots" };
-  }
-  if (
-    !policy.workingRoots.some((root) =>
-      isPathWithinRoot(root, scenario.working_directory),
-    )
-  ) {
-    return {
-      allowed: false,
-      reason: "working directory is outside approved roots",
-    };
-  }
-  const requestedNames = [
-    ...Object.keys(scenario.environment),
-    ...scenario.inherit_environment,
-  ];
-  if (
-    requestedNames.some((name) => !policy.allowedEnvironment.includes(name))
-  ) {
-    return {
-      allowed: false,
-      reason: "scenario requests an environment variable not allowed by policy",
-    };
-  }
-  if (
-    scenario.filesystem_roots.some(
-      (path) =>
-        !policy.workingRoots.some((root) => isPathWithinRoot(root, path)),
-    )
-  ) {
-    return {
-      allowed: false,
-      reason: "filesystem root is outside approved roots",
-    };
-  }
-  return { allowed: true };
-};

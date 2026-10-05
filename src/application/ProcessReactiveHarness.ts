@@ -24,7 +24,7 @@ import { subscribeProcessReactiveObservations } from "./ProcessReactiveObservati
 import {
   normalizeProcessSamples,
   normalizeProcessShimEvent,
-  redactProtocolEvents,
+  normalizeProtocolEvents,
 } from "./ProcessNormalization.js";
 import type { TerminalRenderer } from "./TerminalRenderer.js";
 
@@ -101,6 +101,7 @@ export const startProcessReactiveHarness = (options: {
       execute: (actions, signal) =>
         executeProcessReactiveEffects(
           {
+            scenario: options.scenario,
             terminal: () => reactiveTerminalFor(options.terminal()),
             renderer: options.renderer,
             checkpoints: options.checkpoints,
@@ -144,7 +145,7 @@ export const startProcessReactiveHarness = (options: {
             )[index];
       },
       protocolEventAt: (index) =>
-        redactProtocolEvents(
+        normalizeProtocolEvents(
           options.capture.protocolEvents().slice(index, index + 1),
           options.scenario,
         )[0],

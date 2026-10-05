@@ -57,19 +57,13 @@ export const runtimeCharacterizationPlanSchema = z.strictObject({
     identifiers: z.enum(["deterministic", "runtime"]),
     seed: z.number().int().min(0).max(0xffff_ffff),
   }),
-  authority: z.strictObject({
-    preparation_approved: z.literal(true),
-    execution_approved: z.literal(false),
-    network: z.enum(["none", "loopback"]),
-    provider_owned_process_only: z.literal(true),
-  }),
 });
 
 export type RuntimeCharacterizationPlan = z.infer<
   typeof runtimeCharacterizationPlanSchema
 >;
 
-/** Commit a provider-neutral preparation plan; execution requires a later approval. */
+/** Commit a provider-neutral preparation plan; execution checks the resulting content identity. */
 export const createRuntimeCharacterizationPlan = (
   input: Omit<z.input<typeof runtimeCharacterizationPlanSchema>, "plan_sha256">,
 ): RuntimeCharacterizationPlan => {

@@ -35,6 +35,33 @@ it("serves bounded HTTP and WebSocket replay on loopback", async () => {
   }
 });
 
+it("matches and records the full HTTP request target including its query", async () => {
+  const scenario = parseProcessScenario({
+    executable: "/bin/sh",
+    working_directory: "/tmp",
+    replay: {
+      http: [
+        { method: "GET", path: "/item?id=1", status: 200, body: "matched" },
+      ],
+    },
+  });
+  const replay = await startLoopbackReplay(scenario);
+  try {
+    const matched = await fetch(`${replay.httpUrl}/item?id=1`);
+    expect(matched.status).toBe(200);
+    expect(await matched.text()).toBe("matched");
+    const differentQuery = await fetch(`${replay.httpUrl}/item?id=2`);
+    expect(differentQuery.status).toBe(404);
+    expect(
+      replay.events
+        .filter(({ direction }) => direction === "request")
+        .map(({ path }) => path),
+    ).toEqual(["/item?id=1", "/item?id=2"]);
+  } finally {
+    await replay.close();
+  }
+});
+
 it("matches bounded HTTP scripts without persisting request secrets", async () => {
   const scenario = parseProcessScenario({
     executable: "/bin/sh",

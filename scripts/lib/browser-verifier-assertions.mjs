@@ -133,7 +133,7 @@ export function assertBundleAnalysis(result) {
     );
 }
 
-/** Assert explicitly approved console, JSON, and WebSocket shape capture. */
+/** Assert explicitly selected console text and JSON/WebSocket shape capture. */
 export function assertSensitiveShapes(result) {
   const request = result.network.requests.find(
     (item) =>
@@ -151,12 +151,11 @@ export function assertSensitiveShapes(result) {
     (event) => event.text_capture.values,
   );
   if (
-    !consoleText.some(({ text }) => text.includes("[REDACTED]")) ||
-    consoleText.some(({ text }) => text.includes("console-secret-value"))
+    !consoleText.some(({ text }) =>
+      text.includes("authorization=Bearer console-secret-value"),
+    )
   )
-    throw new Error(
-      "Real Chrome approved console text was not safely redacted",
-    );
+    throw new Error("Real Chrome selected console text was not preserved");
   if (
     !result.network.websocket_events.some(
       (event) =>
@@ -174,8 +173,8 @@ export function assertSensitiveShapes(result) {
   for (const secret of [
     "request-body-secret-value",
     "response-secret-value",
+    "request-secret-value",
     "websocket-secret-value",
-    "console-secret-value",
   ])
     if (serialized.includes(secret))
       throw new Error(`Approved shape capture retained raw value: ${secret}`);

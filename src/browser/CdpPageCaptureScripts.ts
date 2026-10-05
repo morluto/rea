@@ -77,7 +77,7 @@ const buildScriptDraft = async (
   let source: WebPageInspection["scripts"]["items"][number]["source"] = state
     .context.input.include_script_sources
     ? await captureScriptSource(script, state)
-    : sourceExcluded("source capture was not approved");
+    : sourceExcluded("source capture was not selected");
   const inventoryScript = {
     frame_id: state.events.frameForScript(script, state.frameIds),
     url: script.url,

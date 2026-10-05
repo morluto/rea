@@ -81,15 +81,15 @@ export const browserEndpointSchema = z
 
 export const browserAllowedOriginsSchema = z
   .array(browserOriginSchema)
-  .min(1)
-  .transform((origins) => Array.from(new Set(origins)).sort());
+  .transform((origins) => Array.from(new Set(origins)).sort())
+  .default([]);
 
 const browserInput = {
   cdp_endpoint: browserEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
 };
 
-/** Public input for complete discovery of allowed page targets. */
+/** Public input for complete discovery, optionally filtered by exact origin. */
 export const listBrowserTargetsInputSchema = z.object({
   ...browserInput,
 });
@@ -155,44 +155,66 @@ export const sanitizedBrowserUrlSchema = z.object({
 });
 export type SanitizedBrowserUrl = z.infer<typeof sanitizedBrowserUrlSchema>;
 
-/** Remove credentials and query values before a browser URL becomes durable. */
+/** Preserve local URL data while removing only URL userinfo credentials. */
 export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
     return {
-      url: "[unsupported-url]",
+      url: value,
       origin: null,
       query_parameter_names: [],
-      redacted: true,
+      redacted: false,
     };
   }
   const hadCredentials = parsed.username !== "" || parsed.password !== "";
-  const hadFragment = parsed.hash !== "";
-  const names = [...new Set(parsed.searchParams.keys())].sort();
-  parsed.username = "";
-  parsed.password = "";
-  parsed.hash = "";
-  parsed.search = "";
-  for (const name of names) parsed.searchParams.append(name, "[REDACTED]");
+  const names = [...parsed.searchParams.keys()];
+  const sanitizedUrl = hadCredentials
+    ? removeUrlUserInfo(value, parsed)
+    : value;
   return {
-    url: parsed.href,
+    url: sanitizedUrl,
     origin: parsed.origin === "null" ? null : parsed.origin,
     query_parameter_names: names,
-    redacted: hadCredentials || hadFragment || names.length > 0,
+    redacted: hadCredentials,
   };
 };
 
-/** Remove credentials, fragments, and query values from endpoint candidates. */
-export const sanitizeEndpointCandidate = (value: string): string => {
+const removeUrlUserInfo = (value: string, parsed: URL): string => {
+  const schemeSeparator = value.indexOf("://");
+  const authorityStart =
+    schemeSeparator < 0
+      ? value.startsWith("//")
+        ? 2
+        : -1
+      : schemeSeparator + 3;
+  if (authorityStart < 0) return credentialFreeHref(parsed);
+  const remaining = value.slice(authorityStart);
+  const delimiter = remaining.search(/[/?#]/u);
+  const authorityEnd =
+    delimiter < 0 ? value.length : authorityStart + delimiter;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const userInfoEnd = authority.lastIndexOf("@");
+  if (userInfoEnd < 0) return credentialFreeHref(parsed);
+  const candidate = `${value.slice(0, authorityStart)}${authority.slice(userInfoEnd + 1)}${value.slice(authorityEnd)}`;
   try {
-    const parsed = new URL(value, "https://rea.invalid");
-    const sanitized = sanitizeBrowserUrl(parsed.href).url;
-    return parsed.origin === "https://rea.invalid"
-      ? sanitized.replace("https://rea.invalid", "")
-      : sanitized;
+    const candidateUrl = new URL(candidate);
+    return candidateUrl.username === "" && candidateUrl.password === ""
+      ? candidate
+      : credentialFreeHref(parsed);
   } catch {
-    return value.split("#", 1)[0]?.split("?", 1)[0] ?? "";
+    return credentialFreeHref(parsed);
   }
+};
+
+const credentialFreeHref = (parsed: URL): string => {
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.href;
+};
+
+/** Normalize endpoint candidates without discarding local query or fragment data. */
+export const sanitizeEndpointCandidate = (value: string): string => {
+  return sanitizeBrowserUrl(value).url;
 };

@@ -83,7 +83,7 @@ const captureScriptSource = async (
     return {
       source: {
         included: false,
-        reason: "source capture was not approved",
+        reason: "source capture was not selected",
       },
     };
   const result = requiredRecord(

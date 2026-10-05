@@ -100,8 +100,7 @@ export const collectNativeSymbols = (
   return { symbols, accepted, unsupported };
 };
 
-const normalizeSymbol = (value: string): string =>
-  value.replace(/^_+/u, "").replace(/@\d+$/u, "").toLowerCase();
+const normalizeSymbol = (value: string): string => value.replace(/^_+/u, "");
 
 const sameSymbolName = (left: string, right: string): boolean =>
   normalizeSymbol(left) === normalizeSymbol(right);
@@ -185,7 +184,7 @@ const matchPinvoke = (
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
   const exact = candidates.find(
     (symbol) =>
-      sameSymbolName(managed.import_name, symbol.name) &&
+      managed.import_name === symbol.name &&
       moduleCompatible(managed.import_scope_name, symbol),
   );
   const decorated = candidates.find((symbol) =>

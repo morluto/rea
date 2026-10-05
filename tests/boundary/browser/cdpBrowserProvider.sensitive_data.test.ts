@@ -53,7 +53,7 @@ describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
     );
     expect(result.value.scripts.items[0]?.frame_id).toBe("frame-main");
     expect(result.value.scripts.items[0]?.source_map_url).toBe(
-      `${browser.allowedOrigin}/app.js.map?token=%5BREDACTED%5D`,
+      `${browser.allowedOrigin}/app.js.map?token=map-secret`,
     );
     expect(result.value.scripts.items[0]?.resource_reconciliation).toEqual({
       status: "exact",
@@ -61,13 +61,13 @@ describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
     });
     expect(result.value.scripts.items[0]?.source).toEqual({
       included: false,
-      reason: "source capture was not approved",
+      reason: "source capture was not selected",
     });
     expect(result.value.resources).toHaveLength(1);
     expect(result.value.network.requests).toHaveLength(1);
     expect(result.value.network.requests[0]?.initiator).toEqual({
       type: "script",
-      url: `${browser.allowedOrigin}/app.js?caller=%5BREDACTED%5D`,
+      url: `${browser.allowedOrigin}/app.js?caller=caller-secret`,
       line: 3,
       column: 5,
     });
@@ -110,7 +110,7 @@ describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
       dom_urls: [
         {
           attribute: "href",
-          url: `${browser.allowedOrigin}/agent?token=%5BREDACTED%5D`,
+          url: `${browser.allowedOrigin}/agent?token=dom-url-secret`,
           destination_scope: "approved",
         },
       ],
@@ -186,7 +186,7 @@ describeBrowser("CdpBrowserProvider: complete storage fingerprints", () => {
 });
 
 describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
-  it("captures only approved redacted console text and value-free payload shapes", async () => {
+  it("captures requested console text verbatim and value-free payload shapes", async () => {
     const browser = await startFakeCdpBrowser({
       sensitiveShapes: true,
       binaryWebSocketEvent: true,
@@ -208,10 +208,16 @@ describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
     expect(result.value.console.events[0]?.text_capture).toEqual({
       status: "included",
       values: [
-        { argument_index: 0, type: "string", text: "authorization=[REDACTED]" },
+        {
+          argument_index: 0,
+          type: "string",
+          text: "authorization=Bearer console-secret",
+        },
         { argument_index: 1, type: "number", text: "42" },
       ],
-      retained_bytes: 26,
+      retained_bytes:
+        Buffer.byteLength("authorization=Bearer console-secret") +
+        Buffer.byteLength("42"),
     });
     expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
       status: "included",
@@ -261,7 +267,6 @@ describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
       "request-body-secret",
       "response-body-secret",
       "websocket-secret",
-      "console-secret",
       "object-secret",
     ])
       expect(serialized).not.toContain(secret);
@@ -273,7 +278,7 @@ describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
 });
 
 describeBrowser("CdpBrowserProvider: complete sensitive data", () => {
-  it("returns complete approved text and shapes while redacting secrets", async () => {
+  it("returns complete requested text and payload shapes verbatim", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
     trackBrowser(browser);
     const request = inspectWebPageInputSchema.parse({
@@ -291,10 +296,16 @@ describeBrowser("CdpBrowserProvider: complete sensitive data", () => {
     expect(result.value.console.events[0]?.text_capture).toEqual({
       status: "included",
       values: [
-        { argument_index: 0, type: "string", text: "authorization=[REDACTED]" },
+        {
+          argument_index: 0,
+          type: "string",
+          text: "authorization=Bearer console-secret",
+        },
         { argument_index: 1, type: "number", text: "42" },
       ],
-      retained_bytes: 26,
+      retained_bytes:
+        Buffer.byteLength("authorization=Bearer console-secret") +
+        Buffer.byteLength("42"),
     });
     expect(result.value.network.requests[0]?.body_shapes.status).toBe(
       "included",
@@ -354,34 +365,16 @@ const expectSensitiveValuesAbsent = (
 ): void => {
   const serialized = JSON.stringify(inspection);
   for (const secret of [
-    "page-secret",
-    "frame-secret",
-    "dom-secret",
     "forbidden",
-    "resource-secret",
-    "script-secret",
-    "inline-secret",
-    "map-secret",
-    "network-secret",
-    "request-secret",
     "request-body-secret",
-    "response-secret",
     "response-body-secret",
     "websocket-secret",
-    "websocket-url-secret",
-    "console-secret",
     "unknown-origin-console-secret",
     "unknown-console-value-secret",
     "storage-secret",
     "cookie-secret",
     "indexed-db-secret",
     "cache-body-secret",
-    "secret-id",
-    "dom-url-secret",
-    "link-secret",
-    "csp-secret",
-    "hash-secret",
-    "header-secret",
   ])
     expect(serialized).not.toContain(secret);
   const methods = browser.commands.map((command) => command.method);

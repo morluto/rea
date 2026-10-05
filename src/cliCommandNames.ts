@@ -47,7 +47,6 @@ export const CLI_COMMANDS = Object.freeze({
   compare: "compare",
   captureProcess: "capture-process",
   compareProcessCaptures: "compare-process-captures",
-  policy: "policy",
   listBrowserTargets: "list-browser-targets",
   inspectWebPage: "inspect-web-page",
   analyzeWebBundle: "analyze-web-bundle",

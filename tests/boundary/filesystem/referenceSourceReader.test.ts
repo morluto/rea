@@ -42,7 +42,7 @@ describe("readReferenceSource entries", () => {
     expect(result.value.limitations).toHaveLength(1);
   });
 
-  it("sanitizes internal, external, and missing symlink targets", async () => {
+  it("reports physical external symlink targets without following them", async () => {
     const root = await createTestTempDirectory("rea-reference-");
     const outside = await createTestTempDirectory("rea-outside-");
     await writeFile(join(outside, "secret"), "secret");
@@ -60,7 +60,7 @@ describe("readReferenceSource entries", () => {
         status: "read",
         kind: "symlink",
         path: "external",
-        target: "<outside-root>",
+        target: join(outside, "secret"),
         targetState: "external",
       },
       {
@@ -86,7 +86,9 @@ describe("readReferenceSource entries", () => {
       },
     ]);
     expect(result.value.bytesRead).toBe(5);
-    expect(JSON.stringify(result.value.entries)).not.toContain(outside);
+    expect(JSON.stringify(result.value.entries)).toContain(
+      join(outside, "secret"),
+    );
   });
 
   it("reads a source file larger than the former 16 MiB ceiling", async () => {
@@ -168,16 +170,13 @@ describe("readReferenceSource failures and exclusions", () => {
     });
   });
 
-  it("sanitizes filesystem errors", async () => {
+  it("keeps selected-root paths in actionable filesystem errors", async () => {
     const missing = join(tmpdir(), "rea-secret-root-that-does-not-exist");
     const result = await readReferenceSource(missing);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.message).toBe(
-      "Reference source root could not be resolved",
-    );
-    expect(result.error.message).not.toContain(missing);
+    expect(result.error.message).toContain(missing);
   });
 
   it("returns typed failures for cancellation and invalid roots", async () => {

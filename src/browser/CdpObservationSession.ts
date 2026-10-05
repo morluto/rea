@@ -91,7 +91,7 @@ export const observeCdpSession = async (
       completed: 1,
       total: 2,
       message:
-        "Browser observation armed; perform the approved user action now",
+        "Browser observation armed; perform the requested user action now",
     });
     let endReason = await waitForWindow(
       context.input.observation_ms,

@@ -35,14 +35,11 @@ import {
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 
-const SECRET_VALUES = [
-  "network-secret-value",
-  "console-secret-value",
-  "storage-secret-value",
-  "websocket-secret-value",
-  "ax-private-label-value",
-];
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 30_000;
+const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
+const SCENARIO_URL_SECRET_VALUE = "rea-browser-url-verifier-secret";
+process.env.REA_BROWSER_VERIFIER_SECRET = SCENARIO_SECRET_VALUE;
+process.env.REA_BROWSER_VERIFIER_URL = SCENARIO_URL_SECRET_VALUE;
 const verifierRun = createVerifierRun();
 
 const executable = await browserExecutable();
@@ -99,10 +96,25 @@ try {
   if (!observed.ok) throw observed.error;
   assertObservation(observed.value, site.origin);
   const serialized = JSON.stringify(observed.value);
-  for (const secret of [...SECRET_VALUES, "browser-secret-value"])
+  if (
+    !observed.value.target.url.includes("startup=browser-secret-value") ||
+    !observed.value.network.requests.some((request) =>
+      request.url.includes("token=network-secret-value"),
+    )
+  )
+    throw new Error(
+      "Passive browser result did not preserve ordinary URL queries",
+    );
+  for (const secret of [
+    "request-secret-value",
+    "request-body-secret-value",
+    "response-secret-value",
+    "storage-secret-value",
+    "websocket-secret-value",
+  ])
     if (serialized.includes(secret))
       throw new Error(
-        `Passive browser result retained redacted value: ${secret}`,
+        `Passive browser result included unselected structured data: ${secret}`,
       );
 
   const withSource = await provider.inspectPage(
@@ -217,17 +229,12 @@ try {
       mode: "connect",
       cdp_endpoint: endpoint,
       target_id: target,
-      ownership: "external",
-      cleanup: "disconnect-only",
     },
     site.origin,
   );
   let attachedScenario;
   try {
-    attachedScenario = await runScenarioCli(attachedScenarioInput, {
-      REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON: JSON.stringify([endpoint]),
-      REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON: JSON.stringify([site.origin]),
-    });
+    attachedScenario = await runScenarioCli(attachedScenarioInput);
   } catch (cliError) {
     const direct =
       await new PlaywrightBrowserScenarioProvider().captureScenario(
@@ -239,12 +246,8 @@ try {
         underlying instanceof Error
           ? `${underlying.name}: ${underlying.message}`
           : String(underlying ?? direct.error.message);
-      const redactedDetails = [...SECRET_VALUES, "browser-secret-value"].reduce(
-        (message, secret) => message.replaceAll(secret, "<redacted>"),
-        details,
-      );
       throw new Error(
-        `Attached browser scenario failed through both CLI and provider: ${redactedDetails}`,
+        `Attached browser scenario failed through both CLI and provider: ${details}`,
         { cause: cliError },
       );
     }
@@ -273,9 +276,6 @@ try {
         {
           mode: "launch",
           executable_path: executable,
-          headless: true,
-          user_data: "temporary-owned",
-          cleanup: "close-and-delete-profile",
         },
         site.origin,
       ),
@@ -290,13 +290,32 @@ try {
   if ([...profilesAfter].some((entry) => !profilesBefore.has(entry)))
     throw new Error("Scenario launch retained a temporary browser profile");
   assertScenarioCapture(launchedScenario.value);
-  for (const secret of ["network-secret-value", "websocket-url-secret"])
-    if (
-      JSON.stringify([attachedScenario, launchedScenario.value]).includes(
-        secret,
-      )
-    )
-      throw new Error(`Browser scenario retained sensitive value: ${secret}`);
+  const scenarioResults = JSON.stringify([
+    attachedScenario,
+    launchedScenario.value,
+  ]);
+  for (const retainedValue of [
+    "token=network-secret-value",
+    "token=websocket-url-secret",
+    "authorization=Bearer console-secret-value",
+    "websocket-secret-value",
+  ])
+    if (!scenarioResults.includes(retainedValue))
+      throw new Error(
+        `Browser scenario did not preserve selected value: ${retainedValue}`,
+      );
+  for (const unselectedValue of [
+    SCENARIO_SECRET_VALUE,
+    SCENARIO_URL_SECRET_VALUE,
+    "request-secret-value",
+    "request-body-secret-value",
+    "response-secret-value",
+    "storage-secret-value",
+  ])
+    if (scenarioResults.includes(unselectedValue))
+      throw new Error(
+        `Browser scenario included unselected structured value: ${unselectedValue}`,
+      );
 
   const largeScreenshot = await verifyLargeScreenshotE2e(endpoint, site.origin);
   process.stdout.write(

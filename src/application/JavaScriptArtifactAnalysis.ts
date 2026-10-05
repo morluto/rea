@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { analyzeParsedJavaScriptStaticSource } from "../domain/javascriptStaticAnalysis.js";
 import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
+import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
   JavaScriptSourceRange,
   JavaScriptSourcePoint,
@@ -249,9 +250,12 @@ const collectSourceMapOriginals = (
     const names = map.sources;
     if (!Array.isArray(names))
       return invalidSourceMap(file, "Source map has no sources array.");
-    const contents = Array.isArray(map.sourcesContent)
-      ? map.sourcesContent
-      : [];
+    const contents = map.sourcesContent;
+    if (!hasValidSourceMapContents(names.length, contents))
+      return invalidSourceMap(
+        file,
+        "Source map sourcesContent must contain one string or null entry per source.",
+      );
     const root = typeof map.sourceRoot === "string" ? map.sourceRoot : "";
     for (const [index, raw] of names.entries()) {
       if (typeof raw !== "string")
@@ -259,8 +263,8 @@ const collectSourceMapOriginals = (
           file,
           "Source map contains a non-string source name.",
         );
-      const content =
-        typeof contents[index] === "string" ? contents[index] : null;
+      const rawContent = Array.isArray(contents) ? contents[index] : undefined;
+      const content = typeof rawContent === "string" ? rawContent : null;
       sources.push({
         source: resolveSourceName(root, raw),
         content,

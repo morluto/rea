@@ -9,7 +9,6 @@ import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
 import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/errors.js";
-import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { SERVER_START_FAILED } from "./main/messages.js";
 import { createRuntimeState } from "./main/state.js";
@@ -58,16 +57,6 @@ export const run = async (
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
-  const permissionAuthority = await loadConfiguredPermissionAuthority(
-    config.value,
-  );
-  if (!permissionAuthority.ok) {
-    dependencies.writeStderr(
-      `${projectAnalysisError(permissionAuthority.error).message}\n`,
-    );
-    return 1;
-  }
-
   const session = createBinarySession(config.value, logger);
   const opened = await openInitialTarget(
     session,
@@ -104,20 +93,17 @@ export const run = async (
           javascriptRuntimeObservation: new V8InspectorProvider(),
         };
       }),
-    permissionAuthority: permissionAuthority.value,
     runtimeState,
   });
   if (!transport.ok) return 1;
   const unregisterReload = registerConfigReload({
     dependencies,
-    permissionAuthority: permissionAuthority.value,
     runtimeState,
     serverLogger,
   });
   createShutdown({
     handle: transport.handle,
     session,
-    permissionAuthority: permissionAuthority.value,
     unregisterReload,
     dependencies,
     serverLogger,

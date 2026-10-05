@@ -12,7 +12,7 @@ import {
 const origin = "https://app.example.test";
 const request = {
   scriptKey: `scr_${"1".repeat(64)}`,
-  declaredUrl: `${origin}/assets/app.js.map?token=%5BREDACTED%5D`,
+  declaredUrl: `${origin}/assets/app.js.map?token=secret&v=2#source-map`,
   fetchUrl: `${origin}/assets/app.js.map?token=secret`,
 };
 
@@ -222,6 +222,67 @@ describe("web source-map fetching and validation", () => {
       fetch: () => Promise.resolve(new Response("not-json", { status: 200 })),
     });
     expect(result.items[0]?.status).toBe("invalid");
+  });
+});
+
+describe("web source-map sourcesContent validation", () => {
+  it.each([
+    ["a scalar sourcesContent value", { sourcesContent: "source" }],
+    ["a non-string, non-null source entry", { sourcesContent: [42] }],
+    ["a sourcesContent array with the wrong length", { sourcesContent: [] }],
+  ])("reports %s as invalid", async (_description, content) => {
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              sources: ["source.ts"],
+              names: [],
+              mappings: "",
+              ...content,
+            }),
+            { status: 200 },
+          ),
+        ),
+    });
+
+    expect(result).toMatchObject({
+      status: "unavailable",
+      items: [
+        {
+          status: "invalid",
+          artifact: null,
+          original_sources: [],
+          limitation: expect.stringContaining("Source-map JSON"),
+        },
+      ],
+    });
+  });
+
+  it("accepts null source-map source contents", async () => {
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              sources: ["source.ts"],
+              sourcesContent: [null],
+              names: [],
+              mappings: "",
+            }),
+            { status: 200 },
+          ),
+        ),
+    });
+
+    expect(result.items[0]).toMatchObject({
+      status: "included",
+      original_sources: [
+        { source: `${origin}/assets/source.ts`, artifact: null },
+      ],
+    });
   });
 });
 

@@ -1,15 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { isInputRequiredResult } from "@modelcontextprotocol/server";
 import {
   getNavigationContext,
   inspectAddressContext,
 } from "../application/AnalysisContextQueries.js";
 import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
-import { processCapturePermissionRequest } from "../application/ProcessCapturePermission.js";
 import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
@@ -18,17 +15,11 @@ import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
 import type {
   ProcessCapture,
-  ProcessExecutionPolicy,
   ProcessScenario,
 } from "../domain/processCapture.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { projectPermissionFailure } from "../application/PermissionFailure.js";
+import { ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import {
-  authorizeProcessCaptureWithElicitation,
-  type ProcessCaptureElicitation,
-} from "./ProcessCaptureElicitation.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
@@ -45,7 +36,6 @@ import {
   sessionAvailabilityPolicy,
   type SessionAvailability,
 } from "./sessionAvailabilityPolicy.js";
-import { DENY_PROCESS_POLICY } from "./sessionToolPolicies.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
@@ -91,44 +81,20 @@ interface ProcessToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
-  readonly processPolicy: () => ProcessExecutionPolicy;
   readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
-  readonly permissionAuthority?: PermissionAuthority;
-  readonly processCaptureElicitation?: ProcessCaptureElicitation;
 }
 
 const registerProcessTools = ({
   server,
   session,
   logger,
-  processPolicy,
   captureContract,
-  permissionAuthority,
-  processCaptureElicitation,
 }: ProcessToolRegistration): void => {
   server.registerTool(
     captureContract.name,
     toolRegistrationOptions(captureContract),
     async (input, context) => {
       const scenario = input;
-      if (permissionAuthority !== undefined) {
-        const request = processCapturePermissionRequest(scenario);
-        const authorized =
-          processCaptureElicitation === undefined
-            ? await permissionAuthority.authorize(request, "read")
-            : await authorizeProcessCaptureWithElicitation(
-                permissionAuthority,
-                request,
-                context,
-                processCaptureElicitation,
-              );
-        if (isInputRequiredResult(authorized)) return authorized;
-        if (!authorized.ok)
-          return toCallToolResult(
-            err(projectPermissionFailure(authorized.error)),
-            captureContract,
-          );
-      }
       const progress = mcpProgressReporter(context);
       await progress.report({
         phase: captureContract.name,
@@ -139,12 +105,7 @@ const registerProcessTools = ({
       const captured = await logToolExecution(
         logger,
         captureContract.name,
-        () =>
-          captureProcessScenario(
-            scenario,
-            processPolicy(),
-            context.mcpReq.signal,
-          ),
+        () => captureProcessScenario(scenario, context.mcpReq.signal),
       );
       await progress.report({
         phase: captureContract.name,
@@ -247,11 +208,7 @@ const registerOpenLifecycleTool = ({
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions {
-  readonly processPolicy?: () => ProcessExecutionPolicy;
   readonly startedAt?: string;
-  readonly permissionAuthority?: PermissionAuthority;
-  readonly processCaptureElicitation?: ProcessCaptureElicitation;
-  readonly artifactIntegrityContinueEnabled?: () => boolean;
   readonly availabilityPolicy?: () => SessionAvailability;
 }
 
@@ -302,7 +259,6 @@ export const registerSessionTools = (
   logger: Logger,
   options: SessionToolOptions = {},
 ): void => {
-  const processPolicy = options.processPolicy ?? (() => DENY_PROCESS_POLICY);
   const [
     openContract,
     closeContract,
@@ -326,9 +282,10 @@ export const registerSessionTools = (
     logger,
     contracts: [openContract, closeContract, statusContract],
     startedAt: options.startedAt ?? new Date().toISOString(),
-    availabilityPolicy: sessionAvailabilityPolicy(options.availabilityPolicy, {
-      processPolicy: processPolicy(),
-    }),
+    availabilityPolicy: sessionAvailabilityPolicy(
+      options.availabilityPolicy,
+      {},
+    ),
   });
   registerEvidenceTools({
     server,
@@ -341,14 +298,7 @@ export const registerSessionTools = (
     server,
     session,
     logger,
-    processPolicy,
     captureContract,
-    ...(options.permissionAuthority === undefined
-      ? {}
-      : { permissionAuthority: options.permissionAuthority }),
-    ...(options.processCaptureElicitation === undefined
-      ? {}
-      : { processCaptureElicitation: options.processCaptureElicitation }),
   });
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import { z } from "zod";
@@ -11,6 +12,7 @@ import {
 import {
   AnalysisInputError,
   AnalysisProtocolError,
+  EvidenceIntegrityError,
   type AnalysisError,
 } from "../domain/errors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -41,16 +43,29 @@ export const compareManagedMembersEvidenceValidated = (
   }
 };
 
+interface ManagedMemberComparisonPathDependencies {
+  readonly resolveTarget: typeof parseBinaryTarget;
+  readonly readBytes: (path: string) => Promise<Buffer>;
+}
+
+const DEFAULT_PATH_DEPENDENCIES: ManagedMemberComparisonPathDependencies = {
+  resolveTarget: parseBinaryTarget,
+  readBytes: readFile,
+};
+
 /** Inspect two local PE artifacts and return one derived comparison Evidence. */
-export const compareManagedMemberPaths = async (input: {
-  readonly leftPath: string;
-  readonly rightPath: string;
-}): Promise<Result<Evidence, AnalysisError>> => {
+export const compareManagedMemberPaths = async (
+  input: {
+    readonly leftPath: string;
+    readonly rightPath: string;
+  },
+  dependencies: ManagedMemberComparisonPathDependencies = DEFAULT_PATH_DEPENDENCIES,
+): Promise<Result<Evidence, AnalysisError>> => {
   const operation = "compare_managed_members";
   try {
     const [leftTarget, rightTarget] = await Promise.all([
-      parseBinaryTarget(input.leftPath),
-      parseBinaryTarget(input.rightPath),
+      dependencies.resolveTarget(input.leftPath),
+      dependencies.resolveTarget(input.rightPath),
     ]);
     if (!leftTarget.ok)
       return err(
@@ -61,9 +76,21 @@ export const compareManagedMemberPaths = async (input: {
         new AnalysisInputError(operation, { cause: rightTarget.error }),
       );
     const [leftBytes, rightBytes] = await Promise.all([
-      readFile(leftTarget.value.path),
-      readFile(rightTarget.value.path),
+      dependencies.readBytes(leftTarget.value.path),
+      dependencies.readBytes(rightTarget.value.path),
     ]);
+    for (const [target, bytes] of [
+      [leftTarget.value, leftBytes],
+      [rightTarget.value, rightBytes],
+    ] as const) {
+      const observedSha256 = createHash("sha256").update(bytes).digest("hex");
+      if (observedSha256 !== target.sha256)
+        return err(
+          new EvidenceIntegrityError(
+            `Managed artifact digest changed after open: expected ${target.sha256}, observed ${observedSha256} at ${target.path}`,
+          ),
+        );
+    }
     const leftInspection = inspectManagedMembersBytes(
       leftBytes,
       leftTarget.value,

@@ -4,13 +4,12 @@ import type { ToolContract } from "./toolContractTypes.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
-  approved: "Explicit operator approval to perform this operation.",
   after: "The later or right-hand observation to compare.",
   before: "The earlier or left-hand observation to compare.",
   boundary_id: "Exact reconstruction boundary identifier to evaluate.",
   case_sensitive:
     "Whether text matching distinguishes uppercase and lowercase.",
-  cdp_endpoint: "Approved literal loopback Chrome DevTools Protocol endpoint.",
+  cdp_endpoint: "Literal loopback Chrome DevTools Protocol endpoint.",
   comment: "Exact analyst comment text to write.",
   comparisons: "Validated comparison Evidence records to aggregate.",
   coverage: "Exact reconstruction-coverage commitment to verify.",
@@ -19,13 +18,13 @@ const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   error: "Structured, caller-actionable error when the operation fails.",
   evidence: "Evidence record produced by this operation.",
   evidence_id: "Stable identifier of the recorded Evidence observation.",
-  executable: "Approved absolute path of the executable to run.",
+  executable: "Command name or executable path to run.",
   format: "Declared input artifact format.",
   name: "Exact name used by this operation.",
   pattern:
     "Literal text or regular expression used to filter matching results.",
   phase: "Current plan or execution phase of the operation.",
-  plan: "Content-bound execution plan and its approval commitment.",
+  plan: "Content-bound execution plan and its digest commitment.",
   query: "Non-empty feature or text query to investigate.",
   question: "Concrete unresolved question to retain for later investigation.",
   result: "Primary structured result returned by this operation.",
@@ -43,7 +42,8 @@ const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   status: "Current lifecycle or verification status.",
   summary: "Concise evidence-backed summary of the result.",
   symbols: "Ordered Swift symbols to demangle.",
-  target_id: "Exact authorized CDP target identifier.",
+  target_id:
+    "Exact CDP target identifier selected from the endpoint's target listing.",
   unknown_id: "Exact residual-unknown identifier.",
 };
 
@@ -112,8 +112,6 @@ const fallbackPropertyDescription = (property: string): string => {
   const explicit = PROPERTY_DESCRIPTIONS[property];
   if (explicit !== undefined) return explicit;
   const words = property.replaceAll("_", " ");
-  if (property.endsWith("_approved"))
-    return `Explicit operator approval for ${words.slice(0, -9)}.`;
   if (property.startsWith("max_"))
     return `Maximum permitted ${words.slice(4)} for this operation.`;
   if (property.startsWith("include_"))
@@ -133,7 +131,7 @@ const fallbackPropertyDescription = (property: string): string => {
   if (property.endsWith("_bytes"))
     return `Byte count for ${words.slice(0, -6)}.`;
   if (property.endsWith("_root") || property.endsWith("_roots"))
-    return `Approved canonical filesystem ${words}.`;
+    return `Local filesystem ${words} selected for this operation.`;
   if (property.startsWith("is_") || property.startsWith("has_"))
     return `Whether ${words}.`;
   return `Value for ${words}.`;

@@ -7,14 +7,7 @@ import {
 
 const terminalTrigger = () => ({
   kind: "terminal_text" as const,
-  view: "decoded" as const,
-  encoding: "utf8" as const,
   literal: "Ready",
-  case_sensitive: true,
-  control_sequences: "include" as const,
-  occurrence: 1,
-  since: { kind: "scenario_start" as const },
-  consume: false,
 });
 
 const finishTransition = () => ({
@@ -23,7 +16,7 @@ const finishTransition = () => ({
   max_uses: 1,
   when: terminalTrigger(),
   actions: [{ type: "checkpoint" as const, name: "ready" }],
-  target: { kind: "finish" as const, outcome: "passed" as const },
+  target: { kind: "finish" as const },
 });
 
 const baseScenario = () => ({
@@ -58,7 +51,6 @@ const buildLargeCallerScenario = () => {
   const sendInputs = Array.from({ length: 300 }, () => ({
     type: "send_input",
     data: "x",
-    sensitive: false,
   }));
   states[0]!.on = Array.from({ length: 130 }, (_, index) => ({
     id: `transition_${String(index)}`,
@@ -69,7 +61,7 @@ const buildLargeCallerScenario = () => {
     target:
       index > 0 && index <= 39
         ? { kind: "goto", state: `state_${String(index)}` }
-        : { kind: "finish", outcome: "passed" },
+        : { kind: "finish" },
   }));
   for (let index = 1; index < states.length; index += 1) {
     const state = states[index]!;
@@ -118,16 +110,25 @@ const REJECTION_FIELD: Readonly<
     path: ["states", 0, "on", 0, "when", "cardinality", "min"],
     code: "too_small",
   },
-  "unsupported terminal interpretation": {
-    path: ["states", 0, "on", 0, "when", "control_sequences"],
-    code: "invalid_value",
-  },
 };
 
 describe("process reactive scenario schema", () => {
   it("parses a terminal scenario", () => {
     expect(processReactiveScenarioSchema.parse(baseScenario())).toMatchObject({
       initial_state: "starting",
+      states: [
+        {
+          on: [
+            {
+              when: {
+                occurrence: 1,
+                since: { kind: "scenario_start" },
+                consume: false,
+              },
+            },
+          ],
+        },
+      ],
     });
   });
 
@@ -159,7 +160,7 @@ describe("process reactive scenario schema", () => {
               when: { ...terminalTrigger(), literal },
               actions: [
                 { type: "checkpoint", name: checkpoint },
-                { type: "send_input", data, sensitive: false },
+                { type: "send_input", data },
               ],
             },
           ],
@@ -232,26 +233,6 @@ describe("process reactive scenario schema", () => {
                   since: { kind: "scenario_start" },
                   consume: false,
                   cardinality: { min: 0, max: 1 },
-                },
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    [
-      "unsupported terminal interpretation",
-      {
-        ...baseScenario(),
-        states: [
-          {
-            ...baseScenario().states[0],
-            on: [
-              {
-                ...finishTransition(),
-                when: {
-                  ...terminalTrigger(),
-                  control_sequences: "strip_ansi",
                 },
               },
             ],

@@ -280,79 +280,6 @@ const DOCUMENTATION_DIRECTORY_NAMES = new Set([
   "man",
 ]);
 
-const SECRET_BASENAMES = new Set([
-  "id_rsa",
-  "id_ed25519",
-  "pgpass",
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  ".envrc",
-  ".env.local",
-  ".env.production",
-  ".env.development",
-  ".env.test",
-  ".env.staging",
-  ".env.example",
-  "auth.json",
-  "auth.yaml",
-  "auth.yml",
-  "token.json",
-  "tokens.json",
-  "credentials.json",
-  "secrets.json",
-  "google-services.json",
-  "service-account.json",
-  ".htpasswd",
-]);
-
-const SECRET_BASENAME_PREFIXES = [
-  ".env",
-  ".env.",
-  "private",
-  "secret",
-  "secrets",
-  "credential",
-  "credentials",
-  "token",
-  "tokens",
-  "password",
-  "passwords",
-  "auth",
-  "apikey",
-  "api-key",
-  "api_key",
-  "service-account",
-  "kubeconfig",
-];
-
-const SECRET_BASENAME_SUFFIXES = [
-  ".pem",
-  ".key",
-  ".p12",
-  ".gpg",
-  ".pgp",
-  ".keystore",
-];
-
-const SECRET_PATH_SEGMENTS = new Set([
-  ".ssh",
-  ".aws",
-  ".gnupg",
-  ".pki",
-  ".docker",
-  ".secrets",
-  "secrets",
-  "secret",
-  "private",
-  "credentials",
-  "tokens",
-  "passwords",
-  "passphrase",
-  "kubernetes",
-  "k8s",
-]);
-
 const filenameIsTest = (filename: string): boolean => {
   const lower = filename.toLowerCase();
   if (lower.includes(".test.") || lower.includes(".spec.")) return true;
@@ -388,44 +315,6 @@ const isPathUnderAny = (path: string, names: ReadonlySet<string>): boolean => {
     if (segment === "") continue;
     if (names.has(segment.toLowerCase())) return true;
   }
-  return false;
-};
-
-const secretPrefixMatches = (filename: string): boolean => {
-  const lower = filename.toLowerCase();
-  for (const prefix of SECRET_BASENAME_PREFIXES) {
-    const prefixLower = prefix.toLowerCase();
-    if (!lower.startsWith(prefixLower)) continue;
-    const nextIndex = prefixLower.length;
-    if (nextIndex < lower.length) {
-      const next = lower[nextIndex];
-      if (next !== "." && next !== "_" && next !== "-") continue;
-    }
-    const extension = basenameParts(filename).ext.toLowerCase();
-    if (CODE_EXTENSIONS.has(extension)) continue;
-    return true;
-  }
-  return false;
-};
-
-/** Return true when a path or any parent segment matches common secret patterns. */
-export const isSecretLikePath = (path: string): boolean => {
-  const parts = path.split("/").filter((segment) => segment !== "");
-  for (const segment of parts) {
-    const lower = segment.toLowerCase();
-    if (SECRET_PATH_SEGMENTS.has(lower)) return true;
-  }
-
-  const filename = parts[parts.length - 1];
-  if (filename === undefined) return false;
-  const lower = filename.toLowerCase();
-
-  if (SECRET_BASENAMES.has(lower)) return true;
-  if (secretPrefixMatches(filename)) return true;
-  for (const suffix of SECRET_BASENAME_SUFFIXES) {
-    if (lower.endsWith(suffix.toLowerCase())) return true;
-  }
-
   return false;
 };
 

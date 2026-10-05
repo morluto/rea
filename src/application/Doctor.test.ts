@@ -3,6 +3,33 @@ import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor } from "./Doctor.js";
 
+it("reports unavailable replay without blocking installation or Hopper readiness", async () => {
+  const replayCheck = {
+    name: "javascript-replay",
+    ok: false,
+    classification: "unsupported_host" as const,
+    detail: "Controlled replay requires Linux x86_64",
+  };
+  const doctorHost = host({
+    javascriptReplayCheck: () => Promise.resolve(replayCheck),
+  });
+  for (const scope of [undefined, { providers: ["hopper"] }]) {
+    const report = await runDoctor(undefined, doctorHost, scope);
+    expect(report.healthy).toBe(true);
+    expect(report.checks).toContainEqual(replayCheck);
+    expect(report.informational_checks).toContainEqual(replayCheck);
+    expect(report.scope_checks).not.toContainEqual(replayCheck);
+  }
+  const unhealthy = await runDoctor(
+    undefined,
+    host({
+      nodeVersion: "20.0.0",
+      javascriptReplayCheck: () => Promise.resolve(replayCheck),
+    }),
+  );
+  expect(unhealthy.healthy).toBe(false);
+});
+
 describe("doctor", () => {
   it("returns exact recovery for every failed diagnostic", async () => {
     const result = await runDoctor(

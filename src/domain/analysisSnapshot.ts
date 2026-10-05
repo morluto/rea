@@ -284,6 +284,8 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
       "Analysis snapshot evidence contains records for another target",
     );
   const ids = new Set<string>();
+  const boundEntries: AnalysisSnapshotEntry[] = [];
+  const index = createEvidenceIndex(parsed);
   for (const entry of parsed.entries) {
     if (
       entry.execution.provider.id !== parsed.binding.provider.id ||
@@ -302,14 +304,129 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
     if (ids.has(entry.query_id))
       throw new TypeError("Analysis snapshot contains duplicate queries");
     ids.add(entry.query_id);
+    if (!entryHasMatchingEvidence(entry, parsed, index)) {
+      if (entryHasCorrespondingEvidence(entry, parsed, index))
+        throw new TypeError(
+          `Analysis snapshot entry ${entry.operation} differs from its Evidence record`,
+        );
+      // Older snapshots may contain cache entries without profile-bound Evidence.
+      // Keep their Evidence bundle, but never replay those unbound values.
+      continue;
+    }
+    boundEntries.push(entry);
   }
   const sorted = [...parsed.entries].sort((left, right) =>
     left.query_id.localeCompare(right.query_id),
   );
   if (JSON.stringify(parsed.entries) !== JSON.stringify(sorted))
     throw new TypeError("Analysis snapshot entries are not canonical");
-  return parsed;
+  return { ...parsed, entries: boundEntries };
 };
+
+/** Check that a cached provider execution is represented by bundled Evidence. */
+interface EvidenceIndex {
+  readonly matching: ReadonlySet<string>;
+  readonly corresponding: ReadonlySet<string>;
+}
+
+const createEvidenceIndex = (
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding" | "evidence_bundle">,
+): EvidenceIndex => {
+  const matching = new Set<string>();
+  const corresponding = new Set<string>();
+  for (const evidence of snapshot.evidence_bundle.records) {
+    if (!isCorrespondingEvidence(evidence, snapshot)) continue;
+    const query = evidenceQueryKey(evidence);
+    corresponding.add(query);
+    matching.add(
+      canonicalJson({
+        query,
+        normalized_result: evidence.normalized_result,
+        raw_result: evidence.raw_result,
+        limitations: evidence.limitations,
+        locations: evidence.locations,
+        subject:
+          evidence.subject === null
+            ? null
+            : {
+                local_path: evidence.subject.local_path,
+                sha256: evidence.subject.digest.sha256,
+                format: evidence.subject.format,
+                architecture: evidence.subject.architecture,
+              },
+      }),
+    );
+  }
+  const result = { matching, corresponding };
+  return result;
+};
+
+const entryHasMatchingEvidence = (
+  entry: AnalysisSnapshotEntry,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding" | "evidence_bundle">,
+  index: EvidenceIndex,
+): boolean => index.matching.has(entryEvidenceKey(entry, snapshot.binding));
+
+const entryHasCorrespondingEvidence = (
+  entry: AnalysisSnapshotEntry,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding" | "evidence_bundle">,
+  index: EvidenceIndex,
+): boolean => index.corresponding.has(entryQueryKey(entry, snapshot.binding));
+
+const isCorrespondingEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
+): boolean =>
+  evidence.predicate_type === "rea.analysis" &&
+  evidence.confidence === "observed" &&
+  evidence.authority === "shipped-artifact" &&
+  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  "analysis_profile" in evidence &&
+  analysisProfilesEqual(
+    evidence.analysis_profile,
+    snapshot.binding.analysis_profile,
+  );
+
+const evidenceQueryKey = (evidence: Evidence): string =>
+  canonicalJson({
+    operation: evidence.operation,
+    parameters: evidence.parameters,
+    provider: evidence.provider,
+    analysis_profile:
+      "analysis_profile" in evidence ? evidence.analysis_profile : null,
+  });
+
+const entryQueryKey = (
+  entry: AnalysisSnapshotEntry,
+  binding: AnalysisSnapshotBinding,
+): string =>
+  canonicalJson({
+    operation: entry.operation,
+    parameters: entry.parameters,
+    provider: entry.execution.provider,
+    analysis_profile: binding.analysis_profile,
+  });
+
+const entryEvidenceKey = (
+  entry: AnalysisSnapshotEntry,
+  binding: AnalysisSnapshotBinding,
+): string =>
+  canonicalJson({
+    query: entryQueryKey(entry, binding),
+    normalized_result: entry.execution.result,
+    raw_result: entry.execution.raw_result,
+    limitations: entry.execution.limitations,
+    locations: entry.execution.locations,
+    subject:
+      entry.execution.subject === null
+        ? null
+        : {
+            local_path: entry.execution.subject.path,
+            sha256: entry.execution.subject.sha256,
+            format: entry.execution.subject.format,
+            architecture: entry.execution.subject.architecture,
+          },
+  });
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>

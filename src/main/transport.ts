@@ -1,7 +1,6 @@
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
 import type { BinarySession } from "../application/BinarySession.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { Logger } from "../logger.js";
 import {
   createServer,
@@ -28,7 +27,6 @@ interface ServerContext {
   readonly logger: Logger;
   readonly serverLogger: Logger;
   readonly loadOptionalProviders: () => Promise<OptionalProviders>;
-  readonly permissionAuthority: PermissionAuthority;
   readonly runtimeState: RuntimeState;
 }
 
@@ -58,19 +56,13 @@ export const startMcpTransport = async (
       () =>
         (dependencies.createServer ?? createServer)(session, session, {
           logger: serverContext.logger,
-          processPolicy: () =>
-            serverContext.runtimeState.currentConfig.processExecutionPolicy,
-          permissionAuthority: serverContext.permissionAuthority,
           ...optionalProviders,
-          artifactIntegrityContinueEnabled: () =>
+          javascriptReplayConfiguration: () =>
             serverContext.runtimeState.currentConfig
-              .artifactIntegrityContinueEnabled,
-          javascriptReplayPolicy: () =>
-            serverContext.runtimeState.currentConfig.javascriptReplayPolicy,
-          managedRuntimePolicy: () =>
-            serverContext.runtimeState.currentConfig.managedRuntimePolicy,
-          availabilityPolicy: () =>
-            runtimeAvailability(serverContext.runtimeState),
+              .javascriptReplayConfiguration,
+          managedRuntimeConfiguration: () =>
+            serverContext.runtimeState.currentConfig
+              .managedRuntimeConfiguration,
         }),
       {
         onerror: () => {
@@ -87,22 +79,3 @@ export const startMcpTransport = async (
   }
   return { ok: true, handle };
 };
-
-const runtimeAvailability = (state: RuntimeState) => ({
-  processCaptureEnabled:
-    state.currentConfig.processExecutionPolicy.status === "enabled",
-  browserObservationEnabled:
-    state.currentConfig.browserObservationPolicy.status === "enabled",
-  browserScenarioEnabled:
-    state.currentConfig.browserScenarioPolicy.status === "enabled",
-  electronObservationEnabled:
-    state.currentConfig.electronObservationPolicy.status === "enabled",
-  electronAutomationEnabled:
-    state.currentConfig.electronAutomationPolicy.status === "enabled",
-  v8InspectorObservationEnabled:
-    state.currentConfig.v8InspectorObservationPolicy.status === "enabled",
-  javascriptReplayEnabled:
-    state.currentConfig.javascriptReplayPolicy.status === "enabled",
-  managedRuntimeEnabled:
-    state.currentConfig.managedRuntimePolicy.status === "enabled",
-});

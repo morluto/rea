@@ -1,8 +1,4 @@
 import type { JsonValue } from "./jsonValue.js";
-import type {
-  MissingPermissionScope,
-  PermissionScope,
-} from "./permissionPolicy.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -17,7 +13,6 @@ import {
   HopperProcessError,
   HopperRemoteError,
   HopperTimeoutError,
-  PermissionRequiredError,
   ProviderAdapterError,
   ProviderSelectionError,
   ReplayPlanStaleError,
@@ -47,12 +42,6 @@ export const projectAnalysisError = (
     retryable: RETRYABLE_CODES.has(code),
     remediation: {
       action: analysisErrorRemediationAction(error),
-      restart_required:
-        error instanceof PermissionRequiredError &&
-        error.remediation === "restart",
-      ...(error instanceof PermissionRequiredError
-        ? { elicitation_supported: error.remediation === "elicit" }
-        : {}),
     },
     ...(details === undefined ? {} : { details }),
   };
@@ -61,7 +50,6 @@ export const projectAnalysisError = (
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
   if (error.cleanupIncomplete) return "cleanup_incomplete";
   if (error instanceof ReplayPlanStaleError) return "plan_stale";
-  if (error instanceof PermissionRequiredError) return "permission_required";
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"
@@ -124,8 +112,6 @@ const processCaptureCode = (
 ): AnalysisErrorProjection["code"] => {
   if (error.cleanupIncomplete) return "cleanup_incomplete";
   if (error.userCategory === "cancelled") return "cancelled";
-  if (error.userCategory === "permission_required")
-    return "permission_required";
   return "process_capture_failed";
 };
 
@@ -133,7 +119,6 @@ type SpecializedErrorTag =
   | "ArtifactOperationError"
   | "BrowserObservationError"
   | "EvidenceFileError"
-  | "PermissionRequiredError"
   | "ProcessCaptureError"
   | "ProviderSelectionError"
   | "ReplayPlanStaleError"
@@ -171,7 +156,6 @@ const staticErrorCode = (
     case "ArtifactOperationError":
     case "BrowserObservationError":
     case "EvidenceFileError":
-    case "PermissionRequiredError":
     case "ProcessCaptureError":
     case "ProviderSelectionError":
     case "ReplayPlanStaleError":
@@ -214,16 +198,9 @@ const requestErrorDetails = (
     };
   if (error instanceof ReplayPlanStaleError)
     return {
-      approved_plan_digest: error.approvedDigest,
+      expected_plan_digest: error.expectedDigest,
       actual_plan_digest: error.actualDigest,
       application_code_admitted: false,
-    };
-  if (error instanceof PermissionRequiredError)
-    return {
-      capability: error.requested.capability,
-      requested: scopeDetails(error.requested),
-      missing: missingScopeDetails(error.missing),
-      ceiling: error.ceiling === null ? null : scopeDetails(error.ceiling),
     };
   return undefined;
 };
@@ -338,33 +315,6 @@ const lifecycleErrorDetails = (
   if (error instanceof BinaryTargetError) return { path: error.path };
   return undefined;
 };
-
-const scopeDetails = (
-  scope: PermissionScope,
-): Readonly<Record<string, JsonValue>> => ({
-  capability: scope.capability,
-  roots: [...scope.roots],
-  executables: [...scope.executables],
-  environment_names: [...scope.environment_names],
-  ...(scope.origins === undefined ? {} : { origins: [...scope.origins] }),
-  network: scope.network,
-  mount: scope.mount,
-});
-
-const missingScopeDetails = (
-  scope: MissingPermissionScope,
-): Readonly<Record<string, JsonValue>> => ({
-  ...(scope.roots === undefined ? {} : { roots: [...scope.roots] }),
-  ...(scope.executables === undefined
-    ? {}
-    : { executables: [...scope.executables] }),
-  ...(scope.environment_names === undefined
-    ? {}
-    : { environment_names: [...scope.environment_names] }),
-  ...(scope.origins === undefined ? {} : { origins: [...scope.origins] }),
-  ...(scope.network === undefined ? {} : { network: scope.network }),
-  ...(scope.mount === undefined ? {} : { mount: scope.mount }),
-});
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "invalid_request",

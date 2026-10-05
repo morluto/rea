@@ -9,7 +9,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -23,12 +22,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -48,7 +43,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -62,12 +56,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -87,7 +77,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -101,12 +90,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -126,7 +111,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -140,12 +124,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -165,7 +145,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -179,12 +158,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -204,7 +179,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -218,12 +192,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -243,7 +213,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -257,12 +226,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -304,7 +269,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -318,12 +282,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -343,7 +303,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -357,12 +316,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -382,7 +337,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -396,12 +350,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -416,143 +366,11 @@
     {
       "type": "object",
       "properties": {
-        "code": { "type": "string", "const": "permission_required" },
-        "category": {
-          "type": "string",
-          "enum": [
-            "invalid_input",
-            "permission_required",
-            "unsupported_provider",
-            "integrity_mismatch",
-            "truncated",
-            "cancelled",
-            "timeout",
-            "unavailable",
-            "execution_failure"
-          ]
-        },
-        "message": { "type": "string", "minLength": 1 },
-        "retryable": { "type": "boolean" },
-        "remediation": {
-          "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
-          "additionalProperties": false
-        },
-        "details": {
-          "type": "object",
-          "properties": {
-            "capability": { "type": "string" },
-            "requested": {
-              "type": "object",
-              "properties": {
-                "capability": { "type": "string" },
-                "roots": { "type": "array", "items": { "type": "string" } },
-                "executables": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                },
-                "environment_names": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                },
-                "origins": { "type": "array", "items": { "type": "string" } },
-                "network": {
-                  "type": "string",
-                  "enum": ["none", "loopback", "external"]
-                },
-                "mount": { "type": "boolean" }
-              },
-              "required": [
-                "capability",
-                "roots",
-                "executables",
-                "environment_names",
-                "network",
-                "mount"
-              ],
-              "additionalProperties": false
-            },
-            "missing": {
-              "type": "object",
-              "properties": {
-                "roots": { "type": "array", "items": { "type": "string" } },
-                "executables": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                },
-                "environment_names": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                },
-                "origins": { "type": "array", "items": { "type": "string" } },
-                "network": {
-                  "type": "string",
-                  "enum": ["none", "loopback", "external"]
-                },
-                "mount": { "type": "boolean", "const": true }
-              },
-              "additionalProperties": false
-            },
-            "ceiling": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "capability": { "type": "string" },
-                    "roots": { "type": "array", "items": { "type": "string" } },
-                    "executables": {
-                      "type": "array",
-                      "items": { "type": "string" }
-                    },
-                    "environment_names": {
-                      "type": "array",
-                      "items": { "type": "string" }
-                    },
-                    "origins": {
-                      "type": "array",
-                      "items": { "type": "string" }
-                    },
-                    "network": {
-                      "type": "string",
-                      "enum": ["none", "loopback", "external"]
-                    },
-                    "mount": { "type": "boolean" }
-                  },
-                  "required": [
-                    "capability",
-                    "roots",
-                    "executables",
-                    "environment_names",
-                    "network",
-                    "mount"
-                  ],
-                  "additionalProperties": false
-                },
-                { "type": "null" }
-              ]
-            }
-          },
-          "required": ["capability", "requested", "missing", "ceiling"],
-          "additionalProperties": false
-        }
-      },
-      "required": ["code", "category", "message", "retryable", "remediation"],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
         "code": { "type": "string", "const": "process_capture_failed" },
         "category": {
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -566,12 +384,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -591,7 +405,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -605,12 +418,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -630,7 +439,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -644,12 +452,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -669,7 +473,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -683,12 +486,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -708,7 +507,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -722,12 +520,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -747,7 +541,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -761,12 +554,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {
@@ -786,7 +575,6 @@
           "type": "string",
           "enum": [
             "invalid_input",
-            "permission_required",
             "unsupported_provider",
             "integrity_mismatch",
             "truncated",
@@ -800,12 +588,8 @@
         "retryable": { "type": "boolean" },
         "remediation": {
           "type": "object",
-          "properties": {
-            "action": { "type": "string", "minLength": 1 },
-            "restart_required": { "type": "boolean" },
-            "elicitation_supported": { "type": "boolean" }
-          },
-          "required": ["action", "restart_required"],
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
           "additionalProperties": false
         },
         "details": {

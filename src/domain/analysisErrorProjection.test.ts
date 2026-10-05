@@ -9,7 +9,6 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-  PermissionRequiredError,
   ProviderAdapterError,
   ReplayPlanStaleError,
   UnknownRegistryError,
@@ -184,53 +183,6 @@ describe("analysis error projection: caller contract", () => {
     });
   });
 
-  it.each([
-    [
-      "configure",
-      false,
-      false,
-      "Add the exact missing scope beneath the administrator ceiling, then retry.",
-    ],
-    [
-      "elicit",
-      false,
-      true,
-      "Approve the exact missing scope, then retry the operation.",
-    ],
-    [
-      "restart",
-      true,
-      false,
-      "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client.",
-    ],
-  ] as const)(
-    "projects %s permission remediation into stable protocol fields",
-    (remediation, restartRequired, elicitationSupported, action) => {
-      const projected = projectAnalysisError(
-        new PermissionRequiredError({
-          requested: {
-            capability: "process_capture",
-            roots: ["/workspace/evidence.json"],
-            executables: [],
-            environment_names: [],
-            network: "none",
-            mount: false,
-            operation_identity: "read:evidence",
-          },
-          missing: { roots: ["/workspace/evidence.json"] },
-          ceiling: null,
-          remediation,
-        }),
-      );
-
-      expect(projected.remediation).toEqual({
-        action,
-        restart_required: restartRequired,
-        elicitation_supported: elicitationSupported,
-      });
-    },
-  );
-
   it("gives missing residual unknowns lookup-specific remediation", () => {
     expect(
       projectAnalysisError(new UnknownRegistryError("not-found")),
@@ -243,20 +195,6 @@ describe("analysis error projection: caller contract", () => {
           "Check that the unknown_id belongs to this session, then retry.",
       },
       details: { reason: "not-found" },
-    });
-  });
-
-  it("distinguishes disabled integrity continuation from format support", () => {
-    expect(
-      projectAnalysisError(
-        new ArtifactOperationError("inventory_artifact", "policy"),
-      ),
-    ).toMatchObject({
-      code: "artifact_operation_failed",
-      category: "unavailable",
-      message: expect.stringContaining(
-        "REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED=true",
-      ),
     });
   });
 });

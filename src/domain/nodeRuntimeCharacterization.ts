@@ -62,7 +62,9 @@ export const nodeCharacterizationPreparationInputSchema = z
   });
 
 export const nodeCharacterizationExecutionInputSchema = z.strictObject({
-  approved_plan_sha256: digestSchema,
+  plan_sha256: digestSchema.describe(
+    "SHA-256 content identity of the prepared plan; execution rejects a mismatch.",
+  ),
   preparation: nodeCharacterizationPreparationInputSchema,
 });
 

@@ -11,6 +11,7 @@ import {
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import { isSupportedControlledReplayHost } from "./ControlledReplayHostSupport.js";
 import {
   clientRequirementsFor,
   NO_CLIENT_FEATURES,
@@ -28,13 +29,12 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
+  readonly controlledReplayEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
   readonly electronAutomationEnabled?: boolean;
   readonly v8InspectorObservationEnabled?: boolean;
-  readonly javascriptReplayEnabled?: boolean;
-  readonly managedRuntimeEnabled?: boolean;
 };
 
 type AvailabilityFacts = {
@@ -185,8 +185,8 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
     return navigationContextAvailability(context.descriptors);
   const javascriptApplication = javascriptApplicationAvailability(context);
   if (javascriptApplication !== null) return javascriptApplication;
-  const policyDecision = policyAvailability(context);
-  if (policyDecision !== null) return policyDecision;
+  const workflowAvailability = workflowAvailabilityFor(context);
+  if (workflowAvailability !== null) return workflowAvailability;
   const targetDecision = targetAvailability(context);
   if (targetDecision !== null) return targetDecision;
   return providerAvailability(context);
@@ -202,54 +202,44 @@ const javascriptApplicationAvailability = ({
     : null;
 };
 
-const policyAvailability = ({
+const workflowAvailabilityFor = ({
   name,
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
-  const browser = browserPolicyAvailability(name, kind, policy);
+  const browser = browserProviderAvailability(name, kind, policy);
   if (browser !== null) return browser;
   if (name === "capture_process_scenario" && !policy.processCaptureEnabled)
     return {
-      reason: "policy_disabled",
-      remediation:
-        "Enable or grant process_capture within the administrator ceiling.",
-    };
-  if (name === "run_controlled_replay" && !policy.javascriptReplayEnabled)
-    return {
-      reason: "policy_disabled",
-      remediation:
-        "Enable javascript_replay with exact source roots and sandbox executables.",
+      reason: "unsupported_host",
+      remediation: "Run process capture on a supported Linux or macOS host.",
     };
   if (name === "run_controlled_replay")
-    return { reason: "available", remediation: null };
-  if (
-    name === "plan_managed_runtime_correlation" &&
-    !policy.managedRuntimeEnabled
-  )
-    return {
-      reason: "policy_disabled",
-      remediation:
-        "Enable managed_runtime with exact artifact roots and a runtime executable.",
-    };
+    return (policy.controlledReplayEnabled ??
+      isSupportedControlledReplayHost(process.platform, process.arch))
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "unsupported_host",
+          remediation: "Run controlled replay on a Linux x86_64 host.",
+        };
   if (name === "plan_managed_runtime_correlation")
     return { reason: "available", remediation: null };
   if (kind === "application") return { reason: "available", remediation: null };
-  const electron = electronPolicyAvailability(name, kind, policy);
+  const electron = electronProviderAvailability(name, kind, policy);
   if (electron !== null) return electron;
   if (kind === "runtime-provider")
     return policy.v8InspectorObservationEnabled === true
       ? { reason: "available", remediation: null }
       : {
-          reason: "policy_disabled",
+          reason: "provider_missing",
           remediation:
-            "Enable V8 Inspector observation; pass the user's literal-loopback Inspector endpoint to the tool.",
+            "Start REA with its JavaScript runtime provider available.",
         };
   if (kind === "session") return { reason: "available", remediation: null };
   return null;
 };
 
-const electronPolicyAvailability = (
+const electronProviderAvailability = (
   name: string,
   kind: ToolKind,
   policy: AvailabilityPolicy,
@@ -259,20 +249,20 @@ const electronPolicyAvailability = (
     return policy.electronAutomationEnabled === true
       ? { reason: "available", remediation: null }
       : {
-          reason: "policy_disabled",
+          reason: "provider_missing",
           remediation:
-            "Enable active Electron automation and configure exact executable and application roots.",
+            "Start REA with the Electron scenario provider available.",
         };
   return policy.electronObservationEnabled === true
     ? { reason: "available", remediation: null }
     : {
-        reason: "policy_disabled",
+        reason: "provider_missing",
         remediation:
-          "Enable Electron observation; pass the user's literal-loopback CDP endpoint to the tool.",
+          "Start REA with its Electron observation provider available.",
       };
 };
 
-const browserPolicyAvailability = (
+const browserProviderAvailability = (
   name: string,
   kind: ToolKind,
   policy: AvailabilityPolicy,
@@ -281,17 +271,17 @@ const browserPolicyAvailability = (
     return policy.browserScenarioEnabled === true
       ? { reason: "available", remediation: null }
       : {
-          reason: "policy_disabled",
+          reason: "provider_missing",
           remediation:
-            "Enable browser scenarios and configure exact executable roots or loopback CDP endpoints, page origins, and environment secret names.",
+            "Start REA with its browser scenario provider available.",
         };
   if (kind !== "browser-provider") return null;
   return policy.browserObservationEnabled === true
     ? { reason: "available", remediation: null }
     : {
-        reason: "policy_disabled",
+        reason: "provider_missing",
         remediation:
-          "Enable browser observation and configure exact CDP endpoint and page origins.",
+          "Start REA with its browser observation provider available.",
       };
 };
 

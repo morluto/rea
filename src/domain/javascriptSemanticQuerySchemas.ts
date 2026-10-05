@@ -12,7 +12,6 @@ import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
-
 const literalSeedSchema = z.strictObject({
   kind: z.literal("literal"),
   value: jsonValueSchema.refine(
@@ -58,10 +57,6 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-const sourceMapAuthoritySchema = z.strictObject({
-  authority: z.literal("none"),
-});
-
 /** Parsed pure-domain query over one authenticated companion graph. */
 export const javaScriptSemanticQueryInputSchema = z.strictObject({
   seed: javaScriptSemanticQuerySeedSchema,
@@ -83,7 +78,6 @@ export const javaScriptSemanticQueryInputSchema = z.strictObject({
     })
     .nullable()
     .default(null),
-  source_map_authority: sourceMapAuthoritySchema.default({ authority: "none" }),
 });
 
 /** Deterministic semantic trace result. */

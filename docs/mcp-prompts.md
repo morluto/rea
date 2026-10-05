@@ -13,7 +13,7 @@ invoke tools by themselves.
 | `verify_reconstruction`           | Evaluate a finite reconstruction specification against retained comparison Evidence. |
 | `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
 | `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
-| `prepare_bounded_process_capture` | Design an approval-gated controlled process experiment before execution.             |
+| `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
 
 Every rendered prompt provides optional starting points using current REA tool
 names. Agents can call tools directly, skip irrelevant suggestions, and inspect
@@ -108,8 +108,6 @@ session are no longer suggested. Provider errors, unsupported operations, and
 malformed provider output produce an empty completion list rather than an
 unverified identifier.
 
-Suggestions never grant permission. In particular, selecting an artifact
-occurrence does not authorize extraction, selecting an unknown does not
-authorize mutation, and selecting a prior capture does not authorize process
-execution. The corresponding tools retain their existing approval, policy,
-effect, and validation boundaries.
+Suggestions are starting points, not tool calls. A tool acts on the target,
+operation, and lifecycle fields in its own request; selecting a suggestion does
+not execute it or broaden those fields.

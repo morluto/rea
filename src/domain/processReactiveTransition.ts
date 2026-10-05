@@ -36,7 +36,7 @@ const createTransitionRecord = (input: {
     ? {
         ...state,
         state_after: null,
-        outcome: input.transition.target.outcome,
+        outcome: "passed",
       }
     : {
         ...state,

@@ -34,24 +34,23 @@ const endpoint = "http://127.0.0.1:9223";
 const activeExample = {
   executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
   application_path: "/Applications/Example.app/Contents/Resources/main.js",
-  application_root: "/Applications/Example.app/Contents/Resources",
   args: [],
   actions: [{ step_id: "exercise-ipc", kind: "click", selector: "#run" }],
 };
 
-/** Root-confined Electron file-page discovery and inspection contracts. */
+/** Endpoint-scoped Electron file-page discovery and inspection contracts. */
 export const ELECTRON_TOOL_CONTRACTS = [
   {
     name: "list_electron_targets",
     ...toolContractMetadata("list_electron_targets"),
     description:
-      "List every Electron file:// page target from an approved user-owned loopback CDP endpoint. Every path is canonicalized and must remain contained by an approved filesystem root, including after symlink resolution.",
+      "List every Electron file:// page target from a selected loopback CDP endpoint. Local file paths are canonicalized after symlink resolution. Selecting an endpoint exposes every eligible target and its local path metadata.",
     kind: "electron-provider",
     inputSchema: listElectronTargetsInputSchema,
     outputSchema: listOutputSchema,
     examples: [
       {
-        title: "List approved Electron file pages",
+        title: "List Electron file pages",
         input: {
           cdp_endpoint: endpoint,
         },
@@ -68,7 +67,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     outputSchema: inspectionOutputSchema,
     examples: [
       {
-        title: "Inspect an approved Electron page",
+        title: "Inspect an Electron page",
         input: {
           cdp_endpoint: endpoint,
           target_id: "TARGET_ID_FROM_LIST_ELECTRON_TARGETS",
@@ -113,7 +112,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "capture_electron_scenario",
     ...toolContractMetadata("capture_electron_scenario"),
     description:
-      "Use this for an explicitly approved, provider-owned Electron run when passive CDP or Inspector observation cannot exercise application behavior. REA owns startup and teardown, accepts caller-defined click/wait actions plus window-targeted renderer reload/crash and synthetic open-url/second-instance delivery, and returns correlated window/WebContents/process/preload/session/navigation/shell/IPC evidence without retaining payload values. Results identify observed and unavailable event families, coverage status, action targets, and truncation. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. Use passive Electron tools for observation-only work.",
+      "Use this for a provider-owned Electron run when passive CDP or Inspector observation cannot exercise application behavior. REA owns startup and teardown, accepts caller-defined click/wait actions plus window-targeted renderer reload/crash and synthetic open-url/second-instance delivery, and returns correlated window/WebContents/process/preload/session/navigation/shell/IPC evidence without retaining payload values. Results identify observed and unavailable event families, coverage status, action targets, and truncation. External shell, navigation, permission, download, popup, updater, and OS-integration effects are blocked and recorded. Use passive Electron tools for observation-only work.",
     kind: "electron-provider",
     inputSchema: electronActiveObservationInputSchema,
     outputSchema: evidenceResultOf(electronActiveObservationResultSchema),

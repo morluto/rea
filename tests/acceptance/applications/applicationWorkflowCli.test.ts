@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,6 +25,34 @@ afterEach(async () => {
       .splice(0)
       .map(async (path) => rm(path, { recursive: true, force: true })),
   );
+});
+
+describe("JavaScript application path CLI", () => {
+  it("accepts a relative local application path and preserves canonical Evidence identity", async () => {
+    const root = await createTestTempDirectory("rea-relative-application-cli-");
+    temporary.push(root);
+    await writeFile(join(root, "app.js"), "export const value = 1;\n");
+    const absolute = await analyzeJavaScriptApplication({ input_path: root });
+    if (!absolute.ok) throw absolute.error;
+    const absoluteAnalysis = javascriptApplicationAnalysisResultSchema.parse(
+      absolute.value.normalized_result,
+    );
+
+    const relativePath = relative(process.cwd(), root);
+    const fromCli = await runCli([
+      "analyze-javascript-application",
+      relativePath,
+      "--json",
+    ]);
+
+    expect(fromCli).toMatchObject({
+      evidence_id: absolute.value.evidence_id,
+      normalized_result: {
+        input_path: absoluteAnalysis.input_path,
+      },
+      subject: { local_path: absolute.value.subject?.local_path },
+    });
+  }, 20_000);
 });
 
 describe("application workflow CLI parity", () => {

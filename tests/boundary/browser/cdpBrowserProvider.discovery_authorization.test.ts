@@ -9,7 +9,32 @@ import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
 
 describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
-  it("lists only exact-origin pages and sanitizes URLs", async () => {
+  it("discovers pages and captures a selected target without an origin list", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({ cdp_endpoint: browser.endpoint }),
+    );
+
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.targets.map(({ target_id }) => target_id)).toContain(
+      "allowed-page",
+    );
+    expect(listed.value.excluded.disallowed_origin).toBe(0);
+
+    const inspected = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!inspected.ok) throw inspected.error;
+    expect(inspected.value.target.origin).toBe(browser.allowedOrigin);
+  });
+
+  it("filters by exact origin and preserves local URL details", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
@@ -25,7 +50,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
       expect.objectContaining({
         target_id: "allowed-page",
         origin: browser.allowedOrigin,
-        url: `${browser.allowedOrigin}/app?token=%5BREDACTED%5D`,
+        url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
       }),
     ]);
     expect(result.value.excluded).toEqual({
@@ -34,7 +59,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
       non_page: 1,
     });
     expect(JSON.stringify(result.value)).not.toContain("forbidden");
-    expect(JSON.stringify(result.value)).not.toContain("page-secret");
+    expect(JSON.stringify(result.value)).toContain("page-secret#fragment");
   });
 
   it.each([
@@ -43,7 +68,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
     ["root-relative", "root-relative", ""],
     ["prefixed host/path", "prefixed", "Loading "],
   ] as const)(
-    "sanitizes %s transitional target titles",
+    "preserves URL-shaped %s target titles",
     async (_label, urlShapedAllowedTitle, prefix) => {
       const browser = await startFakeCdpBrowser({ urlShapedAllowedTitle });
       trackBrowser(browser);
@@ -53,7 +78,13 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
       };
-      const expected = `${prefix}${browser.allowedOrigin}/app?startup=%5BREDACTED%5D`;
+      const authority = browser.allowedOrigin.replace(/^https?:\/\//u, "");
+      const expected =
+        _label === "absolute"
+          ? `${browser.allowedOrigin}/app?startup=title-secret#fragment`
+          : _label === "root-relative"
+            ? "/app?startup=title-secret#fragment"
+            : `${prefix}${authority}/app?startup=title-secret#fragment`;
       const listed = await provider.listTargets(
         listBrowserTargetsInputSchema.parse(input),
       );
@@ -65,9 +96,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
       );
       if (!inspected.ok) throw inspected.error;
       expect(inspected.value.target.title).toBe(expected);
-      expect(JSON.stringify({ listed, inspected })).not.toContain(
-        "title-secret",
-      );
+      expect(JSON.stringify({ listed, inspected })).toContain("title-secret");
     },
   );
 

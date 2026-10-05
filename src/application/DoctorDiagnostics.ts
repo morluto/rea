@@ -70,16 +70,19 @@ export const doctorHealthy = (
       | undefined;
   },
 ): boolean => {
+  const requiredChecks = checks.filter(
+    ({ name }) => !isOptionalDoctorCheck(name),
+  );
   if (providers.providerInspections === undefined)
-    return checks.every(({ ok }) => ok);
-  const providerChecks = checks.filter(
+    return requiredChecks.every(({ ok }) => ok);
+  const providerChecks = requiredChecks.filter(
     ({ name }) =>
       name.startsWith("hopper") ||
       providers.providerInspections?.some((inspection) =>
         providerCheckName(inspection.id, name),
       ) === true,
   );
-  const coreHealthy = checks
+  const coreHealthy = requiredChecks
     .filter((candidate) => !providerChecks.includes(candidate))
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
@@ -98,6 +101,10 @@ export const doctorHealthy = (
       providers.providerInspections.some(({ available }) => available))
   );
 };
+
+/** Identify workflow diagnostics that do not gate core installation readiness. */
+export const isOptionalDoctorCheck = (name: string): boolean =>
+  name === "javascript-replay";
 
 const nodeCheck = (host: DoctorHost): DoctorCheck =>
   check("node", supportsNodeVersion(host.nodeVersion), host.nodeVersion, {

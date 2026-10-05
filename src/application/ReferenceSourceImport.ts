@@ -1,5 +1,4 @@
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { isSecretLikePath } from "../domain/referenceSourceClassification.js";
 import {
   createHistoricalSourceGraph,
   historicalSourceLanguages,
@@ -128,8 +127,8 @@ const sortExclusions = (
  * Import a reference source directory into a committed historical source graph.
  *
  * The import is deterministic, parallel-safe, and never executes source, hooks,
- * git subprocesses, or network requests. Secret-like paths are redacted before
- * they are committed to the graph.
+ * git subprocesses, or network requests. Paths explicitly excluded by the
+ * caller's reference-source policy are omitted from the graph.
  */
 export const importReferenceSource = async (
   options: ReferenceSourceImportOptions,
@@ -142,7 +141,7 @@ export const importReferenceSource = async (
 
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
   const shouldExclude = (path: string): boolean => {
-    if (isSecretLikePath(path) || secrets.ignores(path)) {
+    if (secrets.ignores(path)) {
       exclusions.push({ path, reason: "configured-secret" });
       return true;
     }

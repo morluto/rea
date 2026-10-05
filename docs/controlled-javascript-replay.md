@@ -1,26 +1,19 @@
 # Controlled JavaScript replay
 
-`run_controlled_replay` executes only operator-selected extracted modules. It
+`run_controlled_replay` executes only the extracted modules named in the request. It
 does not launch or drive the original application. Static inference, passive
 browser/Electron observation, isolated replay, and real application behavior
 remain different authorities.
 
-## Enable the ceiling
+## Host prerequisites
 
-Replay is disabled by default. Configure exact source roots before REA starts:
-
-```sh
-export REA_JAVASCRIPT_REPLAY_ENABLED=true
-export REA_JAVASCRIPT_REPLAY_ROOTS_JSON='["/absolute/extracted/modules"]'
-```
-
-The default trusted executables are the current Node.js runtime,
+Replay requires the current Node.js runtime,
 `/usr/bin/bwrap`, `/usr/bin/systemd-run`, `/usr/bin/systemctl`, and
-`/usr/bin/bash`. Override them only with the corresponding
+`/usr/bin/bash`. Override executable paths only with the corresponding
 `REA_JAVASCRIPT_REPLAY_*_PATH` variable. Configuration creates the
-administrator ceiling; it does not replace per-call approval. `rea doctor`
-reports disabled, available, and exact sandbox-probe failures without running
-module code. REA setup never installs these host components.
+runtime configuration; REA setup never installs these host components. Check
+availability with `rea doctor`, which reports exact sandbox-probe failures
+without running module code.
 
 ## Plan, review, execute
 
@@ -31,15 +24,18 @@ limits, no-network policy, private filesystems, and a `plan_digest`.
 Runtime commitments include the exact worker, seccomp filter, Node executable,
 ELF loader, and shared-library source/destination paths and SHA-256 digests.
 
-The execute request must repeat the same manifest and include:
+The execute request repeats the same manifest and includes the exact digest
+returned by the plan request:
 
 ```json
 {
   "mode": "execute",
-  "approved": true,
   "plan_digest": "<exact digest returned by plan>"
 }
 ```
+
+The execute request directly selects that content-bound operation. There is no
+separate REA grant or approval field.
 
 REA rebuilds the plan. Any changed module, stub, case, runtime, backend, limit,
 or export commitment returns `plan_stale` before worker admission.
@@ -82,7 +78,7 @@ comparison never erases the underlying observations.
 Optional `reproducer_export` is committed by the plan and writes to its
 caller-supplied path after the sandbox has stopped.
 The owner-only manifest is written only after complete sandbox cleanup. Source
-bytes are excluded unless `include_sources: true` was explicitly approved.
+bytes are excluded unless `include_sources: true` was selected in the request.
 An export failure is retained in the result and does not erase a completed
 replay observation.
 

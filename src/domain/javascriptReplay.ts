@@ -108,11 +108,9 @@ const determinismSchema = z
   })
   .strict();
 
-const controlledReplayInputShape = {
+const controlledReplayCommonInputShape = {
   left: replaySideSchema,
   right: replaySideSchema.optional(),
-  cases: z.array(explicitCaseSchema).default([]),
-  generator: generatorSchema.optional(),
   determinism: determinismSchema.default({
     clock_iso: "2000-01-01T00:00:00.000Z",
     random_seed: 0,
@@ -144,31 +142,55 @@ const controlledReplayInputShape = {
 
 /** Parse a replay request that can only construct a plan. */
 export const controlledReplayPlanInputSchema = z.strictObject({
-  ...controlledReplayInputShape,
+  ...controlledReplayCommonInputShape,
+  cases: z.array(explicitCaseSchema).default([]),
+  generator: generatorSchema.optional(),
   mode: z.literal("plan"),
 });
 
 /** Parse a replay request carrying the digest for one exact plan. */
 export const controlledReplayExecutionInputSchema = z.strictObject({
-  ...controlledReplayInputShape,
+  ...controlledReplayCommonInputShape,
+  cases: z.array(explicitCaseSchema).default([]),
+  generator: generatorSchema.optional(),
   mode: z.literal("execute"),
   plan_digest: digestSchema,
 });
 
-/** Parse a controlled replay request into its legal plan or execution state. */
-export const controlledReplayInputSchema = z
-  .discriminatedUnion("mode", [
-    controlledReplayPlanInputSchema,
-    controlledReplayExecutionInputSchema,
-  ])
-  .superRefine((value, context) => {
-    if (value.cases.length === 0 && value.generator === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["cases"],
-        message: "At least one explicit or generated case is required",
-      });
+const replayWithExplicitCases = <Shape extends z.ZodRawShape>(shape: Shape) =>
+  z.strictObject({
+    ...shape,
+    cases: z.array(explicitCaseSchema).min(1),
   });
+
+const replayWithGeneratedCases = <Shape extends z.ZodRawShape>(shape: Shape) =>
+  z.strictObject({
+    ...shape,
+    cases: z.array(explicitCaseSchema).default([]),
+    generator: generatorSchema,
+  });
+
+/** Parse replay requests with explicit cases or a generated case preset. */
+export const controlledReplayInputSchema = z.union([
+  replayWithExplicitCases({
+    ...controlledReplayCommonInputShape,
+    mode: z.literal("plan"),
+  }),
+  replayWithGeneratedCases({
+    ...controlledReplayCommonInputShape,
+    mode: z.literal("plan"),
+  }),
+  replayWithExplicitCases({
+    ...controlledReplayCommonInputShape,
+    mode: z.literal("execute"),
+    plan_digest: digestSchema,
+  }),
+  replayWithGeneratedCases({
+    ...controlledReplayCommonInputShape,
+    mode: z.literal("execute"),
+    plan_digest: digestSchema,
+  }),
+]);
 
 const moduleCommitmentSchema = z
   .object({
@@ -385,8 +407,10 @@ export const controlledReplayOutputSchema = z.discriminatedUnion("phase", [
   controlledReplayExecutionOutputSchema,
 ]);
 
-export type ControlledReplayInput = z.infer<typeof controlledReplayInputSchema>;
-export type ControlledReplayExecutionInput = z.infer<
+export type ControlledReplayInput =
+  | z.output<typeof controlledReplayPlanInputSchema>
+  | z.output<typeof controlledReplayExecutionInputSchema>;
+export type ControlledReplayExecutionInput = z.output<
   typeof controlledReplayExecutionInputSchema
 >;
 export type ControlledReplayExecutionOutput = z.infer<

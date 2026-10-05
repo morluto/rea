@@ -6,6 +6,11 @@
   Linux-x86_64 Bubblewrap, seccomp, and delegated systemd user-cgroup backend.
   Hosts that cannot establish every required boundary fail closed.
 
+> Historical design note: REA's separate permission-policy, grant, and
+> per-call approval workflow was later removed. Current tool requests directly
+> name their target and lifecycle. The sandbox and exact plan-digest behavior
+> described here remain part of controlled replay.
+
 ## Context
 
 REA can reconstruct JavaScript and Electron artifacts, observe an existing

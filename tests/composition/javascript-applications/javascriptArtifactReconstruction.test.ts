@@ -306,8 +306,7 @@ const assertSemanticLinks = (
   const endpointJson = JSON.stringify(
     graph.nodes.filter(({ kind }) => kind === "endpoint"),
   );
-  expect(endpointJson).toContain("token=%5BREDACTED%5D");
-  expect(endpointJson).not.toContain("fixture-secret");
+  expect(endpointJson).toContain("token=fixture-secret");
 };
 
 const fixtureDirectory = async (): Promise<string> => {

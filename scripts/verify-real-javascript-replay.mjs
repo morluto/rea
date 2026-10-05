@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 
-import { PermissionAuthority } from "../dist/application/PermissionAuthority.js";
 import { runControlledReplay } from "../dist/application/JavaScriptReplayService.js";
-import { createPermissionPolicy } from "../dist/domain/permissionPolicy.js";
 import { LinuxJavaScriptReplayRunner } from "../dist/replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "../dist/replay/SystemJavaScriptReplayHost.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
@@ -42,18 +40,7 @@ const suppliedRight =
   suppliedInput?.right === undefined
     ? undefined
     : await canonicalSide(suppliedInput.right);
-const roots = [
-  ...new Set(
-    suppliedLeft === undefined
-      ? [dirname(leftPath), dirname(rightPath)]
-      : [...suppliedLeft.modules, ...(suppliedRight?.modules ?? [])].map(
-          ({ path }) => dirname(path),
-        ),
-  ),
-];
-const policy = {
-  status: "enabled",
-  roots,
+const configuration = {
   nodePath: process.execPath,
   bubblewrapPath:
     process.env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH ?? "/usr/bin/bwrap",
@@ -64,39 +51,10 @@ const policy = {
     process.env.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH ?? "/usr/bin/systemctl",
   shellPath: process.env.REA_JAVASCRIPT_REPLAY_SHELL_PATH ?? "/usr/bin/bash",
 };
-const ceiling = {
-  capability: "javascript_replay",
-  roots,
-  executables: [
-    policy.nodePath,
-    policy.bubblewrapPath,
-    policy.systemdRunPath,
-    policy.systemctlPath,
-    policy.shellPath,
-  ],
-  environment_names: [],
-  network: "none",
-  mount: true,
-};
-const authority = new PermissionAuthority(
-  createPermissionPolicy(
-    [ceiling],
-    [
-      {
-        ...ceiling,
-        grant_id: "administrator:javascript_replay",
-        lifetime: "administrator",
-        operation_identity: null,
-        expires_at: null,
-      },
-    ],
-  ),
-);
 const dependencies = {
-  policy: () => policy,
+  configuration: () => configuration,
   host: new SystemJavaScriptReplayHost(),
   runner: new LinuxJavaScriptReplayRunner(),
-  authority,
 };
 const defaultInput = {
   mode: "plan",

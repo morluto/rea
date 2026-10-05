@@ -217,15 +217,15 @@ Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills,
 
 ### CLI or agent?
 
-| If you want to…                                                  | Use                                                                       |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Ask an agent to investigate an app and build a feature           | Run setup, restart your agent, then describe the task                     |
-| Inspect or decompile one part of an app from the Terminal        | `rea analyze` or `rea decompile`                                          |
-| Validate, canonicalize, or compare Evidence bundles              | `rea evidence-import`, `rea evidence-export`, or `rea compare`            |
-| Map a local JavaScript/Electron application without executing it | `rea analyze PATH` or `rea analyze-javascript-application`                |
-| Reuse immutable analysis results without relaunching a provider  | Pass `--snapshot /approved/path/analysis.json` to a deep-analysis command |
-| Import source as historical reference                            | `rea import-reference-source`                                             |
-| Capture or compare controlled process behavior                   | `rea capture-process` or `rea compare-process-captures`                   |
+| If you want to…                                                  | Use                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Ask an agent to investigate an app and build a feature           | Run setup, restart your agent, then describe the task               |
+| Inspect or decompile one part of an app from the Terminal        | `rea analyze` or `rea decompile`                                    |
+| Validate, canonicalize, or compare Evidence bundles              | `rea evidence-import`, `rea evidence-export`, or `rea compare`      |
+| Map a local JavaScript/Electron application without executing it | `rea analyze PATH` or `rea analyze-javascript-application`          |
+| Reuse immutable analysis results without relaunching a provider  | Pass `--snapshot /path/to/analysis.json` to a deep-analysis command |
+| Import source as historical reference                            | `rea import-reference-source`                                       |
+| Capture or compare controlled process behavior                   | `rea capture-process` or `rea compare-process-captures`             |
 
 ```bash
 rea evidence-import /absolute/path/to/evidence/bundle.json
@@ -251,7 +251,7 @@ Import an older source tree as a reference. REA keeps it separate from observati
 rea import-reference-source /absolute/path/to/source
 ```
 
-Imports read the path supplied to the command and validate every Evidence ID and manifest. Exports never replace an existing file unless `--overwrite` is explicit.
+Imports read the path supplied to the command. File names do not cause automatic omissions; files are represented by hashes and metadata. To exclude selected paths, set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON string array of ignore patterns. Exports never replace an existing file unless `--overwrite` is explicit.
 
 Use a snapshot to save successful analysis results and reuse them on later runs. REA reuses a result only when the target bytes, operation, parameters, analysis tool, and settings match. It does not cache changes or cursor-dependent calls. Snapshot files stay local and use owner-only permissions.
 
@@ -299,7 +299,7 @@ REA handles the app analysis in steps 1 through 5. The agent performs step 6 wit
 - Analyze Swift and Objective-C metadata without manually untangling every mangled symbol.
 - Leave names, comments, and bookmarks in Hopper so human and agent analysis reinforce each other.
 
-See [native investigation](docs/native-investigation.md) for keyed archives, instruction/call/type primitives, typed dispatch metadata, value traces and approved native desktop observation.
+See [native investigation](docs/native-investigation.md) for keyed archives, instruction/call/type primitives, typed dispatch metadata, value traces and native desktop observation.
 
 ## Tool catalog for investigation
 
@@ -308,28 +308,28 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Native inspection         |    39 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
 | Investigation workflows   |    15 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
-| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and approved extraction                                        |
+| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
 | Managed PE/CLI            |     8 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, runtime-correlation plans, and build comparisons                  |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, capture comparisons, and approved browser scenarios                |
-| Electron analysis         |     5 | renderer observation, static app mapping, static/runtime reconciliation, and approved click/wait scenarios                                                |
+| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, capture comparisons, and browser scenarios                         |
+| Electron analysis         |     5 | renderer observation, static app mapping, static/runtime reconciliation, and click/wait scenarios                                                         |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                  |
-| Application workflows     |    10 | cross-layer feature traces, build comparisons, historical source mapping, return-shape comparison, approved Linux replay, and reconstruction checks       |
+| Application workflows     |    10 | cross-layer feature traces, build comparisons, historical source mapping, return-shape comparison, Linux replay, and reconstruction checks                |
 | Workspace and observation |    22 | sessions, evidence bundles, navigation context, finite replay machines, process/artifact/function comparisons, and open-question tracking                 |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
 
 ## Current status
 
-REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have their own platform and approval requirements; use `rea capabilities` to check what is available on your host.
+REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites; use `rea capabilities` to check what is available on your host.
 
 - **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through Hopper or Ghidra. Inspect functions, strings, assembly, decompilation, calls, and references. Hopper also accepts `.hop` databases and supports annotations.
-- **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Extraction requires approval. On macOS, DMG traversal also requires approval and `REA_ARTIFACT_NATIVE_MOUNT_ENABLED=true`.
+- **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
 - **JavaScript and Electron:** Map modules, imports, source maps, routes, IPC channels, storage, and native add-ons without running the app. Compare builds and trace a feature across the recovered graph. Dynamic and ambiguous relationships remain unresolved. See [JavaScript application workflows](docs/javascript-application-workflows.md).
-- **Websites:** Inspect an approved page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and approved screenshots. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
-- **Electron and Node runtime observation:** Inspect approved Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
+- **Websites:** Inspect a selected page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and screenshots requested by the call. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
+- **Electron and Node runtime observation:** Inspect selected Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
 - **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. Runtime-correlation plans are supported, but an executor is not implemented. See [managed-code analysis](docs/managed-code-analysis.md).
-- **Controlled behavior capture:** Run approved process, browser, or Electron scenarios and compare the resulting evidence. Each requires its own configuration and approval. Missing observations cannot establish that two runs behaved the same way.
-- **JavaScript replay:** Run selected extracted modules in the separately approved Linux sandbox. Replay requires the isolation controls described in [controlled JavaScript replay](docs/controlled-javascript-replay.md).
+- **Controlled behavior capture:** Run process, browser, or Electron scenarios with the target, actions, and lifecycle declared in each request, then compare the resulting evidence. Missing observations cannot establish that two runs behaved the same way.
+- **JavaScript replay:** Run selected extracted modules in the Linux sandbox. Each execution request is bound to the exact plan digest; replay also requires the isolation controls described in [controlled JavaScript replay](docs/controlled-javascript-replay.md).
 - **Evidence and comparison:** Save results with artifact identity, provider, locations, confidence, and limitations. Export or import bundles, compare artifacts and functions, and connect static findings to runtime observations without claiming causality from correlation.
 - **Open questions:** Track unresolved findings, contradictions, and follow-up probes. Reconstruction checks report pass, fail, or unknown rather than treating missing evidence as a pass.
 - **Guided workflows:** Start six [MCP investigation workflows](docs/mcp-prompts.md) with suggestions based on your current session.
@@ -338,53 +338,40 @@ Windows Ghidra operations are currently unavailable. Hopper-only features, such 
 
 ### Website observation with CDP
 
-REA can inspect an already-running Chrome-family browser that you own. Browser observation is disabled by default and requires a literal loopback CDP endpoint plus exact approved page origins:
+REA can inspect an already-running Chrome-family browser through a literal loopback CDP endpoint. Each request names the endpoint and target; an optional origin filter can narrow discovery:
 
 ```bash
-export REA_BROWSER_OBSERVE_ENABLED=true
-export REA_BROWSER_CDP_ENDPOINTS_JSON='["http://127.0.0.1:9222"]'
-export REA_BROWSER_ALLOWED_ORIGINS_JSON='["http://127.0.0.1:3000"]'
-
-rea list-browser-targets http://127.0.0.1:9222 --approved --json
-rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --approved --json
+rea list-browser-targets http://127.0.0.1:9222 --json
+rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --json
 ```
 
-The eight passive browser tools work through both CLI and MCP. They inspect the page without navigating, clicking, or evaluating its JavaScript. Credentials, cookies, authorization headers, and raw payload values are not retained. Script sources, accessibility text, screenshots, and selected console or payload summaries require separate capture approval. REA cannot observe activity that happened before it attached. See [browser observation](docs/browser-observation.md) for browser startup, capture options, and limits.
+The eight passive browser tools work through both CLI and MCP. They inspect the selected page without navigating, clicking, or evaluating its JavaScript. Credentials, cookies, authorization headers, and raw payload values are not retained. A request selects whether to include script sources, accessibility text, screenshots, or console and payload summaries. REA cannot observe activity that happened before it attached. See [browser observation](docs/browser-observation.md) for browser startup, capture options, and limits.
 
 ### Controlled browser scenarios
 
-`capture_browser_scenario` runs an approved sequence of browser actions through
+`capture_browser_scenario` runs a caller-declared sequence of browser actions through
 Playwright. Unlike passive observation, it can interact with the page. Each
 step records evidence such as screenshots, page structure, navigation, and
 network activity. Missing or truncated observations cannot establish that two
 runs behaved the same way.
 
 ```bash
-export REA_BROWSER_SCENARIO_ENABLED=true
-export REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON='["/usr/bin"]'
-export REA_BROWSER_SCENARIO_CDP_ENDPOINTS_JSON='["http://127.0.0.1:9222"]'
-export REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON='["http://127.0.0.1:3000"]'
-export REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON='["REA_TEST_PASSWORD"]'
-
 rea capture-browser-scenario ./scenario.json --json
 ```
 
 Launch mode owns a temporary browser profile and removes it after terminating
 the launched browser. Connect mode accepts one exact loopback CDP target and
-disconnects without closing the external browser. Automation has no default
-grant: use the shared project/session policy, or set
-`REA_BROWSER_SCENARIO_AUTO_GRANT=true` only for a trusted unattended
-environment. Scenario JSON contains secret references and environment-variable
-names, never secret values. See the
+disconnects without closing the external browser. The request supplies the
+selected executable or endpoint, actions, and any origin or environment
+selections needed by the scenario. Scenario JSON contains secret references and
+environment-variable names, never secret values. See the
 [browser scenario contract](docs/browser-scenario-contract.md).
 
 ### Node and Electron V8 Inspector observation
 
-Node and Electron runtime observation is disabled by default. Enable it to attach to an existing Inspector target:
+Node and Electron runtime observation attaches to an existing Inspector target named in the request:
 
 ```bash
-export REA_V8_INSPECTOR_OBSERVE_ENABLED=true
-
 rea list-javascript-runtime-targets http://127.0.0.1:9229 --json
 rea observe-javascript-runtime http://127.0.0.1:9229 TARGET_ID \
   --runtime-kind node --json
@@ -410,14 +397,14 @@ The [current status](#current-status) section describes shipped capabilities. Th
 ### Next
 
 1. **Test replay isolation:** add hostile fixtures and test the Linux replay sandbox across more kernels.
-2. **Connect more application layers:** add static extractors and approved runtime observations to feature traces.
+2. **Connect more application layers:** add static extractors and runtime observations to feature traces.
 3. **Extend .NET analysis:** improve comparisons of obfuscated assemblies and connect managed findings to verified native analysis. See the [managed-code guide](docs/managed-code-analysis.md).
 4. **Compare more runtime behavior:** expand process, protocol, filesystem, reconnect, and version-comparison coverage.
 
 ### Later
 
-1. **Expand browser and Electron interaction:** add approved scenario actions beyond the current click and wait operations.
-2. **Observe native apps at runtime:** explore LLDB, Frida, system logs, and native API tracing with explicit approval.
+1. **Expand browser and Electron interaction:** add scenario actions beyond the current click and wait operations.
+2. **Observe native apps at runtime:** explore LLDB, Frida, system logs, and native API tracing.
 3. **Evaluate more tools and targets:** assess IDA/Hex-Rays, Binary Ninja, Rizin, LIEF, Windows-native tools, mobile apps, and firmware.
 
 Setup already lets you choose agent integration and Hopper installation. Support for installing additional analysis tools is future work, described in the [installation roadmap](docs/roadmap.md).
@@ -450,7 +437,7 @@ maintains that pin, upgrades the bundled skill at the same time, and gives Codex
 a 30-second startup allowance for a cold package-runner start. An interactive
 `rea upgrade` opens the updated setup plan after installing the new executable;
 structured or non-interactive upgrades tell you to run that sync explicitly.
-Restart clients whose approved registration changed.
+Restart clients whose MCP registration changed.
 
 MCP clients that support prompts can also discover six ordered investigation
 workflows through `prompts/list`. Their optional identifier arguments use the
@@ -541,15 +528,17 @@ The session also reports active work and cleanup status. If a caller times out, 
 
 ### CLI exit status
 
-| Status    | Meaning                                                                                                                                                                    |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`       | The operation completed. Results may still include warnings, partial evidence, or unresolved questions.                                                                    |
-| `1`       | The operation could not complete, for example because of invalid input, missing permission, cancellation, or timeout. Structured output reports the reason when available. |
-| `128 + N` | The process ended from signal `N`, where the shell or runtime preserves the conventional signal-derived status.                                                            |
+| Status    | Meaning                                                                                                                                                                        |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`       | The operation completed. Results may still include warnings, partial evidence, or unresolved questions.                                                                        |
+| `1`       | The operation could not complete, for example because of invalid input, host permission denial, cancellation, or timeout. Structured output reports the reason when available. |
+| `128 + N` | The process ended from signal `N`, where the shell or runtime preserves the conventional signal-derived status.                                                                |
 
 `setup` returns `1` for `planned`, `needs_confirmation`, or `needs_human`
 because configuration is not ready; rerun it after approval or remediation.
-`doctor` returns `1` when any check is unhealthy. Output format, full envelopes,
+`doctor` returns `1` when required checks for its readiness scope are unhealthy.
+Unavailable optional replay prerequisites remain visible as informational
+diagnostics and do not block setup or unrelated providers. Output format, full envelopes,
 filters, and token controls never change the operation status.
 
 When REA feeds a shell pipeline, enable `pipefail` so a downstream formatter
@@ -570,18 +559,12 @@ Use `rea instructions` when you only need assembly instructions for a function. 
 
 Closing a session shuts down REA's bridge and removes its temporary socket directory while preserving a Hopper application you may be using. If cleanup cannot be verified, `close_binary` reports `cleanup_incomplete` and the affected resources.
 
-## Advanced process-capture setup
+## Process capture
 
-Process capture is disabled by default. Enabling it requires
-`REA_PROCESS_CAPTURE_ENABLED=true`, approved executable and working roots in
-`REA_PROCESS_EXECUTABLE_ROOTS_JSON` and `REA_PROCESS_WORKING_ROOTS_JSON`, and an
-environment allowlist in `REA_PROCESS_ALLOWED_ENV_JSON`. Because the current PTY
-adapter uses host networking, it also requires
-`REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true`.
-
-Set `REA_PROCESS_CAPTURE_AUTO_GRANT=false` to configure those process-capture
-limits as a ceiling without implicitly granting them. This mode remains
-fail-closed until a narrower grant is established.
+Process capture runs the exact executable and scenario declared in the request,
+with the requested working directory, filesystem roots, environment, and
+network behavior. The process runs with your user permissions; Process Capture
+records behavior and is not a security sandbox.
 
 Capture a scenario or compare two saved Process Capture Evidence records:
 
@@ -613,7 +596,7 @@ verified or absent.
 
 Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets. Your agent or model provider has its own data policy.
 
-Runtime observation and execution features are disabled by default and require configuration and approval. Analysis tools and launched targets run with your user permissions. Extracted JavaScript replay uses a separate Linux sandbox and requires the isolation controls described in [ADR-0002](docs/adr/0002-controlled-replay-authority-and-sandbox.md).
+Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Extracted JavaScript replay runs in a separate Linux sandbox and requires the isolation controls described in [controlled JavaScript replay](docs/controlled-javascript-replay.md).
 
 Windows Ghidra operations are blocked until REA implements the required process ownership, private-directory permissions, and safe-path checks. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 

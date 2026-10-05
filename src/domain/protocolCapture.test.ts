@@ -7,7 +7,6 @@ import {
   decodeJsonRpc,
   decodeMessagePack,
   inferMessageSchema,
-  looksLikeCredential,
   protocolCaptureSchema,
   type ProtocolMessage,
 } from "./protocolCapture.js";
@@ -70,13 +69,6 @@ describe("protocol capture", () => {
     expect(classifyProtocolFamily("text/plain", null)).toBeNull();
     expect(classifyProtocolFamily(null, null)).toBeNull();
   });
-
-  it("detects credential-like field names", () => {
-    expect(looksLikeCredential("password")).toBe(true);
-    expect(looksLikeCredential("api_key")).toBe(true);
-    expect(looksLikeCredential("authorization")).toBe(true);
-    expect(looksLikeCredential("username")).toBe(false);
-  });
 });
 
 describe("JSON-RPC decoding", () => {
@@ -112,22 +104,35 @@ describe("JSON-RPC decoding", () => {
     });
   });
 
-  it("redacts credential-like fields", () => {
+  it("preserves decoded fields whose names resemble credentials", () => {
     const payload = new TextEncoder().encode(
       JSON.stringify({
-        password: "secret123",
+        password: "observed-value",
+        authorization: { scheme: "custom", value: "observed-header" },
         username: "admin",
       }),
     );
     const result = decodeJsonRpc(payload);
-    const passwordField = result.decoded_fields.find(
-      (f) => f.path === "password",
-    );
-    expect(passwordField?.value).toBe("[REDACTED]");
-    const usernameField = result.decoded_fields.find(
-      (f) => f.path === "username",
-    );
-    expect(usernameField?.value).toBe("admin");
+    expect(result.decoded_fields).toEqual([
+      {
+        path: "password",
+        wire_type: "json",
+        value: "observed-value",
+        inferred: false,
+      },
+      {
+        path: "authorization",
+        wire_type: "json",
+        value: { scheme: "custom", value: "observed-header" },
+        inferred: false,
+      },
+      {
+        path: "username",
+        wire_type: "json",
+        value: "admin",
+        inferred: false,
+      },
+    ]);
   });
 });
 

@@ -7,12 +7,11 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   AnalysisCancelledError,
-  ProviderAdapterError,
   type AnalysisError,
 } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { EvidenceSubjectTarget } from "../domain/evidence.js";
+import { createEvidence } from "../domain/evidence.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
@@ -33,7 +32,11 @@ import {
   resolveSessionOpen,
   type BinarySessionOpenOptions,
 } from "./BinarySessionOpen.js";
-import { prepareSessionExecution } from "./BinarySessionExecution.js";
+import {
+  bindExecutionTarget,
+  commitExecutionProfile,
+  prepareSessionExecution,
+} from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 export type { BinarySessionPort } from "./BinarySessionPort.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
@@ -211,8 +214,10 @@ export class BinarySession
         runId,
       };
       this.#clearRuntimeAvailability();
-      if (profile === null) this.clearSnapshot();
-      else this.selectSnapshot(target, profile);
+      if (options.snapshot === undefined) {
+        if (profile === null) this.clearSnapshot();
+        else this.selectSnapshot(target, profile);
+      }
       if (options.snapshot !== undefined) {
         const imported = this.importAnalysisSnapshot(options.snapshot);
         if (!imported.ok) {
@@ -329,7 +334,22 @@ export class BinarySession
         name !== "decode_interface_builder" &&
         name !== "inspect_asset_catalog" &&
         name !== "inspect_keyed_archive"
-      )
+      ) {
+        const evidence = createEvidence(
+          profiled.value.subject ?? active.target,
+          profiled.value.provider,
+          {
+            operation: name,
+            parameters: arguments_,
+            result: profiled.value.result,
+            analysisProfile: profile,
+            rawResult: profiled.value.rawResult,
+            limitations: profiled.value.limitations,
+            locations: profiled.value.locations,
+          },
+        );
+        const recorded = this.recordEvidence(evidence);
+        if (!recorded.ok) return recorded;
         this.recordSnapshot({
           target: active.target,
           profile,
@@ -337,7 +357,7 @@ export class BinarySession
           parameters: arguments_,
           execution: profiled.value,
         });
-      else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
+      } else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
         this.invalidateSnapshot();
       }
       return profiled;
@@ -495,64 +515,3 @@ export class BinarySession
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
-
-const commitExecutionProfile = (
-  operation: AnalysisOperation,
-  result: Result<AnalysisExecution, AnalysisError>,
-  profile: AnalysisProfileCommitment | undefined,
-): Result<AnalysisExecution, AnalysisError> => {
-  if (!result.ok || profile === undefined) return result;
-  const provider = result.value.provider;
-  if (
-    provider.id !== profile.provider.id ||
-    provider.name !== profile.provider.name ||
-    provider.version !== profile.provider.version
-  )
-    return err(
-      new ProviderAdapterError(profile.provider.id, `${operation}:profile`),
-    );
-  return ok({
-    ...result.value,
-    analysisProfile: structuredClone(profile),
-  });
-};
-
-const bindExecutionTarget = (
-  result: Result<AnalysisExecution, AnalysisError>,
-  operation: AnalysisOperation,
-  target: BinaryTarget,
-): Result<AnalysisExecution, AnalysisError> => {
-  if (!result.ok) return result;
-  const subject: EvidenceSubjectTarget = {
-    path: target.path,
-    sha256: target.sha256,
-    format:
-      target.format === "analysis-database"
-        ? "analysis-database"
-        : target.format,
-    ...(target.architecture === undefined
-      ? {}
-      : { architecture: target.architecture }),
-  };
-  if (
-    result.value.subject !== null &&
-    result.value.subject.sha256 !== target.sha256
-  ) {
-    if (!isArtifactInventorySubject(operation, result.value.subject, target))
-      return err(
-        new ProviderAdapterError(
-          result.value.provider.id,
-          `${operation}:subject`,
-        ),
-      );
-  }
-  return ok({ ...result.value, subject: result.value.subject ?? subject });
-};
-
-const isArtifactInventorySubject = (
-  operation: AnalysisOperation,
-  subject: EvidenceSubjectTarget,
-  target: BinaryTarget,
-): boolean =>
-  (operation === "inventory_artifact" || operation === "inspect_artifact") &&
-  subject.path === (target.sourcePath ?? target.path);

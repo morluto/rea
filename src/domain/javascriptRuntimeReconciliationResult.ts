@@ -140,7 +140,7 @@ const sourceMapAuthority = (
     0,
   ),
   limitation:
-    "Source-map declarations and approved original-source reads retain separate static authority and are not used as primary runtime byte matches.",
+    "Source-map declarations and original-source content retain separate static authority and are not used as primary runtime byte matches.",
 });
 
 const reconciliationCoverage = (

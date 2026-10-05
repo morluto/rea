@@ -100,7 +100,6 @@ describe("enhanced MCP tools", () => {
               remediation: {
                 action:
                   "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
-                restart_required: false,
               },
             },
           },

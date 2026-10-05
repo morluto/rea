@@ -117,7 +117,9 @@ const browserScript = (port) => `
     const { generation } = await response.json();
     if (generation <= observedGeneration) return;
     observedGeneration = generation;
-    history.pushState({}, "", "/app/session-" + String(generation));
+    const sessionUrl = new URL(window.location.href);
+    sessionUrl.pathname = "/app/session-" + String(generation);
+    history.pushState({}, "", sessionUrl);
   }, 100);
   //# sourceMappingURL=/app.js.map
 `;

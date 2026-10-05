@@ -115,7 +115,7 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 1", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "same_document_navigation",
-          url: `${browser.allowedOrigin}/reloaded?token=%5BREDACTED%5D`,
+          url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
         }),
         expect.objectContaining({
           type: "load_failed",
@@ -124,8 +124,8 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 1", () => {
       ]),
     );
     expect(result.value.completeness.status).toBe("attach_limited");
-    expect(JSON.stringify(result.value)).not.toContain("session-secret");
-    expect(JSON.stringify(result.value)).not.toContain("redirect-secret");
+    expect(JSON.stringify(result.value)).toContain("session-secret#spa-secret");
+    expect(JSON.stringify(result.value)).toContain("redirect-secret");
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );

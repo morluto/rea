@@ -5,6 +5,10 @@ import type {
   BrowserScenarioUrl,
   BrowserScenarioValue,
 } from "../domain/browserScenario.js";
+import {
+  sanitizeBrowserUrl,
+  type SanitizedBrowserUrl,
+} from "../domain/browserObservation.js";
 import type { BrowserStorageValueFingerprint } from "../domain/browserScenarioCaptureValues.js";
 
 const REDACTION_PREFIX = "[REDACTED:";
@@ -20,7 +24,11 @@ export class BrowserScenarioSecrets {
     const values = new Map<string, string>();
     for (const declaration of scenario.secrets) {
       const value = environment[declaration.environment_variable];
-      if (value === undefined) return undefined;
+      if (
+        !Object.hasOwn(environment, declaration.environment_variable) ||
+        typeof value !== "string"
+      )
+        return undefined;
       values.set(declaration.secret_id, value);
     }
     return new BrowserScenarioSecrets(values);
@@ -52,6 +60,34 @@ export class BrowserScenarioSecrets {
       if (secret !== "")
         output = output.replaceAll(secret, `${REDACTION_PREFIX}${id}]`);
     return output;
+  }
+
+  /** Remove only declared secret values from one URL and report that action. */
+  sanitizeUrl(value: string): SanitizedBrowserUrl {
+    let output = value;
+    const replacements = [...this.values].sort(
+      ([leftId, left], [rightId, right]) =>
+        right.length - left.length ||
+        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
+    );
+    for (const [id, secret] of replacements) {
+      if (secret === "") continue;
+      const marker = `${REDACTION_PREFIX}${id}]`;
+      const searchParamsValue = new URLSearchParams([["value", secret]])
+        .toString()
+        .slice("value=".length);
+      for (const candidate of new Set([
+        secret,
+        encodeURIComponent(secret),
+        searchParamsValue,
+      ]))
+        output = output.replaceAll(candidate, marker);
+    }
+    const sanitized = sanitizeBrowserUrl(output);
+    return {
+      ...sanitized,
+      redacted: sanitized.redacted || output !== value,
+    };
   }
 
   fingerprint(value: string): BrowserStorageValueFingerprint {

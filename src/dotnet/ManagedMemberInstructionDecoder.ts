@@ -422,48 +422,111 @@ export const parseExceptionRegions = (
   bytes: Buffer,
   offset: number,
   methodEnd: number,
-): ManagedExceptionRegion[] => {
-  if (offset >= methodEnd) return [];
-  const kind = bytes.readUInt8(offset);
-  if ((kind & 0x3f) !== 1) return [];
-  const fat = (kind & 0x40) !== 0;
-  const size = fat
-    ? bytes.readUInt32LE(offset) >>> 8
-    : bytes.readUInt8(offset + 1);
-  const start = fat ? offset + 4 : offset + 4;
-  const clauseSize = fat ? 24 : 12;
-  if (size < 4 || offset > methodEnd - size) return [];
-  const count = Math.floor((size - 4) / clauseSize);
+): ExceptionRegionParseResult => {
   const regions: ManagedExceptionRegion[] = [];
+  let sectionOffset = offset;
+  let hasMoreSections = true;
+  while (hasMoreSections) {
+    if (
+      !Number.isSafeInteger(sectionOffset) ||
+      sectionOffset < 0 ||
+      sectionOffset > methodEnd - 4 ||
+      sectionOffset > bytes.length - 4
+    )
+      return malformedExceptionRegions(
+        "Exception section header leaves artifact",
+      );
+
+    const kind = bytes.readUInt8(sectionOffset);
+    if ((kind & 0x3f) !== 1)
+      return malformedExceptionRegions(
+        `Unsupported method data section kind ${String(kind & 0x3f)}`,
+      );
+    const fat = (kind & 0x40) !== 0;
+    const size = fat
+      ? bytes.readUInt8(sectionOffset + 1) |
+        (bytes.readUInt8(sectionOffset + 2) << 8) |
+        (bytes.readUInt8(sectionOffset + 3) << 16)
+      : bytes.readUInt8(sectionOffset + 1);
+    const clauseSize = fat ? 24 : 12;
+    if (
+      size < 4 ||
+      sectionOffset > methodEnd - size ||
+      sectionOffset > bytes.length - size
+    )
+      return malformedExceptionRegions(
+        "Exception section size leaves artifact",
+      );
+    if ((size - 4) % clauseSize !== 0)
+      return malformedExceptionRegions(
+        "Exception section size does not contain whole clauses",
+      );
+    if (
+      !fat &&
+      (bytes[sectionOffset + 2] !== 0 || bytes[sectionOffset + 3] !== 0)
+    )
+      return malformedExceptionRegions(
+        "Small exception section reserved bytes are nonzero",
+      );
+
+    const count = (size - 4) / clauseSize;
+    regions.push(...readExceptionClauses(bytes, sectionOffset + 4, count, fat));
+
+    hasMoreSections = (kind & 0x80) !== 0;
+    sectionOffset += size;
+  }
+  return { status: "complete", regions };
+};
+
+interface ExceptionRegionParseSuccess {
+  readonly status: "complete";
+  readonly regions: ManagedExceptionRegion[];
+}
+
+interface ExceptionRegionParseFailure {
+  readonly status: "malformed";
+  readonly regions: [];
+  readonly issue: string;
+}
+
+type ExceptionRegionParseResult =
+  | ExceptionRegionParseSuccess
+  | ExceptionRegionParseFailure;
+
+const malformedExceptionRegions = (
+  issue: string,
+): ExceptionRegionParseFailure => ({ status: "malformed", regions: [], issue });
+
+const readExceptionClauses = (
+  bytes: Buffer,
+  start: number,
+  count: number,
+  fat: boolean,
+): ManagedExceptionRegion[] => {
+  const regions: ManagedExceptionRegion[] = [];
+  const clauseSize = fat ? 24 : 12;
   for (let index = 0; index < count; index += 1) {
     const clause = start + index * clauseSize;
-    if (fat) {
-      const flags = bytes.readUInt32LE(clause);
-      const extra = bytes.readUInt32LE(clause + 20);
-      regions.push({
-        flags,
-        try_offset: bytes.readUInt32LE(clause + 4),
-        try_length: bytes.readUInt32LE(clause + 8),
-        handler_offset: bytes.readUInt32LE(clause + 12),
-        handler_length: bytes.readUInt32LE(clause + 16),
-        class_token:
-          flags === 0 ? `0x${extra.toString(16).padStart(8, "0")}` : null,
-        filter_offset: flags === 1 ? extra : null,
-      });
-    } else {
-      const flags = bytes.readUInt16LE(clause);
-      const extra = bytes.readUInt32LE(clause + 8);
-      regions.push({
-        flags,
-        try_offset: bytes.readUInt16LE(clause + 2),
-        try_length: bytes.readUInt8(clause + 4),
-        handler_offset: bytes.readUInt16LE(clause + 5),
-        handler_length: bytes.readUInt8(clause + 7),
-        class_token:
-          flags === 0 ? `0x${extra.toString(16).padStart(8, "0")}` : null,
-        filter_offset: flags === 1 ? extra : null,
-      });
-    }
+    const flags = fat ? bytes.readUInt32LE(clause) : bytes.readUInt16LE(clause);
+    const extra = bytes.readUInt32LE(clause + (fat ? 20 : 8));
+    regions.push({
+      flags,
+      try_offset: fat
+        ? bytes.readUInt32LE(clause + 4)
+        : bytes.readUInt16LE(clause + 2),
+      try_length: fat
+        ? bytes.readUInt32LE(clause + 8)
+        : bytes.readUInt8(clause + 4),
+      handler_offset: fat
+        ? bytes.readUInt32LE(clause + 12)
+        : bytes.readUInt16LE(clause + 5),
+      handler_length: fat
+        ? bytes.readUInt32LE(clause + 16)
+        : bytes.readUInt8(clause + 7),
+      class_token:
+        flags === 0 ? `0x${extra.toString(16).padStart(8, "0")}` : null,
+      filter_offset: flags === 1 ? extra : null,
+    });
   }
   return regions;
 };

@@ -34,7 +34,7 @@ describe("web bundle analyzer", () => {
         expect.objectContaining({
           kind: "static_import",
           specifier: "./chunk.js?token=secret",
-          resolved_url: `${origin}/assets/chunk.js?token=%5BREDACTED%5D`,
+          resolved_url: `${origin}/assets/chunk.js?token=secret`,
         }),
         expect.objectContaining({
           kind: "dynamic_import",
@@ -43,11 +43,11 @@ describe("web bundle analyzer", () => {
       ]),
     );
     expect(result.observations.routes).toEqual([
-      expect.objectContaining({ value: "/users/:id?token=%5BREDACTED%5D" }),
+      expect.objectContaining({ value: "/users/:id?token=secret" }),
     ]);
     expect(result.observations.endpoints).toEqual([
       expect.objectContaining({
-        value: "/api/users?authorization=%5BREDACTED%5D",
+        value: "/api/users?authorization=secret",
       }),
     ]);
     expect(result.observations.webmcp_declarations).toEqual([
@@ -63,7 +63,7 @@ describe("web bundle analyzer", () => {
         expect.objectContaining({ value: "Vue" }),
       ]),
     );
-    expect(JSON.stringify(result)).not.toContain("authorization=secret");
+    expect(JSON.stringify(result)).toContain("authorization=secret");
     expect(result.completeness.status).toBe("complete");
   });
 

@@ -332,20 +332,6 @@ async function createTargets(root, includeManaged) {
 }
 
 async function runCodex(prompt) {
-  const mcpEnvironment = [
-    ["REA_BROWSER_OBSERVE_ENABLED", "true"],
-    [
-      "REA_BROWSER_CDP_ENDPOINTS_JSON",
-      JSON.stringify(["http://127.0.0.1:9222"]),
-    ],
-    [
-      "REA_BROWSER_ALLOWED_ORIGINS_JSON",
-      JSON.stringify(["http://127.0.0.1:3000"]),
-    ],
-  ];
-  const mcpEnvironmentOverride = `mcp_servers.rea.env={${mcpEnvironment
-    .map(([name, value]) => `${name}=${JSON.stringify(value)}`)
-    .join(",")}}`;
   const arguments_ = [
     "exec",
     "--ignore-user-config",
@@ -367,21 +353,12 @@ async function runCodex(prompt) {
     `mcp_servers.rea.args=${JSON.stringify([join(repositoryRoot, "scripts/rea.mjs"), "mcp"])}`,
     "-c",
     `mcp_servers.rea.startup_timeout_sec=${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)}`,
-    "-c",
-    mcpEnvironmentOverride,
     ...(optionalModel === undefined ? [] : ["--model", optionalModel]),
     prompt,
   ];
   const child = spawn(codex, arguments_, {
     cwd: evaluationRoot,
-    env: {
-      ...process.env,
-      REA_BROWSER_OBSERVE_ENABLED: "true",
-      REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify(["http://127.0.0.1:9222"]),
-      REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-        "http://127.0.0.1:3000",
-      ]),
-    },
+    env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const events = [];

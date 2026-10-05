@@ -8,7 +8,7 @@ import {
 const digest = (character: string): string => character.repeat(64);
 
 describe("provider-neutral runtime characterization plan", () => {
-  it("commits preparation separately from execution approval", () => {
+  it("commits the selected preparation inputs", () => {
     const plan = createRuntimeCharacterizationPlan({
       preparation_sha256: digest("5"),
       artifact: {
@@ -50,16 +50,9 @@ describe("provider-neutral runtime characterization plan", () => {
         identifiers: "deterministic",
         seed: 7,
       },
-      authority: {
-        preparation_approved: true,
-        execution_approved: false,
-        network: "none",
-        provider_owned_process_only: true,
-      },
     });
 
     expect(parseRuntimeCharacterizationPlan(plan)).toEqual(plan);
-    expect(plan.authority.execution_approved).toBe(false);
     expect(() =>
       parseRuntimeCharacterizationPlan({
         ...plan,

@@ -6,6 +6,7 @@ import type {
   BrowserScenarioEvent,
   BrowserStepArtifacts,
 } from "../domain/browserScenarioCapture.js";
+import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 
@@ -16,6 +17,7 @@ export interface BrowserScenarioSessionPort {
   readonly version: string;
   readonly initialUrl: string;
   currentUrl(): string;
+  sanitizeUrl(value: string): SanitizedBrowserUrl;
   setStep(index: number): void;
   nextEventSequence(): number;
   lastEventSequence(): number;

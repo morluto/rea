@@ -68,8 +68,7 @@ const validateTransitionDeclaration = (
   if (declared !== undefined) {
     const stateAfter =
       declared.target.kind === "goto" ? declared.target.state : null;
-    const outcome =
-      declared.target.kind === "finish" ? declared.target.outcome : null;
+    const outcome = declared.target.kind === "finish" ? "passed" : null;
     require(transition.state_after === stateAfter &&
       transition.outcome ===
         outcome, path, "reactive transition target or outcome differs from the committed graph");

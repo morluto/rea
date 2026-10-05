@@ -1,4 +1,3 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
 import { z } from "zod";
 import writeFileAtomic from "write-file-atomic";
 
@@ -23,14 +22,11 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
-import type { PermissionAuthority } from "./PermissionAuthority.js";
-import { replayPermissionRequest } from "./JavaScriptReplayPermission.js";
 import {
   digestBytes,
   prepareReplayPlan,
-  type EnabledJavaScriptReplayPolicy,
+  type JavaScriptReplayConfiguration,
   type JavaScriptReplayHost,
-  type JavaScriptReplayPolicy,
   type JavaScriptReplayRunner,
 } from "./JavaScriptReplayPlanning.js";
 
@@ -39,10 +35,9 @@ const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
 export interface JavaScriptReplayDependencies {
-  readonly policy: () => JavaScriptReplayPolicy;
+  readonly configuration: () => JavaScriptReplayConfiguration;
   readonly host: JavaScriptReplayHost;
   readonly runner: JavaScriptReplayRunner;
-  readonly authority: PermissionAuthority | undefined;
 }
 
 /** Plan or execute one content-bound extracted-module replay experiment. */
@@ -69,17 +64,13 @@ export const runControlledReplayValidated = async (
   input: ControlledReplayInput,
   options: ExecutionOptions = {},
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const authorized = await authorizeReplay(
-    dependencies,
-    dependencies.policy(),
-    input,
-    options.signal,
-  );
-  if (!authorized.ok) return authorized;
+  if (isAborted(options.signal))
+    return err(new AnalysisCancelledError(OPERATION));
+  const configuration = dependencies.configuration();
 
   const prepared = await prepareValidatedReplay(
     dependencies,
-    authorized.value,
+    configuration,
     input,
     options.signal,
   );
@@ -105,12 +96,12 @@ export const runControlledReplayValidated = async (
       ),
     );
 
-  const exportContext = await authorizeReproducerExport(input);
+  const exportContext = prepareReproducerExport(input);
   if (!exportContext.ok) return exportContext;
 
   const executed = await executeValidatedReplay({
     runner: dependencies.runner,
-    policy: authorized.value,
+    configuration,
     prepared: prepared.value,
     exportContext: exportContext.value,
     options,
@@ -137,42 +128,9 @@ export const runControlledReplayValidated = async (
   }
 };
 
-const authorizeReplay = async (
-  dependencies: JavaScriptReplayDependencies,
-  policy: JavaScriptReplayPolicy,
-  input: ControlledReplayInput,
-  signal: AbortSignal | undefined,
-): Promise<Result<EnabledJavaScriptReplayPolicy, AnalysisError>> => {
-  if (policy.status === "disabled")
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "rea-javascript-replay",
-        OPERATION,
-        "controlled replay is disabled; configure exact roots and executables before enabling it",
-      ),
-    );
-  if (dependencies.authority === undefined)
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "rea-javascript-replay",
-        OPERATION,
-        "JavaScript replay permission policy is not configured",
-      ),
-    );
-  if (isAborted(signal)) return err(new AnalysisCancelledError(OPERATION));
-
-  const request = replayPermissionRequest(input, policy);
-  const authorized =
-    input.mode === "plan"
-      ? await dependencies.authority.explain(request, "read")
-      : await dependencies.authority.authorize(request, "read");
-  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
-  return ok(policy);
-};
-
 const prepareValidatedReplay = async (
   dependencies: JavaScriptReplayDependencies,
-  policy: EnabledJavaScriptReplayPolicy,
+  configuration: JavaScriptReplayConfiguration,
   input: ControlledReplayInput,
   signal: AbortSignal | undefined,
 ): Promise<
@@ -180,7 +138,7 @@ const prepareValidatedReplay = async (
 > => {
   if (isAborted(signal)) return err(new AnalysisCancelledError(OPERATION));
   try {
-    return ok(await prepareReplayPlan(input, policy, dependencies.host));
+    return ok(await prepareReplayPlan(input, configuration, dependencies.host));
   } catch (cause: unknown) {
     return err(
       new AnalysisCapabilityUnavailableError(
@@ -197,7 +155,7 @@ interface ReproducerExportContext {
   readonly includeSources: boolean;
 }
 
-const authorizeReproducerExport = (
+const prepareReproducerExport = (
   input: ControlledReplayExecutionInput,
 ): Result<ReproducerExportContext | undefined, AnalysisError> => {
   if (input.reproducer_export === undefined) return ok(undefined);
@@ -209,7 +167,7 @@ const authorizeReproducerExport = (
 
 interface ReplayExecutionContext {
   readonly runner: JavaScriptReplayRunner;
-  readonly policy: EnabledJavaScriptReplayPolicy;
+  readonly configuration: JavaScriptReplayConfiguration;
   readonly prepared: Awaited<ReturnType<typeof prepareReplayPlan>>;
   readonly exportContext: ReproducerExportContext | undefined;
   readonly options: ExecutionOptions;
@@ -226,19 +184,19 @@ const executeValidatedReplay = async (
     AnalysisError
   >
 > => {
-  const { runner, policy, prepared, exportContext, options } = context;
+  const { runner, configuration, prepared, exportContext, options } = context;
   await options.progress?.report({
     phase: OPERATION,
     completed: 0,
     total: 1,
-    message: "Admitting approved modules into the isolated replay worker",
+    message: "Starting the isolated replay worker",
   });
   if (isAborted(options.signal))
     return err(new AnalysisCancelledError(OPERATION));
 
   try {
     let executed = replayExecutionResultSchema.parse(
-      await runner.execute(prepared, policy, options.signal),
+      await runner.execute(prepared, configuration, options.signal),
     );
     await options.progress?.report({
       phase: OPERATION,
@@ -302,7 +260,7 @@ const applyReproducerExport = async (
       ...executed,
       limitations: [
         ...executed.limitations,
-        "Replay completed, but the separately approved reproducer export failed.",
+        "Replay completed, but the requested reproducer export failed.",
       ],
       reproducer: {
         state: "failed",

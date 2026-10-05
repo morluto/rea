@@ -15,7 +15,6 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = await realpath(await mkdtemp(join(tmpdir(), "rea-inspector-")));
 const environment = {
   ...process.env,
-  REA_V8_INSPECTOR_OBSERVE_ENABLED: "true",
 };
 const client = new Client({
   name: "rea-inspector-conformance",

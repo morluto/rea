@@ -1,6 +1,7 @@
 import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
   AnalyzeWebBundleInput,
   WebSourceMapItem,
@@ -222,8 +223,7 @@ const validSourceMapEnvelope = (text: string): boolean => {
     return false;
   }
   if (!isRecord(parsed) || parsed.version !== 3) return false;
-  if (typeof parsed.mappings === "string")
-    return Array.isArray(parsed.sources) && Array.isArray(parsed.names);
+  if (typeof parsed.mappings === "string") return validSourceMapLeaf(parsed);
   if (!Array.isArray(parsed.sections)) return false;
   const pending: unknown[] = [...parsed.sections];
   while (pending.length > 0) {
@@ -234,15 +234,16 @@ const validSourceMapEnvelope = (text: string): boolean => {
     if (!isRecord(map) || map.version !== 3) return false;
     if (Array.isArray(map.sections))
       for (const child of map.sections) pending.push(child);
-    else if (
-      typeof map.mappings !== "string" ||
-      !Array.isArray(map.sources) ||
-      !Array.isArray(map.names)
-    )
-      return false;
+    else if (!validSourceMapLeaf(map)) return false;
   }
   return true;
 };
+
+const validSourceMapLeaf = (map: Readonly<Record<string, unknown>>): boolean =>
+  typeof map.mappings === "string" &&
+  Array.isArray(map.sources) &&
+  Array.isArray(map.names) &&
+  hasValidSourceMapContents(map.sources.length, map.sourcesContent);
 
 const approvedUrl = (
   value: string,
@@ -282,12 +283,9 @@ const emptySourceMapItem = (
 
 const sanitizeSource = (value: string): string => {
   try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? sanitizeBrowserUrl(parsed.href).url
-      : `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    return sanitizeBrowserUrl(new URL(value).href).url;
   } catch {
-    return value.split("#", 1)[0]?.split("?", 1)[0] ?? "";
+    return value;
   }
 };
 

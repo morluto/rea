@@ -55,7 +55,7 @@ export const inspectCdpElectronPage = async (
     limitations: [
       "Local file paths exposed by the selected CDP target are retained in the observation.",
       "REA does not evaluate renderer JavaScript, invoke Electron APIs, navigate, click, or close the page.",
-      "Script contents require separate source-capture approval.",
+      "Select include_script_sources to retain script contents.",
     ],
     mainFrameId: undefined,
     navigationDuringCapture: false,

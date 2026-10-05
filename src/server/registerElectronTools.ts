@@ -10,7 +10,6 @@ import {
 } from "../application/ElectronObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/electronToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
@@ -28,7 +27,6 @@ interface ElectronToolRegistration {
   readonly logger: Logger;
   readonly electron: ElectronObservationPort | undefined;
   readonly electronActive: ElectronActiveObservationPort | undefined;
-  readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
 
@@ -37,7 +35,7 @@ interface ElectronToolContext {
   readonly progress: ProgressReporter;
 }
 
-/** Register Electron tools even when provider or permission policy is absent. */
+/** Register Electron tools even when a provider is absent. */
 // oxlint-disable-next-line max-lines-per-function -- direct SDK calls retain each schema-handler type correlation.
 export const registerElectronTools = (
   server: McpServer,
@@ -60,14 +58,9 @@ export const registerElectronTools = (
         listContract,
         { input, context },
         (parsed, { signal }) =>
-          listElectronTargets(
-            options.electron,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal,
-            },
-          ),
+          listElectronTargets(options.electron, parsed, {
+            signal,
+          }),
       ),
   );
   server.registerTool(
@@ -80,12 +73,10 @@ export const registerElectronTools = (
         { input, context },
         async (parsed, { signal, progress }) => {
           const request = inspectElectronPageInputSchema.parse(parsed);
-          return inspectElectronPage(
-            options.electron,
-            options.permissionAuthority,
-            request,
-            { signal, progress },
-          );
+          return inspectElectronPage(options.electron, request, {
+            signal,
+            progress,
+          });
         },
       ),
   );
@@ -122,12 +113,10 @@ export const registerElectronTools = (
         activeContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          captureElectronScenario(
-            options.electronActive,
-            options.permissionAuthority,
-            parsed,
-            { signal, progress },
-          ),
+          captureElectronScenario(options.electronActive, parsed, {
+            signal,
+            progress,
+          }),
       ),
   );
 };

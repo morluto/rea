@@ -459,10 +459,11 @@ export const compareProcessCaptures = (
                 "Residual unknowns prevent proving that no divergence occurred.",
             } as const)
           : observedFirstDivergence;
+  const observedStatus = deriveProcessComparisonStatus(
+    PROCESS_COMPARISON_DIMENSIONS.map((dimension) => dimensions[dimension]),
+  );
   return {
-    status: deriveProcessComparisonStatus(
-      PROCESS_COMPARISON_DIMENSIONS.map((dimension) => dimensions[dimension]),
-    ),
+    status: observedStatus,
     ...dimensions,
     first_divergence: firstDivergence,
     ...(trace === undefined ? {} : { trace }),

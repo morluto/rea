@@ -243,6 +243,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
                 ...(profile === undefined ? {} : { analysisProfile: profile }),
                 limitations: [
                   "Results depend on Hopper's completed static analysis.",
+                  ...(operation === "procedure_references"
+                    ? [
+                        "Hopper's public Python API does not expose flow classification for calls without resolved targets; unresolved_calls is empty and its coverage is unknown.",
+                      ]
+                    : []),
                 ],
               }),
             }

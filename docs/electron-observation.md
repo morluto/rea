@@ -1,6 +1,6 @@
 # Electron file-page observation
 
-REA can attach to a user-owned Electron/Chromium CDP endpoint and inspect existing `file://` renderer pages without evaluating JavaScript or invoking Electron APIs. The caller supplies the endpoint directly; REA accepts only literal-port loopback HTTP endpoints. Selecting an endpoint exposes every Electron target it serves, including local file paths and page metadata.
+REA can attach to an Electron/Chromium CDP endpoint and inspect existing `file://` renderer pages without evaluating JavaScript or invoking Electron APIs. The request supplies the endpoint directly; REA accepts only literal-port loopback HTTP endpoints. Selecting an endpoint exposes every Electron target it serves, including local file paths and page metadata.
 
 This passive runtime surface is distinct from the target-free static
 [`analyze_javascript_application`](javascript-artifact-reconstruction.md)
@@ -11,15 +11,13 @@ Use the separate
 [`reconcile_javascript_runtime`](javascript-runtime-reconciliation.md) workflow
 when both Evidence sets already exist.
 
-## Configure authority
+## Target boundary
 
-The capability is disabled by default:
-
-```bash
-export REA_ELECTRON_OBSERVE_ENABLED=true
-```
-
-Its permission ceiling is loopback-only. REA accepts local hostless `file://` URLs that resolve to regular files; remote hosts, encoded path separators, and nonexistent paths are rejected. There is no separate filesystem-root configuration.
+The request supplies a literal-port loopback endpoint and, for inspection, a
+target ID. REA accepts local hostless `file://` URLs that resolve to regular
+files; remote hosts, encoded path separators, and nonexistent paths are
+rejected. The endpoint exposes every eligible target and its local path
+metadata.
 
 ## Workflow
 
@@ -33,7 +31,8 @@ rea inspect-electron-page http://127.0.0.1:9223 TARGET_ID \
   --observation-ms 100 --json
 ```
 
-Script content is excluded by default. Requesting it includes every authorized script source:
+Script content is excluded by default. Setting `include_script_sources` in the
+request returns the selected target's script sources:
 
 ```bash
 rea inspect-electron-page http://127.0.0.1:9223 TARGET_ID \
@@ -43,9 +42,9 @@ rea inspect-electron-page http://127.0.0.1:9223 TARGET_ID \
 
 The normalized result contains canonical local paths, frame and DOM
 structure, resource metadata, stable script/resource identities, explicit
-completeness, and content-addressed approved source artifacts. Script metadata
+completeness, and content-addressed script artifacts. Script metadata
 retains its execution-context frame ID when CDP supplies one. The capture also
-inventories authorized worker, service-worker, and shared-worker targets with
+inventories worker, service-worker, and shared-worker targets with
 validated opener-target and parent-frame IDs. Worker discovery uses passive
 target metadata; REA does not attach to or execute code in those targets.
 Collection counts and aggregate script-source bytes are not capped. Like every
@@ -59,31 +58,25 @@ invoke Electron IPC, close a target, or terminate the application.
 
 ## Active Electron scenarios
 
-Active Electron authority is separate and disabled by default. When enabled,
-REA launches an operator-approved Electron executable through the official
-Playwright Electron API, owns its lifetime, accepts bounded click/wait actions,
+The scenario request supplies the Electron executable and application entry
+point, plus any arguments and actions. The application root defaults to the
+entry point's parent directory and can be supplied when the app uses a different
+root. REA launches that executable through
+the official Playwright Electron API and owns its lifetime. It accepts click/wait actions,
 window-targeted renderer reload/crash actions, and synthetic `open-url` or
 `second-instance` deep-link delivery. It records capture-scoped window and
 WebContents identities, process metrics, and IPC channel and value-shape metadata.
 Payload values are not retained.
 
-Configure exact roots and run the real fixture verifier with an operator-owned
-Electron runtime:
+Run the real fixture verifier with an operator-provided Electron runtime:
 
 ```bash
-export REA_ELECTRON_AUTOMATE_ENABLED=true
-export REA_ELECTRON_AUTOMATE_AUTO_GRANT=false
-export REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON='["/absolute/path/to/runtime"]'
-export REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON='["/absolute/path/to/app"]'
 REA_ELECTRON_EXECUTABLE=/absolute/path/to/electron npm run verify:electron
 ```
 
-This capability actively launches and interacts with the target. It is not a
-passive CDP observation and must be granted separately as `electron_automate`.
-The default is fail-closed (`AUTO_GRANT=false`); an operator can instead issue
-a project/session/one-shot grant through the normal permission workflow. The
-owned process keeps normal host filesystem and network privileges, so this is
-an authority boundary and lifecycle boundary, not a sandbox.
+This operation actively launches and interacts with the selected target. It is
+not a passive CDP observation. The owned process keeps normal host filesystem
+and network privileges, so lifecycle ownership does not make it a sandbox.
 
 The CLI and MCP surfaces accept the same schema. For a JSON request file:
 
@@ -106,7 +99,7 @@ caller-selected capture limits.
 
 Active Electron Evidence can also be supplied to
 [`reconcile_javascript_runtime`](javascript-runtime-reconciliation.md). That
-projection is intentionally target-only and partial: it binds the approved
+projection is intentionally target-only and partial: it binds the selected
 application path and capture outcome to the static graph, while frames, scripts,
 workers, and execution claims remain unavailable until a separate passive runtime
 capture provides them.

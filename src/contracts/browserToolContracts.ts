@@ -114,22 +114,21 @@ const exampleScenarioCapture = () => ({
   limitations: [],
 });
 
-/** Origin-scoped, passive browser reverse-engineering contracts. */
+/** Passive browser reverse-engineering contracts. */
 export const BROWSER_TOOL_CONTRACTS = [
   {
     name: "list_browser_targets",
     ...toolContractMetadata("list_browser_targets"),
     description:
-      "List every page target from an approved user-owned loopback Chrome DevTools Protocol endpoint whose current URL matches an approved exact origin. URL credentials, query values, and fragments are redacted.",
+      "List page targets exposed by the selected loopback Chrome DevTools Protocol endpoint. Optionally filter by exact origin. URLs preserve query values and fragments; only URL userinfo credentials are removed.",
     kind: "browser-provider",
     inputSchema: listBrowserTargetsInputSchema,
     outputSchema: listOutputSchema,
     examples: [
       {
-        title: "List approved browser page targets",
+        title: "List browser page targets",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
         },
       },
     ],
@@ -138,16 +137,15 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "inspect_web_page",
     ...toolContractMetadata("inspect_web_page"),
     description:
-      "Passively inspect one approved page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence.",
+      "Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target's current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence.",
     kind: "browser-provider",
     inputSchema: inspectWebPageInputSchema,
     outputSchema: inspectionOutputSchema,
     examples: [
       {
-        title: "Inspect one approved browser page",
+        title: "Inspect one browser page",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
         },
       },
@@ -157,16 +155,15 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one configured CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from allowed origins. JavaScript is parsed but never executed.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
     kind: "browser-provider",
     inputSchema: analyzeWebBundleInputSchema,
     outputSchema: bundleOutputSchema,
     examples: [
       {
-        title: "Analyze an approved page bundle",
+        title: "Analyze a page bundle",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
           observation_ms: 500,
           include_accessibility_text: false,
@@ -181,7 +178,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "observe_web_session",
     ...toolContractMetadata("observe_web_session"),
     description:
-      "Arm a CDP observation window of the requested duration while the user operates the page. Allows approved same-origin reload and SPA navigation, records every observed navigation, redirect, lifecycle, and failure event, and stops before retaining an out-of-policy destination.",
+      "Arm a CDP observation window of the requested duration while the user operates the page. By default it follows the selected target's current origin; an explicit origin list controls which origins may be retained. Records navigation, redirect, lifecycle, and failure events.",
     kind: "browser-provider",
     inputSchema: observeWebSessionInputSchema,
     outputSchema: observationSessionOutputSchema,
@@ -190,7 +187,6 @@ export const BROWSER_TOOL_CONTRACTS = [
         title: "Observe one external user action",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
           observation_ms: 10_000,
         },
@@ -210,7 +206,6 @@ export const BROWSER_TOOL_CONTRACTS = [
         title: "Discover current WebMCP declarations",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
           observation_ms: 100,
         },
@@ -255,10 +250,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     outputSchema: screenshotOutputSchema,
     examples: [
       {
-        title: "Capture an approved viewport",
+        title: "Capture a viewport",
         input: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
         },
       },

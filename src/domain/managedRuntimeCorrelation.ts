@@ -34,8 +34,8 @@ const managedRuntimeBoundsSchema = z.strictObject({
   timeout_ms: z.number().int().min(1).default(5_000),
   max_threads: z.number().int().min(1).default(32),
   max_output_bytes: z.number().int().min(0).default(65_536),
-  allow_network: z.literal(false).default(false),
-  allow_ui: z.literal(false).default(false),
+  allow_network: z.boolean().default(false),
+  allow_ui: z.boolean().default(false),
 });
 
 export const managedRuntimeCorrelationInputSchema = z.strictObject({
@@ -58,14 +58,8 @@ export const managedRuntimeCorrelationInputSchema = z.strictObject({
 
 export const managedRuntimeCorrelationResultSchema = z.strictObject({
   correlation_id: prefixedDigestSchema("mrc"),
-  phase: z.literal("admission-plan"),
+  phase: z.literal("correlation-plan"),
   executed: z.literal(false),
-  authority_model: z.strictObject({
-    capability: z.literal("managed_runtime"),
-    permission_grant_id: z.string().min(1),
-    default_enabled: z.literal(false),
-    per_call_approval_required: z.literal(true),
-  }),
   static_observation: z.strictObject({
     evidence_id: evidenceIdSchema,
     artifact_sha256: digestSchema,
@@ -96,8 +90,8 @@ export const managedRuntimeCorrelationResultSchema = z.strictObject({
     effect: managedRuntimeEffectSchema,
     host: managedRuntimeHostSchema,
     executable_path: z.string().min(1),
-    network: z.literal("none"),
-    filesystem: z.literal("owned-artifacts-only"),
+    network: z.enum(["none", "host"]),
+    confinement: z.literal("not-established"),
   }),
   effect_taxonomy: z.strictObject({
     attaches_process: z.boolean(),
@@ -131,7 +125,6 @@ const sha256 = (value: JsonValue): string => {
 export const planManagedRuntimeCorrelation = (
   input: ManagedRuntimeCorrelationInput,
   executablePath: string,
-  permissionGrantId: string,
 ): ManagedRuntimeCorrelationResult => {
   const staticEvidence = parseEvidence(input.static_members);
   if (staticEvidence.operation !== "inspect_managed_members")
@@ -153,14 +146,8 @@ export const planManagedRuntimeCorrelation = (
       "Requested method lock does not match a static managed member observation",
     );
   const withoutId = {
-    phase: "admission-plan" as const,
+    phase: "correlation-plan" as const,
     executed: false as const,
-    authority_model: {
-      capability: "managed_runtime" as const,
-      permission_grant_id: permissionGrantId,
-      default_enabled: false as const,
-      per_call_approval_required: true as const,
-    },
     static_observation: {
       evidence_id: staticEvidence.evidence_id,
       artifact_sha256: members.artifact.sha256,
@@ -185,8 +172,10 @@ export const planManagedRuntimeCorrelation = (
       effect: input.requested_effect,
       host: input.host,
       executable_path: executablePath,
-      network: "none" as const,
-      filesystem: "owned-artifacts-only" as const,
+      network: input.bounds.allow_network
+        ? ("host" as const)
+        : ("none" as const),
+      confinement: "not-established" as const,
     },
     effect_taxonomy: effectTaxonomy(input.requested_effect),
     bounds: input.bounds,
@@ -196,7 +185,8 @@ export const planManagedRuntimeCorrelation = (
       "This operation admits and records a runtime-correlation plan only; it did not attach, load, debug, reflect, instrument, invoke, or execute target code.",
       "Runtime agreement would be a separate runtime observation and would not retroactively turn static inference into a byte observation.",
       "The exact artifact SHA-256, MVID, method signature, and normalized IL shape must match before any future executor can run.",
-      "Network and UI effects are not admitted by this contract.",
+      "The selected runtime executable and host prerequisites are unverified because planning does not launch the runtime.",
+      "No filesystem, network, or UI confinement was established; the requested bounds describe a future executor configuration only.",
     ],
   };
   return managedRuntimeCorrelationResultSchema.parse({

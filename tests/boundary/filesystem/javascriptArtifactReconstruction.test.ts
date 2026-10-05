@@ -129,6 +129,84 @@ it("retains every source declared by every included local source map", async () 
   });
 });
 
+it.each([
+  ["a non-array sourcesContent value", { sourcesContent: "source" }],
+  ["a non-string, non-null source entry", { sourcesContent: [42] }],
+  ["a source-content array with the wrong length", { sourcesContent: [] }],
+])(
+  "reports %s as an invalid local source map",
+  async (_description, content) => {
+    const root = await createTestTempDirectory(
+      "rea-javascript-invalid-source-map-",
+    );
+    await writeFile(
+      join(root, "invalid.js.map"),
+      JSON.stringify({
+        version: 3,
+        sources: ["source.ts"],
+        names: [],
+        mappings: "",
+        ...content,
+      }),
+    );
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+
+    expect(result.graph.coverage.status).toBe("partial");
+    expect(
+      result.graph.nodes.some(
+        ({ kind, observations }) =>
+          kind === "unknown" &&
+          observations.some(
+            ({ properties }) =>
+              properties.operation === "parse-local-source-map",
+          ),
+      ),
+    ).toBe(true);
+  },
+);
+
+it("accepts omitted and explicitly null source-map source contents", async () => {
+  const root = await createTestTempDirectory(
+    "rea-javascript-null-source-content-",
+  );
+  await Promise.all([
+    writeFile(
+      join(root, "omitted.js.map"),
+      JSON.stringify({
+        version: 3,
+        sources: ["omitted.ts"],
+        names: [],
+        mappings: "",
+      }),
+    ),
+    writeFile(
+      join(root, "null.js.map"),
+      JSON.stringify({
+        version: 3,
+        sources: ["null.ts"],
+        sourcesContent: [null],
+        names: [],
+        mappings: "",
+      }),
+    ),
+  ]);
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const originals = result.graph.nodes.filter(
+    ({ kind }) => kind === "source-module",
+  );
+
+  expect(originals).toHaveLength(2);
+  expect(
+    originals.every(
+      ({ observations }) =>
+        observations[0]?.properties.content_available === false,
+    ),
+  ).toBe(true);
+  expect(result.graph.coverage.status).toBe("complete");
+});
+
 it("retains every repeated content observation and containment path", async () => {
   const root = await createTestTempDirectory("rea-javascript-observations-");
   await Promise.all(

@@ -1,7 +1,6 @@
 import type { WebPageInspection } from "../domain/browserObservation.js";
 import { inferJsonShape } from "../domain/jsonShape.js";
 import { safeResponseMetadata } from "./CdpSafeMetadata.js";
-import { redactSensitiveText } from "./SensitiveTextCapture.js";
 import {
   allowedSanitizedUrl,
   isHttpUrl,
@@ -265,7 +264,7 @@ const captureConsoleText = (
   for (const [argumentIndex, argument] of arguments_.entries()) {
     const primitive = consolePrimitive(argument);
     if (primitive === undefined) continue;
-    const text = redactSensitiveText(primitive.text);
+    const text = primitive.text;
     values.push({
       argument_index: argumentIndex,
       type: primitive.type,

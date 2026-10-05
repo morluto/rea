@@ -73,7 +73,7 @@ export const traceApplicationFeatureEvidenceValidated = (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
@@ -136,7 +136,7 @@ export const compareApplicationVersionsEvidenceValidated = (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
@@ -165,7 +165,7 @@ export const compareSourceToBundleEvidenceValidated = (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
@@ -225,19 +225,56 @@ export const compareJavaScriptExportShapesEvidenceValidated = (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
 const workflowFailure = (
   operation: string,
   cause: unknown,
+  input: unknown,
 ): Result<never, AnalysisError> =>
-  err(
-    cause instanceof z.ZodError || cause instanceof TypeError
-      ? new AnalysisInputError(operation)
-      : new AnalysisProtocolError(
-          "JavaScript application workflow produced an invalid result",
-          { cause },
+  cause instanceof z.ZodError
+    ? err(
+        new AnalysisInputError(
+          operation,
+          undefined,
+          projectInputIssues(cause.issues, input),
         ),
-  );
+      )
+    : cause instanceof TypeError &&
+        SAFE_APPLICATION_INPUT_CONSTRAINTS.has(cause.message)
+      ? err(
+          new AnalysisInputError(operation, undefined, [
+            { path: [], reason: "invalid_value", message: cause.message },
+          ]),
+        )
+      : err(
+          new AnalysisProtocolError(
+            "JavaScript application workflow produced an invalid result",
+            { cause },
+          ),
+        );
+
+const SAFE_APPLICATION_INPUT_CONSTRAINTS = new Set([
+  "Evidence semantic identifier does not match its record",
+  "Application workflow requires authenticated analyze_javascript_application, reconcile_javascript_runtime, or project_managed_application_graph Evidence",
+  "JavaScript application Evidence authority or confidence is invalid",
+  "JavaScript application Evidence predicate does not match its result shape",
+  "JavaScript application Evidence subject does not match its result",
+  "Runtime reconciliation Evidence authority or confidence is invalid",
+  "Runtime reconciliation result references Evidence outside its envelope",
+  "Runtime reconciliation application layer is missing",
+  "Managed application graph Evidence authority or confidence is invalid",
+  "Managed application graph result references Evidence outside its envelope",
+  "Native handoff Evidence requires an artifact subject",
+  "Native handoff Evidence must be unique",
+  ...[
+    "analyze_javascript_application",
+    "reconcile_javascript_runtime",
+    "project_managed_application_graph",
+  ].map(
+    (operation) =>
+      `Evidence does not match the supported ${operation} contract`,
+  ),
+]);

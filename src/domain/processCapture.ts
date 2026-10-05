@@ -268,7 +268,8 @@ export interface UnverifiedProcessCapture {
       | "protocol"
       | "shim"
       | "cleanup"
-      | "network";
+      | "network"
+      | "environment";
     readonly reason: string;
   }[];
   readonly cleanup: {
@@ -487,6 +488,7 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
           "shim",
           "cleanup",
           "network",
+          "environment",
         ]),
         reason: z.string(),
       }),

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { add, commit, init } from "isomorphic-git";
@@ -31,12 +31,16 @@ const fixture = async (parent: string, name: string): Promise<string> => {
   return root;
 };
 
-const importTree = (root: string, signal?: AbortSignal) =>
+const importTree = (
+  root: string,
+  signal?: AbortSignal,
+  secretPatterns: readonly string[] = [".env", ".env.*"],
+) =>
   importReferenceSource({
     root,
     caller: "reference-import-test",
     policy: {
-      secretPatterns: [".env", ".env.*"],
+      secretPatterns,
     },
     ...(signal === undefined ? {} : { signal }),
   });
@@ -102,6 +106,33 @@ describe("reference source import error projection", () => {
       expect(projected.message).not.toContain("/private/path");
       expect(projected.message).toMatch(/try again|when ready|Check that/u);
     }
+  });
+});
+
+describe("reference source symlink import", () => {
+  it("retains external symlink targets as local graph diagnostics", async () => {
+    const root = await createTestTempDirectory("rea-reference-links-");
+    const outside = await createTestTempDirectory("rea-reference-outside-");
+    const target = join(outside, "target.js");
+    await writeFile(target, "export {};");
+    await symlink(target, join(root, "external.js"));
+
+    const imported = await importTree(root);
+
+    expect(imported.ok).toBe(true);
+    if (!imported.ok) return;
+    expect(imported.value.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "symlink",
+        path: "external.js",
+        target,
+        target_state: "external",
+        limitations: [],
+      }),
+    );
+    expect(imported.value.entries).not.toContainEqual(
+      expect.objectContaining({ path: "target.js", kind: "file" }),
+    );
   });
 });
 
@@ -270,6 +301,30 @@ describe("reference source import behavior", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.vcs).toEqual({ kind: "git", head: oid, dirty: null });
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("reference source path selection", () => {
+  it("does not omit selected files by secret-like path or filename", async () => {
+    const parent = await createTestTempDirectory("rea-reference-selected-");
+    try {
+      const root = await fixture(parent, "tree");
+      const result = await importTree(root, undefined, []);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.entries).toContainEqual(
+        expect.objectContaining({
+          path: ".env",
+          kind: "file",
+          content_state: "hashed",
+        }),
+      );
+      expect(result.value.exclusions).not.toContainEqual(
+        expect.objectContaining({ path: ".env" }),
+      );
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

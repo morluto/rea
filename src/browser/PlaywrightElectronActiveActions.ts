@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { BrowserObservationError } from "../domain/errors.js";
-import { redactSensitiveText } from "./SensitiveTextCapture.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
@@ -157,7 +156,7 @@ export const runElectronActions = async (
           selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
         status: options.signal?.aborted ? "cancelled" : "failed",
         elapsed_ms: Date.now() - actionStartedAt,
-        error: safeActionErrorMessage(cause, action),
+        error: safeActionErrorMessage(cause),
       });
       break;
     }
@@ -440,18 +439,6 @@ export const runWithExecutionLimits = async <Value>(
   }
 };
 
-const safeActionErrorMessage = (
-  cause: unknown,
-  action: ElectronAction,
-): string => {
-  let message =
-    cause instanceof Error ? cause.message : "Electron action failed";
-  const inputValues = Object.values(action)
-    .filter(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    )
-    .sort((left, right) => right.length - left.length);
-  for (const value of inputValues)
-    message = message.split(value).join("<redacted-input>");
-  return redactSensitiveText(message);
+const safeActionErrorMessage = (cause: unknown): string => {
+  return cause instanceof Error ? cause.message : "Electron action failed";
 };

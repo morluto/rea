@@ -8,9 +8,14 @@ import type {
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { digestJson } from "./JavaScriptReplayPlanning.js";
 
+type CanonicalElectronActiveObservationInput =
+  ElectronActiveObservationInput & {
+    readonly application_root: string;
+  };
+
 /** Create Evidence without retaining arbitrary runtime argument values. */
 export const createElectronActiveEvidence = (
-  input: ElectronActiveObservationInput,
+  input: CanonicalElectronActiveObservationInput,
   result: ElectronActiveObservationResult,
   provider: ProviderIdentity,
 ): Evidence =>
@@ -31,46 +36,18 @@ export const createElectronActiveEvidence = (
   });
 
 const scenarioProjection = (
-  input: ElectronActiveObservationInput,
+  input: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
   executable_path: input.executable_path,
   application_path: input.application_path,
   application_root: input.application_root,
-  args: redactArguments(input.args),
+  args: [...input.args],
   actions: input.actions.map(({ step_id, kind }) => ({ step_id, kind })),
 });
 
 const parameters = (
-  input: ElectronActiveObservationInput,
+  input: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
   ...scenarioProjection(input),
   scenario_sha256: digestJson(scenarioProjection(input)),
 });
-
-const redactArguments = (arguments_: readonly string[]): string[] => {
-  let redactNext = false;
-  return arguments_.map((argument) => {
-    if (redactNext) {
-      redactNext = false;
-      return "<redacted>";
-    }
-    if (sensitiveFlag.test(argument)) {
-      redactNext = true;
-      return argument;
-    }
-    return redactArgument(argument);
-  });
-};
-
-const sensitiveFlag =
-  /^--?(?:password|token|secret|api[-_]?key|authorization|cookie)$/iu;
-
-const redactArgument = (argument: string): string => {
-  if (
-    /^--?(?:password|token|secret|api[-_]?key|authorization|cookie)=/iu.test(
-      argument,
-    )
-  )
-    return `${argument.slice(0, argument.indexOf("=") + 1)}<redacted>`;
-  return argument;
-};

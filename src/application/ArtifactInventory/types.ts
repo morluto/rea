@@ -4,15 +4,6 @@ import type {
   IntegrityContradiction,
 } from "../../domain/artifactGraph.js";
 
-/** Resolved native mount authority admitted to the artifact reader. */
-export type ArtifactNativeMountPolicy =
-  | { readonly status: "disabled" }
-  | { readonly status: "approved" };
-
-export const NATIVE_MOUNT_DISABLED: ArtifactNativeMountPolicy = {
-  status: "disabled",
-};
-
 /** Resolved integrity behavior admitted to the artifact scanner. */
 export type ArtifactIntegrityPolicy =
   | { readonly mode: "fail" }
@@ -25,7 +16,6 @@ export const STRICT_INTEGRITY_POLICY: ArtifactIntegrityPolicy = {
 /** Options shared by artifact inventory scans. */
 export interface ArtifactInventoryOptions {
   readonly signal?: AbortSignal | undefined;
-  readonly nativeMount?: ArtifactNativeMountPolicy | undefined;
   readonly integrity?: ArtifactIntegrityPolicy | undefined;
 }
 

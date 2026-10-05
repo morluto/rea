@@ -268,8 +268,9 @@ describe("GhidraClient established requests", () => {
     ).resolves.toMatchObject({ ok: false, error: { kind: "process" } });
   });
 
-  it("cancels an established queued operation promptly", async () => {
-    const client = clientFor(new FixtureLauncher("hang_tools"));
+  it("cancels queued work and stops active provider work on cancellation", async () => {
+    const launcher = new FixtureLauncher("hang_tools");
+    const client = clientFor(launcher);
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     const activeController = new AbortController();
     const active = client.callTool(
@@ -290,8 +291,22 @@ describe("GhidraClient established requests", () => {
       ok: false,
       error: { kind: "cancelled" },
     });
+    const waiting = client.callTool("procedure_info", {
+      document: null,
+      procedure: "fixture_main",
+    });
+    await wait(5);
+    const process_ = launcher.processes[0];
     activeController.abort();
-    await active;
+    await expect(active).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    expect(await waitForExit(process_)).toBe(true);
+    await expect(waiting).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "process" },
+    });
   });
 });
 

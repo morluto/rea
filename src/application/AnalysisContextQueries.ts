@@ -3,8 +3,13 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { AnalysisOutputError, type AnalysisError } from "../domain/errors.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { parseDocuments } from "../domain/hopperValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type Facet =
@@ -138,7 +143,41 @@ const resolveDocument = async (
     {},
     executionOptions(signal),
   );
-  if (!current.ok) return current;
+  if (!current.ok) {
+    if (!(current.error instanceof AnalysisCapabilityUnavailableError))
+      return current;
+    const listed = await analysis.execute(
+      "list_documents",
+      {},
+      executionOptions(signal),
+    );
+    if (!listed.ok) return listed;
+    const parsed = parseDocuments(listed.value.result);
+    if (!parsed.ok)
+      return err(
+        new AnalysisOutputError(
+          "list_documents",
+          "expected one document identity when resolving a headless provider",
+          { cause: parsed.error },
+        ),
+      );
+    if (parsed.value.length !== 1)
+      return err(
+        new AnalysisOutputError(
+          "list_documents",
+          `expected exactly one document identity for a provider without current-document selection, received ${parsed.value.length}`,
+        ),
+      );
+    const [documentName] = parsed.value;
+    if (documentName === undefined)
+      return err(
+        new AnalysisOutputError(
+          "list_documents",
+          "provider returned no document identity",
+        ),
+      );
+    return ok(documentName);
+  }
   return typeof current.value.result === "string"
     ? ok(current.value.result)
     : err(
@@ -167,8 +206,7 @@ const isMissingCurrentProcedure = (error: AnalysisError): boolean =>
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
-  error._tag === "NoBinaryOpenError" ||
-  error._tag === "PermissionRequiredError";
+  error._tag === "NoBinaryOpenError";
 
 const containingProcedureName = (value: JsonValue): string | null => {
   if (typeof value !== "object" || value === null || Array.isArray(value))

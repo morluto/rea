@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -78,7 +78,6 @@ it.each([
           remediation: {
             action:
               "Artifact is invalid or has changed. Get a fresh copy and try again.",
-            restart_required: false,
           },
         },
       });
@@ -107,7 +106,49 @@ const artifactInventoryResultSchema = z.object({
   ),
 });
 
-it("records an approved mismatch, preserves verified siblings, and never reports equivalence", async () => {
+it("extracts an active archive through MCP when requested", async () => {
+  const root = await createTestTempDirectory("rea-artifact-extract-mcp-");
+  const archive = join(root, "fixture.zip");
+  const zip = new ZipWriter(new Uint8ArrayWriter());
+  await zip.add("main.js", new TextReader("console.log('extract');\n"));
+  await writeFile(archive, await zip.close());
+
+  const session = createTestBinarySession(new ArtifactProvider());
+  const server = createServer(session, session);
+  const client = new Client({ name: "artifact-extract-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  let outputRoot: string | undefined;
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: archive },
+    });
+    expect(opened.isError).not.toBe(true);
+
+    const result = await client.callTool({
+      name: "extract_artifact",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    const normalized = z
+      .object({ output_root: z.string(), artifacts: z.array(z.unknown()) })
+      .parse(compactResult(result.structuredContent).result);
+    outputRoot = normalized.output_root;
+    expect(await readFile(join(outputRoot, "main.js"), "utf8")).toBe(
+      "console.log('extract');\n",
+    );
+    expect(normalized.artifacts).toHaveLength(1);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    if (outputRoot !== undefined)
+      await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
+it("records an explicitly continued mismatch, preserves verified siblings, and never reports equivalence", async () => {
   const root = await createTestTempDirectory("rea-asar-continue-mcp-");
   const source = join(root, "source");
   await mkdir(source);
@@ -129,7 +170,7 @@ it("records an approved mismatch, preserves verified siblings, and never reports
   bytes.write(secondChanged, secondOffset, "utf8");
   await writeFile(archive, bytes);
 
-  const session = createTestBinarySession(new ArtifactProvider(false, true));
+  const session = createTestBinarySession(new ArtifactProvider());
   const server = createServer(session, session);
   const client = new Client({ name: "asar-continue-test", version: "1" });
   const [clientTransport, serverTransport] =
@@ -145,7 +186,6 @@ it("records an approved mismatch, preserves verified siblings, and never reports
       name: "inspect_artifact",
       arguments: {
         integrity_policy: "record-and-continue",
-        integrity_continue_approved: true,
       },
     });
     expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(

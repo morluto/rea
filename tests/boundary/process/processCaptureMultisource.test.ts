@@ -33,11 +33,7 @@ function eventTrigger(
 function collectionTriggers() {
   const terminalTrigger = (literal: string) => ({
     kind: "terminal_text" as const,
-    view: "decoded" as const,
-    encoding: "utf8" as const,
     literal,
-    case_sensitive: true,
-    control_sequences: "include" as const,
     occurrence: 1,
     since: { kind: "scenario_start" as const },
     consume: false,
@@ -65,11 +61,9 @@ function collectionTriggers() {
       "filesystem",
       {
         name: "ready_snapshot",
-        files: [],
-        effects: [],
         truncated: false,
       },
-      ["at_ms"],
+      ["at_ms", "files", "effects"],
     ),
     eventTrigger(
       "shim",
@@ -119,6 +113,8 @@ function createMultiSourceScenario(root: string, script: string) {
     executable: process.execPath,
     arguments: [script, "codex"],
     working_directory: root,
+    filesystem_observation_paths: [root],
+    normalization: { paths: true },
     replay: {
       http: [{ method: "GET", path: "/reactive", status: 200, body: "ok" }],
       websocket_messages: ["reactive-server"],
@@ -150,11 +146,7 @@ function createMultiSourceScenario(root: string, script: string) {
               max_uses: 1,
               when: {
                 kind: "terminal_text",
-                view: "decoded",
-                encoding: "utf8",
                 literal: "Ready",
-                case_sensitive: true,
-                control_sequences: "include",
                 occurrence: 1,
                 since: { kind: "scenario_start" },
                 consume: true,
@@ -175,7 +167,7 @@ function createMultiSourceScenario(root: string, script: string) {
               max_uses: 1,
               when: { kind: "all", triggers: collectionTriggers() },
               actions: [],
-              target: { kind: "finish", outcome: "passed" },
+              target: { kind: "finish" },
             },
           ],
         },
@@ -193,13 +185,7 @@ itWithCaptureCapability(
       new URL("../../fixtures/processReactiveScenario.mjs", import.meta.url),
     );
     const run = () =>
-      captureProcessScenario(createMultiSourceScenario(root, script), {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [root],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      });
+      captureProcessScenario(createMultiSourceScenario(root, script));
     try {
       const first = await run();
       const second = await run();

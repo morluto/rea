@@ -31,11 +31,7 @@ function createInteractiveScenario(root: string, script: string) {
               max_uses: 1,
               when: {
                 kind: "terminal_text",
-                view: "decoded",
-                encoding: "utf8",
                 literal: "Ready",
-                case_sensitive: true,
-                control_sequences: "include",
                 occurrence: 1,
                 since: { kind: "scenario_start" },
                 consume: true,
@@ -59,17 +55,13 @@ function createInteractiveScenario(root: string, script: string) {
               max_uses: 1,
               when: {
                 kind: "terminal_text",
-                view: "decoded",
-                encoding: "utf8",
                 literal: "Done",
-                case_sensitive: true,
-                control_sequences: "include",
                 occurrence: 1,
                 since: { kind: "state_entry" },
                 consume: true,
               },
               actions: [],
-              target: { kind: "finish", outcome: "passed" },
+              target: { kind: "finish" },
             },
           ],
         },
@@ -282,13 +274,7 @@ itWithCaptureCapability(
     );
     const scenario = createInteractiveScenario(root, script);
     try {
-      const result = await captureProcessScenario(scenario, {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [root],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      });
+      const result = await captureProcessScenario(scenario);
       if (!result.ok) throw result.error;
       assertCompletedCapture(result.value);
       assertControlAndTransitionValidation(result.value);
@@ -329,17 +315,13 @@ itWithCaptureCapability(
                 max_uses: 1,
                 when: {
                   kind: "terminal_text",
-                  view: "decoded",
-                  encoding: "utf8",
                   literal: "never-produced",
-                  case_sensitive: true,
-                  control_sequences: "include",
                   occurrence: 1,
                   since: { kind: "scenario_start" },
                   consume: true,
                 },
                 actions: [],
-                target: { kind: "finish", outcome: "passed" },
+                target: { kind: "finish" },
               },
             ],
           },
@@ -347,13 +329,7 @@ itWithCaptureCapability(
       },
     });
     try {
-      const result = await captureProcessScenario(scenario, {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [root],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      });
+      const result = await captureProcessScenario(scenario);
       expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.reactive_run).toMatchObject({

@@ -65,7 +65,7 @@ export const prepareNodeCharacterization = async (
     : prepared;
 };
 
-/** Execute only a freshly recomputed and separately approved characterization plan. */
+/** Execute only when the supplied plan hash matches freshly prepared content. */
 export const executeNodeCharacterization = async (
   dependencies: JavaScriptReplayDependencies,
   rawInput: unknown,
@@ -82,10 +82,10 @@ export const executeNodeCharacterization = async (
     options,
   );
   if (!prepared.ok) return prepared;
-  if (prepared.value.plan.plan_sha256 !== parsed.data.approved_plan_sha256)
+  if (prepared.value.plan.plan_sha256 !== parsed.data.plan_sha256)
     return err(
       new ReplayPlanStaleError(
-        parsed.data.approved_plan_sha256,
+        parsed.data.plan_sha256,
         prepared.value.plan.plan_sha256,
       ),
     );
@@ -229,7 +229,7 @@ const createTransformationEvidence = (
         },
       ],
       limitations: [
-        "The transformation is deterministic derived evidence; execution authority is established only by a separately approved characterization run.",
+        "The transformation is deterministic derived evidence; execution results are limited to the characterization plan whose content hash matched.",
       ],
     },
   );
@@ -266,7 +266,7 @@ const createCharacterizationEvidence = (
       authority: "controlled-replay",
       environment: replay.evidence.environment,
       limitations: [
-        "This Evidence proves only the finite approved characterization plan and transformed controlled-replay authority, not unmodified shipped-runtime equivalence.",
+        "This Evidence proves only the finite hash-matched characterization plan and transformed controlled-replay result, not unmodified shipped-runtime equivalence.",
         ...replay.evidence.limitations,
       ],
       evidenceLinks: [
@@ -325,12 +325,6 @@ const createCharacterizationPlan = (
       randomness: "seeded",
       identifiers: "deterministic",
       seed: replayPlan.determinism.random_seed,
-    },
-    authority: {
-      preparation_approved: true,
-      execution_approved: false,
-      network: "none",
-      provider_owned_process_only: true,
     },
   });
 

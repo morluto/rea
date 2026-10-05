@@ -21,7 +21,6 @@ describe("analysis error projection contract", () => {
           "integrity",
           "limit",
           "path",
-          "policy",
           "unavailable",
           "io",
         ] as const
@@ -41,14 +40,7 @@ describe("analysis error projection contract", () => {
           "limit",
         ] as const
       ).map((reason) => new UnknownRegistryError(reason)),
-      ...(
-        [
-          "capture_failed",
-          "cleanup_incomplete",
-          "permission_required",
-          "cancelled",
-        ] as const
-      ).map(
+      ...(["capture_failed", "cleanup_incomplete", "cancelled"] as const).map(
         (reason) =>
           new ProcessCaptureError("SECRET capture diagnostic", { reason }),
       ),

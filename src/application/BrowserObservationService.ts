@@ -1,9 +1,7 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { Evidence } from "../domain/evidence.js";
-import {
-  isLiteralLoopbackHostname,
-  type InspectWebPageInput,
-  type ListBrowserTargetsInput,
+import type {
+  InspectWebPageInput,
+  ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import type { AnalyzeWebBundleInput } from "../domain/webBundleAnalysis.js";
 import type { ObserveWebSessionInput } from "../domain/browserSession.js";
@@ -20,27 +18,15 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { BrowserObservationPort } from "./BrowserObservationPort.js";
-import type { PermissionAuthority } from "./PermissionAuthority.js";
 import { createBrowserEvidence } from "./BrowserEvidence.js";
 
-type ScopedBrowserInput = Pick<
-  ListBrowserTargetsInput,
-  "cdp_endpoint" | "allowed_origins"
-> & { readonly target_id?: string };
-
-/** Authorize and execute one policy-scoped target discovery observation. */
+/** List browser targets within the endpoint and origin scope in the request. */
 export const listBrowserTargets = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: ListBrowserTargetsInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    browser,
-    authority,
-    input,
-    "list_browser_targets",
-  );
+  const ready = requireBrowser(browser, "list_browser_targets");
   if (!ready.ok) return ready;
   const result = await ready.value.listTargets(input, options);
   return result.ok
@@ -55,14 +41,13 @@ export const listBrowserTargets = async (
     : result;
 };
 
-/** Authorize and execute one policy-scoped passive page inspection. */
+/** Inspect one page within the endpoint and origin scope in the request. */
 export const inspectWebPage = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: InspectWebPageInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(browser, authority, input, "inspect_web_page");
+  const ready = requireBrowser(browser, "inspect_web_page");
   if (!ready.ok) return ready;
   const result = await ready.value.inspectPage(input, options);
   return result.ok
@@ -77,14 +62,13 @@ export const inspectWebPage = async (
     : result;
 };
 
-/** Capture approved sources and derive bounded static web-bundle evidence. */
+/** Capture requested sources and derive static web-bundle evidence. */
 export const analyzeWebBundle = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: AnalyzeWebBundleInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(browser, authority, input, "analyze_web_bundle");
+  const ready = requireBrowser(browser, "analyze_web_bundle");
   if (!ready.ok) return ready;
   const analyzed = await ready.value.analyzeBundle(input, options);
   if (!analyzed.ok) return analyzed;
@@ -101,11 +85,10 @@ export const analyzeWebBundle = async (
 /** Observe navigation caused by external user actions during one armed window. */
 export const observeWebSession = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: ObserveWebSessionInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(browser, authority, input, "observe_web_session");
+  const ready = requireBrowser(browser, "observe_web_session");
   if (!ready.ok) return ready;
   const observed = await ready.value.observeSession(input, options);
   return observed.ok
@@ -123,16 +106,10 @@ export const observeWebSession = async (
 /** Discover WebMCP declarations without exposing an invocation surface. */
 export const discoverWebMcpTools = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: DiscoverWebMcpToolsInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    browser,
-    authority,
-    input,
-    "discover_webmcp_tools",
-  );
+  const ready = requireBrowser(browser, "discover_webmcp_tools");
   if (!ready.ok) return ready;
   const discovered = await ready.value.discoverWebMcpTools(input, options);
   return discovered.ok
@@ -167,19 +144,13 @@ export const compareWebCaptureEvidence = async (
     : compared;
 };
 
-/** Capture one explicitly approved visible-viewport screenshot. */
+/** Capture one visible-viewport screenshot for the requested target. */
 export const captureWebScreenshot = async (
   browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: CaptureWebScreenshotInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    browser,
-    authority,
-    input,
-    "capture_web_screenshot",
-  );
+  const ready = requireBrowser(browser, "capture_web_screenshot");
   if (!ready.ok) return ready;
   const captured = await ready.value.captureScreenshot(input, options);
   return captured.ok
@@ -214,51 +185,6 @@ export const compareWebScreenshotEvidence = async (
     : compared;
 };
 
-const prepare = async (
-  browser: BrowserObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
-  input: ScopedBrowserInput,
-  operation:
-    | "list_browser_targets"
-    | "inspect_web_page"
-    | "analyze_web_bundle"
-    | "observe_web_session"
-    | "discover_webmcp_tools"
-    | "capture_web_screenshot",
-): Promise<Result<BrowserObservationPort, AnalysisError>> => {
-  if (authority === undefined)
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "rea-cdp-browser",
-        operation,
-        "browser observation permission policy is not configured",
-      ),
-    );
-  const authorized = await authority.authorize(
-    {
-      capability: "browser_observe",
-      roots: [],
-      executables: [],
-      environment_names: [],
-      origins: [input.cdp_endpoint, ...input.allowed_origins],
-      network: browserNetworkScope(input.allowed_origins),
-      mount: false,
-      operation_identity: `${operation}:${input.target_id ?? input.cdp_endpoint}`,
-    },
-    "read",
-  );
-  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
-  return browser === undefined
-    ? err(
-        new AnalysisCapabilityUnavailableError(
-          "rea-cdp-browser",
-          operation,
-          "browser observation provider is not configured",
-        ),
-      )
-    : ok(browser);
-};
-
 const requireBrowser = (
   browser: BrowserObservationPort | undefined,
   operation: string,
@@ -268,17 +194,7 @@ const requireBrowser = (
         new AnalysisCapabilityUnavailableError(
           "rea-cdp-browser",
           operation,
-          "browser comparison provider is not configured",
+          "browser observation provider is not configured",
         ),
       )
     : ok(browser);
-
-const browserNetworkScope = (
-  allowedOrigins: readonly string[],
-): "loopback" | "external" =>
-  allowedOrigins.every((origin) => {
-    const hostname = new URL(origin).hostname;
-    return isLiteralLoopbackHostname(hostname);
-  })
-    ? "loopback"
-    : "external";

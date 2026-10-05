@@ -218,9 +218,9 @@ behavior also requires `npm run verify:package` and the applicable
 conformance/vtable fixtures, inspects their bytes and repeats after stripping
 local symbols. It requires macOS and the host Xcode toolchain; targets are not
 executed. `npm run verify:native-ui` launches exactly one source-owned fixture
-window and requires successful selected-window capture and approved actions.
-Permission denial fails the positive lane. `npm run verify:native-ui:permissions`
-allows a permission-boundary-only result and explicitly reports
+window and requires successful selected-window capture and selected actions.
+An OS permission denial fails the positive lane. `npm run verify:native-ui:permissions`
+allows a host-permission-boundary-only result and explicitly reports
 `positive_e2e: false`; it must not be reported as capture/action proof.
 Both commands reject a changed executable digest and clean up the fixture
 process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)

@@ -1,5 +1,10 @@
 # ADR-0003: Managed-code evidence and provider boundary
 
+> Historical design note: The admission record described below remains a
+> plan-only output. The separate administrator and per-call approval workflow
+> was removed; current tool requests directly declare their target and
+> lifecycle.
+
 - Status: Accepted
 - Date: 2026-07-16
 - Implementation status: Read-only PE/CLI triage and exact identity are shipped
@@ -19,11 +24,12 @@ inspect-managed-members` provides CLI parity. Static member comparison and build
   addresses. Decompiler reconstruction import is
   shipped through `import_managed_reconstruction` /
   `rea import-managed-reconstruction`; it records user-supplied C#/IL/pseudocode
-  as analyst inference only after exact static member locks match. Default-disabled
-  runtime-correlation admission planning is shipped through
+  as analyst inference only after exact static member locks match. Non-executing
+  runtime-correlation planning is shipped through
   `plan_managed_runtime_correlation` / `rea plan-managed-runtime-correlation`;
-  it does not attach, load, debug, reflect, instrument, invoke, or execute
-  target code. Managed static graph projection is shipped through
+  it does not probe a runtime, establish confinement, attach, load, debug,
+  reflect, instrument, invoke, or execute target code. Managed static graph
+  projection is shipped through
   `project_managed_application_graph` /
   `rea project-managed-application-graph`; it projects authenticated managed
   Evidence into the application graph without changing managed tokens into
@@ -356,15 +362,13 @@ emit full IL, decompiled source, runtime logs, user data, credentials, or
 service/account material. No proprietary binary, hash-locked application
 manifest, or derived dump is committed to REA.
 
-### 8. Keep runtime correlation a different, default-disabled authority
+### 8. Keep runtime correlation planning distinct from execution
 
-Static managed support grants no permission to attach, load, debug, reflect,
-instrument, invoke, or execute. The shipped runtime-correlation planning
-capability distinguishes those effects, remains disabled by default, requires
-explicit administrator and per-call approval, and binds to the exact artifact
+Runtime-correlation planning records requested effects and bounds without
+probing the runtime or establishing confinement. It binds to the exact artifact
 SHA-256, MVID, method signature, and CIL/body shape observed by the static
-path. It records an admission plan only; a future executor must pass a separate
-threat model before any effect can occur.
+path, and records that no target code ran. A future executor requires its own
+provider and threat model before any effect can occur.
 
 Runtime admission must additionally validate host OS, CLR family, architecture,
 and supported build/tool versions; bound time, threads, outputs, UI and network
@@ -440,8 +444,8 @@ or development-only oracles.
 5. Add source-built, pinned real-tool, package, CLI, and MCP conformance.
    Source-owned conformance is shipped; pinned external real-tool checks remain
    planned.
-6. Add separately authorized runtime-correlation admission planning. Shipped;
-   runtime execution remains planned.
+6. Add non-executing runtime-correlation planning. Shipped; runtime execution
+   and confinement remain planned.
 7. Project authenticated managed static Evidence into the application graph.
    Shipped.
 

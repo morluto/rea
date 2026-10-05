@@ -1,5 +1,3 @@
-import { isAbsolute } from "node:path";
-
 import { z } from "zod";
 
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
@@ -11,10 +9,7 @@ const countSchema = z.number().int().min(0);
 
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
-  input_path: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "JavaScript application input path must be absolute"),
+  input_path: z.string().min(1),
   format: z.enum(["auto", "asar", "directory"]).default("auto"),
 });
 

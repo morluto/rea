@@ -9,7 +9,6 @@ import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "../../../src/application/JavaScriptRuntimeObservationService.js";
-import { createPermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/JavaScriptRuntimeReconciliationService.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
 import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
@@ -20,10 +19,6 @@ import type {
 } from "../../../src/domain/javascriptRuntimeObservation.js";
 import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascriptRuntimeObservation.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
-import type {
-  PermissionCeiling,
-  PermissionGrant,
-} from "../../../src/domain/permissionPolicy.js";
 import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -275,22 +270,19 @@ describe("passive V8 Inspector evidence", () => {
     }
   });
 
-  test("produces deterministic Evidence through the authorized service", async () => {
+  test("produces deterministic Evidence through the service without grants", async () => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: pathToFileURL(fixture.entry).href,
     });
     try {
       const input = observeInput(fake.endpoint, fake.targetId, "node");
-      const authority = await authorityFor();
       const first = await observeJavaScriptRuntime(
         new V8InspectorProvider(),
-        authority,
         input,
       );
       const second = await observeJavaScriptRuntime(
         new V8InspectorProvider(),
-        authority,
         input,
       );
       expect(first.ok).toBe(true);
@@ -300,7 +292,6 @@ describe("passive V8 Inspector evidence", () => {
 
       const listed = await listJavaScriptRuntimeTargets(
         new V8InspectorProvider(),
-        authority,
         {
           inspector_endpoint: fake.endpoint,
         },
@@ -367,27 +358,6 @@ const observeInput = (
   runtime_kind: runtimeKind,
   observation_ms: 10,
 });
-
-const authorityFor = async () => {
-  const scope: PermissionCeiling = {
-    capability: "v8_inspector_observe",
-    roots: [],
-    executables: [],
-    environment_names: [],
-    network: "loopback",
-    mount: false,
-  };
-  const grant: PermissionGrant = {
-    ...scope,
-    grant_id: "test:v8-inspector",
-    lifetime: "administrator",
-    operation_identity: null,
-    expires_at: null,
-  };
-  const authority = await createPermissionAuthority([scope], [grant]);
-  if (!authority.ok) throw authority.error;
-  return authority.value;
-};
 
 const runtimeObservation = (
   targetPath: string,

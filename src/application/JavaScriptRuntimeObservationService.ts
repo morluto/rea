@@ -1,7 +1,5 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
-import type { PermissionAuthority } from "./PermissionAuthority.js";
 import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeObservationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
@@ -14,19 +12,13 @@ import type {
 } from "../domain/javascriptRuntimeObservation.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-/** Authorize and list attachable Node/Electron Inspector targets. */
+/** List targets exposed by the explicitly selected loopback Inspector. */
 export const listJavaScriptRuntimeTargets = async (
   provider: JavaScriptRuntimeObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: ListJavaScriptRuntimeTargetsInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    provider,
-    authority,
-    input,
-    "list_javascript_runtime_targets",
-  );
+  const ready = requireProvider(provider, "list_javascript_runtime_targets");
   if (!ready.ok) return ready;
   const result = await ready.value.listTargets(input, options);
   return result.ok
@@ -41,19 +33,13 @@ export const listJavaScriptRuntimeTargets = async (
     : result;
 };
 
-/** Authorize one bounded attach-only Inspector observation. */
+/** Observe one attach-only Inspector target selected by the request. */
 export const observeJavaScriptRuntime = async (
   provider: JavaScriptRuntimeObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: ObserveJavaScriptRuntimeInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    provider,
-    authority,
-    input,
-    "observe_javascript_runtime",
-  );
+  const ready = requireProvider(provider, "observe_javascript_runtime");
   if (!ready.ok) return ready;
   const result = await ready.value.observe(input, options);
   return result.ok
@@ -68,34 +54,11 @@ export const observeJavaScriptRuntime = async (
     : result;
 };
 
-const prepare = async (
+const requireProvider = (
   provider: JavaScriptRuntimeObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
-  input: ListJavaScriptRuntimeTargetsInput | ObserveJavaScriptRuntimeInput,
   operation: "list_javascript_runtime_targets" | "observe_javascript_runtime",
-): Promise<Result<JavaScriptRuntimeObservationPort, AnalysisError>> => {
-  if (authority === undefined)
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "rea-v8-inspector",
-        operation,
-        "V8 Inspector observation permission policy is not configured",
-      ),
-    );
-  const authorized = await authority.authorize(
-    {
-      capability: "v8_inspector_observe",
-      roots: [],
-      executables: [],
-      environment_names: [],
-      network: "loopback",
-      mount: false,
-      operation_identity: `${operation}:${"target_id" in input ? input.target_id : input.inspector_endpoint}`,
-    },
-    "read",
-  );
-  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
-  return provider === undefined
+): Result<JavaScriptRuntimeObservationPort, AnalysisError> =>
+  provider === undefined
     ? err(
         new AnalysisCapabilityUnavailableError(
           "rea-v8-inspector",
@@ -104,4 +67,3 @@ const prepare = async (
         ),
       )
     : ok(provider);
-};

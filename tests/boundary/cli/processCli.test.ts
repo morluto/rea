@@ -86,37 +86,36 @@ describe("process CLI errors", () => {
     });
     expect(await captureProcessScenarioFile(invalid)).toEqual({
       error: "Process command failed",
+      code: "invalid_request",
       category: "invalid_input",
-      message:
-        "Process scenario is invalid. Check its required fields and limits, then try again.",
+      message: "Analysis input is invalid. Check the arguments and try again.",
+      retryable: true,
+      remediation: { action: "Correct the listed arguments and retry." },
+      details: expect.objectContaining({
+        operation: "capture_process_scenario",
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: ["executable"] }),
+        ]),
+      }),
     });
   });
 
-  it("reports the exact process-capture policy recovery", async () => {
+  it("captures the minimal executable-and-arguments scenario", async () => {
     const root = await fixture();
     const scenario = join(root, "scenario.json");
     await writeFile(
       scenario,
       JSON.stringify({
-        executable: "/bin/sh",
-        working_directory: "/tmp",
+        executable: process.execPath,
+        arguments: ["-e", "process.stdout.write('minimal-capture')"],
       }),
     );
-    expect(await captureProcessScenarioFile(scenario)).toMatchObject({
-      error: "Process command failed",
-      code: "permission_required",
-      category: "permission_required",
-      message:
-        "This operation needs additional local permission. Review the requested scope and remediation.",
-      details: {
-        capability: "process_capture",
-        ceiling: null,
-      },
-      remediation: {
-        restart_required: false,
-        elicitation_supported: false,
-      },
+    const evidence = await captureProcessScenarioFile(scenario);
+    expect(evidence).toMatchObject({
+      predicate_type: "rea.process-capture",
+      operation: "capture_process_scenario",
     });
+    expect(JSON.stringify(evidence)).toContain("minimal-capture");
   });
 
   it("rejects unrelated capture evidence", async () => {

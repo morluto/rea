@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
@@ -18,7 +17,6 @@ const duplicateOriginStorage = (origin) => ({
           value: {
             source: "literal",
             value: "first",
-            classification: "public",
           },
         },
       ],
@@ -31,8 +29,11 @@ const duplicateOriginStorage = (origin) => ({
           value: {
             source: "literal",
             value: "second",
-            classification: "public",
           },
+        },
+        {
+          name: "rea-secret-seed",
+          value: { source: "secret", secret_id: "verifier_storage" },
         },
       ],
     },
@@ -43,7 +44,15 @@ const duplicateOriginStorage = (origin) => ({
 export function browserScenario(browser, origin) {
   return browserScenarioSchema.parse({
     browser,
-    start_url: { url: `${origin}/app`, query: [] },
+    start_url: {
+      url: `${origin}/app`,
+      query: [
+        {
+          name: "scenario_token",
+          value: { source: "secret", secret_id: "verifier_url" },
+        },
+      ],
+    },
     allowed_origins: [origin],
     environment: {
       viewport: { width: 1_280, height: 720, device_scale_factor: 1.25 },
@@ -51,7 +60,6 @@ export function browserScenario(browser, origin) {
       timezone: "UTC",
       color_scheme: "light",
       reduced_motion: "reduce",
-      service_workers: "block",
     },
     actions: [
       {
@@ -61,7 +69,6 @@ export function browserScenario(browser, origin) {
           kind: "role",
           role: "button",
           name: "ax-private-label-value",
-          exact: true,
         },
         state: "visible",
       },
@@ -72,17 +79,21 @@ export function browserScenario(browser, origin) {
           kind: "role",
           role: "button",
           name: "ax-private-label-value",
-          exact: true,
         },
       },
     ],
     storage: duplicateOriginStorage(origin),
     request_replay: { mode: "disabled" },
-    secrets: [],
-    redaction: {
-      secret_values: "replace-with-secret-reference",
-      query_parameter_names: ["token"],
-    },
+    secrets: [
+      {
+        secret_id: "verifier_url",
+        environment_variable: "REA_BROWSER_VERIFIER_URL",
+      },
+      {
+        secret_id: "verifier_storage",
+        environment_variable: "REA_BROWSER_VERIFIER_SECRET",
+      },
+    ],
     capture: {
       after_each_step: [
         "screenshot",
@@ -115,7 +126,7 @@ export function browserScenario(browser, origin) {
 }
 
 /** Run scenario capture through the public one-shot CLI. */
-export async function runScenarioCli(scenario, configuration) {
+export async function runScenarioCli(scenario) {
   const { stdout } = await execute(
     process.execPath,
     [
@@ -126,16 +137,7 @@ export async function runScenarioCli(scenario, configuration) {
     ],
     {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        REA_BROWSER_SCENARIO_ENABLED: "true",
-        REA_BROWSER_SCENARIO_AUTO_GRANT: "true",
-        REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON: JSON.stringify([
-          dirname(scenario.browser.executable_path ?? process.execPath),
-        ]),
-        REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON: "[]",
-        ...configuration,
-      },
+      env: process.env,
       maxBuffer: 64 * 1_024 * 1_024,
     },
   );
@@ -175,6 +177,35 @@ export function assertScenarioCapture(capture) {
     !storageNames.includes("rea-second-seed")
   )
     throw new Error("Scenario launch did not retain duplicate-origin seeds");
+  const secretSeed =
+    final.artifacts.storage.state === "captured"
+      ? final.artifacts.storage.value.local_storage.find(
+          ({ name }) => name === "rea-secret-seed",
+        )
+      : undefined;
+  if (secretSeed?.value_state !== "redacted-secret")
+    throw new Error("Scenario launch did not redact its declared secret seed");
+  const finalUrl =
+    final.artifacts.url.state === "captured"
+      ? final.artifacts.url.value.url
+      : "";
+  if (!finalUrl.includes("[REDACTED:verifier_url]"))
+    throw new Error("Scenario launch did not redact its declared URL secret");
+  const stepUrl = capture.steps
+    .map(({ after_url }) => after_url)
+    .find(({ url }) => url.includes("[REDACTED:verifier_url]"));
+  if (stepUrl?.redacted !== true)
+    throw new Error(
+      "Scenario step URL did not report declared-secret redaction",
+    );
+  const eventUrl = capture.events.items
+    .filter((event) => "url" in event && event.url !== null)
+    .map((event) => event.url)
+    .find(({ url }) => url.includes("[REDACTED:verifier_url]"));
+  if (eventUrl?.redacted !== true)
+    throw new Error(
+      "Scenario event URL did not report declared-secret redaction",
+    );
   if (
     capture.events.items.length === 0 ||
     capture.completeness.equality_eligible !== true

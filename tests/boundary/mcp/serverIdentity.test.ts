@@ -282,19 +282,20 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
         }),
         expect.objectContaining({
           name: "capture_process_scenario",
-          available: false,
-          reason: "policy_disabled",
+          available: process.platform !== "win32",
+          reason:
+            process.platform === "win32" ? "unsupported_host" : "available",
           client_requirements: {
             required: [],
-            optional: ["elicitation_form"],
+            optional: [],
             missing_required: [],
-            missing_optional: ["elicitation_form"],
+            missing_optional: [],
           },
         }),
         expect.objectContaining({
           name: "inspect_web_page",
           available: false,
-          reason: "policy_disabled",
+          reason: "provider_missing",
         }),
         expect.objectContaining({
           name: "analyze_javascript_application",

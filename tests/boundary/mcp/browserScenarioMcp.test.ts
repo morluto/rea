@@ -1,16 +1,13 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { dirname } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { parseConfig } from "../../../src/config.js";
 import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
 import type { BrowserScenario } from "../../../src/domain/browserScenario.js";
 import {
@@ -110,9 +107,6 @@ const minimalScenario = (origin = "https://app.example.test") => ({
   browser: {
     mode: "launch",
     executable_path: process.execPath,
-    headless: true,
-    user_data: "temporary-owned",
-    cleanup: "close-and-delete-profile",
   },
   start_url: { url: `${origin}/`, query: [] },
   allowed_origins: [origin],
@@ -139,8 +133,6 @@ const scenario = (origin = "https://app.example.test") => ({
     {
       secret_id: "login_input",
       environment_variable: "REA_TEST_PASSWORD",
-      purpose: "input",
-      redaction: "replace-with-secret-reference",
     },
   ],
 });
@@ -152,19 +144,7 @@ describe("browser scenario MCP tool", () => {
     await Promise.all(resources.splice(0).map((item) => item.close()));
   });
 
-  test("authorizes exact scope and records declared secret references as Evidence", async () => {
-    const configured = parseConfig({
-      REA_BROWSER_SCENARIO_ENABLED: "true",
-      REA_BROWSER_SCENARIO_AUTO_GRANT: "true",
-      REA_BROWSER_SCENARIO_EXECUTABLE_ROOTS_JSON: JSON.stringify([
-        dirname(process.execPath),
-      ]),
-      REA_BROWSER_SCENARIO_ALLOWED_ORIGINS_JSON: '["https://app.example.test"]',
-      REA_BROWSER_SCENARIO_ALLOWED_ENV_JSON: '["REA_TEST_PASSWORD"]',
-    });
-    if (!configured.ok) throw configured.error;
-    const authority = await loadConfiguredPermissionAuthority(configured.value);
-    if (!authority.ok) throw authority.error;
+  test("runs the explicit scenario request without a permission grant", async () => {
     const provider = new FakeBrowserScenarioProvider();
     const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
@@ -173,12 +153,9 @@ describe("browser scenario MCP tool", () => {
     const server = createServer(session, session, {
       browserObservation: new CdpBrowserProvider(),
       browserScenarioCapture: provider,
-      permissionAuthority: authority.value,
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 0,
-        browserObservationEnabled: true,
-        browserScenarioEnabled: true,
       }),
     });
     const client = new Client({ name: "browser-scenario-test", version: "1" });
@@ -197,15 +174,6 @@ describe("browser scenario MCP tool", () => {
       environment: { color_scheme: "light", service_workers: "block" },
       storage: { cookies: [], local_storage: [], session_storage: [] },
       request_replay: { mode: "disabled" },
-      redaction: {
-        secret_values: "replace-with-secret-reference",
-        header_names: [
-          "authorization",
-          "cookie",
-          "proxy-authorization",
-          "set-cookie",
-        ],
-      },
       capture: { after_each_step: [], at_end: ["url"], events: [] },
     });
 
@@ -250,23 +218,11 @@ describe("browser scenario MCP tool", () => {
       },
     });
 
-    const denied = await client.callTool({
+    const otherOrigin = await client.callTool({
       name: "capture_browser_scenario",
       arguments: scenario("https://other.example.test"),
     });
-    expect(denied.isError).toBe(true);
-    expect(provider.scenarios).toHaveLength(2);
-
-    const unapprovedEnvironment = scenario();
-    const secretDeclaration = unapprovedEnvironment.secrets.at(0);
-    if (secretDeclaration === undefined)
-      throw new Error("Scenario secret fixture disappeared");
-    secretDeclaration.environment_variable = "REA_UNAPPROVED_SECRET";
-    const deniedSecret = await client.callTool({
-      name: "capture_browser_scenario",
-      arguments: unapprovedEnvironment,
-    });
-    expect(deniedSecret.isError).toBe(true);
-    expect(provider.scenarios).toHaveLength(2);
+    expect(otherOrigin.isError, JSON.stringify(otherOrigin)).not.toBe(true);
+    expect(provider.scenarios).toHaveLength(3);
   });
 });

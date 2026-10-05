@@ -74,7 +74,7 @@ export const CDP_BROWSER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
 const IDENTITY = CDP_BROWSER_PROVIDER_IDENTITY;
 const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
 
-/** Passive, origin-scoped browser observation through a user-owned CDP endpoint. */
+/** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
   identity(): ProviderIdentity {
     return IDENTITY;
@@ -90,15 +90,21 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         "list_browser_targets",
         options.signal,
       );
-      const allowedOrigins = new Set(input.allowed_origins);
-      const selected = selectTargets(discovery, allowedOrigins);
+      const selected = selectTargets(
+        discovery,
+        input.allowed_origins.length === 0
+          ? undefined
+          : new Set(input.allowed_origins),
+      );
       return ok(
         browserTargetListSchema.parse({
           browser: discovery.version,
           targets: selected.allowed,
           excluded: selected.excluded,
           limitations: [
-            "Only page targets whose current URL matches an approved exact origin are listed.",
+            input.allowed_origins.length === 0
+              ? "All page targets with supported HTTP(S) URLs are listed."
+              : "Only page targets whose current URL matches an explicitly requested exact origin are listed.",
             ...(selected.unconnectable === 0
               ? []
               : [
@@ -137,7 +143,13 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       const sourceMaps = input.fetch_source_maps
         ? await fetchWebSourceMaps(
             captured.sourceMapRequests,
-            input,
+            {
+              ...input,
+              allowed_origins:
+                input.allowed_origins.length > 0
+                  ? input.allowed_origins
+                  : [captured.inspection.target.origin],
+            },
             options.signal,
           )
         : undefined;
@@ -163,6 +175,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
+      const scopedInput = scopeToTargetOrigin(input, target);
       targetSession = await openCdpTargetSession(
         discovery,
         target,
@@ -176,7 +189,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
             sessionId: targetSession.sessionId,
             discovery,
             target,
-            input,
+            input: scopedInput,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
             ...(options.progress === undefined
               ? {}
@@ -208,6 +221,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
+      const scopedInput = scopeToTargetOrigin(input, target);
       targetSession = await openCdpTargetSession(
         discovery,
         target,
@@ -221,7 +235,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
             sessionId: targetSession.sessionId,
             discovery,
             target,
-            input,
+            input: scopedInput,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
             ...(options.progress === undefined
               ? {}
@@ -265,6 +279,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
+      const scopedInput = scopeToTargetOrigin(input, target);
       targetSession = await openCdpTargetSession(
         discovery,
         target,
@@ -278,7 +293,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
             sessionId: targetSession.sessionId,
             discovery,
             target,
-            input,
+            input: scopedInput,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
             ...(options.progress === undefined
               ? {}
@@ -321,6 +336,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
       );
       const target = authorizeTarget(discovery, input);
+      const scopedInput = scopeToTargetOrigin(input, target);
       targetSession = await openCdpTargetSession(
         discovery,
         target,
@@ -333,7 +349,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         operation,
         discovery,
         target,
-        input,
+        input: scopedInput,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.progress === undefined
           ? {}
@@ -352,7 +368,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
 
 const selectTargets = (
   discovery: CdpEndpointDiscovery,
-  allowedOrigins: ReadonlySet<string>,
+  allowedOrigins: ReadonlySet<string> | undefined,
 ): {
   readonly allowed: readonly BrowserTargetList["targets"][number][];
   readonly excluded: BrowserTargetList["excluded"];
@@ -373,7 +389,7 @@ const selectTargets = (
       unsupportedUrl += 1;
       continue;
     }
-    if (!allowedOrigins.has(url.origin)) {
+    if (allowedOrigins !== undefined && !allowedOrigins.has(url.origin)) {
       disallowedOrigin += 1;
       continue;
     }
@@ -415,10 +431,22 @@ const authorizeTarget = (
   if (
     target.type !== "page" ||
     origin === null ||
-    !input.allowed_origins.includes(origin)
+    (input.allowed_origins.length > 0 &&
+      !input.allowed_origins.includes(origin))
   )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return target;
+};
+
+const scopeToTargetOrigin = <T extends { allowed_origins: readonly string[] }>(
+  input: T,
+  target: CdpEndpointTarget,
+): T => {
+  if (input.allowed_origins.length > 0) return input;
+  const origin = sanitizeBrowserUrl(target.url).origin;
+  if (origin === null)
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  return { ...input, allowed_origins: [origin] };
 };
 
 const providerError = (

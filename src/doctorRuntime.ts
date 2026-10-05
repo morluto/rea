@@ -75,17 +75,9 @@ const inspectJavaScriptReplay = async (
       detail: config.error.message,
       remediation: "Fix the reported REA_JAVASCRIPT_REPLAY_* configuration.",
     };
-  if (config.value.javascriptReplayPolicy.status === "disabled")
-    return {
-      name: "javascript-replay",
-      ok: true,
-      classification: "healthy",
-      detail:
-        "disabled by default; no extracted-module execution path is admitted",
-    };
   try {
     await new SystemJavaScriptReplayHost().probe(
-      config.value.javascriptReplayPolicy,
+      config.value.javascriptReplayConfiguration,
     );
     return {
       name: "javascript-replay",
@@ -103,7 +95,7 @@ const inspectJavaScriptReplay = async (
           : "unsupported_host",
       detail: cause instanceof Error ? cause.message : "sandbox probe failed",
       remediation:
-        "Install and configure compatible Bubblewrap and systemd user cgroup delegation, or disable controlled replay.",
+        "Install and configure compatible Bubblewrap and systemd user cgroup delegation on a Linux host, then retry controlled replay.",
     };
   }
 };

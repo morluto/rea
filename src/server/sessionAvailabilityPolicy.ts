@@ -1,10 +1,10 @@
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
-import type { ProcessExecutionPolicy } from "../domain/processCapture.js";
+import { arch, platform } from "node:process";
+import { isSupportedControlledReplayHost } from "../application/ControlledReplayHostSupport.js";
 
 export type SessionAvailability = AvailabilityPolicy;
 
 export interface SessionAvailabilityDefaults {
-  readonly processPolicy: ProcessExecutionPolicy;
   readonly optionalFeatures?: Pick<
     SessionAvailability,
     | "browserObservationEnabled"
@@ -12,8 +12,6 @@ export interface SessionAvailabilityDefaults {
     | "electronObservationEnabled"
     | "electronAutomationEnabled"
     | "v8InspectorObservationEnabled"
-    | "javascriptReplayEnabled"
-    | "managedRuntimeEnabled"
   >;
 }
 
@@ -24,7 +22,8 @@ export const sessionAvailabilityPolicy = (
 ): (() => SessionAvailability) =>
   configured ??
   (() => ({
-    processCaptureEnabled: defaults.processPolicy.status === "enabled",
+    processCaptureEnabled: platform !== "win32",
+    controlledReplayEnabled: isSupportedControlledReplayHost(platform, arch),
     browserObservationEnabled:
       defaults.optionalFeatures?.browserObservationEnabled ?? false,
     browserScenarioEnabled:
@@ -35,8 +34,4 @@ export const sessionAvailabilityPolicy = (
       defaults.optionalFeatures?.electronAutomationEnabled ?? false,
     v8InspectorObservationEnabled:
       defaults.optionalFeatures?.v8InspectorObservationEnabled ?? false,
-    javascriptReplayEnabled:
-      defaults.optionalFeatures?.javascriptReplayEnabled ?? false,
-    managedRuntimeEnabled:
-      defaults.optionalFeatures?.managedRuntimeEnabled ?? false,
   }));

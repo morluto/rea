@@ -8,6 +8,23 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 
+const managedBodyWithSections = (...sections: Buffer[]) => {
+  const header = Buffer.alloc(12);
+  header.writeUInt16LE(0x300b, 0);
+  header.writeUInt16LE(8, 2);
+  header.writeUInt32LE(1, 4);
+  const bytes = buildManagedPeFixture({
+    ilBody: Buffer.concat([
+      header,
+      Buffer.from([0x2a]),
+      Buffer.alloc(3),
+      ...sections,
+    ]),
+  });
+  return inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes))
+    .methods[0]?.body;
+};
+
 describe("managed CIL decoding", () => {
   it("reads fat method header size from the full flags-and-size word", () => {
     const il = Buffer.from([
@@ -104,6 +121,68 @@ describe("managed CIL decoding", () => {
       local_var_sig_token: "0x11000001",
       il_sha256: tiny.methods[0]?.body.il_sha256,
       normalized_il_sha256: tiny.methods[0]?.body.normalized_il_sha256,
+    });
+  });
+});
+
+describe("managed exception section decoding", () => {
+  it("marks an exception section with a partial clause as malformed", () => {
+    const section = Buffer.alloc(17);
+    section[0] = 0x01;
+    section[1] = section.length;
+
+    expect(managedBodyWithSections(section)).toMatchObject({
+      status: "malformed",
+      exception_regions: [],
+      issue: "Exception section size does not contain whole clauses",
+    });
+  });
+
+  it("reads every chained exception section", () => {
+    const first = Buffer.alloc(16);
+    first[0] = 0x81;
+    first[1] = first.length;
+    const second = Buffer.alloc(16);
+    second[0] = 0x01;
+    second[1] = second.length;
+    expect(managedBodyWithSections(first, second)).toMatchObject({
+      status: "present",
+      issue: null,
+      exception_regions: [
+        { flags: 0, try_offset: 0, try_length: 0, handler_offset: 0 },
+        { flags: 0, try_offset: 0, try_length: 0, handler_offset: 0 },
+      ],
+    });
+  });
+
+  it("reports malformed data in a chained section", () => {
+    const first = Buffer.alloc(16);
+    first[0] = 0x81;
+    first[1] = first.length;
+    const second = Buffer.from([0x02, 0x04, 0x00, 0x00]);
+    expect(managedBodyWithSections(first, second)).toMatchObject({
+      status: "malformed",
+      exception_regions: [],
+      issue: "Unsupported method data section kind 2",
+    });
+  });
+
+  it.each([
+    {
+      name: "unsupported section kind",
+      section: Buffer.from([0x02, 0x04, 0x00, 0x00]),
+      issue: "Unsupported method data section kind 2",
+    },
+    {
+      name: "section size outside artifact",
+      section: Buffer.from([0x41, 0xff, 0xff, 0xff]),
+      issue: "Exception section size leaves artifact",
+    },
+  ])("rejects $name", ({ section, issue }) => {
+    expect(managedBodyWithSections(section)).toMatchObject({
+      status: "malformed",
+      exception_regions: [],
+      issue,
     });
   });
 });

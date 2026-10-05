@@ -1,17 +1,12 @@
 import { expect, it } from "vitest";
 
 import { snapshotRoots } from "./FilesystemSnapshot.js";
-import {
-  buildCaptureResult,
-  prepareProcessCapture,
-  type ProcessPreparationHost,
-} from "./ProcessCaptureLifecycle.js";
+import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
 import { ProcessCheckpoints } from "./ProcessCheckpoints.js";
 import { normalizeProcessSamples } from "./ProcessNormalization.js";
 import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import {
-  authorizeProcessScenario,
   compareProcessCaptures,
   parseProcessCapture,
   parseProcessScenario,
@@ -127,32 +122,55 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
   expect(result.rendered_frames).toEqual(renderedFrames);
 });
 
-it("cleans the temporary root when capture home creation fails", async () => {
-  const cleaned: string[] = [];
-  const host: ProcessPreparationHost = {
-    createTemporaryRoot: () => Promise.resolve("/tmp/rea-process-fixture"),
-    createHome: () => Promise.reject(new Error("mkdir failed")),
-    cleanup: (path) => {
-      cleaned.push(path);
-      return Promise.resolve();
+it("marks redacted scripted input as an interaction unknown", () => {
+  const capture = emptyCapture();
+  const result = buildCaptureResult({
+    frames: [],
+    exit: { exitCode: 0, reason: "exited" },
+    samples: [],
+    replay: {
+      httpUrl: "http://127.0.0.1",
+      websocketUrl: "ws://127.0.0.1/ws",
+      events: [],
+      transitions: [],
+      truncated: false,
+      close: () => Promise.resolve(),
     },
-  };
-
-  await expect(
-    prepareProcessCapture(
-      parseProcessScenario(base),
+    before: { files: [], truncated: false },
+    after: { files: [], truncated: false },
+    truncated: false,
+    scenario: parseProcessScenario({
+      ...base,
+      events: [{ type: "input", at_ms: 0, data: "secret", sensitive: true }],
+    }),
+    rootPid: 1,
+    samplingPartial: false,
+    renderedFrames: [],
+    interactions: [
       {
-        status: "enabled",
-        executableRoots: ["/bin"],
-        workingRoots: ["/tmp"],
-        allowedEnvironment: [],
-        networkAccess: "external",
+        sequence: 0,
+        scheduled_at_ms: 0,
+        dispatched_at_ms: 0,
+        type: "input",
+        data: "<redacted-input:6-bytes>",
+        outcome: "dispatched",
       },
-      undefined,
-      host,
-    ),
-  ).rejects.toThrow("mkdir failed");
-  expect(cleaned).toEqual(["/tmp/rea-process-fixture"]);
+    ],
+    checkpoints: capture.filesystem_checkpoints,
+    shimEvents: [],
+    settlement: {
+      state: capture.settlement.state,
+      elapsed_ms: capture.settlement.elapsed_ms,
+    },
+    manifest: capture.manifest,
+    eventJournal: [],
+  });
+
+  expect(result.residual_unknowns).toContainEqual({
+    scope: "interaction",
+    reason:
+      "Sensitive scripted input values are redacted from process capture Evidence.",
+  });
 });
 
 it("normalizes every sampled process identifier in command text", () => {
@@ -275,7 +293,7 @@ it("cancels filesystem snapshots before traversing declared roots", async () => 
     snapshotRoots(
       parseProcessScenario({
         ...base,
-        filesystem_roots: ["/tmp"],
+        filesystem_observation_paths: ["/tmp"],
       }),
       controller.signal,
     ),
@@ -293,50 +311,16 @@ it("parses bounded scenarios and rejects unordered events", () => {
       ],
     }),
   ).toThrow(/ordered/);
-  expect(() =>
+  expect(
     parseProcessScenario({
       ...base,
-      environment: { HOME: "/unsafe" },
-    }),
-  ).toThrow(/reserved/);
+      environment: { HOME: "/caller-selected-home" },
+    }).environment.HOME,
+  ).toBe("/caller-selected-home");
   expect(() =>
     parseProcessScenario({
       ...base,
       events: [{ type: "input", at_ms: timeoutMs + 1, data: "late" }],
     }),
   ).toThrow(/after the scenario timeout/);
-});
-
-it("requires explicit operator approval for host network access", () => {
-  expect(
-    authorizeProcessScenario(parseProcessScenario(base), {
-      status: "enabled",
-      executableRoots: ["/bin"],
-      workingRoots: ["/tmp"],
-      allowedEnvironment: [],
-      networkAccess: "none",
-    }),
-  ).toEqual({
-    allowed: false,
-    reason: "host network access is not approved by operator policy",
-  });
-});
-
-it("refuses paths and environment outside operator policy", () => {
-  const scenario = parseProcessScenario({
-    ...base,
-    environment: { TOKEN: "secret" },
-  });
-  expect(
-    authorizeProcessScenario(scenario, {
-      status: "enabled",
-      executableRoots: ["/bin"],
-      workingRoots: ["/tmp"],
-      allowedEnvironment: [],
-      networkAccess: "external",
-    }),
-  ).toEqual({
-    allowed: false,
-    reason: "scenario requests an environment variable not allowed by policy",
-  });
 });

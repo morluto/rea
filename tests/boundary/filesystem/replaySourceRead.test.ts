@@ -57,8 +57,6 @@ it("rejects a host result larger than the remaining module budget", async () => 
     prepareReplayPlan(
       input,
       {
-        status: "enabled",
-        roots: [path],
         nodePath: path,
         bubblewrapPath: path,
         systemdRunPath: path,

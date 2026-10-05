@@ -1,7 +1,5 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { ElectronObservationPort } from "./ElectronObservationPort.js";
-import type { PermissionAuthority } from "./PermissionAuthority.js";
 import type { Evidence } from "../domain/evidence.js";
 import type {
   InspectElectronPageInput,
@@ -14,19 +12,13 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { createElectronEvidence } from "./ElectronEvidence.js";
 
-/** Authorize and list Electron file pages exposed by the selected endpoint. */
+/** List local file pages exposed by the explicitly selected endpoint. */
 export const listElectronTargets = async (
   provider: ElectronObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: ListElectronTargetsInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    provider,
-    authority,
-    input,
-    "list_electron_targets",
-  );
+  const ready = requireProvider(provider, "list_electron_targets");
   if (!ready.ok) return ready;
   const result = await ready.value.listTargets(input, options);
   return result.ok
@@ -41,19 +33,13 @@ export const listElectronTargets = async (
     : result;
 };
 
-/** Authorize and inspect one root-confined Electron page. */
+/** Inspect one local file page from the explicitly selected endpoint. */
 export const inspectElectronPage = async (
   provider: ElectronObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
   input: InspectElectronPageInput,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const ready = await prepare(
-    provider,
-    authority,
-    input,
-    "inspect_electron_page",
-  );
+  const ready = requireProvider(provider, "inspect_electron_page");
   if (!ready.ok) return ready;
   const result = await ready.value.inspectPage(input, options);
   return result.ok
@@ -68,34 +54,11 @@ export const inspectElectronPage = async (
     : result;
 };
 
-const prepare = async (
+const requireProvider = (
   provider: ElectronObservationPort | undefined,
-  authority: PermissionAuthority | undefined,
-  input: ListElectronTargetsInput | InspectElectronPageInput,
   operation: "list_electron_targets" | "inspect_electron_page",
-): Promise<Result<ElectronObservationPort, AnalysisError>> => {
-  if (authority === undefined)
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "rea-cdp-electron",
-        operation,
-        "Electron observation permission policy is not configured",
-      ),
-    );
-  const authorized = await authority.authorize(
-    {
-      capability: "electron_observe",
-      roots: [],
-      executables: [],
-      environment_names: [],
-      network: "loopback",
-      mount: false,
-      operation_identity: `${operation}:${"target_id" in input ? input.target_id : input.cdp_endpoint}`,
-    },
-    "read",
-  );
-  if (!authorized.ok) return err(projectPermissionFailure(authorized.error));
-  return provider === undefined
+): Result<ElectronObservationPort, AnalysisError> =>
+  provider === undefined
     ? err(
         new AnalysisCapabilityUnavailableError(
           "rea-cdp-electron",
@@ -104,4 +67,3 @@ const prepare = async (
         ),
       )
     : ok(provider);
-};

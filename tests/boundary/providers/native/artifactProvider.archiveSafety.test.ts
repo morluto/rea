@@ -111,6 +111,27 @@ describe("artifact archive safety", () => {
       reason: "path",
       message: "Artifact path collision: a.js",
     });
+
+    for (const [filePath, childPath] of [
+      ["Foo", "foo/bar"],
+      ["root/Foo", "root/foo/bar"],
+    ] as const) {
+      const casePrefixRegistry = new ArtifactPathRegistry();
+      casePrefixRegistry.add(filePath, "file");
+      expect(() => casePrefixRegistry.add(childPath, "file")).toThrow(
+        ArtifactReaderFailure,
+      );
+    }
+
+    const sameDirectoryRegistry = new ArtifactPathRegistry();
+    sameDirectoryRegistry.add("Foo/one.js", "file");
+    expect(() => sameDirectoryRegistry.add("Foo/two.js", "file")).not.toThrow();
+
+    const caseVariantDirectoryRegistry = new ArtifactPathRegistry();
+    caseVariantDirectoryRegistry.add("Foo/one.js", "file");
+    expect(() =>
+      caseVariantDirectoryRegistry.add("foo/two.js", "file"),
+    ).toThrow(ArtifactReaderFailure);
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {

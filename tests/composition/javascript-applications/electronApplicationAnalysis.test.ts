@@ -10,12 +10,12 @@ import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/jav
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 
 describe("static Electron application analysis", () => {
-  it("rejects relative paths and caller-selected analysis bounds", () => {
+  it("accepts relative paths and rejects caller-selected analysis bounds", () => {
     expect(
       analyzeJavaScriptApplicationInputSchema.safeParse({
         input_path: "relative/app.asar",
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       analyzeJavaScriptApplicationInputSchema.safeParse({
         input_path: "/tmp/app.asar",

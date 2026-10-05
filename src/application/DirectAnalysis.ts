@@ -1,6 +1,4 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
-import { artifactExtractionPermissionRequest } from "./ArtifactExtractionDestination.js";
-import { parseConfig, type AppConfig } from "../config.js";
+import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { createBinarySession } from "./runtime.js";
@@ -29,8 +27,6 @@ import {
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
-import type { PermissionAuthority } from "./PermissionAuthority.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -73,7 +69,6 @@ export const runDirectAnalysis = async (
     readonly logger?: Logger;
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
-    readonly permissionAuthority?: PermissionAuthority;
     readonly providerId?: AnalysisProviderSelector;
   } = {},
 ): Promise<JsonValue> =>
@@ -85,9 +80,6 @@ export const runDirectAnalysis = async (
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
-      ...(options.permissionAuthority === undefined
-        ? {}
-        : { permissionAuthority: options.permissionAuthority }),
     }),
   );
 
@@ -109,78 +101,6 @@ export const runProviderAnalysis = async (
     }),
   );
 
-const authorizeAnalysis = async (
-  authority: PermissionAuthority,
-  tool:
-    | NativeToolName
-    | ArtifactAnalysisOperation
-    | ManagedToolName
-    | DirectAnalysisTool,
-  arguments_: Readonly<Record<string, JsonValue>>,
-): Promise<Result<null, AnalysisError>> => {
-  const requests = [];
-  if (tool === "extract_artifact" && typeof arguments_.output_root === "string")
-    requests.push({
-      request: artifactExtractionPermissionRequest(),
-      access: "write" as const,
-    });
-  for (const request of requests) {
-    const result = await authority.authorize(request.request, request.access);
-    if (!result.ok) return err(projectPermissionFailure(result.error));
-  }
-  if (
-    ["inventory_artifact", "inspect_artifact"].includes(tool) &&
-    arguments_.native_mount_approved === true
-  ) {
-    const result = await authority.authorize(
-      {
-        capability: "native_mount",
-        roots: [],
-        executables: [],
-        environment_names: [],
-        network: "none",
-        mount: true,
-        operation_identity: `${tool}:native_mount`,
-      },
-      "read",
-    );
-    if (!result.ok) return err(projectPermissionFailure(result.error));
-  }
-  return ok(null);
-};
-
-const permissionAuthorityFor = (
-  config: AppConfig,
-  supplied: PermissionAuthority | undefined,
-): ReturnType<typeof loadConfiguredPermissionAuthority> =>
-  supplied === undefined
-    ? loadConfiguredPermissionAuthority(config)
-    : Promise.resolve(ok(supplied));
-
-const authorizeAnalysisRun = async (input: {
-  readonly config: AppConfig;
-  readonly suppliedAuthority: PermissionAuthority | undefined;
-  readonly tool:
-    | NativeToolName
-    | ArtifactAnalysisOperation
-    | ManagedToolName
-    | DirectAnalysisTool;
-  readonly arguments: Readonly<Record<string, JsonValue>>;
-}): Promise<Result<null, AnalysisError>> => {
-  const authority = await permissionAuthorityFor(
-    input.config,
-    input.suppliedAuthority,
-  );
-  if (!authority.ok) return authority;
-  const operation = await authorizeAnalysis(
-    authority.value,
-    input.tool,
-    input.arguments,
-  );
-  if (!operation.ok) return operation;
-  return ok(null);
-};
-
 const runAnalysis = async (
   path: string,
   tool:
@@ -193,7 +113,6 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
-    readonly permissionAuthority?: PermissionAuthority;
     readonly providerId?: AnalysisProviderSelector;
     /**
      * Environment the configuration is read from. Defaults to the process
@@ -208,13 +127,6 @@ const runAnalysis = async (
   const { logger, signal, snapshotPath } = options;
   const config = parseConfig(options.environment ?? process.env);
   if (!config.ok) return cliError(config.error);
-  const authorization = await authorizeAnalysisRun({
-    config: config.value,
-    suppliedAuthority: options.permissionAuthority,
-    tool,
-    arguments: arguments_,
-  });
-  if (!authorization.ok) return cliError(authorization.error);
   const session = createBinarySession(config.value, logger);
   try {
     const prepared = await prepareSnapshot({

@@ -6,7 +6,6 @@ import {
   browserScenarioBrowserSchema,
   browserScenarioCaptureSchema,
   browserScenarioEnvironmentSchema,
-  browserScenarioRedactionSchema,
   browserScenarioRequestReplaySchema,
   browserScenarioSecretSchema,
   browserScenarioStorageSchema,
@@ -27,14 +26,16 @@ export {
 
 export const browserScenarioInputSchema = z.strictObject({
   browser: browserScenarioBrowserSchema.describe(
-    "Required launch/connect authority. Launch uses the approved executable and an owned temporary profile; connect uses one approved loopback CDP endpoint and target.",
+    "Required launch/connect selection. Launch uses the selected executable and an owned temporary profile; connect uses one loopback CDP endpoint and target.",
   ),
   start_url: browserScenarioUrlSchema.describe(
     "Required initial HTTP(S) URL. Query values must be declared separately as public literals or secret references.",
   ),
-  allowed_origins: browserScenarioAllowedOriginsSchema.describe(
-    "Required exact HTTP(S) origins for the start URL and every later navigation, storage seed, and replay route.",
-  ),
+  allowed_origins: browserScenarioAllowedOriginsSchema
+    .default([])
+    .describe(
+      "Optional exact HTTP(S) origins for later navigation, storage seed, and replay routes. Defaults to the start URL origin.",
+    ),
   environment: browserScenarioEnvironmentSchema,
   actions: z
     .array(browserScenarioActionSchema)
@@ -46,9 +47,8 @@ export const browserScenarioInputSchema = z.strictObject({
     .array(browserScenarioSecretSchema)
     .default([])
     .describe(
-      "Optional references to approved environment variables. Secret values are never supplied inline; declarations are required only when an action, URL, storage value, or replay route references a secret.",
+      "Optional environment-variable references for values used in actions, URLs, storage, or replay, and for redacting matching observed text. Secret values are never supplied inline.",
     ),
-  redaction: browserScenarioRedactionSchema,
   capture: browserScenarioCaptureSchema,
 });
 
@@ -136,12 +136,6 @@ const validateStorage = (
   return references;
 };
 
-const SENSITIVE_HEADERS = new Set([
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-]);
 const FORBIDDEN_REPLAY_HEADERS = new Set([
   "content-length",
   "location",
@@ -216,23 +210,6 @@ const validateRequestReplay = (
           ],
           `Replay header ${header.name} must be modeled by the provider`,
         );
-      if (
-        SENSITIVE_HEADERS.has(header.name) &&
-        header.value.source === "literal"
-      )
-        addIssue(
-          context,
-          [
-            "request_replay",
-            "routes",
-            routeIndex,
-            "response",
-            "headers",
-            headerIndex,
-            "value",
-          ],
-          `Credential header ${header.name} requires a declared secret`,
-        );
       references.push(...secretReferencesInValue(header.value));
     });
     references.push(...secretReferencesInValue(route.response.body));
@@ -253,51 +230,17 @@ const validateSecretReferences = (
         ["secrets"],
         `Secret reference ${reference} is not declared`,
       );
-  const used = new Set(references);
-  scenario.secrets.forEach(({ secret_id: id }, index) => {
-    if (!used.has(id))
-      addIssue(
-        context,
-        ["secrets", index, "secret_id"],
-        `Secret declaration ${id} is unused`,
-      );
-  });
-};
-
-const validateRedactionCoverage = (
-  scenario: ScenarioShape,
-  context: z.RefinementCtx,
-): void => {
-  const redactedQueries = new Set(scenario.redaction.query_parameter_names);
-  const destinations: BrowserScenarioUrl[] = [scenario.start_url];
-  for (const action of scenario.actions)
-    if (action.action === "goto") destinations.push(action.destination);
-  for (const cookie of scenario.storage.cookies)
-    destinations.push(cookie.destination);
-  if (scenario.request_replay.mode === "exact")
-    for (const route of scenario.request_replay.routes) {
-      destinations.push(route.request);
-      if (route.response.kind === "redirect")
-        destinations.push(route.response.destination);
-    }
-  for (const destination of destinations)
-    for (const query of destination.query)
-      if (
-        query.value.source === "secret" &&
-        !redactedQueries.has(query.name.toLowerCase())
-      )
-        addIssue(
-          context,
-          ["redaction", "query_parameter_names"],
-          `Secret query parameter ${query.name} must be declared for redaction`,
-        );
 };
 
 const validateBrowserScenario = (
   scenario: ScenarioShape,
   context: z.RefinementCtx,
 ): void => {
-  const allowedOrigins = new Set(scenario.allowed_origins);
+  const allowedOrigins = new Set(
+    scenario.allowed_origins.length > 0
+      ? scenario.allowed_origins
+      : [originFor(scenario.start_url)],
+  );
   assertAllowedDestination(
     scenario.start_url,
     allowedOrigins,
@@ -336,11 +279,16 @@ const validateBrowserScenario = (
   references.push(...validateStorage(scenario, allowedOrigins, context));
   references.push(...validateRequestReplay(scenario, allowedOrigins, context));
   validateSecretReferences(scenario, references, context);
-  validateRedactionCoverage(scenario, context);
 };
 
 /** Strict provider-neutral contract for one controlled browser scenario. */
-export const browserScenarioSchema = browserScenarioInputSchema.superRefine(
-  validateBrowserScenario,
-);
+export const browserScenarioSchema = browserScenarioInputSchema
+  .superRefine(validateBrowserScenario)
+  .transform((scenario) => ({
+    ...scenario,
+    allowed_origins:
+      scenario.allowed_origins.length > 0
+        ? scenario.allowed_origins
+        : [originFor(scenario.start_url)],
+  }));
 export type BrowserScenario = z.infer<typeof browserScenarioSchema>;

@@ -45,15 +45,10 @@ const scenario = (
             mode: "connect",
             cdp_endpoint: "http://127.0.0.1:9222",
             target_id: "page-1",
-            ownership: "external",
-            cleanup: "disconnect-only",
           }
         : {
             mode: "launch",
             executable_path: "/opt/chromium",
-            headless: true,
-            user_data: "temporary-owned",
-            cleanup: "close-and-delete-profile",
           },
     start_url: { url: "https://app.example.test/" },
     allowed_origins: ["https://app.example.test"],
@@ -65,10 +60,6 @@ const scenario = (
     storage: {},
     request_replay: { mode: "disabled" },
     secrets: [],
-    redaction: {
-      secret_values: "replace-with-secret-reference",
-      query_parameter_names: [],
-    },
     capture: {
       after_each_step: options.captures ?? ["url"],
       at_end: [],
@@ -121,6 +112,10 @@ class FakeSession implements BrowserScenarioSessionPort {
 
   currentUrl() {
     return "https://app.example.test/current";
+  }
+
+  sanitizeUrl(value: string) {
+    return sanitizeBrowserUrl(value);
   }
 
   setStep(index: number) {

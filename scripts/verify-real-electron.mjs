@@ -10,7 +10,7 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 const executable = process.env.REA_ELECTRON_EXECUTABLE;
 if (executable === undefined || executable.length === 0)
   throw new Error(
-    "REA_ELECTRON_EXECUTABLE must be an absolute path to an approved Electron executable",
+    "REA_ELECTRON_EXECUTABLE must identify the Electron executable for this verification lane",
   );
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -46,7 +46,6 @@ const input = electronActiveObservationInputSchema.parse({
       window_index: 1,
     },
   ],
-  approved: true,
 });
 const verifierRun = createVerifierRun();
 const result = await new PlaywrightElectronActiveProvider().capture(input);

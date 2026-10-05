@@ -3,9 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { parseConfig } from "../../../src/config.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascriptRuntimeReconciliationExample.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -60,8 +58,7 @@ it(
         tool_availability: expect.arrayContaining([
           expect.objectContaining({
             name: "inspect_web_page",
-            available: true,
-            reason: "available",
+            reason: expect.any(String),
           }),
         ]),
       },
@@ -70,20 +67,20 @@ it(
       name: "list_browser_targets",
       arguments: {
         cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
       },
     });
     expect(listed.isError).not.toBe(true);
     expect(listed.structuredContent).toMatchObject({
       result: {
-        targets: [{ target_id: "allowed-page" }],
+        targets: expect.arrayContaining([
+          expect.objectContaining({ target_id: "allowed-page" }),
+        ]),
       },
     });
     const inspected = await connected.client.callTool({
       name: "inspect_web_page",
       arguments: {
         cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
         observation_ms: 0,
         include_console_text: true,
@@ -125,7 +122,6 @@ it(
       name: "analyze_web_bundle",
       arguments: {
         cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
         observation_ms: 0,
       },
@@ -230,11 +226,11 @@ const verifySessionAndComparisonTools = async (
   });
 };
 
-it("denies origins outside the administrator ceiling before CDP attach", async () => {
+it("does not attach to a target outside the request's allowed origin scope", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);
   const connected = await connectBrowser(browser);
-  const denied = await connected.client.callTool({
+  const result = await connected.client.callTool({
     name: "inspect_web_page",
     arguments: {
       cdp_endpoint: browser.endpoint,
@@ -243,12 +239,12 @@ it("denies origins outside the administrator ceiling before CDP attach", async (
       observation_ms: 0,
     },
   });
-  expect(denied.isError).toBe(true);
-  expect(denied.structuredContent).toMatchObject({
+  expect(result.isError).toBe(true);
+  expect(result.structuredContent).toMatchObject({
     error: {
-      code: "permission_required",
       details: {
-        missing: { origins: ["https://unapproved.example.test"] },
+        operation: "inspect_web_page",
+        reason: "target_not_allowed",
       },
     },
   });
@@ -256,25 +252,15 @@ it("denies origins outside the administrator ceiling before CDP attach", async (
 });
 
 const connectBrowser = async (browser: FakeCdpBrowser) => {
-  const config = parseConfig({
-    REA_BROWSER_OBSERVE_ENABLED: "true",
-    REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-    REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([browser.allowedOrigin]),
-  });
-  if (!config.ok) throw config.error;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok) throw authority.error;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
     browserObservation: new CdpBrowserProvider(),
-    permissionAuthority: authority.value,
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 0,
-      browserObservationEnabled: true,
     }),
   });
   const client = new Client({ name: "browser-mcp-test", version: "1" });

@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +20,6 @@ import {
   BrowserObservationError,
   ProviderAdapterError,
 } from "../domain/errors.js";
-import { isPathContained } from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   cleanupOwnedProcessGroup,
@@ -351,13 +351,14 @@ const createResult = (
 const canonicalPaths = async (
   input: ElectronActiveObservationInput,
 ): Promise<ElectronPaths> => {
-  const [executable, application, root] = await Promise.all([
+  const [executable, application] = await Promise.all([
     realpath(input.executable_path),
     realpath(input.application_path),
-    realpath(input.application_root),
   ]);
-  if (!isPathContained(root, application))
-    throw new BrowserObservationError(OPERATION, "target_not_allowed");
+  const root =
+    input.application_root === undefined
+      ? dirname(application)
+      : await realpath(input.application_root);
   return { executable, application, root };
 };
 

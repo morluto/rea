@@ -32,10 +32,7 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
-import {
-  resolveArtifactIntegrityPolicy,
-  resolveNativeMountPolicy,
-} from "../application/ArtifactInventory/policy.js";
+import { resolveArtifactIntegrityPolicy } from "../application/ArtifactInventory/policy.js";
 
 const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
@@ -43,11 +40,7 @@ const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 export class ArtifactProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[];
 
-  constructor(
-    private readonly nativeMountEnabled = false,
-    private readonly integrityContinueEnabled = false,
-    platform: NodeJS.Platform = process.platform,
-  ) {
+  constructor(platform: NodeJS.Platform = process.platform) {
     this.#capabilities = Object.freeze(
       ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {
         const common = {
@@ -65,7 +58,7 @@ export class ArtifactProvider implements AnalysisProvider {
             requiresRoot: false,
           }),
           limitations: Object.freeze([
-            "DMG child inventory is macOS-only and requires per-call approval plus operator policy; PKG remains root-hash-only.",
+            "DMG child inventory automatically uses a read-only native macOS mount; PKG remains root-hash-only.",
             "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
           ]),
         };
@@ -92,20 +85,12 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(
-      target,
-      this.nativeMountEnabled,
-      this.integrityContinueEnabled,
-    );
+    return new ArtifactClient(target);
   }
 }
 
 class ArtifactClient implements AnalysisClient {
-  constructor(
-    private readonly target: BinaryTarget,
-    private readonly nativeMountEnabled: boolean,
-    private readonly integrityContinueEnabled: boolean,
-  ) {}
+  constructor(private readonly target: BinaryTarget) {}
 
   async execute(
     operation: AnalysisOperation,
@@ -287,11 +272,9 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     const parsed = artifactInventoryInputSchema.parse(parameters);
-    const inventoryParameters = artifactInventoryInputSchema.parse({
-      native_mount_approved: parsed.native_mount_approved,
+    const inventoryParameters = {
       integrity_policy: parsed.integrity_policy,
-      integrity_continue_approved: parsed.integrity_continue_approved,
-    });
+    };
     await options?.progress?.report({
       phase: "inspect_artifact.inventory",
       completed: 0,
@@ -334,26 +317,15 @@ class ArtifactClient implements AnalysisClient {
 
   private inventory(
     parsed: {
-      readonly native_mount_approved: boolean;
       readonly integrity_policy: "fail" | "record-and-continue";
-      readonly integrity_continue_approved: boolean;
     },
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      nativeMount: resolveNativeMountPolicy(
-        parsed.native_mount_approved === true,
-        this.nativeMountEnabled,
-      ),
-      integrity: resolveArtifactIntegrityPolicy(
-        parsed.integrity_policy === "fail"
-          ? { mode: "fail" }
-          : {
-              mode: parsed.integrity_policy,
-            },
-        this.integrityContinueEnabled,
-      ),
+      integrity: resolveArtifactIntegrityPolicy({
+        mode: parsed.integrity_policy,
+      }),
     });
   }
 }

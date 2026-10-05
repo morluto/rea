@@ -58,3 +58,22 @@ it("keeps literal hash characters in historical/current filesystem paths", async
     }),
   );
 });
+
+it("rejects static application Evidence whose subject path disagrees with its result", async () => {
+  const root = await createTestTempDirectory("rea-application-subject-path-");
+  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+  if (!analyzed.ok) throw analyzed.error;
+  const subject = analyzed.value.subject;
+  if (subject === null) throw new Error("Analysis Evidence subject missing");
+  const inconsistent = {
+    ...analyzed.value,
+    subject: {
+      ...subject,
+      local_path: join(root, "relocated"),
+    },
+  };
+
+  expect(() => parseApplicationGraphEvidence(inconsistent)).toThrow(
+    "JavaScript application Evidence subject does not match its result",
+  );
+});

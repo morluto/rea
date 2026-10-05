@@ -19,7 +19,6 @@ import {
 } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import type { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -318,17 +317,13 @@ it("cannot omit a session-owned active unknown from reconstruction input", async
   }
 });
 
-const connected = async (permissionAuthority?: PermissionAuthority) => {
+const connected = async () => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
-  const server = createServer(
-    session,
-    session,
-    permissionAuthority === undefined ? {} : { permissionAuthority },
-  );
+  const server = createServer(session, session);
   const client = new Client({ name: "investigation-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

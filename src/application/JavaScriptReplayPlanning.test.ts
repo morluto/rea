@@ -2,15 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   prepareReplayPlan,
-  type EnabledJavaScriptReplayPolicy,
+  type JavaScriptReplayConfiguration,
   type JavaScriptReplayHost,
 } from "./JavaScriptReplayPlanning.js";
 import { controlledReplayInputSchema } from "../domain/javascriptReplay.js";
 
-const root = "/approved";
-const policy: EnabledJavaScriptReplayPolicy = {
-  status: "enabled",
-  roots: [root],
+const root = "/replay-fixture";
+const configuration: JavaScriptReplayConfiguration = {
   nodePath: "/runtime/node",
   bubblewrapPath: "/runtime/bwrap",
   systemdRunPath: "/runtime/systemd-run",
@@ -100,7 +98,7 @@ describe("controlled replay planning input bounds", () => {
       limits: { protocol_bytes: 1024 * 1024 },
     });
 
-    await expect(prepareReplayPlan(input, policy, host)).rejects.toThrow(
+    await expect(prepareReplayPlan(input, configuration, host)).rejects.toThrow(
       "Replay plan input exceeds its protocol byte limit",
     );
     expect(probe).not.toHaveBeenCalled();

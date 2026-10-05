@@ -21,7 +21,6 @@ import {
 } from "./CdpCaptureValues.js";
 import { captureFrames, mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { redactSensitiveText } from "./SensitiveTextCapture.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -293,11 +292,11 @@ const normalizeTool = (
     completeness.exclude("webmcp_tools", "out_of_target_scope");
     return undefined;
   }
-  const description = redactSensitiveText(stringValue(value.description) ?? "");
+  const description = stringValue(value.description) ?? "";
   const annotations = recordValue(value.annotations);
   return {
     tool_key: toolKey(frame.url, name),
-    name: redactSensitiveText(name),
+    name,
     description,
     frame_id: frameId,
     frame_url: frame.url,

@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BrowserContext, Page } from "playwright-core";
 
-import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import {
   browserStepArtifactsSchema,
@@ -105,7 +104,7 @@ const navigationType = (
   }
 };
 
-const captureHistory = async (page: Page) => {
+const captureHistory = async (page: Page, secrets: BrowserScenarioSecrets) => {
   try {
     const raw = historyValueSchema.parse(
       await page.evaluate(`(() => ({
@@ -120,10 +119,10 @@ const captureHistory = async (page: Page) => {
     );
     const value = {
       length: raw.length,
-      current_url: sanitizeBrowserUrl(page.url()),
+      current_url: secrets.sanitizeUrl(page.url()),
       navigation_entries: raw.navigation_entries.map(({ type, name }) => ({
         type: navigationType(type),
-        name: sanitizeBrowserUrl(name),
+        name: secrets.sanitizeUrl(name),
       })),
     };
     return { state: "captured" as const, value };
@@ -213,9 +212,9 @@ export const capturePlaywrightStepArtifacts = async (input: {
     ),
     url: await state("url", async () => ({
       state: "captured" as const,
-      value: sanitizeBrowserUrl(page.url()),
+      value: secrets.sanitizeUrl(page.url()),
     })),
-    history: await state("history", () => captureHistory(page)),
+    history: await state("history", () => captureHistory(page, secrets)),
     storage: await state("storage", () =>
       captureStorage({ context, page, scenario, secrets }),
     ),

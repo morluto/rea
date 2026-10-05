@@ -6,7 +6,6 @@ import { importManagedReconstructionEvidence } from "../application/ManagedRecon
 import { planManagedRuntimeCorrelationEvidence } from "../application/ManagedRuntimeCorrelationService.js";
 import { runProviderAnalysis } from "../application/DirectAnalysis.js";
 import { parseConfig } from "../config.js";
-import { loadConfiguredPermissionAuthority } from "../application/PermissionConfiguration.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { projectAnalysisError } from "../domain/errors.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -171,7 +170,7 @@ const registerPlanManagedRuntimeCorrelation = (
 ): void => {
   cli.command(CLI_COMMANDS.planManagedRuntimeCorrelation, {
     description:
-      "Plan a separately authorized managed runtime-correlation experiment without executing target code",
+      "Plan a managed runtime-correlation request without probing or executing a runtime",
     args: z.object({
       inputJson: z
         .string()
@@ -186,13 +185,8 @@ const registerPlanManagedRuntimeCorrelation = (
         if (!input.ok) return input.error;
         const config = parseConfig(environment);
         if (!config.ok) return projectAnalysisError(config.error);
-        const authority = await loadConfiguredPermissionAuthority(config.value);
-        if (!authority.ok) return projectAnalysisError(authority.error);
         const result = await planManagedRuntimeCorrelationEvidence(
-          {
-            policy: () => config.value.managedRuntimePolicy,
-            authority: authority.value,
-          },
+          { configuration: () => config.value.managedRuntimeConfiguration },
           input.value,
         );
         return result.ok ? result.value : projectAnalysisError(result.error);

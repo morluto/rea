@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty } from "@lydell/node-pty";
@@ -10,8 +10,6 @@ import type {
   InteractionEvent,
   ProcessCapture,
   UnverifiedProcessCapture,
-  ProcessExecutionPolicy,
-  ProcessPolicyDecision,
   ProcessSample,
   ProcessSettlement,
   ProcessScenario,
@@ -20,7 +18,6 @@ import type {
   TerminalFrame,
 } from "../domain/processCapture.js";
 import {
-  authorizeProcessScenario,
   digestProcessCommitment,
   processComparisonContract,
   processScenarioCommitment,
@@ -38,15 +35,12 @@ import {
   ProcessCheckpoints,
 } from "./ProcessCheckpoints.js";
 import { ProcessCaptureError } from "./ProcessCaptureError.js";
-import {
-  assertNotCancelled,
-  assertRealPathAuthority,
-} from "./ProcessCaptureAuthority.js";
+import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
   normalizeProcessElapsedTime,
   normalizeProcessSamples,
   normalizeProcessText,
-  redactProtocolEvents,
+  normalizeProtocolEvents,
 } from "./ProcessNormalization.js";
 import type { CommandShimReplay } from "./CommandShimReplay.js";
 import { PROCESS_PROVIDER } from "./ProcessEvidence.js";
@@ -110,60 +104,91 @@ export type PendingProcessCapture = Omit<
 
 export const buildCaptureResult = (
   options: CaptureResultOptions,
-): PendingProcessCapture => ({
-  manifest: options.manifest,
-  normalization: options.scenario.normalization,
-  frames: options.frames,
-  rendered_frames: options.renderedFrames,
-  interaction_events: options.interactions,
-  exit: {
-    code:
-      options.exit.reason === "exited" && options.exit.exitCode >= 0
-        ? options.exit.exitCode
-        : null,
-    signal: options.exit.signal ?? null,
-    reason: options.exit.reason,
-  },
-  settlement: options.settlement,
-  process_samples: normalizeProcessSamples(
-    options.samples,
-    options.scenario,
-    options.rootPid,
-  ),
-  filesystem_checkpoints: options.checkpoints,
-  shim_events: options.shimEvents,
-  protocol_events: redactProtocolEvents(
+): PendingProcessCapture => {
+  const hasSensitiveScriptedInput = options.scenario.events.some(
+    (event) => event.type === "input" && event.sensitive,
+  );
+  const sensitiveInputUnknown =
+    "Sensitive scripted input values are redacted from process capture Evidence.";
+  const filesystemObservationUnknown =
+    "No filesystem observation paths were selected; filesystem effects remain unknown.";
+  const protocolEvents = normalizeProtocolEvents(
     options.replay.events,
     options.scenario,
-  ),
-  replay_transitions: options.replay.transitions,
-  event_journal: options.eventJournal,
-  files_before: options.before.files,
-  files_after: options.after.files,
-  filesystem_effects: classifyFilesystemEffects(
-    options.before.files,
-    options.after.files,
-  ),
-  truncated: options.truncated,
-  limitations: [
-    "Process trees are sampled and may omit short-lived descendants.",
-    ...(options.samplingPartial
-      ? ["Process-tree sampling ended with an incomplete observation."]
-      : []),
-    "Filesystem observations are before/after snapshots, not syscall traces.",
-    "The harness does not enforce external network isolation.",
-  ],
-  residual_unknowns: [
-    {
-      scope: "process",
-      reason: "Process trees are sampled and may omit short-lived descendants.",
+  );
+  const hasFilesystemObservations =
+    options.scenario.filesystem_observation_paths.length > 0;
+  return {
+    manifest: options.manifest,
+    normalization: options.scenario.normalization,
+    frames: options.frames,
+    rendered_frames: options.renderedFrames,
+    interaction_events: options.interactions,
+    exit: {
+      code:
+        options.exit.reason === "exited" && options.exit.exitCode >= 0
+          ? options.exit.exitCode
+          : null,
+      signal: options.exit.signal ?? null,
+      reason: options.exit.reason,
     },
-    {
-      scope: "network",
-      reason: "External network isolation is not enforced by this adapter.",
-    },
-  ],
-});
+    settlement: options.settlement,
+    process_samples: normalizeProcessSamples(
+      options.samples,
+      options.scenario,
+      options.rootPid,
+    ),
+    filesystem_checkpoints: options.checkpoints,
+    shim_events: options.shimEvents,
+    protocol_events: protocolEvents,
+    replay_transitions: options.replay.transitions,
+    event_journal: options.eventJournal,
+    files_before: options.before.files,
+    files_after: options.after.files,
+    filesystem_effects: classifyFilesystemEffects(
+      options.before.files,
+      options.after.files,
+    ),
+    truncated: options.truncated,
+    limitations: [
+      "Process trees are sampled and may omit short-lived descendants.",
+      ...(options.samplingPartial
+        ? ["Process-tree sampling ended with an incomplete observation."]
+        : []),
+      "Filesystem observations are before/after snapshots, not syscall traces.",
+      "The harness does not enforce external network isolation.",
+      "Inherited host environment variables are not recorded and may affect results.",
+      ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
+      ...(hasSensitiveScriptedInput ? [sensitiveInputUnknown] : []),
+    ],
+    residual_unknowns: [
+      {
+        scope: "process",
+        reason:
+          "Process trees are sampled and may omit short-lived descendants.",
+      },
+      {
+        scope: "network",
+        reason: "External network isolation is not enforced by this adapter.",
+      },
+      {
+        scope: "environment",
+        reason: "Inherited host environment variables are not recorded.",
+      },
+      ...(!hasFilesystemObservations
+        ? [
+            {
+              scope: "filesystem" as const,
+              reason: filesystemObservationUnknown,
+            },
+          ]
+        : []),
+      ...(hasSensitiveScriptedInput
+        ? [{ scope: "interaction" as const, reason: sensitiveInputUnknown }]
+        : []),
+    ],
+  };
+};
 
 const hashFile = async (path: string): Promise<string> => {
   const hash = createHash("sha256");
@@ -306,6 +331,19 @@ export const awaitTerminalExit = async ({
     timers.add(timeout);
   });
 
+/** Host operations used when releasing one captured process run. */
+export interface ProcessCaptureCleanupHost {
+  readonly platform: NodeJS.Platform;
+  readonly cleanupProcessGroup: typeof cleanupOwnedProcessGroup;
+  readonly removeTemporaryRoot: (path: string) => Promise<void>;
+}
+
+const processCaptureCleanupHost: ProcessCaptureCleanupHost = {
+  platform: process.platform,
+  cleanupProcessGroup: cleanupOwnedProcessGroup,
+  removeTemporaryRoot: (path) => rm(path, { recursive: true, force: true }),
+};
+
 export const releaseProcessResources = async (options: {
   readonly timers: ReadonlySet<ProcessTimer>;
   readonly replay: LoopbackReplay | undefined;
@@ -316,7 +354,9 @@ export const releaseProcessResources = async (options: {
   readonly runId: string;
   readonly temporaryRoot: string;
   readonly capturedProcessGroupIds: readonly number[];
+  readonly host?: ProcessCaptureCleanupHost;
 }): Promise<string | undefined> => {
+  const host = options.host ?? processCaptureCleanupHost;
   for (const timer of options.timers) timer.cancel();
   let failure: string | undefined;
   try {
@@ -339,9 +379,9 @@ export const releaseProcessResources = async (options: {
   } catch {
     failure ??= "filesystem checkpoint cleanup failed";
   }
-  if (options.terminal !== undefined && process.platform !== "win32") {
+  if (options.terminal !== undefined && host.platform !== "win32") {
     for (const processGroupId of new Set(options.capturedProcessGroupIds)) {
-      const cleaned = await cleanupOwnedProcessGroup({
+      const cleaned = await host.cleanupProcessGroup({
         runId: options.runId,
         leaderPid: processGroupId,
         processGroupId,
@@ -350,7 +390,7 @@ export const releaseProcessResources = async (options: {
     }
   }
   try {
-    await rm(options.temporaryRoot, { recursive: true, force: true });
+    await host.removeTemporaryRoot(options.temporaryRoot);
   } catch {
     failure ??= "temporary process root cleanup failed";
   }
@@ -424,70 +464,32 @@ export const resolveProcessResult = (
 
 export const prepareProcessCapture = async (
   scenario: ProcessScenario,
-  policy: ProcessExecutionPolicy,
   signal: AbortSignal | undefined,
   host: ProcessPreparationHost = systemProcessPreparationHost,
 ): Promise<{
   readonly temporaryRoot: string;
   readonly runId: string;
-  readonly home: string;
   readonly before: SnapshotResult;
 }> => {
-  if (policy.status === "disabled")
-    throw new ProcessCaptureError("process capture is disabled", {
-      userCategory: "permission_required",
-      userMessage: processPolicyMessage("process capture is disabled"),
-    });
-  const decision = authorizeProcessScenario(scenario, policy);
-  if (!decision.allowed)
-    throw new ProcessCaptureError(decision.reason, {
-      userCategory: "permission_required",
-      userMessage: processPolicyMessage(decision.reason),
-    });
-  await assertRealPathAuthority(scenario, policy);
   assertNotCancelled(signal);
   const before = await snapshotRoots(scenario, signal);
   const temporaryRoot = await host.createTemporaryRoot();
   try {
     const runId = randomUUID();
-    const home = join(temporaryRoot, "home");
-    await host.createHome(home);
-    return { temporaryRoot, runId, home, before };
+    return { temporaryRoot, runId, before };
   } catch (cause: unknown) {
     await host.cleanup(temporaryRoot);
     throw cause;
   }
 };
 
-/** Filesystem seam for allocating and cleaning a capture's private home. */
+/** Filesystem seam for allocating and cleaning a capture's temporary root. */
 export interface ProcessPreparationHost {
   createTemporaryRoot(): Promise<string>;
-  createHome(path: string): Promise<void>;
   cleanup(path: string): Promise<void>;
 }
 
 const systemProcessPreparationHost: ProcessPreparationHost = {
   createTemporaryRoot: () => mkdtemp(join(tmpdir(), "rea-process-")),
-  createHome: (path) => mkdir(path),
   cleanup: (path) => rm(path, { recursive: true, force: true }),
-};
-
-const processPolicyMessage = (
-  reason: Exclude<ProcessPolicyDecision, { readonly allowed: true }>["reason"],
-): string => {
-  if (reason === "process capture is disabled")
-    return "Process capture is disabled. Set `REA_PROCESS_CAPTURE_ENABLED=true`, configure approved roots, then restart REA.";
-  if (reason === "host network access is not approved by operator policy")
-    return "This capture requests host network access, but policy does not allow it. Use replayed network access or ask the operator to enable external network capture.";
-  if (reason === "executable is outside approved roots")
-    return "The executable is outside the approved capture directories. Choose an approved executable or add its directory to `REA_PROCESS_EXECUTABLE_ROOTS_JSON`.";
-  if (reason === "working directory is outside approved roots")
-    return "The working directory is outside the approved capture directories. Choose an approved directory or add it to `REA_PROCESS_WORKING_ROOTS_JSON`.";
-  if (reason === "filesystem root is outside approved roots")
-    return "A requested filesystem root is outside the approved capture directories. Remove it or add its directory to `REA_PROCESS_WORKING_ROOTS_JSON`.";
-  if (
-    reason === "scenario requests an environment variable not allowed by policy"
-  )
-    return "The capture requests an environment variable that policy does not allow. Remove it or add its name to `REA_PROCESS_ALLOWED_ENV_JSON`.";
-  return reason satisfies never;
 };

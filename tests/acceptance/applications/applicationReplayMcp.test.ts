@@ -6,18 +6,14 @@ import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
-import type { EnabledJavaScriptReplayPolicy } from "../../../src/application/JavaScriptReplayPlanning.js";
-import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
+import type { JavaScriptReplayConfiguration } from "../../../src/application/JavaScriptReplayPlanning.js";
 import { controlledReplayOutputSchema } from "../../../src/domain/javascriptReplay.js";
 import { nodeCharacterizationPreparationOutputSchema } from "../../../src/domain/nodeRuntimeCharacterization.js";
-import { createPermissionPolicy } from "../../../src/domain/permissionPolicy.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
-function createReplayPolicy(root: string): EnabledJavaScriptReplayPolicy {
+function createReplayConfiguration(): JavaScriptReplayConfiguration {
   return {
-    status: "enabled",
-    roots: [root],
     nodePath: process.execPath,
     bubblewrapPath: process.execPath,
     systemdRunPath: process.execPath,
@@ -26,46 +22,18 @@ function createReplayPolicy(root: string): EnabledJavaScriptReplayPolicy {
   };
 }
 
-function createReplayAuthority(policy: ReturnType<typeof createReplayPolicy>) {
-  const ceiling = {
-    capability: "javascript_replay" as const,
-    roots: policy.roots,
-    executables: [
-      policy.nodePath,
-      policy.bubblewrapPath,
-      policy.systemdRunPath,
-      policy.systemctlPath,
-      policy.shellPath,
-    ],
-    environment_names: [],
-    network: "none" as const,
-    mount: true,
-  };
-  return new PermissionAuthority(
-    createPermissionPolicy(
-      [ceiling],
-      [
-        {
-          ...ceiling,
-          grant_id: "administrator:javascript_replay",
-          lifetime: "administrator",
-          operation_identity: null,
-          expires_at: null,
-        },
-      ],
-    ),
-  );
-}
-
 function createReplayScenario(root: string) {
-  const policy = createReplayPolicy(root);
+  const configuration = createReplayConfiguration();
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
-    permissionAuthority: createReplayAuthority(policy),
-    javascriptReplayPolicy: () => policy,
+    availabilityPolicy: () => ({
+      processCaptureEnabled: true,
+      controlledReplayEnabled: true,
+    }),
+    javascriptReplayConfiguration: () => configuration,
     javascriptReplayHost: {
       readSource: async (path) => ({
         canonicalPath: await realpath(path),
@@ -222,13 +190,13 @@ async function executeCharacterizationScenario(
     arguments: input,
   });
   expect(plan.isError).not.toBe(true);
-  const approvedPlan = nodeCharacterizationPreparationOutputSchema.parse(
+  const preparedPlan = nodeCharacterizationPreparationOutputSchema.parse(
     plan.structuredContent,
   ).plan;
   const characterized = await client.callTool({
     name: "execute_node_characterization",
     arguments: {
-      approved_plan_sha256: approvedPlan.plan_sha256,
+      plan_sha256: preparedPlan.plan_sha256,
       preparation: input,
     },
   });

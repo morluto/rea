@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 import { observeNativeUi } from "./NativeUiObservation.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -13,7 +15,6 @@ const target: BinaryTarget = {
 const scope = {
   pid: 123,
   window_id: 456,
-  observation_approved: true,
   screenshot: false,
 };
 const snapshot = {
@@ -29,39 +30,184 @@ const snapshot = {
   gaps: [],
   truncated: false,
 };
-describe("native UI authority and lifecycle", () => {
-  it("requires observation and independent action approval before invoking a helper", async () => {
+
+const validPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4sAAAAASUVORK5CYII=",
+  "base64",
+);
+describe("native UI screenshot validation", () => {
+  it("rejects malformed or mismatched screenshot bytes from the helper", async () => {
+    const screenshot = {
+      mime_type: "image/png",
+      base64: validPng.toString("base64"),
+      sha256: "0".repeat(64),
+      width: 1,
+      height: 1,
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, screenshot: true },
+      {
+        invoke: async () => ({
+          ok: true,
+          result: { ...snapshot, screenshot },
+        }),
+      },
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    { base64: "%%%=" },
+    { base64: Buffer.from("not a PNG").toString("base64") },
+    { width: 2 },
+    { sha256: "0".repeat(64) },
+  ])(
+    "rejects invalid screenshot field variants from the helper",
+    async (change) => {
+      const screenshot = {
+        mime_type: "image/png",
+        base64: validPng.toString("base64"),
+        sha256: createHash("sha256").update(validPng).digest("hex"),
+        width: 1,
+        height: 1,
+        ...change,
+      };
+      const result = await observeNativeUi(
+        target,
+        "observe_native_ui",
+        { ...scope, screenshot: true },
+        {
+          invoke: async () => ({
+            ok: true,
+            result: { ...snapshot, screenshot },
+          }),
+        },
+      );
+      expect(result.ok).toBe(false);
+    },
+  );
+
+  it("accepts a self-consistent PNG screenshot from the helper", async () => {
+    const bytes = validPng;
+    const screenshot = {
+      mime_type: "image/png",
+      base64: bytes.toString("base64"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      width: 1,
+      height: 1,
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, screenshot: true },
+      {
+        invoke: async () => ({
+          ok: true,
+          result: { ...snapshot, screenshot },
+        }),
+      },
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("native UI capture selection and budgets", () => {
+  it("accepts observations and scenarios without compatibility flags", async () => {
     let calls = 0;
     const invoke = async () => {
       calls++;
       return { ok: true, result: snapshot };
     };
-    expect(
-      (
-        await observeNativeUi(
-          target,
-          "observe_native_ui",
-          { ...scope, observation_approved: false },
-          { invoke },
-        )
-      ).ok,
-    ).toBe(false);
-    expect(
-      (
-        await observeNativeUi(
-          target,
-          "capture_native_ui_scenario",
-          {
-            ...scope,
-            restore: "leave-as-is",
-            steps: [{ kind: "click", path: [] }],
-          },
-          { invoke },
-        )
-      ).ok,
-    ).toBe(false);
-    expect(calls).toBe(0);
+    const observed = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { pid: 123, window_id: 456, screenshot: false, accessibility: true },
+      { invoke },
+    );
+    expect(observed.ok).toBe(true);
+    const captured = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: true,
+        steps: [{ kind: "click", path: [] }],
+      },
+      { invoke },
+    );
+    expect(captured.ok).toBe(true);
+    expect(calls).toBe(3);
   });
+  it("returns caller-selected large observations and complete action lists", async () => {
+    const nodeLimits: unknown[] = [];
+    const steps = Array.from({ length: 17 }, () => ({
+      kind: "wait" as const,
+      milliseconds: 0,
+    }));
+    const result = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: true,
+        max_nodes: 2_001,
+        steps,
+      },
+      {
+        invoke: async (parameters) => {
+          nodeLimits.push(parameters.max_nodes);
+          return { ok: true, result: snapshot };
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(nodeLimits).toEqual(Array.from({ length: 18 }, () => 2_001));
+    if (result.ok) {
+      expect(result.value.steps).toHaveLength(17);
+      expect(
+        result.value.steps.every(({ outcome }) => outcome === "completed"),
+      ).toBe(true);
+    }
+  });
+  it("accepts caller-selected waits beyond the old aggregate cutoff", async () => {
+    const controller = new AbortController();
+    const result = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: true,
+        steps: Array.from({ length: 4 }, () => ({
+          kind: "wait" as const,
+          milliseconds: 10_001,
+        })),
+      },
+      {
+        signal: controller.signal,
+        invoke: async () => {
+          controller.abort();
+          return { ok: true, result: snapshot };
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.steps[0]).toMatchObject({
+        kind: "wait",
+        outcome: "cancelled",
+      });
+  });
+});
+
+describe("native UI target and cancellation failures", () => {
   it.each([
     "accessibility-denied",
     "screen-recording-denied",
@@ -84,8 +230,6 @@ describe("native UI authority and lifecycle", () => {
       "capture_native_ui_scenario",
       {
         ...scope,
-        actions_approved: true,
-        restore: "leave-as-is",
         steps: [
           { kind: "scroll", path: [1], direction: "increment" },
           { kind: "click", path: [2] },
@@ -123,8 +267,6 @@ describe("native UI authority and lifecycle", () => {
       "capture_native_ui_scenario",
       {
         ...scope,
-        actions_approved: true,
-        restore: "leave-as-is",
         steps: [
           { kind: "wait", milliseconds: 1000 },
           { kind: "click", path: [] },

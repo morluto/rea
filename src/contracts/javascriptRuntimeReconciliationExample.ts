@@ -238,7 +238,7 @@ const runtimeEvidence = createEvidence(
 
 /** Compact valid Evidence pair used by the public reconciliation contract. */
 export const JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE = {
-  static_layers: [{ role: "application", analysis: staticEvidence }],
+  static_layers: [{ analysis: staticEvidence }],
   runtime_observations: [runtimeEvidence],
 };
 

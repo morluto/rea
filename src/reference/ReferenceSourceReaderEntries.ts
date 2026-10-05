@@ -209,7 +209,7 @@ const describeSymlink = async (
         status: "read",
         kind: "symlink",
         path,
-        target: "<outside-root>",
+        target: lexicalTarget,
         targetState: "external",
       };
     try {
@@ -226,15 +226,18 @@ const describeSymlink = async (
             status: "read",
             kind: "symlink",
             path,
-            target: "<outside-root>",
+            target: canonicalTarget,
             targetState: "external",
           };
     } catch {
+      const missingOutsideRoot = !isPathWithinRoot(root, lexicalTarget);
       return {
         status: "read",
         kind: "symlink",
         path,
-        target: pathFromRoot(root, lexicalTarget),
+        target: missingOutsideRoot
+          ? lexicalTarget
+          : pathFromRoot(root, lexicalTarget),
         targetState: "missing",
       };
     }

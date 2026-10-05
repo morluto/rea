@@ -73,14 +73,26 @@ export const managedNativeVerificationReferenceInputSchema = z
 
 const managedApplicationGraphReferenceFacts = {} as const;
 
+const managedApplicationGraphReferenceShape = z.strictObject({
+  ...managedApplicationGraphReferenceFacts,
+  managed_artifact: evidenceSchema.optional(),
+  managed_members: evidenceSchema.optional(),
+  managed_native_boundaries: evidenceSchema.optional(),
+});
+
 /** Inline Evidence sources for managed application graph projection. */
 export const managedApplicationGraphReferenceInputSchema = z
-  .strictObject({
-    ...managedApplicationGraphReferenceFacts,
-    managed_artifact: evidenceSchema.optional(),
-    managed_members: evidenceSchema.optional(),
-    managed_native_boundaries: evidenceSchema.optional(),
-  })
+  .union([
+    managedApplicationGraphReferenceShape.extend({
+      managed_artifact: evidenceSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_members: evidenceSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_native_boundaries: evidenceSchema,
+    }),
+  ])
   .superRefine((input, context) => {
     const ids = [
       input.managed_artifact?.evidence_id,
@@ -184,7 +196,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     name: "plan_managed_runtime_correlation",
     ...toolContractMetadata("plan_managed_runtime_correlation"),
     description:
-      "Prepare a separately authorized managed runtime-correlation admission plan from authenticated inspect_managed_members Evidence. The operation is default-disabled, requires the managed_runtime permission ceiling and grant, locks the exact artifact SHA-256, MVID, method signature, and limited decoded-IL tuple hash, distinguishes attach/load/debugger/reflection/instrumentation effects, and records that no target code was executed.",
+      "Prepare a non-executing managed runtime-correlation plan from authenticated inspect_managed_members Evidence. Planning does not probe or launch a runtime; it records the configured executable or the default command name, locks the exact artifact SHA-256, MVID, method signature, and decoded-IL hash, and describes requested effects and bounds without claiming execution or confinement.",
     kind: "application",
     inputSchema: managedRuntimeCorrelationReferenceInputSchema,
     outputSchema: runtimeOutputSchema,

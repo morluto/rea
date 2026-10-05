@@ -12,7 +12,6 @@ import {
   listBrowserTargets,
   observeWebSession,
 } from "../application/BrowserObservationService.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
@@ -30,7 +29,6 @@ import { toCallToolResult } from "./toolResult.js";
 interface BrowserToolRegistration {
   readonly logger: Logger;
   readonly browser: BrowserObservationPort | undefined;
-  readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
 
@@ -65,14 +63,9 @@ export const registerBrowserTools = (
         listContract,
         { input, context },
         (parsed, { signal }) =>
-          listBrowserTargets(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal,
-            },
-          ),
+          listBrowserTargets(options.browser, parsed, {
+            signal,
+          }),
       ),
   );
   server.registerTool(
@@ -86,7 +79,6 @@ export const registerBrowserTools = (
         (parsed, { signal, progress }) =>
           inspectWebPage(
             options.browser,
-            options.permissionAuthority,
             inspectWebPageInputSchema.parse(parsed),
             { signal, progress },
           ),
@@ -103,7 +95,6 @@ export const registerBrowserTools = (
         (parsed, { signal, progress }) =>
           analyzeWebBundle(
             options.browser,
-            options.permissionAuthority,
             analyzeWebBundleInputSchema.parse(parsed),
             {
               signal,
@@ -121,15 +112,10 @@ export const registerBrowserTools = (
         sessionContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          observeWebSession(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal,
-              progress,
-            },
-          ),
+          observeWebSession(options.browser, parsed, {
+            signal,
+            progress,
+          }),
       ),
   );
   server.registerTool(
@@ -141,15 +127,10 @@ export const registerBrowserTools = (
         webMcpContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          discoverWebMcpTools(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal,
-              progress,
-            },
-          ),
+          discoverWebMcpTools(options.browser, parsed, {
+            signal,
+            progress,
+          }),
       ),
   );
   server.registerTool(
@@ -172,15 +153,10 @@ export const registerBrowserTools = (
         screenshotContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          captureWebScreenshot(
-            options.browser,
-            options.permissionAuthority,
-            parsed,
-            {
-              signal,
-              progress,
-            },
-          ),
+          captureWebScreenshot(options.browser, parsed, {
+            signal,
+            progress,
+          }),
       ),
   );
   server.registerTool(

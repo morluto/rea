@@ -22,6 +22,16 @@ it("accepts long selectors and complete relation and class selections", () => {
   expect(result.expected?.classes).toHaveLength(25);
 });
 
+it("rejects the inert source-map authority setting", () => {
+  expect(
+    javaScriptSemanticQueryInputSchema.safeParse({
+      seed: { kind: "endpoint", value: "/api" },
+      direction: "forward-influence",
+      source_map_authority: { authority: "none" },
+    }).success,
+  ).toBe(false);
+});
+
 it("accepts every reported limitation without a count ceiling", () => {
   const limitations = Array.from(
     { length: 1_001 },

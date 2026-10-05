@@ -11,10 +11,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
-import { createPermissionAuthority } from "../../../src/application/PermissionAuthority.js";
 import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managedWorkflowExamples.js";
-import type { PermissionCeiling } from "../../../src/domain/permissionPolicy.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
@@ -23,50 +21,21 @@ it("opens a managed PE and executes the managed static provider through MCP", as
   const directory = await createTestTempDirectory("rea-managed-mcp-");
   const path = join(directory, "fixture.exe");
   const rightPath = join(directory, "fixture-renamed.exe");
-  const runtimePath = join(directory, "dotnet");
   await writeFile(path, buildManagedPeFixture());
-  await writeFile(runtimePath, "#!/bin/sh\n");
   await writeFile(rightPath, buildManagedPeFixture({ methodName: "Renamed" }));
   const session = composeBinarySession(
     SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
       new ManagedStaticProvider(),
     ]),
   );
-  const runtimeCeiling: PermissionCeiling = {
-    capability: "managed_runtime",
-    roots: [directory],
-    executables: [runtimePath],
-    environment_names: [],
-    network: "none",
-    mount: false,
-  };
-  const authority = await createPermissionAuthority(
-    [runtimeCeiling],
-    [
-      {
-        ...runtimeCeiling,
-        grant_id: "administrator:managed_runtime",
-        lifetime: "administrator",
-        operation_identity: null,
-        expires_at: null,
-      },
-    ],
-  );
-  if (!authority.ok) throw authority.error;
   const server = createServer(session, session, {
-    permissionAuthority: authority.value,
-    managedRuntimePolicy: () => ({
-      status: "enabled",
-      roots: [directory],
-      executablePath: runtimePath,
-    }),
+    managedRuntimeConfiguration: () => ({ executablePath: process.execPath }),
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 0,
       browserObservationEnabled: false,
       electronObservationEnabled: false,
       javascriptReplayEnabled: false,
-      managedRuntimeEnabled: true,
     }),
   });
   const client = new Client({ name: "managed-mcp-test", version: "1.0.0" });
@@ -348,7 +317,6 @@ const verifyRuntimePlan = async (
     confidence: "derived",
     normalized_result: {
       executed: false,
-      authority_model: { capability: "managed_runtime" },
       requested_runtime: { effect: "attach", network: "none" },
       effect_taxonomy: { attaches_process: true },
     },

@@ -12,12 +12,10 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
   const secrets = Array.from({ length: actions.length }, (_, index) => ({
     secret_id: `secret_${index}`,
     environment_variable: `SECRET_${index}`,
-    purpose: "input",
-    redaction: "replace-with-secret-reference",
   }));
   const cookies = Array.from({ length: 129 }, (_, index) => ({
     name: `cookie_${index}`,
-    value: { source: "literal", value: "value", classification: "public" },
+    value: { source: "literal", value: "value" },
     destination: { url: "https://app.example.test/" },
     http_only: false,
     secure: true,
@@ -25,7 +23,7 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
   }));
   const storageEntries = Array.from({ length: 129 }, (_, index) => ({
     name: `entry_${index}`,
-    value: { source: "literal", value: "value", classification: "public" },
+    value: { source: "literal", value: "value" },
   }));
   const routes = Array.from({ length: 257 }, (_, index) => ({
     route_id: `route_${index}`,
@@ -38,9 +36,6 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
     browser: {
       mode: "launch",
       executable_path: "/opt/chromium",
-      headless: true,
-      user_data: "temporary-owned",
-      cleanup: "close-and-delete-profile",
     },
     start_url: { url: "https://app.example.test/" },
     allowed_origins: ["https://app.example.test"],
@@ -72,6 +67,21 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
   ).toHaveLength(257);
 });
 
+it("defaults scenario scope to the start URL origin", () => {
+  const scenario = browserScenarioSchema.parse({
+    browser: {
+      mode: "launch",
+      executable_path: "chrome",
+    },
+    start_url: { url: "https://app.example.test/" },
+    actions: [
+      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+    ],
+  });
+
+  expect(scenario.allowed_origins).toEqual(["https://app.example.test"]);
+});
+
 it("accepts complete browser inputs beyond former string length caps", () => {
   const longValue = "value".repeat(20_000);
   const longToken = "a".repeat(70_000);
@@ -81,9 +91,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
     browser: {
       mode: "launch",
       executable_path: longPath,
-      headless: true,
-      user_data: "temporary-owned",
-      cleanup: "close-and-delete-profile",
     },
     start_url: { url: `https://app.example.test${longPath}` },
     allowed_origins: ["https://app.example.test"],
@@ -91,8 +98,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
       {
         secret_id: longToken,
         environment_variable: longEnvironmentVariable,
-        purpose: "input",
-        redaction: "replace-with-secret-reference",
       },
     ],
     actions: [
@@ -110,7 +115,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
           value: {
             source: "literal",
             value: longValue,
-            classification: "public",
           },
           destination: { url: "https://app.example.test/" },
           http_only: false,
@@ -136,7 +140,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
                 value: {
                   source: "literal",
                   value: longValue,
-                  classification: "public",
                 },
               },
             ],
@@ -171,9 +174,6 @@ it("accepts caller-selected viewport sizes and click counts without ceilings", (
     browser: {
       mode: "launch",
       executable_path: "/opt/chromium",
-      headless: true,
-      user_data: "temporary-owned",
-      cleanup: "close-and-delete-profile",
     },
     start_url: { url: "https://app.example.test/" },
     allowed_origins: ["https://app.example.test"],

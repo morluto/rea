@@ -1,64 +1,22 @@
 import { parseConfig } from "../config.js";
-import { readProjectPermissionStore } from "../application/ProjectPermissionStore.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
-import type { PermissionGrant } from "../domain/permissionPolicy.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeDependencies } from "./types.js";
 import type { RuntimeState } from "./state.js";
-import { MCP_PERMISSION_RELOAD_FAILED } from "./messages.js";
 
 export const registerConfigReload = (input: {
   readonly dependencies: RuntimeDependencies;
-  readonly permissionAuthority: PermissionAuthority;
   readonly runtimeState: RuntimeState;
   readonly serverLogger: Logger;
 }): (() => void) => {
-  const { dependencies, permissionAuthority, runtimeState, serverLogger } =
-    input;
-  let reloadQueue = Promise.resolve();
+  const { dependencies, runtimeState, serverLogger } = input;
   return (
     dependencies.registerReload?.(() => {
       const refreshed = parseConfig(dependencies.env);
       if (!refreshed.ok) {
-        serverLogger.error("Reloaded permission policy is invalid");
+        serverLogger.error("Reloaded REA configuration is invalid");
         return;
       }
-      reloadQueue = reloadQueue
-        .then(async () => {
-          let projectGrants: readonly PermissionGrant[] = [];
-          if (
-            refreshed.value.permissionProjectRoot !== undefined &&
-            refreshed.value.permissionProjectStore !== undefined
-          ) {
-            const project = await (
-              dependencies.readProjectPermissionStore ??
-              readProjectPermissionStore
-            )(
-              refreshed.value.permissionProjectStore,
-              refreshed.value.permissionProjectRoot,
-            );
-            if (!project.ok) {
-              serverLogger.error("Reloaded project grants could not be read");
-              return;
-            }
-            projectGrants = project.value?.grants ?? [];
-          }
-          const reloaded = await permissionAuthority.replaceConfiguredPolicy({
-            ceilings: refreshed.value.permissionCeilings,
-            administratorGrants: refreshed.value.administratorPermissionGrants,
-            projectGrants,
-          });
-          if (!reloaded.ok) {
-            serverLogger.error(
-              "Reloaded permission policy could not be applied",
-            );
-            return;
-          }
-          runtimeState.currentConfig = refreshed.value;
-        })
-        .catch(() => {
-          serverLogger.error(MCP_PERMISSION_RELOAD_FAILED);
-        });
+      runtimeState.currentConfig = refreshed.value;
     }) ?? (() => undefined)
   );
 };

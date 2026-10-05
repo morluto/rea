@@ -6,7 +6,6 @@ import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "../application/JavaScriptRuntimeObservationService.js";
-import type { PermissionAuthority } from "../application/PermissionAuthority.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../contracts/javascriptRuntimeObservationToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisError } from "../domain/errors.js";
@@ -21,7 +20,6 @@ import { toCallToolResult } from "./toolResult.js";
 interface RuntimeToolRegistration {
   readonly logger: Logger;
   readonly runtime: JavaScriptRuntimeObservationPort | undefined;
-  readonly permissionAuthority: PermissionAuthority | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
 
@@ -41,12 +39,7 @@ export const registerJavaScriptRuntimeObservationTools = (
         listContract,
         { input, context },
         (parsed, signal) =>
-          listJavaScriptRuntimeTargets(
-            options.runtime,
-            options.permissionAuthority,
-            parsed,
-            { signal },
-          ),
+          listJavaScriptRuntimeTargets(options.runtime, parsed, { signal }),
       ),
   );
   server.registerTool(
@@ -59,12 +52,7 @@ export const registerJavaScriptRuntimeObservationTools = (
         { input, context },
         async (parsed, signal) => {
           const request = observeJavaScriptRuntimeInputSchema.parse(parsed);
-          return observeJavaScriptRuntime(
-            options.runtime,
-            options.permissionAuthority,
-            request,
-            { signal },
-          );
+          return observeJavaScriptRuntime(options.runtime, request, { signal });
         },
       ),
   );

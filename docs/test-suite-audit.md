@@ -117,7 +117,7 @@ order rather than sorting or changing timestamps to conceal it.
 
 Malformed archives, broken and cyclic references, unsupported metadata pointers,
 relative Objective-C method layouts, ambiguous call candidates, digest mismatch,
-cancellation, permission approval, bounded output and owned-resource cleanup
+cancellation, host permission denial, bounded output and owned-resource cleanup
 remain covered. These cases provide evidence beyond a successful real-tool run.
 The hand-assembled relative method fixture stays until compiler-produced
 relative-list fixtures establish equivalent assertions.

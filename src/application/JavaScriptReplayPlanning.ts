@@ -41,21 +41,14 @@ export interface ReplayRuntimeFileIdentity {
   readonly sha256: string;
 }
 
-/** Complete executable and source authority for enabled JavaScript replay. */
-export interface EnabledJavaScriptReplayPolicy {
-  readonly status: "enabled";
-  readonly roots: readonly [string, ...string[]];
+/** Executable paths required to establish isolated Linux JavaScript replay. */
+export interface JavaScriptReplayConfiguration {
   readonly nodePath: string;
   readonly bubblewrapPath: string;
   readonly systemdRunPath: string;
   readonly systemctlPath: string;
   readonly shellPath: string;
 }
-
-/** Parsed JavaScript replay configuration. */
-export type JavaScriptReplayPolicy =
-  | { readonly status: "disabled" }
-  | EnabledJavaScriptReplayPolicy;
 
 export interface JavaScriptReplayHost {
   readonly readSource: (
@@ -71,7 +64,9 @@ export interface JavaScriptReplayHost {
     nodePath: string,
   ) => Promise<readonly ReplayRuntimeFileIdentity[]>;
   readonly seccompDigest: () => string;
-  readonly probe: (policy: EnabledJavaScriptReplayPolicy) => Promise<void>;
+  readonly probe: (
+    configuration: JavaScriptReplayConfiguration,
+  ) => Promise<void>;
 }
 
 export interface PreparedReplayPlan {
@@ -83,7 +78,7 @@ export interface PreparedReplayPlan {
 export interface JavaScriptReplayRunner {
   readonly execute: (
     prepared: PreparedReplayPlan,
-    policy: EnabledJavaScriptReplayPolicy,
+    configuration: JavaScriptReplayConfiguration,
     signal?: AbortSignal,
   ) => Promise<ReplayExecutionResult>;
 }
@@ -101,7 +96,7 @@ const assertReplayManifestWithinProtocolLimit = (
 /** Read, normalize, and content-address every input to one replay experiment. */
 export const prepareReplayPlan = async (
   input: ControlledReplayInput,
-  policy: EnabledJavaScriptReplayPolicy,
+  configuration: JavaScriptReplayConfiguration,
   host: JavaScriptReplayHost,
 ): Promise<PreparedReplayPlan> => {
   assertReplayManifestWithinProtocolLimit(input);
@@ -115,7 +110,7 @@ export const prepareReplayPlan = async (
     ).byteLength > input.limits.input_bytes
   )
     throw new RangeError("Replay case inputs exceed the aggregate byte limit");
-  await host.probe(policy);
+  await host.probe(configuration);
   const [
     runtime,
     bubblewrap,
@@ -127,13 +122,13 @@ export const prepareReplayPlan = async (
     left,
     right,
   ] = await Promise.all([
-    host.identifyExecutable(policy.nodePath, ["--version"]),
-    host.identifyExecutable(policy.bubblewrapPath, ["--version"]),
-    host.identifyExecutable(policy.systemdRunPath, ["--version"]),
-    host.identifyExecutable(policy.systemctlPath, ["--version"]),
-    host.identifyExecutable(policy.shellPath, ["--version"]),
+    host.identifyExecutable(configuration.nodePath, ["--version"]),
+    host.identifyExecutable(configuration.bubblewrapPath, ["--version"]),
+    host.identifyExecutable(configuration.systemdRunPath, ["--version"]),
+    host.identifyExecutable(configuration.systemctlPath, ["--version"]),
+    host.identifyExecutable(configuration.shellPath, ["--version"]),
     host.identifyWorker(),
-    host.identifyRuntimeClosure(policy.nodePath),
+    host.identifyRuntimeClosure(configuration.nodePath),
     prepareSide(input.left, input.limits.module_bytes, host),
     input.right === undefined
       ? Promise.resolve(undefined)

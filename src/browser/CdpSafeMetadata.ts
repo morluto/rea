@@ -204,13 +204,14 @@ const safeDestination = (
 } => {
   try {
     const parsed = new URL(value, baseUrl);
+    const sanitized = sanitizeBrowserUrl(parsed.href).url;
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      return { url: null, scope: "unsupported" };
+      return { url: sanitized, scope: "unsupported" };
     if (!allowedOrigins.has(parsed.origin))
-      return { url: null, scope: "outside_policy" };
-    return { url: sanitizeBrowserUrl(parsed.href).url, scope: "approved" };
+      return { url: sanitized, scope: "outside_policy" };
+    return { url: sanitized, scope: "approved" };
   } catch {
-    return { url: null, scope: "unsupported" };
+    return { url: value, scope: "unsupported" };
   }
 };
 

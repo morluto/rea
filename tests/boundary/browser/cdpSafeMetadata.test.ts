@@ -5,7 +5,7 @@ import { safeResponseMetadata } from "../../../src/browser/CdpSafeMetadata.js";
 const origin = "https://app.example.test";
 
 describe("safe CDP response metadata", () => {
-  it("retains only allowlisted header structure and redacted approved links", () => {
+  it("drops credential headers and preserves complete local link URLs", () => {
     const captured = safeResponseMetadata(
       "request-1",
       `${origin}/api`,
@@ -42,7 +42,7 @@ describe("safe CDP response metadata", () => {
       },
       links: [
         {
-          href: `${origin}/agent?token=%5BREDACTED%5D`,
+          href: `${origin}/agent?token=link-secret`,
           destination_scope: "approved",
           rel: ["mcp", "service-desc"],
           as: null,
@@ -50,7 +50,7 @@ describe("safe CDP response metadata", () => {
           crossorigin: null,
         },
         expect.objectContaining({
-          href: null,
+          href: "https://private.example.test/x",
           destination_scope: "outside_policy",
         }),
       ],
@@ -70,13 +70,13 @@ describe("safe CDP response metadata", () => {
       "credential-secret",
       "cookie-secret",
       "response-secret",
-      "link-secret",
       "nonce-secret",
       "hash-secret",
       "agent-header-secret",
-      "private.example.test",
     ])
       expect(serialized).not.toContain(secret);
+    expect(serialized).toContain("link-secret");
+    expect(serialized).toContain("private.example.test/x");
   });
 
   it("reports well-known agent resources as untrusted observations", () => {
@@ -91,7 +91,7 @@ describe("safe CDP response metadata", () => {
       {
         mechanism: "well_known_resource",
         declaration: "/.well-known/mcp",
-        url: `${origin}/.well-known/mcp?token=%5BREDACTED%5D`,
+        url: `${origin}/.well-known/mcp?token=secret`,
         trust: "page-declared-untrusted",
       },
     ]);

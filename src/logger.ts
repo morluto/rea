@@ -18,19 +18,6 @@ export const createLogger = (mode: "mcp" | "cli", level: LogLevel): Logger =>
     {
       level,
       base: { application: "rea", mode },
-      redact: {
-        paths: [
-          "token",
-          "*.token",
-          "params",
-          "*.params",
-          "arguments",
-          "*.arguments",
-          "environment",
-          "*.environment",
-        ],
-        censor: "[Redacted]",
-      },
     },
     pino.destination({ dest: 2, sync: false }),
   );

@@ -128,7 +128,8 @@ export class GhidraClient {
     this.#requestQueue = new GhidraRequestQueue(
       (method, parameters, requestOptions) =>
         this.#wire.request(method, parameters, requestOptions),
-      (kind, message) => this.#failure(kind, message),
+      (kind, message, cause) => this.#failure(kind, message, cause),
+      () => this.#stopAfterActiveCancellation(),
     );
   }
 
@@ -187,13 +188,27 @@ export class GhidraClient {
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
   close(): Promise<void> {
+    return this.#requestClose(false);
+  }
+
+  #requestClose(forceStop: boolean): Promise<void> {
     const starting = this.#startPromise;
     const controller = this.#startupController;
     controller?.abort();
     this.#closePromise ??= Promise.resolve().then(() =>
-      this.#close(starting, controller),
+      this.#close(starting, controller, forceStop),
     );
     return this.#closePromise;
+  }
+
+  #stopAfterActiveCancellation(): Promise<void> {
+    return this.#requestClose(true).catch((cause: unknown) => {
+      this.#logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Ghidra cleanup after active request cancellation failed",
+      );
+      throw cause;
+    });
   }
 
   /** Latest bounded local diagnostics, with bearer material redacted. */
@@ -311,7 +326,10 @@ export class GhidraClient {
       failure: this.#failure,
       startupTimeoutMs: this.#options.startupTimeoutMs,
     });
-    if (completed.ok) await this.#lineage.observe(this.#launch);
+    if (completed.ok) {
+      await this.#lineage.observe(this.#launch);
+      this.#requestQueue.reopen();
+    }
     return completed;
   }
 
@@ -367,10 +385,11 @@ export class GhidraClient {
   async #close(
     starting: Promise<GhidraStartResult> | undefined,
     controller: AbortController | undefined,
+    forceStop: boolean,
   ): Promise<void> {
     try {
       await starting?.catch(() => undefined);
-      await this.#cleanup();
+      await this.#cleanup(forceStop);
     } finally {
       if (this.#startPromise === starting) this.#startPromise = undefined;
       if (this.#startupController === controller)
@@ -379,14 +398,15 @@ export class GhidraClient {
     }
   }
 
-  async #cleanup(): Promise<void> {
+  async #cleanup(forceStop = false): Promise<void> {
     this.#closing = true;
+    let forcedStopFailure: GhidraSessionError | undefined;
     try {
       this.#requestQueue.failQueued(
         this.#failure("process", "Ghidra session closed"),
       );
       const socket = this.#socket;
-      if (socket !== undefined && !socket.destroyed) {
+      if (!forceStop && socket !== undefined && !socket.destroyed) {
         const shutdown = await this.#wire
           .request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS })
           .catch(() =>
@@ -417,6 +437,11 @@ export class GhidraClient {
             { reason: stopped.reason },
             "Ghidra process cleanup failed closed",
           );
+          if (forceStop)
+            forcedStopFailure = this.#failure(
+              "process",
+              `Ghidra process cleanup after cancellation was incomplete: ${stopped.reason}`,
+            );
         }
       }
       this.#lastDiagnostics = this.#diagnostics();
@@ -424,11 +449,22 @@ export class GhidraClient {
       this.#launch = undefined;
       const runtimeRoot = this.#runtimeRoot;
       this.#runtimeRoot = undefined;
-      await runtimeRoot?.close();
+      try {
+        await runtimeRoot?.close();
+      } catch (cause: unknown) {
+        if (forceStop)
+          forcedStopFailure ??= this.#failure(
+            "process",
+            "Ghidra runtime cleanup after cancellation failed",
+            cause,
+          );
+        else throw cause;
+      }
       this.#snapshotPath = undefined;
       this.#token = undefined;
       this.#runId = undefined;
       this.#responseBuffer.reset();
+      if (forcedStopFailure !== undefined) throw forcedStopFailure;
     } finally {
       this.#closing = false;
     }

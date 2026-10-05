@@ -19,9 +19,9 @@ const textSchema = z.string().min(1);
 
 const decompilerSchema = z.strictObject({
   name: textSchema,
-  version: textSchema.nullable(),
+  version: textSchema.nullable().default(null),
   family: z.enum(["ilspy", "dnspy", "dnlib", "mono-cecil", "other"]),
-  executable_sha256: digestSchema.nullable(),
+  executable_sha256: digestSchema.nullable().default(null),
   options: z.array(z.string()).default([]),
 });
 

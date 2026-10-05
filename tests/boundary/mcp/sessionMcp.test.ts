@@ -233,13 +233,6 @@ describe("process residuals over MCP", () => {
     const session = createTestBinarySession(() => client("fixture", []));
     const server = createServer(session, session, {
       logger: silentLogger,
-      processPolicy: () => ({
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [dirname(processFixture)],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      }),
     });
     const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
     const [clientTransport, serverTransport] =
@@ -253,8 +246,6 @@ describe("process residuals over MCP", () => {
       arguments: {
         executable: process.execPath,
         arguments: [processFixture, "partial"],
-        working_directory: dirname(processFixture),
-        limits: { output_bytes: 1 },
       },
     });
     expect(captured.isError, text(captured)).not.toBe(true);

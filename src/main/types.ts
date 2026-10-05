@@ -9,5 +9,4 @@ export interface RuntimeDependencies {
   readonly loadOptionalProviders?: () => Promise<
     import("./transport.js").OptionalProviders
   >;
-  readonly readProjectPermissionStore?: typeof import("../application/ProjectPermissionStore.js").readProjectPermissionStore;
 }

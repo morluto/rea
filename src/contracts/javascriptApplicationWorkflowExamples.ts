@@ -22,8 +22,8 @@ const reconciliationEvidence = createEvidence(
     parameters: {
       static_layers:
         JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers.map(
-          ({ role, analysis }) => ({
-            role,
+          ({ analysis }) => ({
+            role: "application",
             evidence_id: analysis.evidence_id,
             runtime_mappings: [],
           }),

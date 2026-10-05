@@ -7,13 +7,11 @@ have equivalent `rea list-javascript-runtime-targets` and
 `rea observe-javascript-runtime` commands. Successful calls return
 deterministic Evidence.
 
-This authority is disabled by default and is separate from browser CDP,
-Electron file-page inspection, Process Capture, and controlled JavaScript
-replay:
+Each request supplies the loopback Inspector endpoint and, for observation, the
+target ID. This surface is separate from browser CDP, Electron file-page
+inspection, Process Capture, and controlled JavaScript replay:
 
 ```bash
-export REA_V8_INSPECTOR_OBSERVE_ENABLED=true
-
 rea list-javascript-runtime-targets http://127.0.0.1:9229 \
   --json
 rea observe-javascript-runtime http://127.0.0.1:9229 TARGET_ID \
@@ -98,14 +96,14 @@ Electron role, so Evidence records the role authority as
 `caller-declared-unverified`.
 
 Electron main, preload, and renderer behavior can therefore be observed only
-as separate approved Inspector targets. The provider does not infer that two
+as separate Inspector targets. The provider does not infer that two
 targets belong to the same Electron application.
 
 ## Capture and determinism
 
 Every observation records its time window and returns all valid script and
 execution-context events received during it. Per-location protocol validation
-remains in force. Scripts are authorized after capture, deduplicated by stable
+remains in force. Scripts are validated after capture, deduplicated by stable
 metadata, and canonically sorted. Wall-clock timestamps and protocol script IDs
 are excluded from the durable result, so identical inputs and captured metadata
 produce the same Evidence ID.
@@ -120,8 +118,8 @@ behavior does not occur.
 Pass the resulting observation Evidence and an
 `analyze_javascript_application` Evidence record to
 `reconcile_javascript_runtime`. The reconciliation accepts this provider
-alongside passive web and Electron page captures. Exact approved file or URL
-mappings can correlate script presence with JavaScript Application Graph
+alongside passive web and Electron page captures. Exact file or URL mappings
+supplied with the request can correlate script presence with JavaScript Application Graph
 assets. Because this provider never reads source bytes, matches normally use a
 unique authorized location and remain weaker than captured-byte identity.
 Builtin `node:` scripts remain runtime-only nodes unless a future explicit

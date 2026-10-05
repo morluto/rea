@@ -82,7 +82,7 @@ export const authFlowEventSchema = z.strictObject({
   token_lifecycle: tokenLifecycleEventSchema.nullable(),
   /** Correlation ID linking challenge-response pairs. */
   correlation_id: z.string().nullable(),
-  /** Whether credentials were detected and redacted. */
+  /** Whether the capture producer marked credentials as redacted. */
   credentials_redacted: z.boolean().default(false),
   /** Whether the authentication succeeded. */
   succeeded: z.boolean().default(false),
@@ -101,7 +101,7 @@ export const customProtocolCaptureSchema = z.strictObject({
   auth_events: z.array(authFlowEventSchema).default([]),
   /** Whether any frame was truncated. */
   has_truncated: z.boolean().default(false),
-  /** Whether credentials were detected. */
+  /** Whether the capture producer detected credential content. */
   credentials_detected: z.boolean().default(false),
 });
 

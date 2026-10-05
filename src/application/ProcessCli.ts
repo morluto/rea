@@ -1,7 +1,5 @@
-import { projectPermissionFailure } from "./PermissionFailure.js";
 import { readFile } from "node:fs/promises";
 
-import { parseConfig } from "../config.js";
 import {
   AnalysisError,
   AnalysisInputError,
@@ -11,18 +9,16 @@ import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
+import { processScenarioSchema } from "../domain/processScenario.js";
 import {
   compareProcessCaptures,
-  parseProcessScenario,
   parseProcessCapture,
 } from "../domain/processCapture.js";
 import { captureProcessScenario } from "./ProcessHarness.js";
-import { processCapturePermissionRequest } from "./ProcessCapturePermission.js";
 import {
   PROCESS_PROVIDER,
   createProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
-import { loadConfiguredPermissionAuthority } from "./PermissionConfiguration.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput {
@@ -31,38 +27,28 @@ export interface ProcessCliErrorOutput {
   readonly message: string;
 }
 
-/** Capture one JSON scenario through the same policy and evidence contract as MCP. */
+/** Capture one JSON scenario through the shared process harness and Evidence contract. */
 export const captureProcessScenarioFile = async (
   path: string,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ) => {
   try {
     const input = await readJson(path);
-    let scenario;
-    try {
-      scenario = parseProcessScenario(input);
-    } catch {
-      throw new ProcessCliFailure(
-        "invalid_input",
-        "Process scenario is invalid. Check its required fields and limits, then try again.",
+    const parsed = processScenarioSchema.safeParse(input);
+    if (!parsed.success)
+      throw new AnalysisInputError(
+        "capture_process_scenario",
+        { cause: parsed.error },
+        projectInputIssues(parsed.error.issues, input),
       );
-    }
-    const config = parseConfig(environment);
-    if (!config.ok) return cliAnalysisError(config.error);
-    const authority = await loadConfiguredPermissionAuthority(config.value);
-    if (!authority.ok) return cliAnalysisError(authority.error);
-    const authorized = await authority.value.authorize(
-      processCapturePermissionRequest(scenario),
-      "read",
-    );
-    if (!authorized.ok)
-      return cliAnalysisError(projectPermissionFailure(authorized.error));
     const captured = await captureProcessScenario(
-      scenario,
-      config.value.processExecutionPolicy,
+      parsed.data,
+      undefined,
+      process.platform,
+      environment,
     );
     if (!captured.ok) return cliAnalysisError(captured.error);
-    return createProcessCaptureEvidence(scenario, captured.value);
+    return createProcessCaptureEvidence(parsed.data, captured.value);
   } catch (cause: unknown) {
     return projectProcessCliError(cause);
   }

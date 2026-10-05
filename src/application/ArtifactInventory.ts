@@ -10,7 +10,6 @@ import type {
   ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
-  ArtifactNativeMountPolicy,
 } from "./ArtifactInventory/types.js";
 
 export { scanCanonicalArtifactInventory } from "./ArtifactInventory/scanCanonical.js";
@@ -19,7 +18,6 @@ export type {
   ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
-  ArtifactNativeMountPolicy,
 } from "./ArtifactInventory/types.js";
 
 /** Inventory one local artifact and return every graph collection inline. */
@@ -27,7 +25,6 @@ export const inventoryArtifact = async (
   inputPath: string,
   options: {
     readonly signal?: AbortSignal;
-    readonly nativeMount?: ArtifactNativeMountPolicy;
     readonly integrity?: ArtifactIntegrityPolicy;
   } = {},
 ): Promise<ArtifactInventoryResult> => {

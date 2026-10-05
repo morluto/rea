@@ -20,7 +20,8 @@ const processEvidenceParameters = (
   executable_name: scenario.executable.split("/").at(-1) ?? scenario.executable,
   argument_count: scenario.arguments.length,
   event_count: scenario.events.length,
-  filesystem_root_count: scenario.filesystem_roots.length,
+  filesystem_observation_path_count:
+    scenario.filesystem_observation_paths.length,
   checkpoint_count: scenario.checkpoints.length,
   command_shim_count: scenario.command_shims.length,
   normalization: scenario.normalization,

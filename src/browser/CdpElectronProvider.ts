@@ -144,11 +144,11 @@ export class CdpElectronProvider implements ElectronObservationPort {
       return err(providerError(cause, "inspect_electron_page"));
     } finally {
       if (targetSession !== undefined)
-        await closeCdpTargetSession(targetSession, [
-          "Debugger",
-          "Runtime",
-          "Page",
-        ]);
+        await closeCdpTargetSession(
+          targetSession,
+          ["Debugger", "Runtime", "Page"],
+          options.signal,
+        );
     }
   }
 }

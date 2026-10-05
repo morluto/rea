@@ -307,7 +307,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["capture_process_scenario", "correlate_static_and_runtime"],
         instruction:
-          "Reuse a supplied capture when relevant; otherwise capture when enabled and authorized. Correlate through explicit hypotheses rather than timing or name coincidence.",
+          "Reuse a supplied capture when relevant; otherwise capture a bounded runtime reproduction when it can distinguish competing explanations. Correlate through explicit hypotheses rather than timing or name coincidence.",
       },
       {
         tools: ["record_unknown"],
@@ -363,18 +363,18 @@ export const PROMPT_CONTRACTS = [
     name: "prepare_bounded_process_capture",
     title: "Prepare a bounded process capture",
     description:
-      "Design an approval-gated process capture scenario with exact executable, filesystem, environment, network, replay, timeout, and cleanup boundaries.",
+      "Choose a command, inputs, observations, and stopping conditions for a process capture that answers the behavioral question.",
     objective:
-      "Prepare and, after authorization, run a controlled process experiment that can answer the stated behavioral question.",
+      "Run a caller-selected process experiment that can answer the stated behavioral question.",
     arguments: {
       behavior_question: required(
         "Behavioral question the capture must answer and stopping condition",
       ),
       executable: required(
-        "Absolute executable path requested for the scenario",
+        "Command name or executable path requested for the scenario",
       ),
       working_directory: required(
-        "Absolute working directory requested for the scenario",
+        "Working directory requested for the scenario",
       ),
       prior_capture_evidence_id: optional(
         "Retained process capture Evidence to compare or refine",
@@ -385,7 +385,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["capture_process_scenario"],
         instruction:
-          "Present the requested scenario and explain the actual authority, runtime constraints, and cleanup behavior. Run only when operator policy authorizes it.",
+          "Run the caller-provided scenario. Explain command lookup, effective working directory, inherited environment, optional filesystem observations, and that the target runs with the current user's permissions.",
       },
       {
         tools: ["compare_process_captures"],

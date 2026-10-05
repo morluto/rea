@@ -15,13 +15,10 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_signature: {},
   inspect_plist: { path: "/Applications/Example.app/Contents/Info.plist" },
   list_architectures: {},
-  observe_native_ui: { pid: 123, window_id: 456, observation_approved: true },
+  observe_native_ui: { pid: 123, window_id: 456 },
   capture_native_ui_scenario: {
     pid: 123,
     window_id: 456,
-    observation_approved: true,
-    actions_approved: true,
-    restore: "leave-as-is",
     steps: [{ kind: "wait", milliseconds: 100 }],
   },
   demangle_swift: { symbols: ["$s4Test3fooyyF"] },
@@ -55,12 +52,12 @@ const native = <Name extends string, Schema extends z.ZodObject>(
 export const NATIVE_TOOL_CONTRACTS = [
   native(
     "observe_native_ui",
-    "Passively observe one explicitly approved already-running native app PID and window ID bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; OS permission denial fails without broad capture or target launch.",
+    "Observe an already-running native app by PID and window ID, bound to the active Mach-O target. Captures a bounded accessibility tree and selected-window screenshot; OS permission denial fails without broad capture or target launch.",
     nativeUiObservationInputSchema,
   ),
   native(
     "capture_native_ui_scenario",
-    "Run separately approved selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state. The caller must choose leave-as-is; automatic restoration is unsupported.",
+    "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted.",
     nativeUiScenarioInputSchema,
   ),
   native(

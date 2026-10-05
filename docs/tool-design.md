@@ -72,7 +72,8 @@ or model-authored loop when one call can answer the question.
 - Separate observed facts from derived and inferred edges. Cite the evidence
   supporting every important relationship; preserve unresolved edges.
 - Declare read-only, mutation, process, filesystem, network, and UI effects
-  truthfully in the contract and permission boundary.
+  truthfully in the contract and enforce the target and lifecycle named in the
+  request.
 - Keep provider-specific types out of provider-neutral domain and application
   layers. Normalize supported provider results without implying equal coverage.
 

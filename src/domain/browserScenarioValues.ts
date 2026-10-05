@@ -10,16 +10,7 @@ export const scenarioIdentifierSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 
-const absoluteExecutablePathSchema = z
-  .string()
-  .min(1)
-  .refine(
-    (value) =>
-      value.startsWith("/") ||
-      /^[A-Za-z]:[\\/]/u.test(value) ||
-      value.startsWith("\\\\"),
-    "Expected an absolute browser executable path",
-  );
+const browserExecutablePathSchema = z.string().trim().min(1);
 
 const browserScenarioBaseUrlSchema = z
   .string()
@@ -35,14 +26,11 @@ const browserScenarioBaseUrlSchema = z
     if (
       (url.protocol !== "http:" && url.protocol !== "https:") ||
       url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== ""
+      url.password !== ""
     ) {
       context.addIssue({
         code: "custom",
-        message:
-          "Browser URLs must be HTTP(S), omit credentials, and declare query values separately",
+        message: "Browser URLs must be HTTP(S) and omit credentials",
       });
       return z.NEVER;
     }
@@ -53,7 +41,6 @@ export const browserScenarioValueSchema = z.discriminatedUnion("source", [
   z.strictObject({
     source: z.literal("literal"),
     value: z.string(),
-    classification: z.literal("public"),
   }),
   z.strictObject({
     source: z.literal("secret"),
@@ -67,7 +54,7 @@ const queryEntrySchema = z.strictObject({
   value: browserScenarioValueSchema,
 });
 
-/** URL whose values remain explicit public literals or declared secret references. */
+/** URL with ordinary inline details and optional structured secret query references. */
 export const browserScenarioUrlSchema = z.strictObject({
   url: browserScenarioBaseUrlSchema,
   query: z.array(queryEntrySchema).default([]),
@@ -77,17 +64,18 @@ export type BrowserScenarioUrl = z.infer<typeof browserScenarioUrlSchema>;
 export const browserScenarioBrowserSchema = z.discriminatedUnion("mode", [
   z.strictObject({
     mode: z.literal("launch"),
-    executable_path: absoluteExecutablePathSchema,
-    headless: z.literal(true),
-    user_data: z.literal("temporary-owned"),
-    cleanup: z.literal("close-and-delete-profile"),
+    executable_path: browserExecutablePathSchema,
+    headless: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Run without a visible browser window; defaults to true and can be disabled when the host supports a display.",
+      ),
   }),
   z.strictObject({
     mode: z.literal("connect"),
     cdp_endpoint: browserEndpointSchema,
     target_id: z.string().trim().min(1),
-    ownership: z.literal("external"),
-    cleanup: z.literal("disconnect-only"),
   }),
 ]);
 
@@ -112,7 +100,7 @@ export const browserScenarioEnvironmentSchema = z
       .default("UTC"),
     color_scheme: z.enum(["light", "dark", "no-preference"]).default("light"),
     reduced_motion: z.enum(["reduce", "no-preference"]).default("reduce"),
-    service_workers: z.literal("block").default("block"),
+    service_workers: z.enum(["allow", "block"]).default("block"),
   })
   .default({
     viewport: { width: 1_280, height: 720, device_scale_factor: 1 },
@@ -150,7 +138,6 @@ const locatorSchema = z.discriminatedUnion("kind", [
       "textbox",
     ]),
     name: z.string().min(1),
-    exact: z.literal(true),
   }),
   z.strictObject({
     kind: z.literal("css"),
@@ -265,7 +252,7 @@ export const browserScenarioStorageSchema = z
   })
   .default({ cookies: [], local_storage: [], session_storage: [] })
   .describe(
-    "Optional initial cookies, local storage, or session storage. Defaults to empty; every supplied value and origin must be explicitly declared and approved.",
+    "Optional initial cookies, local storage, or session storage. Defaults to empty; every supplied value and origin must be declared and within the allowed origins.",
   );
 
 const headerNameSchema = z
@@ -311,7 +298,7 @@ export const browserScenarioRequestReplaySchema = z
     z.strictObject({ mode: z.literal("disabled") }),
     z.strictObject({
       mode: z.literal("exact"),
-      unmatched: z.enum(["abort", "passthrough-approved-origins"]),
+      unmatched: z.enum(["abort", "passthrough-declared-origins"]),
       routes: z.array(replayRouteSchema).min(1),
     }),
   ])
@@ -322,54 +309,14 @@ export const browserScenarioRequestReplaySchema = z
 
 export const browserScenarioSecretSchema = z.strictObject({
   secret_id: scenarioIdentifierSchema,
-  environment_variable: z.string().regex(/^[A-Z_][A-Z0-9_]*$/u),
-  purpose: z.enum(["input", "storage", "request-replay"]),
-  redaction: z.literal("replace-with-secret-reference"),
+  environment_variable: z
+    .string()
+    .min(1)
+    .refine(
+      (name) => !name.includes("=") && !name.includes("\0"),
+      "Environment variable names cannot contain '=' or NUL",
+    ),
 });
-
-const REQUIRED_REDACTED_HEADERS = [
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-] as const;
-
-const normalizedNames = () =>
-  z
-    .array(
-      z
-        .string()
-        .trim()
-        .min(1)
-        .transform((value) => value.toLowerCase()),
-    )
-    .transform((values) => [...new Set(values)].sort());
-
-export const browserScenarioRedactionSchema = z
-  .strictObject({
-    secret_values: z
-      .literal("replace-with-secret-reference")
-      .default("replace-with-secret-reference"),
-    query_parameter_names: normalizedNames().default([]),
-    header_names: normalizedNames().default([...REQUIRED_REDACTED_HEADERS]),
-  })
-  .superRefine(({ header_names: names }, context) => {
-    for (const required of REQUIRED_REDACTED_HEADERS)
-      if (!names.includes(required))
-        context.addIssue({
-          code: "custom",
-          path: ["header_names"],
-          message: `Required credential header ${required} must be redacted`,
-        });
-  })
-  .default({
-    secret_values: "replace-with-secret-reference",
-    query_parameter_names: [],
-    header_names: [...REQUIRED_REDACTED_HEADERS],
-  })
-  .describe(
-    "Redaction policy. Secret values and credential headers are always redacted; list query parameter names when a secret is used in a URL.",
-  );
 
 const snapshotKindSchema = z.enum([
   "screenshot",

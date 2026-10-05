@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   digestBytes,
-  type EnabledJavaScriptReplayPolicy,
+  type JavaScriptReplayConfiguration,
   type JavaScriptReplayRunner,
   type PreparedReplayPlan,
 } from "../application/JavaScriptReplayPlanning.js";
@@ -42,7 +42,7 @@ const isAborted = (signal: AbortSignal | undefined): boolean =>
 export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
   async execute(
     prepared: PreparedReplayPlan,
-    policy: EnabledJavaScriptReplayPolicy,
+    configuration: JavaScriptReplayConfiguration,
     signal?: AbortSignal,
   ): Promise<ReplayExecutionResult> {
     if (isAborted(signal))
@@ -53,13 +53,13 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
         cleanup: { state: "complete", residual_resources: [] },
       });
     const unit = `rea-replay-${randomBytes(8).toString("hex")}.service`;
-    const closure = await validateReplayCommitments(prepared, policy);
+    const closure = await validateReplayCommitments(prepared, configuration);
     const encoded = buildWorkerPayload(prepared);
     const filter = await temporaryFilterHandle();
     try {
       const replayProcess = launchReplayProcess({
         prepared,
-        policy,
+        configuration,
         encoded,
         closure,
         filterPath: filter.path,
@@ -70,8 +70,11 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
         const collected = await replayProcess.completion;
         if (replayProcess.terminationRequest !== undefined)
           await replayProcess.terminationRequest;
-        const unitResult = await observeUnitResult(policy.systemctlPath, unit);
-        const cleanup = await observeCleanup(policy.systemctlPath, unit);
+        const unitResult = await observeUnitResult(
+          configuration.systemctlPath,
+          unit,
+        );
+        const cleanup = await observeCleanup(configuration.systemctlPath, unit);
         return resolveReplayResult({
           prepared,
           collected,
@@ -99,20 +102,20 @@ export class LinuxJavaScriptReplayRunner implements JavaScriptReplayRunner {
 
 const validateReplayCommitments = async (
   prepared: PreparedReplayPlan,
-  policy: EnabledJavaScriptReplayPolicy,
+  configuration: JavaScriptReplayConfiguration,
 ): Promise<readonly RuntimeFile[]> => {
-  const closure = await resolveLinuxRuntimeClosure(policy.nodePath);
+  const closure = await resolveLinuxRuntimeClosure(configuration.nodePath);
   assertRuntimeCommitment(prepared, closure);
   const workerPath = prepared.publicPlan.runtime.worker.path;
   if (
     digestBytes(await readFile(workerPath)) !==
     prepared.publicPlan.runtime.worker.sha256
   )
-    throw new TypeError("Replay worker changed after approval");
+    throw new TypeError("Replay worker changed after plan creation");
   if (
     linuxX64ReplaySeccompDigest() !== prepared.publicPlan.sandbox.seccomp_sha256
   )
-    throw new TypeError("Replay seccomp policy changed after approval");
+    throw new TypeError("Replay seccomp policy changed after plan creation");
   return closure;
 };
 
@@ -128,7 +131,7 @@ const buildWorkerPayload = (prepared: PreparedReplayPlan): Buffer => {
 
 interface LaunchReplayProcessOptions {
   readonly prepared: PreparedReplayPlan;
-  readonly policy: EnabledJavaScriptReplayPolicy;
+  readonly configuration: JavaScriptReplayConfiguration;
   readonly encoded: Buffer;
   readonly closure: readonly RuntimeFile[];
   readonly filterPath: string;
@@ -149,11 +152,18 @@ interface ReplayProcess {
 const launchReplayProcess = (
   options: LaunchReplayProcessOptions,
 ): ReplayProcess => {
-  const { prepared, policy, encoded, closure, filterPath, unit, signal } =
-    options;
+  const {
+    prepared,
+    configuration,
+    encoded,
+    closure,
+    filterPath,
+    unit,
+    signal,
+  } = options;
   const arguments_ = systemdArguments({
     unit,
-    policy,
+    configuration,
     prepared,
     workerPath: prepared.publicPlan.runtime.worker.path,
     closure,
@@ -164,7 +174,7 @@ const launchReplayProcess = (
   let termination: "cancelled" | "timeout" | undefined;
   let terminationRequest: Promise<void> | undefined;
   const requestTermination = (): void => {
-    terminationRequest ??= killUnit(policy.systemctlPath, unit);
+    terminationRequest ??= killUnit(configuration.systemctlPath, unit);
     child?.kill("SIGKILL");
   };
   const terminate = (): void => {
@@ -172,7 +182,7 @@ const launchReplayProcess = (
     requestTermination();
   };
   const completion = new Promise<CollectedProcess>((resolve, reject) => {
-    child = spawn(policy.systemdRunPath, arguments_, {
+    child = spawn(configuration.systemdRunPath, arguments_, {
       stdio: ["pipe", "pipe", "pipe"],
       env: replayProcessEnvironment(),
     });

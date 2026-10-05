@@ -53,21 +53,15 @@ const registerWebMcp = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "discover-webmcp-tools", async () => {
-        const context = await browserContext("discover_webmcp_tools");
-        if (!context.ok) return context.error;
+        const context = browserContext();
         const parsed = discoverWebMcpToolsInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
-          allowed_origins:
-            options.allowedOrigins ?? context.allowedBrowserOrigins,
+          allowed_origins: options.allowedOrigins,
           target_id: args.targetId,
           observation_ms: options.observationMs,
         });
         if (!parsed.success) return inputError("discover_webmcp_tools");
-        const result = await discoverWebMcpTools(
-          context.provider,
-          context.authority,
-          parsed.data,
-        );
+        const result = await discoverWebMcpTools(context.provider, parsed.data);
         return result.ok ? result.value : browserCliError(result.error);
       }),
   });
@@ -123,7 +117,8 @@ const registerScreenshot = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.captureWebScreenshot, {
-    description: "Capture an explicitly approved visible page viewport",
+    description:
+      "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
       endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
@@ -133,18 +128,15 @@ const registerScreenshot = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "capture-web-screenshot", async () => {
-        const context = await browserContext("capture_web_screenshot");
-        if (!context.ok) return context.error;
+        const context = browserContext();
         const parsed = captureWebScreenshotInputSchema.safeParse({
           cdp_endpoint: args.endpoint,
-          allowed_origins:
-            options.allowedOrigins ?? context.allowedBrowserOrigins,
+          allowed_origins: options.allowedOrigins,
           target_id: args.targetId,
         });
         if (!parsed.success) return inputError("capture_web_screenshot");
         const result = await captureWebScreenshot(
           context.provider,
-          context.authority,
           parsed.data,
         );
         return result.ok ? result.value : browserCliError(result.error);

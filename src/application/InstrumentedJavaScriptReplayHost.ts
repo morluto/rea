@@ -55,7 +55,9 @@ export class InstrumentedJavaScriptReplayHost implements JavaScriptReplayHost {
     return this.delegate.seccompDigest();
   }
 
-  probe(policy: Parameters<JavaScriptReplayHost["probe"]>[0]): Promise<void> {
-    return this.delegate.probe(policy);
+  probe(
+    configuration: Parameters<JavaScriptReplayHost["probe"]>[0],
+  ): Promise<void> {
+    return this.delegate.probe(configuration);
   }
 }

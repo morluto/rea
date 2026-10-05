@@ -10,6 +10,39 @@ import { ok } from "../../../../src/domain/result.js";
 import type { NativeCommandRunner } from "../../../../src/native/CommandRunner.js";
 
 describe("artifact Mach-O slices", () => {
+  it("rejects lipo slice sizes that exceed the observed artifact bytes", async () => {
+    const root = await createTestTempDirectory("rea-slices-short-");
+    const binary = join(root, "fat");
+    await writeFile(binary, Buffer.from("0123456789"));
+    const runner: NativeCommandRunner = {
+      run: () =>
+        Promise.resolve(
+          ok({
+            tool: "lipo",
+            executable: "/usr/bin/lipo",
+            executableSha256: "1".repeat(64),
+            toolVersion: null,
+            versionReason: "fixture",
+            arguments: ["-detailed_info", binary],
+            stdout:
+              "architecture arm64\n cputype 16777228\n cpusubtype 0\n offset 0\n size 100\n align 2^2\n",
+            stderr: "",
+            stdoutBytes: 1,
+            stderrBytes: 0,
+            exitCode: 0,
+            signal: null,
+          }),
+        ),
+    };
+    const reader = new MachOSliceArtifactReader(binary, runner);
+    const enumerate = async (): Promise<void> => {
+      for await (const _entry of reader.entries()) {
+        // Enumeration must reject out-of-bounds lipo metadata before yielding.
+      }
+    };
+    await expect(enumerate()).rejects.toMatchObject({ reason: "integrity" });
+  });
+
   it("uses lipo metadata to read universal slice ranges", async () => {
     const root = await createTestTempDirectory("rea-slices-");
     const binary = join(root, "fat");

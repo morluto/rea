@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 import { copyFile, mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -37,6 +37,9 @@ describe("application workflow MCP parity", () => {
     ]);
     if (!left.ok) throw left.error;
     if (!right.ok) throw right.error;
+    const leftAnalysis = javascriptApplicationAnalysisResultSchema.parse(
+      left.value.normalized_result,
+    );
     const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(),
@@ -54,6 +57,18 @@ describe("application workflow MCP parity", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      const relativeApplication = await client.callTool({
+        name: "analyze_javascript_application",
+        arguments: { input_path: relative(process.cwd(), leftRoot) },
+      });
+      expect(relativeApplication.isError).not.toBe(true);
+      expect(relativeApplication.structuredContent).toMatchObject({
+        evidence_id: left.value.evidence_id,
+        result: { input_path: leftAnalysis.input_path },
+        evidence: {
+          subject: { local_path: left.value.subject?.local_path },
+        },
+      });
       const full = await client.callTool({
         name: "compare_javascript_export_shapes",
         arguments: { left: left.value, right: right.value, ...selectors },

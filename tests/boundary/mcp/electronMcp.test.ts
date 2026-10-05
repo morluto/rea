@@ -1,5 +1,5 @@
 import { rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -10,9 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { ElectronActiveObservationPort } from "../../../src/application/ElectronActiveObservationPort.js";
-import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
-import { parseConfig } from "../../../src/config.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
@@ -53,23 +51,15 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     electronFileUrl: pathToFileURL(join(root, "index.html")).href,
   });
   browsers.push(browser);
-  const config = parseConfig({
-    REA_ELECTRON_OBSERVE_ENABLED: "true",
-  });
-  if (!config.ok) throw config.error;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok) throw authority.error;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
     electronObservation: new CdpElectronProvider(),
-    permissionAuthority: authority.value,
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 1,
-      electronObservationEnabled: true,
     }),
   });
   const client = new Client({ name: "electron-mcp-test", version: "1" });
@@ -155,7 +145,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   });
 }, 20_000);
 
-it("exposes active Electron scenarios through the separately granted MCP boundary", async () => {
+it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
   const root = await createTestTempDirectory("rea-electron-active-mcp-");
   temporary.push(root);
   const applicationPath = join(root, "main.js");
@@ -163,6 +153,10 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
   const aliasedRoot = join(root, "..", `${root.split("/").at(-1)}-alias`);
   await symlink(root, aliasedRoot, "dir");
   temporary.push(aliasedRoot);
+  const workingDirectory = await createTestTempDirectory(
+    "rea-electron-working-directory-",
+  );
+  temporary.push(workingDirectory);
   const capturedInputs: unknown[] = [];
   const activeResult =
     createElectronActiveObservationFixtureResult(applicationPath);
@@ -177,28 +171,15 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
       return { ok: true, value: activeResult };
     },
   };
-  const config = parseConfig({
-    REA_ELECTRON_AUTOMATE_ENABLED: "true",
-    REA_ELECTRON_AUTOMATE_AUTO_GRANT: "true",
-    REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: JSON.stringify([
-      dirname(process.execPath),
-    ]),
-    REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: JSON.stringify([root]),
-  });
-  if (!config.ok) throw config.error;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok) throw authority.error;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
     electronActiveObservation: provider,
-    permissionAuthority: authority.value,
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 0,
-      electronAutomationEnabled: true,
     }),
   });
   const client = new Client({ name: "electron-active-mcp-test", version: "1" });
@@ -213,7 +194,7 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
     arguments: {
       executable_path: process.execPath,
       application_path: join(aliasedRoot, "main.js"),
-      application_root: aliasedRoot,
+      application_root: workingDirectory,
       args: ["--token", "super-secret"],
       actions: [
         { step_id: "submit", kind: "click", selector: "#submit-secret" },
@@ -234,20 +215,31 @@ it("exposes active Electron scenarios through the separately granted MCP boundar
   expect(capturedInputs).toHaveLength(1);
   expect(capturedInputs[0]).toMatchObject({
     application_path: applicationPath,
+    application_root: workingDirectory,
+  });
+  const inferredRoot = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      executable_path: process.execPath,
+      application_path: applicationPath,
+      actions: [],
+    },
+  });
+  expect(inferredRoot.isError, JSON.stringify(inferredRoot)).not.toBe(true);
+  expect(capturedInputs[1]).toMatchObject({
+    application_path: applicationPath,
     application_root: root,
   });
   expect(JSON.stringify(captured.structuredContent)).not.toContain(
     "submit-secret",
   );
-  expect(JSON.stringify(captured.structuredContent)).not.toContain(
-    "super-secret",
-  );
+  expect(JSON.stringify(captured.structuredContent)).toContain("super-secret");
   expect(captured.structuredContent).toMatchObject({
     evidence: {
       predicate_type: "rea.electron-active-scenario",
       operation: "capture_electron_scenario",
       parameters: {
-        args: ["--token", "<redacted>"],
+        args: ["--token", "super-secret"],
         actions: [{ step_id: "submit", kind: "click" }],
       },
     },
@@ -258,16 +250,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   const root = await createTestTempDirectory("rea-electron-static-mcp-");
   temporary.push(root);
   await writeElectronBoundaryFixture(root);
-  const config = parseConfig({});
-  if (!config.ok) throw config.error;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok) throw authority.error;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
-    permissionAuthority: authority.value,
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 1,

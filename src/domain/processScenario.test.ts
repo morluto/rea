@@ -3,6 +3,21 @@ import { describe, expect, it } from "vitest";
 import { processScenarioSchema } from "./processScenario.js";
 
 describe("process scenario collection inputs", () => {
+  it("accepts OS environment names without imposing shell identifier syntax", () => {
+    const environment = { "app.setting": "value", "1": "numbered" };
+    expect(
+      processScenarioSchema.parse({ executable: "node", environment })
+        .environment,
+    ).toEqual(environment);
+    for (const name of ["", "KEY=VALUE", "KEY\0VALUE"])
+      expect(
+        processScenarioSchema.safeParse({
+          executable: "node",
+          environment: { [name]: "value" },
+        }).success,
+      ).toBe(false);
+  });
+
   it("accepts more than 64 named filesystem checkpoints", () => {
     const scenario = processScenarioSchema.parse({
       executable: "/bin/echo",
@@ -177,16 +192,11 @@ describe("process scenario large interaction inputs", () => {
       executable: "/bin/echo",
       arguments: Array.from({ length: 257 }, (_, index) => String(index)),
       working_directory: "/tmp",
-      filesystem_roots: Array.from(
+      filesystem_observation_paths: Array.from(
         { length: 17 },
         (_, index) => `/tmp/root-${index}`,
       ),
       environment,
-      inherit_environment: Array.from(
-        { length: 65 },
-        (_, index) => `INHERITED_${index}`,
-      ),
-      secret_aliases: Object.keys(environment),
       command_shims: commandShims,
       events: Array.from({ length: 1_001 }, () => ({
         type: "input" as const,
@@ -220,12 +230,11 @@ describe("process scenario large interaction inputs", () => {
     });
 
     expect(scenario.arguments).toHaveLength(257);
-    expect(scenario.inherit_environment).toHaveLength(65);
     expect(scenario.command_shims).toHaveLength(33);
     expect(scenario.command_shims[0]?.routes).toHaveLength(101);
     expect(scenario.command_shims[0]?.routes[0]?.outputs).toHaveLength(1_001);
     expect(scenario.events).toHaveLength(1_001);
-    expect(scenario.filesystem_roots).toHaveLength(17);
+    expect(scenario.filesystem_observation_paths).toHaveLength(17);
     expect(scenario.checkpoints[0]?.trigger).toMatchObject({
       occurrence: 1_001,
     });
@@ -236,63 +245,36 @@ describe("process scenario large interaction inputs", () => {
   });
 });
 
-describe("process scenario path portability", () => {
-  const base = { arguments: [], environment: {}, filesystem_roots: [] };
+describe("minimal process scenario inputs", () => {
+  const scenario = {
+    arguments: [],
+    environment: {},
+    filesystem_observation_paths: [],
+  };
 
+  it("defaults working directory at execution and accepts command names", () => {
+    const parsed = processScenarioSchema.parse({
+      ...scenario,
+      executable: "node",
+    });
+    expect(parsed.working_directory).toBe(".");
+    expect(parsed.executable).toBe("node");
+    expect(parsed.filesystem_observation_paths).toEqual([]);
+  });
+});
+
+describe("process scenario path portability", () => {
   it.each([
     ["posix", "/usr/bin/node", "/tmp"],
     ["windows drive with backslashes", "C:\\tools\\node.exe", "C:\\work"],
     ["windows drive with forward slashes", "c:/tools/node.exe", "c:/work"],
     ["unc share", "\\\\server\\share\\node.exe", "\\\\server\\share"],
   ])(
-    "accepts a %s path on any host",
+    "preserves a %s scenario on any host",
     (_label, executable, working_directory) => {
-      const parsed = processScenarioSchema.safeParse({
-        ...base,
-        executable,
-        working_directory,
-      });
-      expect(parsed.success).toBe(true);
+      expect(
+        processScenarioSchema.parse({ executable, working_directory }),
+      ).toMatchObject({ executable, working_directory });
     },
   );
-
-  it("accepts Windows filesystem roots", () => {
-    const parsed = processScenarioSchema.safeParse({
-      ...base,
-      executable: "C:\\tools\\node.exe",
-      working_directory: "C:\\work",
-      filesystem_roots: ["C:\\data", "D:\\more"],
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it.each([
-    ["relative", "tools/node.exe"],
-    ["dot relative", "./node.exe"],
-    ["parent relative", "../node.exe"],
-    ["bare filename", "node.exe"],
-    ["empty", ""],
-  ])("still rejects a %s path", (_label, executable) => {
-    const parsed = processScenarioSchema.safeParse({
-      ...base,
-      executable,
-      working_directory: "/tmp",
-    });
-    expect(parsed.success).toBe(false);
-  });
-
-  it("names the constraint so a rejected path is actionable", () => {
-    const parsed = processScenarioSchema.safeParse({
-      ...base,
-      executable: "tools/node.exe",
-      working_directory: "/tmp",
-    });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) return;
-    const messages = parsed.error.issues
-      .map(({ message }) => message)
-      .join("\n");
-    expect(messages).toContain("must be absolute");
-    expect(messages).toContain("C:\\tools\\node.exe");
-  });
 });

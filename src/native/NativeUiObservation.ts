@@ -28,13 +28,13 @@ const responseSchema = z.discriminatedUnion("ok", [
     message: z.string(),
   }),
 ]);
-/** Narrow process seam preserves the native helper's permission and target failures. */
+/** Narrow process seam preserves the native helper's OS and target failures. */
 export type NativeUiHelper = (
   parameters: Readonly<Record<string, unknown>>,
   signal?: AbortSignal,
 ) => Promise<unknown>;
 
-/** Capture a selected existing app window, with separately approved bounded scenarios. */
+/** Capture a selected existing app window and run explicitly selected scenarios. */
 export const observeNativeUi = async (
   target: BinaryTarget,
   operation: "observe_native_ui" | "capture_native_ui_scenario",
@@ -84,16 +84,6 @@ const observeWithHelper = async (
     operation === "capture_native_ui_scenario"
       ? nativeUiScenarioInputSchema.parse(parameters).steps
       : [];
-  const waitMs = steps.reduce(
-    (sum, step) => sum + (step.kind === "wait" ? step.milliseconds : 0),
-    0,
-  );
-  if (waitMs > 30_000)
-    return err(
-      new AnalysisInputError(operation, {
-        cause: new Error("Scenario waits may total at most 30000 ms"),
-      }),
-    );
   const signal =
     options.signal === undefined
       ? AbortSignal.timeout(180_000)
@@ -248,7 +238,7 @@ const observeWithHelper = async (
         "Click uses AXPress; scroll uses AXIncrement/AXDecrement; key-entry sets the selected element's AXValue. Unsupported elements fail without global event fallback.",
         "Each completed action is followed immediately by capture; delayed UI changes require explicit wait steps. A failed after-capture can follow a completed action, so failure does not prove absence of application effects.",
         "Scenarios can change app data, cause app network activity and persist changes. The caller explicitly chooses leave-as-is; automatic restoration is unsupported.",
-        "Window matching uses exact PID and window ID for screenshots and unique accessibility geometry. Accessibility paths can change as the UI changes; stale or ambiguous paths fail. Screenshots are scaled to at most 2048 pixels, each PNG to 8 MiB, total captures to 64 MiB, and scenario duration to 180 seconds.",
+        "Window matching uses exact PID and window ID for screenshots and unique accessibility geometry. Accessibility paths can change as the UI changes; stale or ambiguous paths fail. Screenshots are scaled to at most 2048 pixels; scenario output is budgeted at 64 MiB and execution is cancelled after 180 seconds.",
       ],
     }),
   );

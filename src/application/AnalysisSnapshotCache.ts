@@ -15,6 +15,7 @@ import {
   snapshotMatchesProfile,
   snapshotMatchesTarget,
   snapshotTarget,
+  parseAnalysisSnapshot,
   type AnalysisSnapshot,
   type AnalysisSnapshotEntry,
   type AnalysisSnapshotBinding,
@@ -127,15 +128,28 @@ export class AnalysisSnapshotCache {
     target: BinaryTarget | undefined,
     profile: AnalysisProfileCommitment | undefined,
     evidenceBundle: EvidenceBundle,
-  ): Result<AnalysisSnapshot, NoBinaryOpenError> {
+  ): Result<AnalysisSnapshot, AnalysisError> {
     if (target === undefined || profile === undefined)
       return err(new NoBinaryOpenError());
-    return ok({
-      target: snapshotTarget(target),
-      binding: snapshotBinding(profile),
-      entries: this.entries(),
-      evidence_bundle: structuredClone(evidenceBundle),
-    });
+    try {
+      const snapshotTargetIdentity = snapshotTarget(target);
+      const binding = snapshotBinding(profile);
+      const retainedEvidence = structuredClone(evidenceBundle);
+      return ok(
+        parseAnalysisSnapshot({
+          target: snapshotTargetIdentity,
+          binding,
+          entries: this.entries(),
+          evidence_bundle: retainedEvidence,
+        }),
+      );
+    } catch (cause: unknown) {
+      return err(
+        new EvidenceIntegrityError("Analysis snapshot validation failed", {
+          cause,
+        }),
+      );
+    }
   }
 
   /** Validate target identity, merge evidence atomically, then stage entries. */
@@ -151,18 +165,28 @@ export class AnalysisSnapshotCache {
       bundle: EvidenceBundle,
     ) => Result<number, EvidenceIntegrityError>,
   ): Result<number, AnalysisError> {
+    let validated: AnalysisSnapshot;
+    try {
+      validated = parseAnalysisSnapshot(snapshot);
+    } catch (cause: unknown) {
+      return err(
+        new EvidenceIntegrityError("Analysis snapshot validation failed", {
+          cause,
+        }),
+      );
+    }
     if (
       active !== undefined &&
-      (!snapshotMatchesTarget(snapshot.target, active.target) ||
-        !snapshotMatchesProfile(snapshot.binding, active.profile))
+      (!snapshotMatchesTarget(validated.target, active.target) ||
+        !snapshotMatchesProfile(validated.binding, active.profile))
     )
       return err(
         new EvidenceIntegrityError(
           "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
         ),
       );
-    const importedEvidence = mergeEvidence(snapshot.evidence_bundle);
-    return importedEvidence.ok ? ok(this.stage(snapshot)) : importedEvidence;
+    const importedEvidence = mergeEvidence(validated.evidence_bundle);
+    return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
   }
 
   /** Return canonical entries for persistence. */

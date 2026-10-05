@@ -141,7 +141,7 @@ describeBrowser("CdpBrowserProvider: document script 2", () => {
         items: [
           {
             name: "search_orders",
-            description: "Search orders; authorization=[REDACTED]",
+            description: "Search orders; authorization=Bearer tool-secret",
             declaration_kind: "declarative",
             owner_origin: browser.allowedOrigin,
             annotations: {
@@ -151,7 +151,7 @@ describeBrowser("CdpBrowserProvider: document script 2", () => {
             },
             trust: "page-declared-untrusted",
             registration_source: {
-              url: `${browser.allowedOrigin}/app.js?token=%5BREDACTED%5D`,
+              url: `${browser.allowedOrigin}/app.js?token=tool-source-secret`,
               line: 12,
               column: 4,
             },
@@ -160,12 +160,9 @@ describeBrowser("CdpBrowserProvider: document script 2", () => {
       },
     });
     const serialized = JSON.stringify(result.value);
-    for (const secret of [
-      "tool-secret",
-      "schema-secret",
-      "tool-source-secret",
-      "private-tool-secret",
-    ])
+    expect(serialized).toContain("tool-secret");
+    expect(serialized).toContain("tool-source-secret");
+    for (const secret of ["schema-secret", "private-tool-secret"])
       expect(serialized).not.toContain(secret);
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("WebMCP.enable");

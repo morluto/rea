@@ -9,7 +9,7 @@ import type {
   Worker,
 } from "playwright-core";
 
-import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
@@ -155,7 +155,7 @@ export class PlaywrightScenarioEvents {
   }
 
   private safeUrl(value: string) {
-    return sanitizeBrowserUrl(this.secrets.redact(value));
+    return this.secrets.sanitizeUrl(value);
   }
 
   private console(message: ConsoleMessage): void {
@@ -227,7 +227,7 @@ export class PlaywrightScenarioEvents {
 
   private webSocketFrame(
     kind: "websocket-frame-sent" | "websocket-frame-received",
-    url: ReturnType<typeof sanitizeBrowserUrl>,
+    url: SanitizedBrowserUrl,
     payload: string | Buffer,
   ): void {
     const bytes = Buffer.byteLength(payload);

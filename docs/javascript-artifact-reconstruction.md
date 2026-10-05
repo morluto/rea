@@ -125,9 +125,10 @@ For `.node` bindings, member names mean “requested by JavaScript syntax.” A
 resolved add-on path does not convert them into verified native exports. Native
 symbol verification remains a separate deep-analysis claim.
 
-Endpoint observations preserve useful local diagnostics while removing URL
-credentials, fragments, and query values. Artifact paths, digests, parse
-locations, and analysis metadata remain actionable because REA is local-only.
+Endpoint observations preserve useful local diagnostics, including query values
+and fragments, while removing only URL username/password credentials. Artifact
+paths, digests, parse locations, and analysis metadata remain actionable
+because REA is local-only.
 
 ## Safety boundary
 

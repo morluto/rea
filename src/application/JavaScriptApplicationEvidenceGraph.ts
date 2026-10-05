@@ -157,7 +157,8 @@ const assertApplicationSubject = (
   if (
     evidence.subject === null ||
     evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format
+    evidence.subject.format !== result.format ||
+    evidence.subject.local_path !== result.input_path
   )
     throw new TypeError(
       "JavaScript application Evidence subject does not match its result",

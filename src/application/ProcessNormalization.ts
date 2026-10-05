@@ -11,7 +11,7 @@ export const normalizeProcessElapsedTime = (
   timeBucketMs: number,
 ): number => Math.floor(elapsedMs / timeBucketMs) * timeBucketMs;
 
-/** Normalize and redact one terminal/protocol payload under scenario rules. */
+/** Normalize one terminal/protocol payload under explicitly selected scenario rules. */
 export const normalizeProcessText = (
   value: string,
   scenario: ProcessScenario,
@@ -19,11 +19,6 @@ export const normalizeProcessText = (
   pid: number,
 ): string => {
   let normalized = value;
-  for (const alias of scenario.secret_aliases) {
-    const secret = scenario.environment[alias];
-    if (secret !== undefined && secret.length > 0)
-      normalized = normalized.replaceAll(secret, "<redacted>");
-  }
   if (scenario.normalization.paths) {
     normalized = normalized.replaceAll(temporaryRoot, "<temporary-root>");
     normalized = normalized.replaceAll(
@@ -31,7 +26,7 @@ export const normalizeProcessText = (
       "<working-directory>",
     );
     normalized = normalized.replaceAll(scenario.executable, "<executable>");
-    for (const [index, root] of scenario.filesystem_roots.entries())
+    for (const [index, root] of scenario.filesystem_observation_paths.entries())
       normalized = normalized.replaceAll(
         root,
         `<filesystem-root-${String(index)}>`,
@@ -127,7 +122,7 @@ const normalizePidTokens = (
   );
 };
 
-export const redactProtocolEvents = (
+export const normalizeProtocolEvents = (
   events: readonly ProcessCapture["protocol_events"][number][],
   scenario: ProcessScenario,
 ): readonly ProcessCapture["protocol_events"][number][] =>

@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 
 import {
   digestJson,
-  type EnabledJavaScriptReplayPolicy,
+  type JavaScriptReplayConfiguration,
   type PreparedReplayPlan,
 } from "../application/JavaScriptReplayPlanning.js";
 import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
@@ -13,7 +13,7 @@ export type RuntimeFile = Awaited<
 
 export interface SandboxArgumentsOptions {
   readonly unit: string;
-  readonly policy: EnabledJavaScriptReplayPolicy;
+  readonly configuration: JavaScriptReplayConfiguration;
   readonly prepared: PreparedReplayPlan;
   readonly workerPath: string;
   readonly closure: readonly RuntimeFile[];
@@ -33,13 +33,14 @@ export const assertRuntimeCommitment = (
     digestJson(observed) !==
     digestJson(prepared.publicPlan.runtime.read_only_files)
   )
-    throw new TypeError("Replay runtime closure changed after approval");
+    throw new TypeError("Replay runtime closure changed after plan creation");
 };
 
 export const systemdArguments = (
   options: SandboxArgumentsOptions,
 ): string[] => {
-  const { unit, policy, prepared, workerPath, closure, filterPath } = options;
+  const { unit, configuration, prepared, workerPath, closure, filterPath } =
+    options;
   const limits = prepared.publicPlan.limits;
   const descriptorPaths = [
     filterPath,
@@ -65,12 +66,12 @@ export const systemdArguments = (
     "--property=KillMode=control-group",
     "--property=SendSIGKILL=yes",
     "--",
-    policy.shellPath,
+    configuration.shellPath,
     "-c",
     wrapper,
     "rea-replay-wrapper",
     ...descriptorPaths,
-    policy.bubblewrapPath,
+    configuration.bubblewrapPath,
     "--unshare-all",
     "--unshare-user",
     "--disable-userns",

@@ -11,17 +11,14 @@ import type {
   InteractionEvent,
   TerminalFrame,
 } from "../domain/processCapture.js";
+import { parseProcessScenario } from "../domain/processScenario.js";
 import {
   processReactiveScenarioSchema,
   type ProcessReactiveScenario,
 } from "../domain/processReactiveScenario.js";
 const terminalTrigger = () => ({
   kind: "terminal_text" as const,
-  view: "decoded" as const,
-  encoding: "utf8" as const,
   literal: "Ready",
-  case_sensitive: true,
-  control_sequences: "include" as const,
   occurrence: 1,
   since: { kind: "scenario_start" as const },
   consume: true,
@@ -56,7 +53,7 @@ const twoStateScenario = (): ProcessReactiveScenario =>
             priority: 1,
             max_uses: 1,
             when: terminalTrigger(),
-            actions: [{ type: "send_input", data: "go", sensitive: false }],
+            actions: [{ type: "send_input", data: "go" }],
             target: { kind: "goto", state: "sent" },
           },
         ],
@@ -84,7 +81,7 @@ const twoStateScenario = (): ProcessReactiveScenario =>
               cardinality: { min: 1, max: 1 },
             },
             actions: [],
-            target: { kind: "finish", outcome: "passed" },
+            target: { kind: "finish" },
           },
         ],
       },
@@ -99,6 +96,7 @@ const createHarness = (scenario: ProcessReactiveScenario) => {
   const timers = timerHost();
   let now = 100;
   const effectHost = {
+    scenario: parseProcessScenario({ executable: "node" }),
     terminal: () => ({
       write: (data: string) => terminalCalls.push(`write:${data}`),
       resize: (columns: number, rows: number) =>
@@ -219,7 +217,7 @@ describe("process reactive coordinator ordering", () => {
                 },
                 { type: "checkpoint", name: "stopped" },
               ],
-              target: { kind: "finish", outcome: "passed" },
+              target: { kind: "finish" },
             },
           ],
         },

@@ -58,7 +58,6 @@ try {
   if (!target.ok) throw target.error;
   const observation = await observeNativeUi(target.value, "observe_native_ui", {
     ...scope,
-    observation_approved: true,
   });
   if (
     !observation.ok &&
@@ -83,8 +82,6 @@ try {
       "capture_native_ui_scenario",
       {
         ...scope,
-        observation_approved: true,
-        actions_approved: true,
         restore: "leave-as-is",
         screenshot: false,
         steps: [
@@ -114,8 +111,6 @@ try {
         String(scope.pid),
         "--window-id",
         String(scope.window_id),
-        "--observation-approved",
-        "--actions-approved",
         "--restore",
         "leave-as-is",
         "--steps",
@@ -135,14 +130,14 @@ try {
       evidence.normalized_result?.steps?.length !== 2
     )
       throw new Error(
-        `Native UI CLI did not preserve the approved scenario: ${JSON.stringify(evidence.error ?? evidence.normalized_result?.steps?.map(({ outcome, reason }) => ({ outcome, reason })))}`,
+        `Native UI CLI did not preserve the selected scenario: ${JSON.stringify(evidence.error ?? evidence.normalized_result?.steps?.map(({ outcome, reason }) => ({ outcome, reason })))}`,
       );
     scenarioStatus = "selected-AX-button-action-and-CLI-parity-observed";
   }
   const mismatch = await observeNativeUi(
     { ...target.value, sha256: "0".repeat(64) },
     "observe_native_ui",
-    { ...scope, observation_approved: true },
+    scope,
   );
   if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
     throw new Error("Real helper did not reject changed target bytes");

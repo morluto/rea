@@ -26,13 +26,13 @@ func childCount(_ element: AXUIElement) -> Int {
   var count = 0
   return AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) == .success ? count : 0
 }
-func children(_ element: AXUIElement, limit: Int = 2000) -> [AXUIElement] {
+func children(_ element: AXUIElement, limit: Int) -> [AXUIElement] {
   var value: CFArray?
   let count = min(limit, childCount(element))
   if count == 0 { return [] }
   return AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, count, &value) == .success ? value as? [AXUIElement] ?? [] : []
 }
-func text(_ element: AXUIElement, _ key: String) -> Any { (attribute(element, key) as? String).map { String($0.prefix(4096)) } ?? NSNull() as Any }
+func text(_ element: AXUIElement, _ key: String) -> Any { (attribute(element, key) as? String) ?? NSNull() as Any }
 func windowBounds(_ element: AXUIElement) -> CGRect? {
   guard let p = attribute(element, kAXPositionAttribute), let s = attribute(element, kAXSizeAttribute),
     CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
@@ -108,14 +108,15 @@ func observe(_ request: Request) async throws -> [String: Any] {
     var pending: [(AXUIElement, [Int])] = [(root, [])]
     while let (element, path) = pending.popLast() {
       if nodes.count >= request.max_nodes { truncated = true; break }
-      let items = children(element)
+      let totalChildren = childCount(element)
       var actions: CFArray?
       AXUIElementCopyActionNames(element, &actions)
-      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": text(element, kAXValueAttribute), "actions": actions as? [String] ?? [], "children_count": childCount(element)])
-      if path.count >= 32 { if !items.isEmpty { truncated = true }; continue }
+      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": text(element, kAXValueAttribute), "actions": actions as? [String] ?? [], "children_count": totalChildren])
+      if path.count >= 32 { if totalChildren > 0 { truncated = true }; continue }
       let available = max(0, request.max_nodes - nodes.count - pending.count)
-      let count = min(available, items.count)
-      if childCount(element) > count { truncated = true }
+      let count = min(available, totalChildren)
+      let items = children(element, limit: count)
+      if totalChildren > count { truncated = true }
       for index in (0..<count).reversed() { pending.append((items[index], path + [index])) }
     }
   }
@@ -133,8 +134,8 @@ func observe(_ request: Request) async throws -> [String: Any] {
     configuration.width = max(1, Int(bounds.width * scale)); configuration.height = max(1, Int(bounds.height * scale))
     configuration.showsCursor = false
     let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
-    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]), png.count <= 8 * 1024 * 1024 else {
-      try fail("image-limit", "Selected-window PNG exceeded 8 MiB")
+    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+      try fail("capture-failed", "Selected-window PNG encoding failed")
     }
     screenshot = ["mime_type": "image/png", "base64": png.base64EncodedString(), "sha256": SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined(), "width": image.width, "height": image.height]
   }

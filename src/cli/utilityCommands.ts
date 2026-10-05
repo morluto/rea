@@ -29,37 +29,21 @@ export const registerUtilityCommands = (
   ] as const) {
     cli.command(command, {
       description:
-        "Observe or run an approved scenario in one exact native application window",
+        "Observe or run a scenario in one exact native application window",
       args: z.object({
         path: z.string().describe("Local native executable or app path"),
       }),
       options: z.object({
-        pid: z
-          .number()
-          .int()
-          .positive()
-          .describe("Approved existing application PID"),
+        pid: z.number().int().positive().describe("Existing application PID"),
         windowId: z
           .number()
           .int()
           .positive()
           .describe("Exact selected application window ID"),
-        observationApproved: z
-          .boolean()
-          .default(false)
-          .describe("Approve passive observation of this PID/window"),
-        actionsApproved: z
-          .boolean()
-          .default(false)
-          .describe("Independently approve scenario actions"),
-        restore: z
-          .enum(["leave-as-is"])
-          .optional()
-          .describe("Explicit choice to leave application state as-is"),
         steps: z
           .string()
           .optional()
-          .describe("JSON array of approved declarative AX actions or waits"),
+          .describe("JSON array of declarative AX actions or waits"),
         screenshot: z
           .boolean()
           .default(true)
@@ -71,15 +55,13 @@ export const registerUtilityCommands = (
         maxNodes: z
           .number()
           .int()
-          .min(1)
-          .max(2000)
+          .positive()
+          .safe()
           .default(500)
           .describe("Maximum accessibility nodes per capture"),
       }),
       alias: {
         windowId: "window-id",
-        observationApproved: "observation-approved",
-        actionsApproved: "actions-approved",
         maxNodes: "max-nodes",
       },
       run: ({ args, options }) =>
@@ -90,16 +72,11 @@ export const registerUtilityCommands = (
             {
               pid: options.pid,
               window_id: options.windowId,
-              observation_approved: options.observationApproved,
               screenshot: options.screenshot,
               accessibility: options.accessibility,
               max_nodes: options.maxNodes,
               ...(operation === "capture_native_ui_scenario"
                 ? {
-                    actions_approved: options.actionsApproved,
-                    ...(options.restore === undefined
-                      ? {}
-                      : { restore: options.restore }),
                     steps:
                       options.steps === undefined
                         ? []

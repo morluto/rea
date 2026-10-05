@@ -103,7 +103,7 @@ it("keeps long Electron arguments and deep-link URLs intact", () => {
   ).toBe(longStepId);
 });
 
-it("redacts action inputs from Playwright failures", async () => {
+it("preserves local Playwright action diagnostics", async () => {
   const selector = "#secret-selector";
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",
@@ -126,10 +126,10 @@ it("redacts action inputs from Playwright failures", async () => {
 
   expect(result[0]).toMatchObject({
     status: "failed",
-    error: "locator <redacted-input> failed with token=[REDACTED]",
+    error: `locator ${selector} failed with token=raw-secret`,
   });
-  expect(result[0]?.error).not.toContain(selector);
-  expect(result[0]?.error).not.toContain("raw-secret");
+  expect(result[0]?.error).toContain(selector);
+  expect(result[0]?.error).toContain("raw-secret");
 });
 
 it("retains complete action errors and Electron window text", async () => {

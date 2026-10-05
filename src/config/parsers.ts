@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "../domain/errors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -14,37 +13,6 @@ export const parseStringArray = (
       ? ok(parsed.data)
       : err(
           new ConfigurationError(`${name} must encode an array of strings`, {
-            cause: parsed.error,
-          }),
-        );
-  } catch (cause: unknown) {
-    return err(new ConfigurationError(`${name} must be valid JSON`, { cause }));
-  }
-};
-
-/** Parse a JSON string array whose members must all be absolute paths. */
-export const parseAbsoluteRoots = (
-  encoded: string,
-  name: string,
-): Result<readonly string[], ConfigurationError> => {
-  const parsed = parseStringArray(encoded, name);
-  if (!parsed.ok) return parsed;
-  return parsed.value.some((root) => !isAbsolute(root))
-    ? err(new ConfigurationError(`${name} must encode absolute roots`))
-    : parsed;
-};
-
-export const parseBrowserArray = (
-  encoded: string,
-  name: string,
-  itemSchema: z.ZodType<string>,
-): Result<readonly string[], ConfigurationError> => {
-  try {
-    const parsed = z.array(itemSchema).safeParse(JSON.parse(encoded));
-    return parsed.success
-      ? ok([...new Set(parsed.data)].sort())
-      : err(
-          new ConfigurationError(`${name} must encode valid browser scopes`, {
             cause: parsed.error,
           }),
         );

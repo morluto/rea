@@ -22,6 +22,17 @@ const probeResultSchema = z.strictObject({
   current_document: z.literal("fixture"),
   current_address: z.literal("0x401000"),
   strings: z.strictObject({ "0x401234": z.literal("fixture string") }),
+  procedure_references: z.strictObject({
+    procedure: z.strictObject({
+      address: z.literal("0x401000"),
+      name: z.literal("fixture-procedure"),
+      classification: z.null(),
+    }),
+    direction: z.literal("outgoing"),
+    reference_kinds_available: z.literal(false),
+    unresolved_calls: z.array(z.unknown()),
+    references: z.array(z.unknown()),
+  }),
   inventory_replies: z.array(
     z.strictObject({
       id: z.number().int(),
@@ -152,6 +163,17 @@ describe("Hopper API facade", () => {
       { id: 5, result: [] },
       { id: 6, result: [] },
     ]);
+    expect(result.procedure_references).toEqual({
+      procedure: {
+        address: "0x401000",
+        name: "fixture-procedure",
+        classification: null,
+      },
+      direction: "outgoing",
+      reference_kinds_available: false,
+      unresolved_calls: [],
+      references: [],
+    });
     expect(stdout).not.toContain("supersecret");
     expect(result.analysis_guard.message).toContain(
       "requires completed Hopper background analysis",

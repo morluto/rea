@@ -44,10 +44,7 @@ describe("Electron CLI parity", () => {
         electronFileUrl: pathToFileURL(join(root, "index.html")).href,
       });
       browsers.push(browser);
-      const environment = {
-        ...process.env,
-        REA_ELECTRON_OBSERVE_ENABLED: "true",
-      };
+      const environment = { ...process.env };
       const listed = await runCli(
         ["list-electron-targets", browser.endpoint, "--json"],
         environment,

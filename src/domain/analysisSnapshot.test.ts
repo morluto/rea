@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   type AnalysisSnapshot,
   analysisSnapshotSchema,
+  analysisQueryId,
+  parseAnalysisSnapshot,
   snapshotBinding,
   snapshotEvidenceForQuery,
   snapshotTarget,
@@ -85,7 +87,9 @@ describe("analysis snapshot contract", () => {
 
     expect(parsed.entries).toHaveLength(10_001);
   });
+});
 
+describe("analysis snapshot Evidence binding", () => {
   it("finds only Evidence committed to the exact binding and profile", () => {
     const evidence = createEvidence(
       ANALYSIS_SNAPSHOT_TARGET,
@@ -132,5 +136,83 @@ describe("analysis snapshot contract", () => {
         evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
       }),
     ).toBeUndefined();
+  });
+
+  it("rejects cached execution data that differs from its bundled Evidence", () => {
+    const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    const parameters = { address: "0x1000", document: "main" };
+    const result = { name: "main" };
+    const rawResult = { name: "provider-main" };
+    const subject = {
+      path: ANALYSIS_SNAPSHOT_TARGET.path,
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      format: ANALYSIS_SNAPSHOT_TARGET.format,
+      architecture: ANALYSIS_SNAPSHOT_TARGET.architecture ?? null,
+    };
+    const entry = {
+      query_id: analysisQueryId(target, binding, "address_name", parameters),
+      operation: "address_name",
+      parameters,
+      execution: {
+        result,
+        raw_result: rawResult,
+        provider: binding.provider,
+        limitations: ["fixture limitation"],
+        locations: [{ kind: "address" as const, address: "0x1000" }],
+        subject,
+      },
+    };
+    const evidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      binding.provider,
+      {
+        operation: entry.operation,
+        parameters,
+        result,
+        rawResult,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        limitations: entry.execution.limitations,
+        locations: entry.execution.locations,
+      },
+    );
+    const snapshot = {
+      target,
+      binding,
+      entries: [entry],
+      evidence_bundle: createEvidenceBundle([evidence]),
+    };
+    expect(parseAnalysisSnapshot(snapshot)).toEqual(snapshot);
+
+    const legacy = parseAnalysisSnapshot({
+      ...snapshot,
+      evidence_bundle: createEvidenceBundle([]),
+    });
+    expect(legacy.entries).toEqual([]);
+
+    const alterations = [
+      (altered: typeof snapshot) => {
+        const entry = altered.entries[0];
+        if (entry === undefined) throw new TypeError("missing fixture entry");
+        entry.execution.result = { name: "tampered" };
+      },
+      (altered: typeof snapshot) => {
+        const entry = altered.entries[0];
+        if (entry === undefined) throw new TypeError("missing fixture entry");
+        entry.execution.raw_result = { name: "tampered" };
+      },
+      (altered: typeof snapshot) => {
+        const subject = altered.entries[0]?.execution.subject;
+        if (subject !== null && subject !== undefined)
+          subject.path = "/different/path";
+      },
+    ];
+    for (const alter of alterations) {
+      const altered = structuredClone(snapshot);
+      alter(altered);
+      expect(() => parseAnalysisSnapshot(altered)).toThrow(
+        /differs from its Evidence record/u,
+      );
+    }
   });
 });

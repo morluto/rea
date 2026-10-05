@@ -5,6 +5,7 @@ import {
   type EvidenceObservation,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type {
   BrowserTargetList,
   InspectWebPageInput,
@@ -63,7 +64,7 @@ type BrowserEvidenceOperation =
   | "capture_web_screenshot"
   | "compare_web_screenshots";
 
-/** Create Evidence for a policy-scoped external browser observation. */
+/** Create Evidence for one request-scoped external browser observation. */
 export const createBrowserEvidence = (
   operation: BrowserEvidenceOperation,
   input: BrowserEvidenceInput,
@@ -73,7 +74,7 @@ export const createBrowserEvidence = (
   createEvidence(undefined, provider, {
     predicateType: browserPredicate(operation),
     operation,
-    parameters: browserParameters(input),
+    parameters: browserParameters(input, result),
     result: jsonValueSchema.parse(result),
     confidence: "observed",
     authority: "external-service",
@@ -91,6 +92,7 @@ export const createBrowserEvidence = (
 
 const browserParameters = (
   input: BrowserEvidenceInput,
+  result: BrowserEvidenceResult,
 ): EvidenceObservation["parameters"] => {
   if (!("cdp_endpoint" in input)) {
     if (
@@ -129,9 +131,15 @@ const browserParameters = (
       };
     throw new Error("Browser comparison input did not match a comparison type");
   }
+  const observedOrigin = browserResultTargetOrigin(result);
   const scope = {
     cdp_endpoint: input.cdp_endpoint,
-    allowed_origins: input.allowed_origins,
+    allowed_origins:
+      input.allowed_origins.length > 0
+        ? input.allowed_origins
+        : "target_id" in input && observedOrigin !== undefined
+          ? [observedOrigin]
+          : [],
   };
   if (!("target_id" in input)) return scope;
   return {
@@ -157,6 +165,27 @@ const browserParameters = (
       ? { fetch_source_maps: input.fetch_source_maps }
       : {}),
   };
+};
+
+const browserResultTargetOrigin = (
+  result: BrowserEvidenceResult,
+): string | undefined => {
+  if (
+    "inspection" in result &&
+    typeof result.inspection === "object" &&
+    result.inspection !== null &&
+    "target" in result.inspection &&
+    typeof result.inspection.target === "object" &&
+    result.inspection.target !== null &&
+    "origin" in result.inspection.target &&
+    typeof result.inspection.target.origin === "string"
+  )
+    return result.inspection.target.origin;
+  if (!("target" in result)) return undefined;
+  if ("origin" in result.target) return result.target.origin;
+  if ("initial_url" in result.target)
+    return sanitizeBrowserUrl(result.target.initial_url).origin ?? undefined;
+  return undefined;
 };
 
 const isScreenshotComparison = (

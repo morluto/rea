@@ -8,8 +8,12 @@ import type {
   ProcessReactiveAction,
   ProcessReactiveScenario,
 } from "../domain/processReactiveScenario.js";
+import type { ProcessScenario } from "../domain/processScenario.js";
 import type { ProcessCaptureJournal } from "./ProcessCaptureJournal.js";
-import { normalizeProcessElapsedTime } from "./ProcessNormalization.js";
+import {
+  normalizeProcessElapsedTime,
+  normalizeProcessText,
+} from "./ProcessNormalization.js";
 
 /** Minimal PTY authority used by the admitted reactive action slice. */
 export interface ProcessReactiveTerminal {
@@ -37,6 +41,7 @@ export interface ProcessReactiveCheckpoints {
 
 /** Host dependencies for journal-backed reactive process actions. */
 export interface ProcessReactiveEffectHost {
+  readonly scenario: ProcessScenario;
   readonly terminal: () => ProcessReactiveTerminal | undefined;
   readonly renderer: ProcessReactiveRenderer;
   readonly checkpoints: ProcessReactiveCheckpoints;
@@ -53,11 +58,12 @@ const elapsed = (host: ProcessReactiveEffectHost): number =>
 
 const interactionData = (
   action: Exclude<ProcessReactiveAction, { readonly type: "checkpoint" }>,
+  scenario: ProcessScenario,
 ): string => {
   if (action.type === "send_input")
     return action.sensitive
       ? `<redacted-input:${String(Buffer.byteLength(action.data))}-bytes>`
-      : action.data;
+      : normalizeProcessText(action.data, scenario, "<no-temporary-root>", -1);
   if (action.type === "resize")
     return `${String(action.columns)}x${String(action.rows)}`;
   if (action.type === "close_stdin") return "";
@@ -108,7 +114,7 @@ const recordInteraction = (
     scheduled_at_ms: atMs,
     dispatched_at_ms: atMs,
     type: interactionType(action),
-    data: interactionData(action),
+    data: interactionData(action, host.scenario),
     outcome,
   };
   host.interactions.push(event);

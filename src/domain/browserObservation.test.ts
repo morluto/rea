@@ -6,6 +6,7 @@ import {
   inspectWebPageInputSchema,
   isLiteralLoopbackHostname,
   listBrowserTargetsInputSchema,
+  sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
 import { captureWebScreenshotInputSchema } from "./webScreenshot.js";
@@ -120,20 +121,28 @@ describe("browser observation sensitive surfaces and retention", () => {
     expect(captureWebScreenshotInputSchema.safeParse(input).success).toBe(true);
   });
 
-  it("removes credentials, query values, and fragments from observed URLs", () => {
+  it("removes only URL userinfo and preserves the original query and fragment", () => {
     expect(
       sanitizeBrowserUrl(
-        "https://user:pass@app.example.test/path?token=secret&mode=full#part",
+        "https://user:pass@app.example.test/path?token=secret&mode=full&token=again#part",
       ),
     ).toEqual({
-      url: "https://app.example.test/path?mode=%5BREDACTED%5D&token=%5BREDACTED%5D",
+      url: "https://app.example.test/path?token=secret&mode=full&token=again#part",
       origin: "https://app.example.test",
-      query_parameter_names: ["mode", "token"],
+      query_parameter_names: ["token", "mode", "token"],
       redacted: true,
     });
+
+    const backslashAuthority = String.raw`https:\\user:pass@app.example.test/path?x=a+b&x=two#part`;
+    const sanitized = sanitizeBrowserUrl(backslashAuthority);
+    expect(sanitized.url).toBe(
+      "https://app.example.test/path?x=a+b&x=two#part",
+    );
+    expect(sanitized.url).not.toContain("user:pass");
+    expect(sanitized.redacted).toBe(true);
   });
 
-  it("retains complete URL and query-name metadata while redacting values", () => {
+  it("retains ordinary query values and malformed URL diagnostics", () => {
     const longName = `a${"x".repeat(400)}`;
     const parameters = [
       `${longName}=secret`,
@@ -147,7 +156,8 @@ describe("browser observation sensitive surfaces and retention", () => {
     );
     expect(sanitized.query_parameter_names).toHaveLength(301);
     expect(sanitized.query_parameter_names).toContain(longName);
-    expect(sanitized.url).not.toContain("secret");
+    expect(sanitized.url).toContain(`${longName}=secret`);
+    expect(sanitized.url).toContain("k299=secret");
 
     const oversized = sanitizeBrowserUrl(
       `https://app.example.test/${"p".repeat(70_000)}`,
@@ -155,5 +165,17 @@ describe("browser observation sensitive surfaces and retention", () => {
     expect(oversized.origin).toBe("https://app.example.test");
     expect(oversized.url.length).toBeGreaterThan(70_000);
     expect(oversized.redacted).toBe(false);
+
+    const malformed = "https://[invalid?token=diagnostic#fragment";
+    expect(sanitizeBrowserUrl(malformed)).toEqual({
+      url: malformed,
+      origin: null,
+      query_parameter_names: [],
+      redacted: false,
+    });
+    expect(sanitizeEndpointCandidate(malformed)).toBe(malformed);
+    expect(sanitizeEndpointCandidate("/api/search?q=rea#results")).toBe(
+      "/api/search?q=rea#results",
+    );
   });
 });

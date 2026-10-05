@@ -3,9 +3,11 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCapabilityUnavailableError,
   NoBinaryOpenError,
+  ProviderAdapterError,
   type AnalysisError,
 } from "../domain/errors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { EvidenceSubjectTarget } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisClient,
@@ -88,3 +90,65 @@ export const prepareSessionExecution = (
     : undefined;
   return ok({ active, capability, profile, cacheable, cached });
 };
+
+/** Attach the selected profile only when the provider identity agrees. */
+export const commitExecutionProfile = (
+  operation: AnalysisOperation,
+  result: Result<AnalysisExecution, AnalysisError>,
+  profile: AnalysisProfileCommitment | undefined,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok || profile === undefined) return result;
+  const provider = result.value.provider;
+  if (
+    provider.id !== profile.provider.id ||
+    provider.name !== profile.provider.name ||
+    provider.version !== profile.provider.version
+  )
+    return err(
+      new ProviderAdapterError(profile.provider.id, `${operation}:profile`),
+    );
+  return ok({
+    ...result.value,
+    analysisProfile: structuredClone(profile),
+  });
+};
+
+/** Bind an execution to the selected target, preserving valid artifact subjects. */
+export const bindExecutionTarget = (
+  result: Result<AnalysisExecution, AnalysisError>,
+  operation: AnalysisOperation,
+  target: BinaryTarget,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok) return result;
+  const subject: EvidenceSubjectTarget = {
+    path: target.path,
+    sha256: target.sha256,
+    format:
+      target.format === "analysis-database"
+        ? "analysis-database"
+        : target.format,
+    ...(target.architecture === undefined
+      ? {}
+      : { architecture: target.architecture }),
+  };
+  if (
+    result.value.subject !== null &&
+    result.value.subject.sha256 !== target.sha256 &&
+    !isArtifactInventorySubject(operation, result.value.subject, target)
+  )
+    return err(
+      new ProviderAdapterError(
+        result.value.provider.id,
+        `${operation}:subject`,
+      ),
+    );
+  return ok({ ...result.value, subject: result.value.subject ?? subject });
+};
+
+const isArtifactInventorySubject = (
+  operation: AnalysisOperation,
+  subject: EvidenceSubjectTarget,
+  target: BinaryTarget,
+): boolean =>
+  (operation === "inventory_artifact" || operation === "inspect_artifact") &&
+  subject.path === (target.sourcePath ?? target.path);

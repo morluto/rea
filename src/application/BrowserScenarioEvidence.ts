@@ -15,8 +15,12 @@ const browserScenarioParameters = (
 ): EvidenceObservation["parameters"] => ({
   scenario_sha256: digestJson(scenario),
   browser_mode: scenario.browser.mode,
+  ...(scenario.browser.mode === "launch"
+    ? { browser_headless: scenario.browser.headless }
+    : {}),
   start_url: sanitizeBrowserUrl(scenario.start_url.url),
   allowed_origins: scenario.allowed_origins,
+  environment: scenario.environment,
   actions: scenario.actions.map(({ step_id, action }) => ({
     step_id,
     action,
@@ -25,11 +29,9 @@ const browserScenarioParameters = (
     "timeout_ms" in item ? (item.timeout_ms ?? null) : null,
   ),
   secret_declarations: scenario.secrets.map(
-    ({ secret_id, environment_variable, purpose, redaction }) => ({
+    ({ secret_id, environment_variable }) => ({
       secret_id,
       environment_variable,
-      purpose,
-      redaction,
     }),
   ),
   capture: scenario.capture,

@@ -18,8 +18,8 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, writeFile } from "node:fs/promises";
+import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const nonHopperProvider = (operations: string[]): AnalysisProvider => {
@@ -339,7 +339,88 @@ describe("replay of exact immutable calls", () => {
       expect(activeImport.error.message).toContain("profile_mismatch");
     await activeProfileMismatch.close();
   });
+});
 
+describe("snapshot switch rollback", () => {
+  it("retains the previous cache when a target switch snapshot conflicts", async () => {
+    const [first] = await createBinarySessionTargets();
+    const directory = await createTestTempDirectory("rea-session-copy-");
+    const second = join(directory, `second${extname(first)}`);
+    await copyFile(first, second);
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    expect((await session.open(first)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      session.recordUnknown({
+        question: "Does this function reach the network?",
+        severity: "medium",
+        domain: "network",
+        supporting_evidence_ids: [],
+        contradicting_evidence_ids: [],
+        required_authority: "shipped-artifact",
+        required_confidence: "observed",
+        required_environment: null,
+        recommended_probes: [
+          { operation: "analyze_function", rationale: "Inspect its callers." },
+        ],
+        relationships: [],
+      }).ok,
+    ).toBe(true);
+    const originalCache = session.exportAnalysisSnapshot();
+    expect(originalCache).toMatchObject({
+      ok: true,
+      value: { entries: [{ operation: "address_name" }] },
+    });
+
+    const conflicting = createTestBinarySession(createCacheProvider([]));
+    expect((await conflicting.open(second)).ok).toBe(true);
+    expect(
+      conflicting.recordUnknown({
+        question: "Does this function reach the network?",
+        severity: "high",
+        domain: "network",
+        supporting_evidence_ids: [],
+        contradicting_evidence_ids: [],
+        required_authority: "shipped-artifact",
+        required_confidence: "observed",
+        required_environment: null,
+        recommended_probes: [
+          { operation: "analyze_function", rationale: "Inspect its callers." },
+        ],
+        relationships: [],
+      }).ok,
+    ).toBe(true);
+    const conflictingSnapshot = conflicting.exportAnalysisSnapshot();
+    expect(conflictingSnapshot.ok).toBe(true);
+    if (!conflictingSnapshot.ok || !originalCache.ok) return;
+    await conflicting.close();
+
+    expect(
+      await session.open(second, { snapshot: conflictingSnapshot.value }),
+    ).toMatchObject({ ok: false });
+    expect(session.activeTarget()?.path).toBe(first);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(calls).toEqual(["health", "address_name", "health", "health"]);
+    await session.close();
+  });
+});
+
+describe("snapshot cache eligibility", () => {
   it("does not snapshot reads that depend on the provider cursor", async () => {
     const [first] = await createBinarySessionTargets();
     const calls: string[] = [];

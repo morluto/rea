@@ -162,12 +162,15 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
   const fixture = await applicationFixture();
   const staticEvidence = await analyzeFixture(fixture);
   const applicationPath = join(fixture, "main.js");
-  const input = electronActiveObservationInputSchema.parse({
-    executable_path: process.execPath,
-    application_path: applicationPath,
+  const input = {
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: applicationPath,
+      application_root: fixture,
+      actions: [],
+    }),
     application_root: fixture,
-    actions: [],
-  });
+  };
   const runtimeEvidence = createElectronActiveEvidence(
     input,
     createElectronActiveObservationFixtureResult(applicationPath),
@@ -198,17 +201,19 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
   );
 });
 
-it("hashes the retained Electron scenario projection, not raw selectors or secrets", async () => {
+it("keeps selected Electron arguments while omitting raw selectors", async () => {
   const fixture = await applicationFixture();
   const applicationPath = join(fixture, "main.js");
-  const makeInput = (secret: string, selector: string) =>
-    electronActiveObservationInputSchema.parse({
+  const makeInput = (secret: string, selector: string) => ({
+    ...electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
       application_path: applicationPath,
       application_root: fixture,
       args: ["--token", secret],
       actions: [{ step_id: "click", kind: "click", selector }],
-    });
+    }),
+    application_root: fixture,
+  });
   const provider = {
     id: "rea-playwright-electron-active",
     name: "REA Playwright active Electron observation provider",
@@ -225,12 +230,12 @@ it("hashes the retained Electron scenario projection, not raw selectors or secre
     provider,
   );
 
-  expect(first.parameters.scenario_sha256).toBe(
+  expect(first.parameters.scenario_sha256).not.toBe(
     second.parameters.scenario_sha256,
   );
-  expect(JSON.stringify(first)).not.toContain("first-secret");
+  expect(JSON.stringify(first)).toContain("first-secret");
   expect(JSON.stringify(first)).not.toContain("#first-secret");
-  expect(first.parameters.args).toEqual(["--token", "<redacted>"]);
+  expect(first.parameters.args).toEqual(["--token", "first-secret"]);
 });
 
 it("imports an operator-provided cache layer through an explicit file mapping", async () => {

@@ -59,7 +59,7 @@ export const protocolMessageSchema = z.strictObject({
   schema_hypotheses: z.array(schemaHypothesisSchema).default([]),
   /** Whether decoding was truncated. */
   truncated: z.boolean().default(false),
-  /** Whether credentials were detected and redacted. */
+  /** Whether the capture producer marked credentials as redacted. */
   credentials_redacted: z.boolean().default(false),
 });
 export type ProtocolMessage = z.infer<typeof protocolMessageSchema>;
@@ -74,7 +74,7 @@ export const protocolCaptureSchema = z.strictObject({
   inferred_schema: z.array(schemaHypothesisSchema).default([]),
   /** Whether any message was truncated. */
   has_truncated: z.boolean().default(false),
-  /** Whether credentials were detected and redacted. */
+  /** Whether the capture producer marked credential content as redacted. */
   credentials_detected: z.boolean().default(false),
 });
 
@@ -101,26 +101,6 @@ export function classifyProtocolFamily(
   return null;
 }
 
-/** Credential-like field names that should be redacted. */
-const CREDENTIAL_PATTERNS = [
-  "password",
-  "passwd",
-  "secret",
-  "token",
-  "api_key",
-  "apikey",
-  "authorization",
-  "auth",
-  "credential",
-  "private_key",
-];
-
-/** Check if a field path looks like it may contain credentials. */
-export function looksLikeCredential(path: string): boolean {
-  const lower = path.toLowerCase();
-  return CREDENTIAL_PATTERNS.some((p) => lower.includes(p));
-}
-
 /** Decode a JSON-RPC message from raw payload bytes. */
 export function decodeJsonRpc(rawPayload: Uint8Array): {
   decoded_fields: DecodedField[];
@@ -132,21 +112,12 @@ export function decodeJsonRpc(rawPayload: Uint8Array): {
 
   if (typeof parsed === "object" && parsed !== null) {
     for (const [key, value] of Object.entries(parsed)) {
-      if (looksLikeCredential(key)) {
-        fields.push({
-          path: key,
-          wire_type: "json",
-          value: "[REDACTED]",
-          inferred: false,
-        });
-      } else {
-        fields.push({
-          path: key,
-          wire_type: "json",
-          value,
-          inferred: false,
-        });
-      }
+      fields.push({
+        path: key,
+        wire_type: "json",
+        value,
+        inferred: false,
+      });
     }
   }
 

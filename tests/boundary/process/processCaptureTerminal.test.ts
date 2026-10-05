@@ -14,6 +14,8 @@ const buildTerminalScenario = (root: string, script: string) =>
     executable: process.execPath,
     arguments: [script],
     working_directory: root,
+    filesystem_observation_paths: [root],
+    normalization: { paths: true },
     checkpoints: [
       {
         name: "probe_seen",
@@ -92,17 +94,15 @@ const buildTerminalScenario = (root: string, script: string) =>
                 source: "filesystem",
                 exact: {
                   name: "reactive_shim_seen",
-                  files: [],
-                  effects: [],
                   truncated: false,
                 },
-                ignore_fields: ["at_ms"],
+                ignore_fields: ["at_ms", "files", "effects"],
                 since: { kind: "scenario_start" },
                 consume: true,
                 cardinality: { min: 1, max: 1 },
               },
               actions: [],
-              target: { kind: "finish", outcome: "passed" },
+              target: { kind: "finish" },
             },
           ],
         },
@@ -129,13 +129,6 @@ it("renders terminal state, records shim invocations, and captures literal check
     if (!capability.available) return;
     const result = await captureProcessScenario(
       buildTerminalScenario(root, script),
-      {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [root],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;

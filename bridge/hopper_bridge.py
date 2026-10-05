@@ -309,6 +309,12 @@ def _procedure_references(document, params):
         })
     return {
         "procedure": _procedure_identity(procedure), "direction": direction,
+        "reference_kinds_available": False,
+        # The public Hopper API returns observed references but does not expose
+        # enough flow metadata to enumerate calls with no resolved target.
+        # Keep the required list field explicit; the provider records this as
+        # unknown coverage rather than claiming the list is exhaustive.
+        "unresolved_calls": [],
         "references": items,
     }
 

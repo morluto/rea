@@ -48,8 +48,8 @@ export const compareWebCaptures = (
     limitations: [
       "A changed status proves an observed difference; an unknown status means absence could not be established from capture completeness.",
       "Network comparison covers only activity observed after each CDP attachment.",
-      "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was approved and not truncated.",
-      "Storage key inventories are compared only when approved and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
+      "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was selected and not truncated.",
+      "Storage key inventories are compared only when selected and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
     ],
   });
 };

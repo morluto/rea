@@ -18,7 +18,7 @@ const resolveLocator = (page: Page, locator: ScenarioLocator): Locator => {
     case "role":
       return page.getByRole(locator.role, {
         name: locator.name,
-        exact: locator.exact,
+        exact: true,
       });
     case "css":
       return page.locator(locator.selector);

@@ -11,7 +11,6 @@ import {
   HopperStartError,
   HopperTimeoutError,
   NoBinaryOpenError,
-  PermissionRequiredError,
   ProviderSelectionError,
   ReplayPlanStaleError,
   UnknownRegistryError,
@@ -40,19 +39,7 @@ export const analysisErrorRemediationAction = (
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
   if (error instanceof ReplayPlanStaleError)
-    return "Review the rebuilt replay plan and explicitly approve its new digest.";
-  if (error instanceof PermissionRequiredError) {
-    switch (error.remediation) {
-      case "configure":
-        return "Add the exact missing scope beneath the administrator ceiling, then retry.";
-      case "elicit":
-        return "Approve the exact missing scope, then retry the operation.";
-      case "restart":
-        return "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client.";
-      case "grant":
-        return "The administrator ceiling already covers this scope; issue a grant for it (a project grant, or the documented auto-grant setting for an unattended environment), then retry.";
-    }
-  }
+    return "Rebuild the replay plan and retry with its current digest.";
   return analysisErrorUserMessage(error);
 };
 
@@ -60,7 +47,6 @@ export const analysisErrorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
   if (error instanceof ReplayPlanStaleError) return "integrity_mismatch";
-  if (error instanceof PermissionRequiredError) return "permission_required";
   if (
     error instanceof ProviderSelectionError &&
     error.reason === "provider_unavailable"
@@ -74,7 +60,7 @@ export const analysisErrorCategory = (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"
   )
-    return "permission_required";
+    return "unavailable";
   if (error instanceof HopperProcessError || error instanceof HopperStartError)
     return "unavailable";
   if (error instanceof ArtifactOperationError)
@@ -103,7 +89,7 @@ const artifactErrorCategory = (
   if (reason === "integrity") return "integrity_mismatch";
   if (reason === "limit") return "truncated";
   if (reason === "cancelled") return "cancelled";
-  if (reason === "policy" || reason === "unavailable") return "unavailable";
+  if (reason === "unavailable") return "unavailable";
   return "execution_failure";
 };
 
@@ -125,8 +111,6 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error instanceof ReplayPlanStaleError)
     return "The controlled replay plan changed before execution. Refresh the current state and try again.";
-  if (error instanceof PermissionRequiredError)
-    return "This operation needs additional local permission. Review the requested scope and remediation.";
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
   const hopperMessage = hopperErrorUserMessage(error);
@@ -225,10 +209,8 @@ const artifactMessage = (reason: ArtifactOperationError["reason"]): string => {
     return "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.";
   if (reason === "path")
     return "Artifact contains an unsafe or conflicting internal path. Inspect the reported path and correct the artifact before retrying.";
-  if (reason === "policy")
-    return "Artifact integrity continuation is disabled by policy. Configure REA_ARTIFACT_INTEGRITY_CONTINUE_ENABLED=true and retry only if continuing after mismatches is approved.";
   if (reason === "unavailable")
-    return "Artifact processing is unavailable for the current target or policy. Check artifact support and required approvals.";
+    return "Artifact processing is unavailable for the current target or host. Check artifact support and required tools.";
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
@@ -268,7 +250,6 @@ const KNOWN_ERROR_TAGS = {
   ConfigurationError: true,
   NoBinaryOpenError: true,
   BinaryTargetError: true,
-  PermissionRequiredError: true,
   ReplayPlanStaleError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 

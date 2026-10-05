@@ -331,6 +331,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.opened.page.url();
   }
 
+  sanitizeUrl(value: string) {
+    return this.secrets.sanitizeUrl(value);
+  }
+
   setStep(index: number): void {
     this.eventCapture.setStep(index);
   }

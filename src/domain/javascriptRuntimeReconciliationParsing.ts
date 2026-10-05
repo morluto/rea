@@ -420,7 +420,7 @@ const assertRuntimeParameters = (
       );
     if (expected.sourceIncluded && !parameters.include_script_sources)
       throw new TypeError(
-        "Runtime Evidence contains source without source-capture approval",
+        "Runtime Evidence contains source without source-capture selection",
       );
     return;
   }

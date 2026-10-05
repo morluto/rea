@@ -16,7 +16,7 @@ The eight shipped tools are:
 | Compare members across builds and map build-local tokens                    | `compare_managed_members`           |
 | Check native call declarations against supplied export or function evidence | `verify_managed_native_boundaries`  |
 | Import decompiled code against verified static member identities            | `import_managed_reconstruction`     |
-| Plan a separately approved runtime experiment without executing it          | `plan_managed_runtime_correlation`  |
+| Plan a runtime experiment without executing it                              | `plan_managed_runtime_correlation`  |
 | Add managed findings to an application graph                                | `project_managed_application_graph` |
 
 Each has a matching CLI command: replace underscores with hyphens and prefix
@@ -37,8 +37,8 @@ collapsing them:
 3. What source-like or behavioral structure can be reconstructed or inferred?
 4. Which findings survive an exact-build check or a cross-build structural
    comparison?
-5. Which remaining questions require native analysis or a separately
-   authorized runtime experiment?
+5. Which remaining questions require native analysis or a future runtime
+   experiment?
 
 The ordinary workflow ends at question four. Static analysis never loads or
 executes the target.
@@ -156,7 +156,7 @@ UTF-8 encoding, and lowercase hexadecimal output.
 ### Epistemic commitment
 
 - authority: static bytes, reconstruction, structural inference, independent
-  validation, native provider, or separately authorized runtime;
+  validation, native provider, or future runtime observation;
 - state: observed, inferred, unknown, or unavailable;
 - confidence independent of authority;
 - coverage and admitted/dropped counts;
@@ -407,7 +407,8 @@ remains the admission requirement.
 The later runtime track is not an extension flag on a static operation. Its
 design must expose whether it attaches to an existing process, launches a new
 process, loads an assembly, uses reflection, installs a debugger/profiler, or
-instruments code. Each effect needs separate approval and exact-build checks.
+instruments code. Each effect must be declared and checked against the exact
+build.
 
 At minimum, admission requires target SHA-256, MVID, normalized signature and
 body/CIL commitment, CLR family, OS, architecture, tool version, scenario
@@ -416,11 +417,10 @@ the experiment. It must not contact real services/accounts or claim that an
 instrumented path represents an ordinary launch unless that proposition is
 independently tested.
 
-The shipped `plan_managed_runtime_correlation` path admits only a
-default-disabled, permission-gated experiment plan and records that no target
-code was executed. Until a separate executor is designed and shipped, runtime
-behavior questions remain explicit unknowns with suggested probes; static
-support does not perform them.
+The shipped `plan_managed_runtime_correlation` path returns an experiment plan
+and records that no target code was executed. There is no runtime executor.
+Runtime behavior questions therefore remain explicit unknowns with suggested
+probes; static support does not perform them.
 
 ## Delivery sequence
 
@@ -442,8 +442,8 @@ The managed-code track advances as reviewable pull requests:
    PE/CLI corpus shipped through `npm run verify:managed`; optional BYO
    `ilspycmd` real-tool oracle shipped through `REA_ILSPY_CMD_PATH`; dnSpy and
    pinned Windows checks remain planned); and
-8. separately authorized runtime-correlation admission planning (shipped; no
-   runtime execution);
+8. non-executing runtime-correlation planning (shipped; no runtime prerequisite
+   probe, execution, or confinement claim);
 9. managed static Evidence projection into the application graph (shipped).
 
 Each implementation PR updates generated product facts only for behavior it

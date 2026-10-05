@@ -445,7 +445,7 @@
     }
   ],
   "cli": {
-    "primary_count": 75,
+    "primary_count": 74,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -503,7 +503,6 @@
       "observe-native-ui",
       "observe-web-session",
       "plan-managed-runtime-correlation",
-      "policy",
       "prepare-node-characterization",
       "project-managed-application-graph",
       "providers",
@@ -532,14 +531,14 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 75,
+      "cli_commands": 74,
       "mcp_tools": 122,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "49674f8c1bc073eb86d862d76cd196576750667529c115e20ffb8cf24824746e",
-      "prompts_sha256": "fa889fc671185ac9c968c6dc8309cf609e709cdc837dbbf39b7cdfadb84ac2d7",
-      "combined_sha256": "88df47ddee7253da2eb91f94cd6c84b3e0c1ac96272a23715a6420bb6006990a",
+      "tools_sha256": "9f2b8a77ca7d972dedddf33294f5addb5fc7e00ce43ae5de21be989e0777871a",
+      "prompts_sha256": "4762db348821fec787a5b8c6423f2c48a71f6f0ec2afee97b16ad69030ec504b",
+      "combined_sha256": "3a0e6d66df95b913797ce2e4548e97d409d6e8768023f8a7a23d8d85ae9d766f",
       "providers_sha256": "c5a88a49990fafc8244972ee8ff543fc19995eb79db960da55f6a311e15340d1"
     }
   }

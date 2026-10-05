@@ -1,10 +1,10 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or approved runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
   version: "23"
   tool_count: 122
-  catalog_digest: "88df47ddee7253da2eb91f94cd6c84b3e0c1ac96272a23715a6420bb6006990a"
+  catalog_digest: "3a0e6d66df95b913797ce2e4548e97d409d6e8768023f8a7a23d8d85ae9d766f"
 ---
 
 # REA
@@ -50,8 +50,8 @@ returned result leaves a specific question unanswered.
 
 Every conclusion must distinguish observations, inferences, and unknowns. Cite
 Evidence IDs, preserve limitations and incomplete coverage, and never imply
-that static analysis observed execution. Ask for approval only where a tool or
-policy requires it; approval never broadens a different authority boundary.
+that static analysis observed execution. Runtime requests execute the declared
+target and lifecycle; do not broaden the target or action beyond those fields.
 
 ## Plan broader investigations
 
@@ -72,7 +72,7 @@ For requests that span multiple features or subsystems, use a staged workflow:
    infer behavior from filenames, strings, or layout alone.
 5. Corroborate a conclusion with the evidence type it requires. Use runtime
    observation or controlled replay only when static evidence cannot answer the
-   question and the required authority is available.
+   question and the required host runtime and OS access are available.
 6. Decompose work into independent questions. When parallel workers are
    available and the questions do not depend on one another, assign distinct
    scopes, point workers to existing evidence, and ask them to return sources,

@@ -80,6 +80,28 @@ class FakeInventorySegment:
         return address if isinstance(address, int) else int(str(address), 16)
 
 
+class FakeReferenceSegment:
+    def getNameAtAddress(self, address):
+        return "fixture-procedure"
+
+    def getReferencesFromAddress(self, address):
+        return []
+
+    def getReferencesOfAddress(self, address):
+        return []
+
+
+class FakeProcedure:
+    def __init__(self, segment):
+        self.segment = segment
+
+    def getEntryPoint(self):
+        return 0x401000
+
+    def getSegment(self):
+        return self.segment
+
+
 class FakeStringsDocument:
     def getSegmentsList(self):
         return [FakeStringSegment()]
@@ -158,6 +180,15 @@ def main():
     bridge["REA_TOKEN"] = "probe-token"
     FakeDocumentProvider.document.analysis_active = False
     FakeDocumentProvider.current.analysis_active = False
+    reference_segment = FakeReferenceSegment()
+    reference_procedure = FakeProcedure(reference_segment)
+    bridge["_procedure"] = lambda document, value=None: reference_procedure
+    bridge["_instruction_addresses"] = lambda procedure: [0x401000]
+    bridge["_segment"] = lambda document, address: reference_segment
+    procedure_references = bridge["_dispatch"](
+        "procedure_references",
+        {"procedure": "0x401000", "direction": "outgoing"},
+    )
     inventories = bridge_replies(bridge, [
         request(method, params, index)
         for index, (method, params) in enumerate([
@@ -220,6 +251,7 @@ def main():
                 "current_address": current_address,
                 "strings": strings,
                 "inventory_replies": inventories,
+                "procedure_references": procedure_references,
                 "provider_faults": provider_faults,
                 "malformed_requests": malformed_requests,
                 "session_document_reused": selected,

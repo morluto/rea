@@ -6,6 +6,17 @@ import {
 } from "./ManagedMemberInstructionDecoder.js";
 import { sha256Bytes } from "./ManagedMetadataHeaps.js";
 
+const bodyStatus = (
+  decodedIssue: string | null,
+  truncatedInstructions: number,
+  exceptionRegions: ReturnType<typeof parseExceptionRegions> | null,
+): "malformed" | "partial" | "present" => {
+  if (decodedIssue !== null || exceptionRegions?.status === "malformed")
+    return "malformed";
+  if (truncatedInstructions > 0) return "partial";
+  return "present";
+};
+
 interface MethodBodyHeader {
   readonly format: "tiny" | "fat";
   readonly size: number;
@@ -87,12 +98,15 @@ export const methodBody = (
     );
     const methodEnd = ilOffset + header.ilSize;
     const sectionOffset = (methodEnd + 3) & ~3;
-    const status =
-      decoded.issue !== null
-        ? "malformed"
-        : decoded.truncated > 0
-          ? "partial"
-          : "present";
+    const exceptionRegions =
+      header.format === "fat" && (header.flags & 8) !== 0
+        ? parseExceptionRegions(bytes, sectionOffset, bytes.length)
+        : null;
+    const status = bodyStatus(
+      decoded.issue,
+      decoded.truncated,
+      exceptionRegions,
+    );
     return {
       status,
       header_format: header.format,
@@ -113,12 +127,12 @@ export const methodBody = (
       truncated_instructions: decoded.truncated,
       opcode_counts: opcodeCounts,
       anchors,
-      exception_regions:
-        header.format === "fat" && (header.flags & 8) !== 0
-          ? parseExceptionRegions(bytes, sectionOffset, bytes.length)
-          : [],
+      exception_regions: exceptionRegions?.regions ?? [],
       issue:
         decoded.issue ??
+        (exceptionRegions?.status === "malformed"
+          ? exceptionRegions.issue
+          : null) ??
         (decoded.truncated > 0
           ? "Instruction decoding stopped before the end of the method body"
           : null),

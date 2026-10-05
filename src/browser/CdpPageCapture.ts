@@ -84,7 +84,7 @@ export const capturePage = async (
     allowedOrigins,
     limitations: [
       "Observation starts when REA attaches; prior network and console activity is unavailable.",
-      "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; separately approved captures retain only redacted text or value-free shapes.",
+      "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
       "Source maps are reported only as declarative URLs and are not fetched.",
       "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
     ],

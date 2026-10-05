@@ -18,9 +18,6 @@ describe("PlaywrightScenarioEvents", () => {
       browser: {
         mode: "launch",
         executable_path: "/opt/chromium",
-        headless: true,
-        user_data: "temporary-owned",
-        cleanup: "close-and-delete-profile",
       },
       start_url: { url: "https://app.example.test/" },
       allowed_origins: ["https://app.example.test"],
@@ -30,7 +27,6 @@ describe("PlaywrightScenarioEvents", () => {
         timezone: "UTC",
         color_scheme: "light",
         reduced_motion: "reduce",
-        service_workers: "block",
       },
       actions: [
         {
@@ -42,10 +38,6 @@ describe("PlaywrightScenarioEvents", () => {
       storage: {},
       request_replay: { mode: "disabled" },
       secrets: [],
-      redaction: {
-        secret_values: "replace-with-secret-reference",
-        query_parameter_names: [],
-      },
       capture: {
         after_each_step: [],
         at_end: [],
@@ -85,9 +77,6 @@ describe("PlaywrightScenarioEvents", () => {
       browser: {
         mode: "launch",
         executable_path: "/opt/chromium",
-        headless: true,
-        user_data: "temporary-owned",
-        cleanup: "close-and-delete-profile",
       },
       start_url: { url: "https://app.example.test/" },
       allowed_origins: ["https://app.example.test"],

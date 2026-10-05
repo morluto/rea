@@ -12,7 +12,6 @@ import { importManagedReconstructionEvidence } from "../dist/application/Managed
 import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
 import { projectManagedApplicationGraphEvidence } from "../dist/application/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../dist/application/JavaScriptApplicationWorkflowService.js";
-import { createPermissionAuthority } from "../dist/application/PermissionAuthority.js";
 import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
 import { createEvidence } from "../dist/domain/evidence.js";
 import {
@@ -250,29 +249,7 @@ try {
   assert.equal(obfuscatedMembers.types[0]?.full_name, "Fixture.ꙮType");
   assert.equal(obfuscatedMembers.methods[0]?.name, "λ⛧");
   assert.equal(obfuscatedMembers.fields[0]?.name, "字段");
-  const runtimeExecutable = join(workspace, "dotnet");
-  await writeFile(runtimeExecutable, "#!/bin/sh\n");
-  const runtimeCeiling = {
-    capability: "managed_runtime",
-    roots: [workspace],
-    executables: [runtimeExecutable],
-    environment_names: [],
-    network: "none",
-    mount: false,
-  };
-  const runtimeAuthority = await createPermissionAuthority(
-    [runtimeCeiling],
-    [
-      {
-        ...runtimeCeiling,
-        grant_id: "administrator:managed_runtime",
-        lifetime: "administrator",
-        operation_identity: null,
-        expires_at: null,
-      },
-    ],
-  );
-  assert.equal(runtimeAuthority.ok, true);
+  const runtimeExecutable = process.execPath;
   const runtimeMethod = obfuscatedMembers.methods[0];
   assert.ok(runtimeMethod);
   const obfuscatedMembersEvidence = createEvidence(
@@ -317,14 +294,7 @@ try {
   );
   assert.equal(reconstructionImport.value.confidence, "inferred");
   const runtimePlan = await planManagedRuntimeCorrelationEvidence(
-    {
-      policy: () => ({
-        status: "enabled",
-        roots: [workspace],
-        executablePath: runtimeExecutable,
-      }),
-      authority: runtimeAuthority.value,
-    },
+    { configuration: () => ({ executablePath: runtimeExecutable }) },
     {
       static_members: obfuscatedMembersEvidence,
       method: {
@@ -350,12 +320,16 @@ try {
   assert.equal(runtimePlan.ok, true);
   assert.equal(runtimePlan.value.normalized_result.executed, false);
   assert.equal(
-    runtimePlan.value.normalized_result.authority_model.capability,
-    "managed_runtime",
+    runtimePlan.value.normalized_result.unsupported_until_executor_exists,
+    true,
   );
   assert.equal(
     runtimePlan.value.normalized_result.effect_taxonomy.uses_debugger,
     true,
+  );
+  assert.equal(
+    runtimePlan.value.normalized_result.requested_runtime.confinement,
+    "not-established",
   );
 
   const left = await fixture("token-drift-left.exe", {

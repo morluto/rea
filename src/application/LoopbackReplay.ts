@@ -179,7 +179,8 @@ const handleHttpRequest = async (
     recorder.scenario.limits.protocol_body_bytes,
   );
   const method = request.method ?? "GET";
-  const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+  const path = `${requestUrl.pathname}${requestUrl.search}`;
   if (body === undefined) {
     recorder.truncated = true;
     response.statusCode = 413;

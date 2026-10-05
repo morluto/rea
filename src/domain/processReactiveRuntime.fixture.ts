@@ -15,11 +15,7 @@ import {
 
 export const terminalTrigger = (literal = "Ready") => ({
   kind: "terminal_text" as const,
-  view: "decoded" as const,
-  encoding: "utf8" as const,
   literal,
-  case_sensitive: true,
-  control_sequences: "include" as const,
   occurrence: 1,
   since: { kind: "scenario_start" as const },
   consume: false,
@@ -50,7 +46,7 @@ export const finish = (
   max_uses: 4,
   when,
   actions,
-  target: { kind: "finish", outcome: "passed" },
+  target: { kind: "finish" },
 });
 export const collectionFor = (source: ProcessObservationSource) => {
   switch (source) {

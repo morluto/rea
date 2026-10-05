@@ -2,12 +2,8 @@ import { AnalysisError } from "../domain/errors.js";
 
 interface ProcessCaptureErrorOptions extends ErrorOptions {
   readonly userMessage?: string;
-  readonly userCategory?: "permission_required" | "cancelled";
-  readonly reason?:
-    | "capture_failed"
-    | "cleanup_incomplete"
-    | "permission_required"
-    | "cancelled";
+  readonly userCategory?: "cancelled";
+  readonly reason?: "capture_failed" | "cleanup_incomplete" | "cancelled";
   readonly cleanupResources?: readonly string[];
 }
 
@@ -16,10 +12,7 @@ export class ProcessCaptureError extends AnalysisError {
   readonly _tag = "ProcessCaptureError";
 
   override readonly userMessage: string | undefined;
-  override readonly userCategory:
-    | "permission_required"
-    | "cancelled"
-    | undefined;
+  override readonly userCategory: "cancelled" | undefined;
   readonly reason: NonNullable<ProcessCaptureErrorOptions["reason"]>;
   override readonly cleanupIncomplete: boolean;
   override readonly cleanupResources: readonly string[];
@@ -30,11 +23,7 @@ export class ProcessCaptureError extends AnalysisError {
     this.userCategory = options?.userCategory;
     this.reason =
       options?.reason ??
-      (options?.userCategory === "permission_required"
-        ? "permission_required"
-        : options?.userCategory === "cancelled"
-          ? "cancelled"
-          : "capture_failed");
+      (options?.userCategory === "cancelled" ? "cancelled" : "capture_failed");
     this.cleanupIncomplete = this.reason === "cleanup_incomplete";
     this.cleanupResources = options?.cleanupResources ?? [];
   }

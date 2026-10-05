@@ -184,6 +184,30 @@ describe("historical source graph", () => {
     }
   });
 
+  it("retains actual external targets and accepts legacy markers", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries[2] = symlinkEntry({
+      target: "/private/shared/target.js",
+      target_state: "external",
+    });
+    const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries[2]).toMatchObject({
+      kind: "symlink",
+      target: "/private/shared/target.js",
+      target_state: "external",
+    });
+    expect(() =>
+      createHistoricalSourceGraph({
+        ...input,
+        entries: input.entries.map((entry) =>
+          entry.kind === "symlink"
+            ? { ...entry, target: "<outside-root>" }
+            : entry,
+        ),
+      }),
+    ).not.toThrow();
+  });
+
   it("derives language and manifest indexes and enforces code-point order", () => {
     const input = graphInput();
     input.entries[1] = fileEntry({ classifications: ["source", "test"] });
@@ -298,7 +322,7 @@ describe("historical source graph validation", () => {
             : entry,
         ),
       }),
-    ).toThrow();
+    ).not.toThrow();
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),

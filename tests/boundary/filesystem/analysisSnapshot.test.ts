@@ -22,6 +22,7 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET as TARGET,
 } from "../../../src/domain/analysisSnapshot.fixture.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 
 describe("analysis snapshots: persistence", () => {
@@ -37,13 +38,29 @@ describe("analysis snapshots: persistence", () => {
       parameters: { address: "0x1000" },
       execution: createAnalysisExecution("main", PROVIDER, {
         analysisProfile: PROFILE,
+        rawResult: "main",
+        subject: {
+          path: TARGET.path,
+          sha256: TARGET.sha256,
+          format: TARGET.format,
+          ...(TARGET.architecture === undefined
+            ? {}
+            : { architecture: TARGET.architecture }),
+        },
       }),
+    });
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "address_name",
+      parameters: { address: "0x1000" },
+      result: "main",
+      rawResult: "main",
+      analysisProfile: PROFILE,
     });
     const snapshot: AnalysisSnapshot = {
       target,
       binding,
       entries: [entry],
-      evidence_bundle: createEvidenceBundle([]),
+      evidence_bundle: createEvidenceBundle([evidence]),
     };
     const written = await writeAnalysisSnapshot(snapshot, path, false);
     expect(written.ok).toBe(true);

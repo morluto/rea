@@ -36,7 +36,7 @@ check project-owned conformance fixtures and fail-closed report behavior.
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `discover-classify`             | target-free startup, artifact inventory, compatible workflow selection, and exact visible limits                      |
 | `diagnose-environment`          | broken runtime separated from analysis failure, version skew detected, and revision changed after recovery            |
-| `acquire-authority`             | exact missing scope, narrow grant, expansion re-prompt, and no launch after denial/cancellation                       |
+| `declare-request`               | exact target, operation, and lifecycle are carried by the request before launch                                       |
 | `static-analysis`               | native and JavaScript routing plus preserved ambiguity, truncation, unsupported syntax, and residual unknowns         |
 | `reactive-scenarios`            | predicate-driven interaction, descendant settlement, Electron correlation, and cancellation cleanup Evidence          |
 | `compare-authority-candidate`   | explicit partial-order/finite-trace semantics, primary divergence localization, and unknown for incomplete comparison |
@@ -63,7 +63,7 @@ The evaluator rejects or withholds readiness when:
 - contradiction Evidence or its affected comparison is missing;
 - the reconstruction obligation ledger is not `ready`, has no required
   obligation, or retains an unowned/unverified required obligation;
-- denied authority launches a process, cancellation loses diagnostics, or owned
+- a process exceeds its declared target/lifecycle, cancellation loses diagnostics, or owned
   resources remain;
 - replay is nondeterministic, tampering/staleness is not detected, or the
   expected source digest differs.

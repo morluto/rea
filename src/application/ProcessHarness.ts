@@ -4,7 +4,6 @@ import type {
   ProcessCapture,
   UnverifiedProcessCapture,
   ProcessCaptureEventJournalEntry,
-  ProcessExecutionPolicy,
   ProcessSample,
   ProcessScenario,
   RecordProcessCaptureEvent,
@@ -12,6 +11,10 @@ import type {
 } from "../domain/processCapture.js";
 import { parseProcessCapture } from "../domain/processCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  type AnalysisError,
+} from "../domain/errors.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,
@@ -43,7 +46,10 @@ import {
   resolveProcessResult,
   type PendingProcessCapture,
 } from "./ProcessCaptureLifecycle.js";
-import { assertNotCancelled } from "./ProcessCaptureAuthority.js";
+import {
+  assertNotCancelled,
+  resolveProcessScenarioRuntimePaths,
+} from "./ProcessScenarioRuntimeValidation.js";
 import {
   createProcessCaptureJournal,
   scheduleScenarioInteractions,
@@ -56,6 +62,7 @@ import {
   type ProcessReactiveHarness,
 } from "./ProcessReactiveHarness.js";
 import { makeProcessCaptureEnvironment } from "./ProcessCaptureEnvironment.js";
+import { processCaptureOwnershipUnavailableReason } from "./ProcessCaptureCapability.js";
 export { probeProcessCaptureCapability } from "./ProcessCaptureCapability.js";
 
 interface StartedCaptureRuntime {
@@ -115,7 +122,7 @@ const createTerminalRenderer = (
 
 interface StartCaptureRuntimeOptions {
   readonly scenario: ProcessScenario;
-  readonly home: string;
+  readonly hostEnvironment: Readonly<Record<string, string | undefined>>;
   readonly temporaryRoot: string;
   readonly runId: string;
   readonly before: Awaited<ReturnType<typeof snapshotRoots>>;
@@ -436,16 +443,15 @@ const completeCapture = async (options: {
   });
 };
 
-/** Execute one authorized scenario and return bounded observations. */
+/** Execute one caller-selected scenario and return bounded observations. */
 const runProcessScenario = async (
   scenario: ProcessScenario,
-  policy: ProcessExecutionPolicy,
   signal?: AbortSignal,
+  hostEnvironment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<ProcessCapture> => {
   assertSupportedReactiveScenario(scenario);
-  const { temporaryRoot, runId, home, before } = await prepareProcessCapture(
+  const { temporaryRoot, runId, before } = await prepareProcessCapture(
     scenario,
-    policy,
     signal,
   );
   const frames: TerminalFrame[] = [];
@@ -463,7 +469,7 @@ const runProcessScenario = async (
   try {
     runtime = await startCaptureRuntime({
       scenario,
-      home,
+      hostEnvironment,
       temporaryRoot,
       runId,
       before,
@@ -522,11 +528,26 @@ const runProcessScenario = async (
 /** Execute one scenario through a typed expected-failure channel. */
 export const captureProcessScenario = async (
   scenario: ProcessScenario,
-  policy: ProcessExecutionPolicy,
   signal?: AbortSignal,
-): Promise<Result<ProcessCapture, ProcessCaptureError>> => {
+  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<Result<ProcessCapture, ProcessCaptureError | AnalysisError>> => {
+  const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
+  if (ownershipReason !== undefined)
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "rea-process",
+        "capture_process_scenario",
+        ownershipReason,
+      ),
+    );
   try {
-    return ok(await runProcessScenario(scenario, policy, signal));
+    assertNotCancelled(signal);
+    const resolvedScenario = await resolveProcessScenarioRuntimePaths(
+      scenario,
+      environment,
+    );
+    return ok(await runProcessScenario(resolvedScenario, signal, environment));
   } catch (cause: unknown) {
     return err(
       cause instanceof ProcessCaptureError

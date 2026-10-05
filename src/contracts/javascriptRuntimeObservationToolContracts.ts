@@ -22,7 +22,7 @@ export const JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS = [
     outputSchema: evidenceResultOf(javascriptRuntimeTargetListSchema),
     examples: [
       {
-        title: "List approved Node Inspector targets",
+        title: "List Node Inspector targets",
         input: {
           inspector_endpoint: endpoint,
         },
@@ -39,7 +39,7 @@ export const JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS = [
     outputSchema: evidenceResultOf(javascriptRuntimeObservationSchema),
     examples: [
       {
-        title: "Observe one approved Node runtime",
+        title: "Observe one Node runtime",
         input: {
           inspector_endpoint: endpoint,
           target_id: "TARGET_ID_FROM_LIST_JAVASCRIPT_RUNTIME_TARGETS",

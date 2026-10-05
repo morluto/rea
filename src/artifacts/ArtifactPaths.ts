@@ -30,15 +30,8 @@ export const normalizeArtifactPath = (input: string): string => {
 /** Reject exact, Unicode-normalized, case-folded, and prefix collisions. */
 export class ArtifactPathRegistry {
   readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
-  readonly #folded = new Set<string>();
 
   add(path: string, kind: "file" | "directory" | "symlink" | "slice"): void {
-    const folded = path.toLocaleLowerCase("en-US");
-    if (this.#folded.has(folded))
-      throw new ArtifactReaderFailure(
-        "path",
-        `Artifact path collision: ${path}`,
-      );
     const parts = path.split("/");
     let node = this.#root;
     for (const [index, part] of parts.entries()) {
@@ -47,10 +40,16 @@ export class ArtifactPathRegistry {
           "path",
           `Artifact prefix conflict: ${path}`,
         );
-      let child = node.children.get(part);
+      const foldedPart = part.toLocaleLowerCase("en-US");
+      let child = node.children.get(foldedPart);
+      if (child !== undefined && child.spelling !== part)
+        throw new ArtifactReaderFailure(
+          "path",
+          `Artifact path collision: ${path}`,
+        );
       if (child === undefined) {
-        child = { kind: undefined, children: new Map() };
-        node.children.set(part, child);
+        child = { spelling: part, kind: undefined, children: new Map() };
+        node.children.set(foldedPart, child);
       }
       node = child;
       if (index === parts.length - 1) {
@@ -67,11 +66,11 @@ export class ArtifactPathRegistry {
       }
     }
     node.kind = kind;
-    this.#folded.add(folded);
   }
 }
 
 interface PathTrieNode {
+  readonly spelling?: string;
   kind: "file" | "directory" | "symlink" | "slice" | undefined;
   readonly children: Map<string, PathTrieNode>;
 }

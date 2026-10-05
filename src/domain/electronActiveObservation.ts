@@ -1,11 +1,16 @@
-import { isAbsolute } from "node:path";
-
 import { z } from "zod";
 
+const pathInputSchema = z.string().trim().min(1);
 const absolutePathSchema = z
   .string()
   .min(1)
-  .refine(isAbsolute, "path must be absolute");
+  .refine(
+    (value) =>
+      value.startsWith("/") ||
+      /^[A-Za-z]:[\\/]/u.test(value) ||
+      value.startsWith("\\\\"),
+    "provider path must be absolute",
+  );
 
 const windowIndexSchema = z.number().int().min(0);
 
@@ -53,9 +58,9 @@ const actionSchema = z.discriminatedUnion("kind", [
 
 /** Input for one explicit, provider-owned Electron runtime experiment. */
 export const electronActiveObservationInputSchema = z.strictObject({
-  executable_path: absolutePathSchema,
-  application_path: absolutePathSchema,
-  application_root: absolutePathSchema,
+  executable_path: pathInputSchema,
+  application_path: pathInputSchema,
+  application_root: pathInputSchema.optional(),
   args: z.array(z.string()).default([]),
   actions: z.array(actionSchema).default([]),
 });

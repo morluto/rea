@@ -1,20 +1,29 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
+
+import { decodeCanonicalBase64 } from "./webScreenshot.js";
 
 const scope = {
   pid: z.number().int().positive(),
   window_id: z.number().int().positive(),
-  observation_approved: z.literal(true),
   screenshot: z.boolean().default(true),
   accessibility: z.boolean().default(true),
-  max_nodes: z.number().int().min(1).max(2_000).default(500),
+  max_nodes: z
+    .number()
+    .int()
+    .positive()
+    .safe()
+    .default(500)
+    .describe(
+      "Maximum accessibility nodes per capture; increase for large windows.",
+    ),
 };
 /** Opt-in passive observation binds one already-running process and window. */
 export const nativeUiObservationInputSchema = z.strictObject(scope);
-/** Active scenarios require independent action approval and an explicit restore choice. */
+/** Active scenarios use explicit actions and leave application state as-is. */
 export const nativeUiScenarioInputSchema = z.strictObject({
   ...scope,
-  actions_approved: z.literal(true),
-  restore: z.literal("leave-as-is"),
   steps: z
     .array(
       z.discriminatedUnion("kind", [
@@ -30,18 +39,69 @@ export const nativeUiScenarioInputSchema = z.strictObject({
         z.strictObject({
           kind: z.literal("key-entry"),
           path: z.array(z.number().int().nonnegative()).max(32),
-          text: z.string().max(4_096),
+          text: z.string(),
         }),
         z.strictObject({
           kind: z.literal("wait"),
-          milliseconds: z.number().int().min(0).max(10_000),
+          milliseconds: z
+            .number()
+            .int()
+            .min(0)
+            .max(180_000)
+            .describe(
+              "Wait duration in milliseconds, within the 180-second operation deadline.",
+            ),
         }),
       ]),
     )
-    .min(1)
-    .max(16),
+    .min(1),
 });
 /** Ordered captures and failures distinguish missing observation from a failed action. */
+const nativeUiScreenshotSchema = z
+  .strictObject({
+    mime_type: z.literal("image/png"),
+    base64: z.string().min(4),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  })
+  .superRefine((screenshot, context) => {
+    const bytes = decodeCanonicalBase64(screenshot.base64);
+    if (bytes === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "Invalid canonical PNG base64",
+      });
+      return;
+    }
+    if (createHash("sha256").update(bytes).digest("hex") !== screenshot.sha256)
+      context.addIssue({
+        code: "custom",
+        message: "PNG screenshot digest mismatch",
+      });
+    if (
+      bytes.byteLength < 24 ||
+      !bytes.subarray(0, 8).equals(PNG_SIGNATURE) ||
+      bytes.subarray(12, 16).toString("ascii") !== "IHDR"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Screenshot bytes are not a PNG image",
+      });
+      return;
+    }
+    if (
+      bytes.readUInt32BE(16) !== screenshot.width ||
+      bytes.readUInt32BE(20) !== screenshot.height
+    )
+      context.addIssue({
+        code: "custom",
+        message: "PNG screenshot dimensions mismatch",
+      });
+  });
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
 export const nativeUiSnapshotSchema = z.strictObject({
   window: z.strictObject({
     pid: z.number().int().positive(),
@@ -61,15 +121,7 @@ export const nativeUiSnapshotSchema = z.strictObject({
     }),
   ),
   truncated: z.boolean(),
-  screenshot: z
-    .strictObject({
-      mime_type: z.literal("image/png"),
-      base64: z.string(),
-      sha256: z.string(),
-      width: z.number().int().positive(),
-      height: z.number().int().positive(),
-    })
-    .nullable(),
+  screenshot: nativeUiScreenshotSchema.nullable(),
   gaps: z.array(z.string()),
 });
 export const nativeUiResultSchema = z.strictObject({

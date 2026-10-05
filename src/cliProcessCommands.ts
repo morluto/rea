@@ -19,14 +19,15 @@ import { projectInputIssues } from "./domain/inputIssueProjection.js";
 export const registerProcessCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerReplayMachineCommand(cli, logger);
   cli.command(CLI_COMMANDS.captureProcess, {
-    description: "Capture one approved process capture JSON scenario",
+    description: "Capture one caller-selected process scenario",
     args: z.object({ scenario: z.string().describe("Scenario JSON path") }),
     run: ({ args }) =>
       logCliCommand(logger, "capture-process", () =>
-        captureProcessScenarioFile(args.scenario),
+        captureProcessScenarioFile(args.scenario, environment),
       ),
   });
   cli.command(CLI_COMMANDS.compareProcessCaptures, {

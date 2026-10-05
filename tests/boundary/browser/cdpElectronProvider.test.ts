@@ -122,7 +122,7 @@ describe("CdpElectronProvider target selection", () => {
           file_path: join(root, "app.js"),
           source: {
             included: false,
-            reason: "source capture was not approved",
+            reason: "source capture was not selected",
           },
         }),
       ],

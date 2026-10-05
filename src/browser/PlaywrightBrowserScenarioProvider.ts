@@ -3,7 +3,6 @@ import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type {
   BrowserScenario,
   BrowserScenarioAction,
@@ -108,8 +107,8 @@ const createStep = (
     readonly stepId: string;
     readonly action: string;
     readonly elapsedMs: number;
-    readonly beforeUrl: string;
-    readonly afterUrl: string;
+    readonly beforeUrl: ReturnType<BrowserScenarioSessionPort["sanitizeUrl"]>;
+    readonly afterUrl: ReturnType<BrowserScenarioSessionPort["sanitizeUrl"]>;
     readonly eventStart: number;
     readonly eventEnd: number;
     readonly artifacts: BrowserStepArtifacts;
@@ -121,8 +120,8 @@ const createStep = (
     action: input.action,
     status: input.status,
     elapsed_ms: input.elapsedMs,
-    before_url: sanitizeBrowserUrl(input.beforeUrl),
-    after_url: sanitizeBrowserUrl(input.afterUrl),
+    before_url: input.beforeUrl,
+    after_url: input.afterUrl,
     error: input.error,
     event_sequence_start: input.eventStart,
     event_sequence_end: input.eventEnd,
@@ -147,8 +146,8 @@ const initialStep = async (input: {
     action: "goto_start",
     status: "completed",
     elapsedMs,
-    beforeUrl: session.initialUrl,
-    afterUrl: session.currentUrl(),
+    beforeUrl: session.sanitizeUrl(session.initialUrl),
+    afterUrl: session.sanitizeUrl(session.currentUrl()),
     error: null,
     eventStart: 1,
     eventEnd: session.lastEventSequence(),
@@ -165,7 +164,7 @@ const executeStep = async (input: {
   readonly signal: AbortSignal | undefined;
 }): Promise<BrowserScenarioStep> => {
   const { session, scenario, action, stepIndex, priorFailure, signal } = input;
-  const beforeUrl = session.currentUrl();
+  const beforeUrl = session.sanitizeUrl(session.currentUrl());
   const eventStart = session.nextEventSequence();
   const requested = requestedForStep(scenario, stepIndex);
   if (priorFailure)
@@ -216,7 +215,7 @@ const executeStep = async (input: {
     ...outcome,
     elapsedMs: Date.now() - actionStartedAt,
     beforeUrl,
-    afterUrl: session.currentUrl(),
+    afterUrl: session.sanitizeUrl(session.currentUrl()),
     eventStart,
     eventEnd: session.lastEventSequence(),
     artifacts,

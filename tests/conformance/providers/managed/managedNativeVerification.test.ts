@@ -173,6 +173,20 @@ describe("managed/native boundary verification", () => {
     });
   });
 
+  it("does not verify a symbol whose spelling differs only by case", () => {
+    const result = verifyManagedNativeBoundaries({
+      ...exampleInput(),
+      native_observations: [nativeEvidenceWithExports(["OPEN_NATIVE"])],
+    });
+
+    expect(result.summary).toMatchObject({ verified: 0, unresolved: 1 });
+    expect(result.pinvoke_imports[0]).toMatchObject({
+      status: "unresolved",
+      matched_native: null,
+      candidates: [],
+    });
+  });
+
   it("retains every observed native candidate", () => {
     const result = verifyManagedNativeBoundaries({
       ...exampleInput(),

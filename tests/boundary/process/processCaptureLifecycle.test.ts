@@ -11,10 +11,7 @@ import {
   captureProcessScenario,
   ProcessCaptureError,
 } from "../../../src/application/ProcessHarness.js";
-import {
-  parseProcessScenario,
-  type ProcessExecutionPolicy,
-} from "../../../src/domain/processCapture.js";
+import { parseProcessScenario } from "../../../src/domain/processCapture.js";
 
 const processFixture = fileURLToPath(
   new URL("../../fixtures/processFidelity.mjs", import.meta.url),
@@ -22,7 +19,7 @@ const processFixture = fileURLToPath(
 const execFileAsync = promisify(execFile);
 
 itWithCaptureCapability(
-  "does not follow or disclose symlink targets outside declared roots",
+  "records external symlink metadata without following the target",
   async () => {
     const root = await createTestTempDirectory("rea-symlink-test-");
     await symlink("/etc/passwd", join(root, "escape"));
@@ -31,62 +28,29 @@ itWithCaptureCapability(
         parseProcessScenario({
           executable: "/usr/bin/true",
           working_directory: root,
-          filesystem_roots: [root],
+          filesystem_observation_paths: [root],
         }),
-        {
-          status: "enabled",
-          executableRoots: ["/usr/bin"],
-          workingRoots: [root],
-          allowedEnvironment: [],
-          networkAccess: "external",
-        },
       );
       expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       const escaped = result.value.files_after.find((file) =>
         file.path.endsWith(":escape"),
       );
-      expect(escaped?.symlink_target).toBe("<outside-declared-root>");
-      expect(result.value.truncated).toBe(true);
+      expect(escaped?.symlink_target).toBe("/etc/passwd");
+      expect(result.value.truncated).toBe(false);
       expect(JSON.stringify(result.value.files_after)).not.toContain(root);
-      expect(JSON.stringify(result.value.files_after)).not.toContain(
-        "/etc/passwd",
-      );
+      expect(
+        result.value.files_after.some((file) => file.path.includes("passwd")),
+      ).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   },
 );
 
-// Policy denial is decided before any process is launched, so this assertion
-// stays ungated and still runs on hosts without native PTY authority.
-it("does not launch when policy denies capture", async () => {
-  const scenario = parseProcessScenario({
-    executable: "/bin/sh",
-    working_directory: "/tmp",
-  });
-  const result = await captureProcessScenario(scenario, {
-    status: "disabled",
-  });
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("expected policy refusal");
-  expect(result.error).toBeInstanceOf(ProcessCaptureError);
-  expect(result.error).toMatchObject({
-    userCategory: "permission_required",
-    message: "process capture is disabled",
-  });
-});
-
 itWithCaptureCapability(
   "distinguishes timeout from cancellation and cleans both runs",
   async () => {
-    const policy: ProcessExecutionPolicy = {
-      status: "enabled",
-      executableRoots: [dirname(process.execPath)],
-      workingRoots: [dirname(processFixture)],
-      allowedEnvironment: [],
-      networkAccess: "external",
-    };
     const timedOut = await captureProcessScenario(
       parseProcessScenario({
         executable: process.execPath,
@@ -95,7 +59,6 @@ itWithCaptureCapability(
         timeout_ms: 50,
         idle_timeout_ms: 5_000,
       }),
-      policy,
     );
     expect(timedOut.ok).toBe(true);
     if (!timedOut.ok) throw timedOut.error;
@@ -115,7 +78,6 @@ itWithCaptureCapability(
         timeout_ms: 5_000,
         idle_timeout_ms: 5_000,
       }),
-      policy,
       controller.signal,
     );
     expect(cancelled.ok).toBe(false);
@@ -159,11 +121,7 @@ itWithCaptureCapability(
                   max_uses: 1,
                   when: {
                     kind: "terminal_text",
-                    view: "decoded",
-                    encoding: "utf8",
                     literal: "prompt>",
-                    case_sensitive: true,
-                    control_sequences: "include",
                     occurrence: 1,
                     since: { kind: "scenario_start" },
                     consume: true,
@@ -186,11 +144,7 @@ itWithCaptureCapability(
                   max_uses: 1,
                   when: {
                     kind: "terminal_text",
-                    view: "decoded",
-                    encoding: "utf8",
                     literal: "input:answer",
-                    case_sensitive: true,
-                    control_sequences: "include",
                     occurrence: 1,
                     since: { kind: "scenario_start" },
                     consume: true,
@@ -211,11 +165,7 @@ itWithCaptureCapability(
                   max_uses: 1,
                   when: {
                     kind: "terminal_text",
-                    view: "decoded",
-                    encoding: "utf8",
                     literal: "resize:100x40",
-                    case_sensitive: true,
-                    control_sequences: "include",
                     occurrence: 1,
                     since: { kind: "scenario_start" },
                     consume: true,
@@ -227,20 +177,13 @@ itWithCaptureCapability(
                       signal: "SIGINT",
                     },
                   ],
-                  target: { kind: "finish", outcome: "passed" },
+                  target: { kind: "finish" },
                 },
               ],
             },
           ],
         },
       }),
-      {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [dirname(processFixture)],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      },
     );
     if (!result.ok) throw result.error;
     expect(result.ok).toBe(true);
@@ -273,19 +216,6 @@ itWithCaptureCapability(
         timeout_ms: 2_000,
         idle_timeout_ms: 2_000,
       }),
-      {
-        status: "enabled",
-        executableRoots: [
-          join(dirname(process.execPath), "missing"),
-          dirname(process.execPath),
-        ],
-        workingRoots: [
-          join(dirname(processFixture), "missing"),
-          dirname(processFixture),
-        ],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
@@ -310,13 +240,6 @@ itWithCaptureCapability(
         timeout_ms: 2_000,
         idle_timeout_ms: 2_000,
       }),
-      {
-        status: "enabled",
-        executableRoots: [dirname(process.execPath)],
-        workingRoots: [dirname(processFixture)],
-        allowedEnvironment: [],
-        networkAccess: "external",
-      },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
@@ -330,7 +253,7 @@ itWithCaptureCapability(
     expect(
       commands.some((command) => command.includes("tree-grandchild")),
     ).toBe(true);
-    expect(JSON.stringify(result.value.process_samples)).not.toContain(
+    expect(JSON.stringify(result.value.process_samples)).toContain(
       dirname(processFixture),
     );
     const { stdout } = await execFileAsync("ps", ["-axo", "command="]);

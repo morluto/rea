@@ -4,12 +4,11 @@ import { buildCapabilityInventory } from "./CapabilityInventory.js";
 
 const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   processCaptureEnabled: true,
+  controlledReplayEnabled: true,
   browserObservationEnabled: true,
   browserScenarioEnabled: true,
   electronObservationEnabled: true,
   v8InspectorObservationEnabled: true,
-  javascriptReplayEnabled: true,
-  managedRuntimeEnabled: true,
 };
 
 const status = (
@@ -141,25 +140,45 @@ describe("capability inventory: provider status", () => {
     else expect(availability.remediation).toContain(remediation);
   });
 
-  it.each([
-    ["capture_process_scenario", { processCaptureEnabled: false }],
-    ["inspect_web_page", { browserObservationEnabled: false }],
-    ["capture_browser_scenario", { browserScenarioEnabled: false }],
-    ["inspect_electron_page", { electronObservationEnabled: false }],
-    ["observe_javascript_runtime", { v8InspectorObservationEnabled: false }],
-    ["run_controlled_replay", { javascriptReplayEnabled: false }],
-    ["plan_managed_runtime_correlation", { managedRuntimeEnabled: false }],
-  ] as const)("reports stable policy denial for %s", (name, override) => {
-    const availability = entry(name, status(), {
+  it("keeps configured workflows callable and reports only real host or provider limits", () => {
+    const inventory = buildCapabilityInventory(status(), {
       ...enabledPolicy,
-      ...override,
+      processCaptureEnabled: false,
+      browserObservationEnabled: false,
+      browserScenarioEnabled: false,
+      electronObservationEnabled: false,
+      electronAutomationEnabled: false,
+      v8InspectorObservationEnabled: false,
     });
-    expect(availability).toMatchObject({
+    const byName = new Map(inventory.map((item) => [item.name, item]));
+    expect(byName.get("capture_process_scenario")).toMatchObject({
       available: false,
-      reason: "policy_disabled",
+      reason: "unsupported_host",
     });
-    expect(availability.remediation).toEqual(expect.any(String));
-    expect(availability.remediation?.length).toBeGreaterThan(0);
+    expect(byName.get("inspect_web_page")).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+    });
+    expect(byName.get("run_controlled_replay")).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+    expect(byName.get("plan_managed_runtime_correlation")).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+  });
+
+  it("reports controlled replay as unsupported on other host targets", () => {
+    const replay = entry("run_controlled_replay", status(), {
+      ...enabledPolicy,
+      controlledReplayEnabled: false,
+    });
+    expect(replay).toMatchObject({
+      available: false,
+      reason: "unsupported_host",
+      remediation: "Run controlled replay on a Linux x86_64 host.",
+    });
   });
 });
 
@@ -171,8 +190,6 @@ describe("capability inventory: caller guidance", () => {
       browserObservationEnabled: false,
       electronObservationEnabled: false,
       v8InspectorObservationEnabled: false,
-      javascriptReplayEnabled: false,
-      managedRuntimeEnabled: false,
     });
     for (const availability of inventory)
       if (!availability.available) {
@@ -182,7 +199,7 @@ describe("capability inventory: caller guidance", () => {
       }
   });
 
-  it("projects negotiated client features into per-tool requirements", () => {
+  it("does not require interactive elicitation for process capture", () => {
     const withoutElicitation = buildCapabilityInventory(
       status(),
       enabledPolicy,
@@ -196,13 +213,13 @@ describe("capability inventory: caller guidance", () => {
 
     expect(withoutElicitation?.client_requirements).toEqual({
       required: [],
-      optional: ["elicitation_form"],
+      optional: [],
       missing_required: [],
-      missing_optional: ["elicitation_form"],
+      missing_optional: [],
     });
     expect(withElicitation?.client_requirements).toEqual({
       required: [],
-      optional: ["elicitation_form"],
+      optional: [],
       missing_required: [],
       missing_optional: [],
     });

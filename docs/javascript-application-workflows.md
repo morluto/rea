@@ -146,8 +146,7 @@ For two operator-provided directories or ASARs, run:
 ```bash
 npm run verify:application-workflows -- \
   --left /absolute/path/to/version-a \
-  --right /absolute/path/to/version-b \
-  --source-map-read-approved
+  --right /absolute/path/to/version-b
 ```
 
 The verifier reconstructs both versions independently, compares them, runs one
@@ -166,12 +165,11 @@ another persistence format.
 ## Controlled replay boundary
 
 Static graph workflows never execute a graph node or recovered module.
-`run_controlled_replay` is the separate extracted-module boundary: it requires
-the `javascript_replay` authority, a plan call followed by exact content-bound
-approval, and the mandatory Linux OS sandbox fixed by
-[ADR-0002](adr/0002-controlled-replay-authority-and-sandbox.md). Browser,
-Electron, Process Capture, artifact-read, and static-analysis approvals do not
-authorize that execution.
+`run_controlled_replay` is the separate extracted-module boundary. A plan
+request and execute request share the same manifest; execution must include the
+exact plan digest, and the worker runs inside the mandatory Linux OS sandbox.
+The sandbox is an execution boundary; it does not make replay a real application
+runtime observation.
 
 Replay observations retain `controlled-replay` authority. They cannot
 promote static inference into passive runtime observation or prove that the

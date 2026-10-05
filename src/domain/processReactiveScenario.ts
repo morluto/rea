@@ -30,6 +30,9 @@ const ignoredFieldSchema = z.enum([
   "scheduled_at_ms",
   "dispatched_at_ms",
   "elapsed_ms",
+  "files",
+  "effects",
+  "truncated",
 ]);
 
 interface EventTrigger {
@@ -44,11 +47,7 @@ interface EventTrigger {
 
 interface TerminalTextTrigger {
   readonly kind: "terminal_text";
-  readonly view: "decoded";
-  readonly encoding: "utf8";
   readonly literal: string;
-  readonly case_sensitive: true;
-  readonly control_sequences: "include";
   readonly occurrence: number;
   readonly since: ProcessReactiveFrontier;
   readonly consume: boolean;
@@ -91,30 +90,28 @@ const processReactiveTriggerSchema: z.ZodType<ProcessReactiveTrigger> = z.lazy(
         exact: jsonValueSchema,
         ignore_fields: z
           .array(ignoredFieldSchema)
+          .default([])
           .refine((values) => new Set(values).size === values.length, {
             message: "ignored event fields must be unique",
           }),
-        since: frontierSchema,
-        consume: z.boolean(),
+        since: frontierSchema.default({ kind: "scenario_start" }),
+        consume: z.boolean().default(false),
         cardinality: z
           .strictObject({
             min: z.number().int().safe().positive(),
             max: z.number().int().safe().positive(),
           })
+          .default({ min: 1, max: 1 })
           .refine(({ min, max }) => min <= max, {
             message: "cardinality min must not exceed max",
           }),
       }),
       z.strictObject({
         kind: z.literal("terminal_text"),
-        view: z.literal("decoded"),
-        encoding: z.literal("utf8"),
         literal: z.string().min(1),
-        case_sensitive: z.literal(true),
-        control_sequences: z.literal("include"),
-        occurrence: z.number().int().safe().positive(),
-        since: frontierSchema,
-        consume: z.boolean(),
+        occurrence: z.number().int().safe().positive().default(1),
+        since: frontierSchema.default({ kind: "scenario_start" }),
+        consume: z.boolean().default(false),
       }),
       z.strictObject({
         kind: z.literal("all"),
@@ -154,7 +151,7 @@ const processReactiveActionSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("send_input"),
     data: z.string(),
-    sensitive: z.boolean(),
+    sensitive: z.boolean().default(false),
   }),
   z.strictObject({
     type: z.literal("resize"),
@@ -173,7 +170,7 @@ export type ProcessReactiveAction = z.infer<typeof processReactiveActionSchema>;
 
 const transitionTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("goto"), state: identifierSchema }),
-  z.strictObject({ kind: z.literal("finish"), outcome: z.literal("passed") }),
+  z.strictObject({ kind: z.literal("finish") }),
 ]);
 
 const transitionSchema = z.strictObject({

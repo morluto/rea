@@ -6,7 +6,6 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { loadConfiguredPermissionAuthority } from "../../../src/application/PermissionConfiguration.js";
 import { observeJavaScriptRuntime } from "../../../src/application/JavaScriptRuntimeObservationService.js";
 import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
 import {
@@ -14,7 +13,6 @@ import {
   javascriptRuntimeTargetListSchema,
   observeJavaScriptRuntimeInputSchema,
 } from "../../../src/domain/javascriptRuntimeObservation.js";
-import { parseConfig } from "../../../src/config.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
@@ -108,8 +106,10 @@ describe("JavaScript runtime observation MCP tools", () => {
   test("lists and observes one target as retained Evidence", async () => {
     const root = await createTestTempDirectory("rea-v8-mcp-");
     temporary.push(root);
-    const { entry, inspector, authority, client } =
-      await createObservationClient(root, resources);
+    const { entry, inspector, client } = await createObservationClient(
+      root,
+      resources,
+    );
 
     const listed = await client.callTool({
       name: "list_javascript_runtime_targets",
@@ -160,7 +160,7 @@ describe("JavaScript runtime observation MCP tools", () => {
     expect(new Set(inspector.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    const direct = await observeDirectly(root, inspector, authority);
+    const direct = await observeDirectly(inspector);
     expect(direct.ok).toBe(true);
     if (direct.ok) expect(evidenceId).toBe(direct.value.evidence_id);
   });
@@ -176,23 +176,15 @@ const createObservationClient = async (
     targetUrl: pathToFileURL(entry).href,
   });
   resources.push(inspector);
-  const config = parseConfig({
-    REA_V8_INSPECTOR_OBSERVE_ENABLED: "true",
-  });
-  if (!config.ok) throw config.error;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  if (!authority.ok) throw authority.error;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(),
   }));
   const server = createServer(session, session, {
     javascriptRuntimeObservation: new V8InspectorProvider(),
-    permissionAuthority: authority.value,
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 0,
-      v8InspectorObservationEnabled: true,
     }),
   });
   const client = new Client({ name: "v8-mcp-test", version: "1" });
@@ -201,17 +193,14 @@ const createObservationClient = async (
   resources.push(client, server, session);
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  return { entry, inspector, authority: authority.value, client };
+  return { entry, inspector, client };
 };
 
 const observeDirectly = (
-  root: string,
   inspector: Awaited<ReturnType<typeof startFakeV8Inspector>>,
-  authority: Parameters<typeof observeJavaScriptRuntime>[1],
 ) =>
   observeJavaScriptRuntime(
     new V8InspectorProvider(),
-    authority,
     observeJavaScriptRuntimeInputSchema.parse({
       inspector_endpoint: inspector.endpoint,
       target_id: inspector.targetId,

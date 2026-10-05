@@ -7,31 +7,15 @@ import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/appleAssetCatalog.js";
 import { keyedArchiveInputSchema } from "../domain/keyedArchive.js";
-const integrityInput = {
-  fail: {
-    integrity_policy: z.literal("fail").default("fail"),
-    integrity_continue_approved: z.literal(false).default(false),
-  },
-  continue: {
-    integrity_policy: z.literal("record-and-continue"),
-    integrity_continue_approved: z.literal(true),
-  },
-} as const;
-
-const artifactInventoryFacts = {
-  native_mount_approved: z.boolean().default(false),
-} as const;
-
 /** Exact caller boundary for deterministic artifact inventory. */
-export const artifactInventoryInputSchema = z.union([
-  z.object({ ...artifactInventoryFacts, ...integrityInput.fail }),
-  z.object({ ...artifactInventoryFacts, ...integrityInput.continue }),
-]);
+export const artifactInventoryInputSchema = z.strictObject({
+  integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
+});
 
 /** Extraction needs no selector: it materializes every regular child file. */
 export const artifactExtractionInputSchema = z.strictObject({});
 
-/** Provider input after the local permission boundary chooses its destination. */
+/** Provider input containing the destination chosen by the local adapter. */
 export const artifactExtractionExecutionSchema = z.strictObject({
   output_root: z.string().min(1),
 });
@@ -74,7 +58,7 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    "Inspect an active archive or application package in one call. Returns the complete content-addressed artifact graph, source Evidence, observations, relationships, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. It does not extract files; use extract_artifact to materialize its regular contents.",
+    "Inspect an active archive or application package in one call. Returns the complete content-addressed artifact graph, source Evidence, observations, relationships, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
     artifactInventoryInputSchema,
   ),
   artifact(

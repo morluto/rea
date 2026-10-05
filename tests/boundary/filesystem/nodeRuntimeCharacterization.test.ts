@@ -11,12 +11,10 @@ import {
   prepareNodeCharacterization,
 } from "../../../src/application/NodeRuntimeCharacterizationService.js";
 import type {
-  EnabledJavaScriptReplayPolicy,
+  JavaScriptReplayConfiguration,
   JavaScriptReplayHost,
   JavaScriptReplayRunner,
 } from "../../../src/application/JavaScriptReplayPlanning.js";
-import { PermissionAuthority } from "../../../src/application/PermissionAuthority.js";
-import { createPermissionPolicy } from "../../../src/domain/permissionPolicy.js";
 import {
   nodeCharacterizationPreparationInputSchema,
   nodeCharacterizationPreparationOutputSchema,
@@ -27,7 +25,7 @@ const sha256 = (value: Uint8Array): string =>
   createHash("sha256").update(value).digest("hex");
 
 describe("Node runtime characterization", () => {
-  it("prepares without execution, then executes only the approved exact plan", async () => {
+  it("prepares without execution, then requires the exact prepared plan hash", async () => {
     const fixture = await createFixture();
     let executions = 0;
     const dependencies = dependenciesFor(fixture.root, () => {
@@ -47,7 +45,6 @@ describe("Node runtime characterization", () => {
       plan: {
         preparation_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         runtime: { family: "ecmascript", provider_id: "node-javascript" },
-        authority: {},
       },
       transformation: {
         original_sha256: fixture.sha256,
@@ -67,7 +64,7 @@ describe("Node runtime characterization", () => {
     ).toThrow();
 
     const stale = await executeNodeCharacterization(dependencies, {
-      approved_plan_sha256: "0".repeat(64),
+      plan_sha256: "0".repeat(64),
       preparation: input,
     });
     expect(stale.ok).toBe(false);
@@ -75,7 +72,7 @@ describe("Node runtime characterization", () => {
     expect(executions).toBe(0);
 
     const executed = await executeNodeCharacterization(dependencies, {
-      approved_plan_sha256: output.plan.plan_sha256,
+      plan_sha256: output.plan.plan_sha256,
       preparation: input,
     });
     expect(executed.ok && executed.value).toMatchObject({
@@ -222,9 +219,7 @@ const preparationInput = (
 });
 
 const dependenciesFor = (root: string, onExecute: () => void) => {
-  const policy: EnabledJavaScriptReplayPolicy = {
-    status: "enabled",
-    roots: [root],
+  const configuration: JavaScriptReplayConfiguration = {
     nodePath: process.execPath,
     bubblewrapPath: process.execPath,
     systemdRunPath: process.execPath,
@@ -283,33 +278,5 @@ const dependenciesFor = (root: string, onExecute: () => void) => {
       };
     },
   };
-  const ceiling = {
-    capability: "javascript_replay" as const,
-    roots: [root],
-    executables: [
-      policy.nodePath,
-      policy.bubblewrapPath,
-      policy.systemdRunPath,
-      policy.systemctlPath,
-      policy.shellPath,
-    ],
-    environment_names: [],
-    network: "none" as const,
-    mount: true,
-  };
-  const authority = new PermissionAuthority(
-    createPermissionPolicy(
-      [ceiling],
-      [
-        {
-          ...ceiling,
-          grant_id: "administrator:javascript_replay",
-          lifetime: "administrator",
-          operation_identity: null,
-          expires_at: null,
-        },
-      ],
-    ),
-  );
-  return { policy: () => policy, host, runner, authority };
+  return { configuration: () => configuration, host, runner };
 };

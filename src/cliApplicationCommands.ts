@@ -17,7 +17,6 @@ import {
   reconstructionCoverageEvaluationInputSchema,
 } from "./application/ReconstructionCoverageService.js";
 import { buildReconstructionObligationLedgerEvidenceValidated } from "./application/ReconstructionObligationLedgerService.js";
-import { loadConfiguredPermissionAuthority } from "./application/PermissionConfiguration.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -32,7 +31,6 @@ import { parseConfig } from "./config.js";
 import { LinuxJavaScriptReplayRunner } from "./replay/LinuxJavaScriptReplayRunner.js";
 import { SystemJavaScriptReplayHost } from "./replay/SystemJavaScriptReplayHost.js";
 import type { AppConfig } from "./config.js";
-import type { PermissionAuthority } from "./application/PermissionAuthority.js";
 import { traceApplicationFeatureInputSchema } from "./domain/javascriptFeatureTraceSchemas.js";
 import { traceJavaScriptSemanticsInputSchema } from "./domain/javascriptSemanticTraceSchemas.js";
 import { compareApplicationVersionsInputSchema } from "./domain/javascriptApplicationVersionComparisonSchemas.js";
@@ -96,7 +94,7 @@ export const registerApplicationCommands = (
   });
   cli.command(CLI_COMMANDS.runControlledReplay, {
     description:
-      "Plan or execute an approved extracted-module replay in the Linux sandbox",
+      "Plan or execute an extracted-module replay in the isolated Linux sandbox",
     args: z.object({
       inputJson: z.string().describe("Inline replay JSON or JSON file path"),
     }),
@@ -109,37 +107,36 @@ export const registerApplicationCommands = (
         if (!input.ok) return input.error;
         const config = parseConfig(environment);
         if (!config.ok) return projectAnalysisError(config.error);
-        const authority = await loadConfiguredPermissionAuthority(config.value);
-        if (!authority.ok) return projectAnalysisError(authority.error);
         const result = await runControlledReplay(
           {
-            policy: () => config.value.javascriptReplayPolicy,
+            configuration: () => config.value.javascriptReplayConfiguration,
             host: new SystemJavaScriptReplayHost(),
             runner: new LinuxJavaScriptReplayRunner(),
-            authority: authority.value,
           },
           input.value,
         );
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
-  registerAuthorizedJsonCommand({
+  registerConfiguredJsonCommand({
     cli,
     logger,
+    environment,
     name: CLI_COMMANDS.prepareNodeCharacterization,
     description:
       "Prepare one exact Node/JavaScript characterization without execution",
-    workflow: (config, authority, input) =>
-      prepareNodeCharacterization(replayDependencies(config, authority), input),
+    workflow: (config, input) =>
+      prepareNodeCharacterization(replayDependencies(config), input),
   });
-  registerAuthorizedJsonCommand({
+  registerConfiguredJsonCommand({
     cli,
     logger,
+    environment,
     name: CLI_COMMANDS.executeNodeCharacterization,
     description:
-      "Execute one separately approved exact Node/JavaScript characterization",
-    workflow: (config, authority, input) =>
-      executeNodeCharacterization(replayDependencies(config, authority), input),
+      "Execute one exact Node/JavaScript characterization from its content-bound plan",
+    workflow: (config, input) =>
+      executeNodeCharacterization(replayDependencies(config), input),
   });
   registerObligationLedgerCommand(cli, logger);
   registerCoverageCommand(cli, logger);
@@ -165,7 +162,7 @@ const registerObligationLedgerCommand = (
     },
   });
 
-interface AuthorizedJsonCommandOptions {
+interface ConfiguredJsonCommandOptions {
   readonly cli: CliInstance;
   readonly logger: Logger;
   /** Environment the configuration is read from; defaults to the process environment. */
@@ -174,7 +171,6 @@ interface AuthorizedJsonCommandOptions {
   readonly description: string;
   readonly workflow: (
     config: AppConfig,
-    authority: PermissionAuthority,
     input: unknown,
   ) => Promise<
     | { readonly ok: true; readonly value: JsonValue }
@@ -182,14 +178,14 @@ interface AuthorizedJsonCommandOptions {
   >;
 }
 
-const registerAuthorizedJsonCommand = ({
+const registerConfiguredJsonCommand = ({
   cli,
   logger,
   environment = process.env,
   name,
   description,
   workflow,
-}: AuthorizedJsonCommandOptions): void => {
+}: ConfiguredJsonCommandOptions): void => {
   cli.command(name, {
     description,
     args: z.object({
@@ -199,13 +195,9 @@ const registerAuthorizedJsonCommand = ({
       logCliCommand(logger, name, async () => {
         const input = await parseCliJsonInput(args.inputJson, name);
         if (!input.ok) return input.error;
-        const configured = await configuredAuthority(environment);
+        const configured = configuredConfig(environment);
         if (!configured.ok) return configured.error;
-        const result = await workflow(
-          configured.config,
-          configured.authority,
-          input.value,
-        );
+        const result = await workflow(configured.config, input.value);
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
@@ -226,33 +218,27 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     },
   });
 
-const configuredAuthority = async (
+const configuredConfig = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<
+):
   | {
       readonly ok: true;
       readonly config: AppConfig;
-      readonly authority: PermissionAuthority;
     }
   | {
       readonly ok: false;
       readonly error: ReturnType<typeof projectAnalysisError>;
-    }
-> => {
-  const configured = await loadConfiguredAuthority(environment);
+    } => {
+  const configured = parseConfig(environment);
   return configured.ok
-    ? configured
+    ? { ok: true, config: configured.value }
     : { ok: false, error: projectAnalysisError(configured.error) };
 };
 
-const replayDependencies = (
-  config: AppConfig,
-  authority: PermissionAuthority,
-) => ({
-  policy: () => config.javascriptReplayPolicy,
+const replayDependencies = (config: AppConfig) => ({
+  configuration: () => config.javascriptReplayConfiguration,
   host: new SystemJavaScriptReplayHost(),
   runner: new LinuxJavaScriptReplayRunner(),
-  authority,
 });
 
 interface JsonCommandOptions<Schema extends z.ZodType> {
@@ -306,22 +292,4 @@ const registerJsonCommand = <Schema extends z.ZodType>({
             };
       }),
   });
-};
-
-const loadConfiguredAuthority = async (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<
-  | {
-      readonly ok: true;
-      readonly config: AppConfig;
-      readonly authority: PermissionAuthority;
-    }
-  | { readonly ok: false; readonly error: AnalysisError }
-> => {
-  const config = parseConfig(environment);
-  if (!config.ok) return config;
-  const authority = await loadConfiguredPermissionAuthority(config.value);
-  return authority.ok
-    ? { ok: true, config: config.value, authority: authority.value }
-    : authority;
 };

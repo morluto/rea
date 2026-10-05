@@ -14,9 +14,7 @@ export const browserScopeOptions = {
   allowedOrigins: z
     .array(z.string().min(1))
     .optional()
-    .describe(
-      "Exact origins to observe; defaults to REA_BROWSER_ALLOWED_ORIGINS_JSON",
-    ),
+    .describe("Optional exact-origin filter"),
 };
 
 export const browserPageInspectionOptions = z.object({

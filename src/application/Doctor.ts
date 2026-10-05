@@ -27,6 +27,7 @@ import {
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
+  isOptionalDoctorCheck,
 } from "./DoctorDiagnostics.js";
 import {
   normalizeDoctorScope,
@@ -187,9 +188,14 @@ export const runDoctor = async (
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
     scope,
-    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
+    scope_checks:
+      scope.mode === "audit-wide"
+        ? checks.filter(({ name }) => !isOptionalDoctorCheck(name))
+        : scoped.scopeChecks,
     informational_checks:
-      scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
+      scope.mode === "audit-wide"
+        ? checks.filter(({ name }) => isOptionalDoctorCheck(name))
+        : scoped.informationalChecks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,

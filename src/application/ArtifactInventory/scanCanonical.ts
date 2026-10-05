@@ -30,7 +30,6 @@ import {
   type PendingIntegrityContradiction,
 } from "./scanReader.js";
 import {
-  NATIVE_MOUNT_DISABLED,
   STRICT_INTEGRITY_POLICY,
   type ArtifactInventoryOptions,
   type ArtifactInventorySnapshot,
@@ -46,12 +45,7 @@ export const scanCanonicalArtifactInventory = async (
   const rootDigest = metadata.isDirectory()
     ? null
     : await hashReadable(createReadStream(path), options.signal);
-  const reader = await createReader(
-    path,
-    rootFormat,
-    options.nativeMount ?? NATIVE_MOUNT_DISABLED,
-    options.signal,
-  );
+  const reader = await createReader(path, rootFormat, options.signal);
 
   try {
     const { nodes, occurrences, pendingContradictions } = await scanReader(

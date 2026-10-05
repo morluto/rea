@@ -24,27 +24,12 @@ describe("runtime configuration", () => {
       expect(result.value.referenceSourcePolicy).toEqual({
         secretPatterns: [],
       });
-      expect(result.value.browserObservationPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.browserScenarioPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.electronObservationPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.electronAutomationPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.v8InspectorObservationPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.javascriptReplayPolicy).toEqual({
-        status: "disabled",
-      });
-      expect(result.value.managedRuntimePolicy).toEqual({
-        status: "disabled",
-      });
+      expect(result.value.javascriptReplayConfiguration.nodePath).toBe(
+        process.execPath,
+      );
+      expect(
+        result.value.managedRuntimeConfiguration.executablePath,
+      ).toBeUndefined();
     }
   });
 
@@ -95,212 +80,6 @@ describe("runtime configuration", () => {
   });
 });
 
-describe("runtime permission configuration", () => {
-  it("builds a loopback-only Electron observation ceiling", () => {
-    const result = parseConfig({ REA_ELECTRON_OBSERVE_ENABLED: "true" });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.permissionCeilings).toContainEqual({
-      capability: "electron_observe",
-      roots: [],
-      executables: [],
-      environment_names: [],
-      network: "loopback",
-      mount: false,
-    });
-  });
-
-  it("builds a loopback-only V8 Inspector capability ceiling", () => {
-    const result = parseConfig({
-      REA_V8_INSPECTOR_OBSERVE_ENABLED: "true",
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.permissionCeilings).toContainEqual({
-      capability: "v8_inspector_observe",
-      roots: [],
-      executables: [],
-      environment_names: [],
-      network: "loopback",
-      mount: false,
-    });
-  });
-});
-
-describe("active Electron permission configuration", () => {
-  it("builds a separately granted, no-network Electron automation ceiling", () => {
-    const result = parseConfig({
-      REA_ELECTRON_AUTOMATE_ENABLED: "true",
-      REA_ELECTRON_AUTOMATE_AUTO_GRANT: "false",
-      REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
-      REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.electronAutomationPolicy).toEqual({
-      status: "enabled",
-      executableRoots: ["/opt/electron"],
-      applicationRoots: ["/tmp/apps"],
-    });
-    expect(result.value.permissionCeilings).toContainEqual({
-      capability: "electron_automate",
-      roots: ["/tmp/apps"],
-      executables: ["/opt/electron"],
-      environment_names: [],
-      network: "external",
-      mount: false,
-    });
-    expect(result.value.administratorPermissionGrants).not.toContainEqual(
-      expect.objectContaining({ capability: "electron_automate" }),
-    );
-
-    const granted = parseConfig({
-      REA_ELECTRON_AUTOMATE_ENABLED: "true",
-      REA_ELECTRON_AUTOMATE_AUTO_GRANT: "true",
-      REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
-      REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
-    });
-    if (!granted.ok) throw granted.error;
-    expect(granted.value.administratorPermissionGrants).toContainEqual(
-      expect.objectContaining({
-        capability: "electron_automate",
-        lifetime: "administrator",
-      }),
-    );
-  });
-
-  it("rejects relative active Electron roots", () => {
-    expect(
-      parseConfig({
-        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["relative/apps"]',
-      }).ok,
-    ).toBe(false);
-    expect(
-      parseConfig({
-        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["relative/bin"]',
-      }).ok,
-    ).toBe(false);
-  });
-
-  it("requires both root sets only for enabled Electron automation", () => {
-    expect(
-      parseConfig({
-        REA_ELECTRON_AUTOMATE_ENABLED: "true",
-        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/tmp/apps"]',
-      }).ok,
-    ).toBe(false);
-    expect(
-      parseConfig({
-        REA_ELECTRON_AUTOMATE_ENABLED: "true",
-        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/opt/electron"]',
-      }).ok,
-    ).toBe(false);
-    expect(
-      parseConfig({
-        REA_ELECTRON_AUTOMATE_EXECUTABLE_ROOTS_JSON: '["/ignored/bin"]',
-        REA_ELECTRON_AUTOMATE_APPLICATION_ROOTS_JSON: '["/ignored/app"]',
-      }),
-    ).toMatchObject({
-      ok: true,
-      value: { electronAutomationPolicy: { status: "disabled" } },
-    });
-  });
-});
-
-describe("runtime permission configuration", () => {
-  it("can configure a process-capture ceiling without an implicit grant", () => {
-    const result = parseConfig({
-      REA_PROCESS_CAPTURE_ENABLED: "true",
-      REA_PROCESS_CAPTURE_AUTO_GRANT: "false",
-      REA_PROCESS_EXECUTABLE_ROOTS_JSON: '["/opt/tools"]',
-      REA_PROCESS_WORKING_ROOTS_JSON: '["/tmp/work"]',
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.permissionCeilings).toContainEqual(
-      expect.objectContaining({ capability: "process_capture" }),
-    );
-    expect(result.value.administratorPermissionGrants).not.toContainEqual(
-      expect.objectContaining({ capability: "process_capture" }),
-    );
-  });
-
-  it("preserves the configured process-capture administrator grant by default", () => {
-    const result = parseConfig({
-      REA_PROCESS_CAPTURE_ENABLED: "true",
-      REA_PROCESS_EXECUTABLE_ROOTS_JSON: '["/opt/tools"]',
-      REA_PROCESS_WORKING_ROOTS_JSON: '["/tmp/work"]',
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.administratorPermissionGrants).toContainEqual(
-      expect.objectContaining({
-        capability: "process_capture",
-        lifetime: "administrator",
-      }),
-    );
-  });
-
-  it("builds a no-network JavaScript replay ceiling only when enabled", () => {
-    const result = parseConfig({
-      REA_JAVASCRIPT_REPLAY_ENABLED: "true",
-      REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["/tmp/extracted-modules"]',
-      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.javascriptReplayPolicy).toMatchObject({
-      status: "enabled",
-      roots: ["/tmp/extracted-modules"],
-      nodePath: "/opt/node/bin/node",
-    });
-    expect(result.value.permissionCeilings).toContainEqual({
-      capability: "javascript_replay",
-      roots: ["/tmp/extracted-modules"],
-      executables: [
-        "/opt/node/bin/node",
-        "/usr/bin/bwrap",
-        "/usr/bin/systemd-run",
-        "/usr/bin/systemctl",
-        "/usr/bin/bash",
-      ],
-      environment_names: [],
-      network: "none",
-      mount: true,
-    });
-    expect(result.value.administratorPermissionGrants).toContainEqual(
-      expect.objectContaining({
-        capability: "javascript_replay",
-        lifetime: "administrator",
-      }),
-    );
-  });
-
-  it("requires a source root when JavaScript replay is enabled", () => {
-    expect(
-      parseConfig({ REA_JAVASCRIPT_REPLAY_ENABLED: "true" }),
-    ).toMatchObject({ ok: false });
-  });
-
-  it("does not retain dormant JavaScript replay authority", () => {
-    const result = parseConfig({
-      REA_JAVASCRIPT_REPLAY_ENABLED: "false",
-      REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["/tmp/extracted-modules"]',
-      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.javascriptReplayPolicy).toEqual({
-      status: "disabled",
-    });
-  });
-
-  it("rejects relative JavaScript replay roots and executables", () => {
-    expect(
-      parseConfig({ REA_JAVASCRIPT_REPLAY_ROOTS_JSON: '["relative/module"]' })
-        .ok,
-    ).toBe(false);
-    expect(
-      parseConfig({ REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" }).ok,
-    ).toBe(false);
-  });
-});
-
 describe("runtime target configuration", () => {
   it("rejects invalid target kinds with actionable environment diagnostics", () => {
     const result = parseConfig({ HOPPER_TARGET_KIND: "archive" });
@@ -309,60 +88,26 @@ describe("runtime target configuration", () => {
     expect(result.error.message).toContain("Invalid REA environment");
   });
 
-  it("builds a no-network managed runtime ceiling only when enabled", () => {
-    const result = parseConfig({
-      REA_MANAGED_RUNTIME_ENABLED: "true",
-      REA_MANAGED_RUNTIME_ROOTS_JSON: '["/tmp/managed-targets"]',
-      REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/opt/dotnet/dotnet",
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value.managedRuntimePolicy).toEqual({
-      status: "enabled",
-      roots: ["/tmp/managed-targets"],
-      executablePath: "/opt/dotnet/dotnet",
-    });
-    expect(result.value.permissionCeilings).toContainEqual({
-      capability: "managed_runtime",
-      roots: ["/tmp/managed-targets"],
-      executables: ["/opt/dotnet/dotnet"],
-      environment_names: [],
-      network: "none",
-      mount: false,
-    });
-    expect(result.value.administratorPermissionGrants).toContainEqual(
-      expect.objectContaining({
-        capability: "managed_runtime",
-        lifetime: "administrator",
-      }),
-    );
-  });
-
-  it("rejects relative managed runtime roots and executables", () => {
+  it("configures runtime executable paths without authority settings", () => {
     expect(
-      parseConfig({ REA_MANAGED_RUNTIME_ROOTS_JSON: '["relative/assembly"]' })
-        .ok,
-    ).toBe(false);
+      parseConfig({
+        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/opt/dotnet/dotnet",
+        REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        managedRuntimeConfiguration: { executablePath: "/opt/dotnet/dotnet" },
+        javascriptReplayConfiguration: { nodePath: "/opt/node/bin/node" },
+      },
+    });
     expect(
       parseConfig({ REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "relative/dotnet" })
         .ok,
     ).toBe(false);
-  });
-
-  it("requires a non-empty root set only for enabled managed runtime correlation", () => {
-    const enabled = parseConfig({ REA_MANAGED_RUNTIME_ENABLED: "true" });
-    expect(enabled.ok).toBe(false);
-    if (!enabled.ok)
-      expect(enabled.error.message).toContain("at least one absolute root");
-
     expect(
-      parseConfig({
-        REA_MANAGED_RUNTIME_ROOTS_JSON: '["/ignored/while-disabled"]',
-        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/ignored/dotnet",
-      }),
-    ).toMatchObject({
-      ok: true,
-      value: { managedRuntimePolicy: { status: "disabled" } },
-    });
+      parseConfig({ REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" }).ok,
+    ).toBe(false);
   });
 
   it("parses database kind and loader arguments", () => {
@@ -383,10 +128,6 @@ describe("runtime target configuration", () => {
         hopperTargetKind: "database",
         hopperLoaderArgs: ["-l", "FAT", "--aarch64", "-l", "Mach-O"],
         logLevel: "info",
-        artifactNativeMountEnabled: false,
-        processExecutionPolicy: {
-          status: "disabled",
-        },
         referenceSourcePolicy: {
           secretPatterns: [],
         },

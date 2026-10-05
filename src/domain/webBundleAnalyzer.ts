@@ -7,7 +7,7 @@ import {
 import { buildWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 
-/** Analyze captured, explicitly approved JavaScript source without execution. */
+/** Analyze selected captured JavaScript source without execution. */
 export const analyzeCapturedWebBundle = (
   inspection: WebPageInspection,
   sourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {

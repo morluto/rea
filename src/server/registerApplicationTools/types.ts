@@ -1,6 +1,5 @@
 import type { BinarySessionPort } from "../../application/BinarySession.js";
 import type { JavaScriptReplayDependencies } from "../../application/JavaScriptReplayService.js";
-import type { PermissionAuthority } from "../../application/PermissionAuthority.js";
 import type { Logger } from "../../logger.js";
 
 /** Shared services for registering JavaScript application graph workflows. */
@@ -11,5 +10,4 @@ export interface ApplicationToolRegistration {
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
   readonly replay: JavaScriptReplayDependencies;
-  readonly permissionAuthority: PermissionAuthority | undefined;
 }

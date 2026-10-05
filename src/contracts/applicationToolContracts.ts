@@ -119,7 +119,6 @@ export const APPLICATION_TOOL_CONTRACTS = [
           query: {
             seed: { kind: "semantic-node", node_id: `jsrg_node_${HASH}` },
             direction: "backward-provenance",
-            source_map_authority: { authority: "none" },
           },
         },
       },
@@ -242,7 +241,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "execute_node_characterization",
     ...toolContractMetadata("execute_node_characterization"),
     description:
-      "Recompute and execute one exact Node characterization plan in the owned controlled-replay boundary. Returns transformation, replay, cleanup, and provider-neutral characterization Evidence; stale plans fail before execution.",
+      "Recompute and execute one exact Node characterization plan in the owned controlled-replay boundary. The supplied plan_sha256 is checked against the freshly computed plan_sha256 as content identity; a mismatch fails before execution. Returns transformation, replay, cleanup, and provider-neutral characterization Evidence.",
     kind: "application",
     inputSchema: nodeCharacterizationExecutionInputSchema,
     outputSchema: nodeCharacterizationExecutionOutputSchema,
@@ -250,7 +249,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
       {
         title: "Execute one exact characterization plan",
         input: {
-          approved_plan_sha256: HASH,
+          plan_sha256: HASH,
           preparation: NODE_PREPARATION_EXAMPLE,
         },
       },

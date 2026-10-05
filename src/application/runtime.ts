@@ -46,10 +46,7 @@ export const createBinarySession = (
         const { ArtifactProvider } = await import(
           "../artifacts/ArtifactProvider.js"
         );
-        return new ArtifactProvider(
-          config.artifactNativeMountEnabled,
-          config.artifactIntegrityContinueEnabled,
-        );
+        return new ArtifactProvider();
       }),
       lazyProvider("native-macos", async () => {
         const { NativeMacOSProvider } = await import(

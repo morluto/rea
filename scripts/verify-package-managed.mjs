@@ -153,8 +153,6 @@ const verifyManagedRuntimePlan = async ({
       ],
       {
         ...environment,
-        REA_MANAGED_RUNTIME_ENABLED: "true",
-        REA_MANAGED_RUNTIME_ROOTS_JSON: JSON.stringify([workspace]),
         REA_MANAGED_RUNTIME_EXECUTABLE_PATH: process.execPath,
       },
     ),
@@ -163,14 +161,21 @@ const verifyManagedRuntimePlan = async ({
     managedRuntimePlan.operation !== "plan_managed_runtime_correlation" ||
     managedRuntimePlan.provider?.id !== "rea-dotnet-workflows" ||
     managedRuntimePlan.normalized_result?.executed !== false ||
-    managedRuntimePlan.normalized_result?.authority_model?.capability !==
-      "managed_runtime" ||
+    managedRuntimePlan.normalized_result?.unsupported_until_executor_exists !==
+      true ||
     managedRuntimePlan.normalized_result?.effect_taxonomy?.attaches_process !==
       true ||
     managedRuntimePlan.normalized_result?.effect_taxonomy
       ?.invokes_target_code !== false
   )
     throw new Error("packaged managed runtime-correlation CLI failed");
+  if (
+    managedRuntimePlan.normalized_result?.requested_runtime?.confinement !==
+    "not-established"
+  )
+    throw new Error(
+      "packaged managed runtime plan claimed unverified confinement",
+    );
 };
 
 const verifyManagedBoundaries = async ({ cli, managedPath, environment }) => {

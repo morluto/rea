@@ -5,11 +5,6 @@ import type {
 } from "./browserObservationErrors.js";
 
 export type { BrowserObservationOperation } from "./browserObservationErrors.js";
-import type {
-  MissingPermissionScope,
-  PermissionRequest,
-  PermissionScope,
-} from "./permissionPolicy.js";
 import {
   hopperStartupFailure,
   type HopperStartupDiagnostic,
@@ -49,7 +44,6 @@ const ANALYSIS_ERROR_TAGS = [
   "ConfigurationError",
   "NoBinaryOpenError",
   "BinaryTargetError",
-  "PermissionRequiredError",
   "ReplayPlanStaleError",
 ] as const;
 
@@ -60,8 +54,7 @@ export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
 export abstract class AnalysisError extends Error {
   abstract readonly _tag: AnalysisErrorTag;
   readonly userMessage: string | undefined = undefined;
-  readonly userCategory: "permission_required" | "cancelled" | undefined =
-    undefined;
+  readonly userCategory: "cancelled" | undefined = undefined;
   readonly cleanupIncomplete: boolean = false;
   readonly cleanupResources: readonly string[] = [];
 }
@@ -285,7 +278,6 @@ export class ArtifactOperationError extends AnalysisError {
       | "integrity"
       | "limit"
       | "path"
-      | "policy"
       | "unavailable"
       | "io",
     readonly artifactDetails?: Readonly<{
@@ -490,7 +482,6 @@ export interface AnalysisErrorProjection
     | "artifact_operation_failed"
     | "evidence_integrity_mismatch"
     | "truncated"
-    | "permission_required"
     | "process_capture_failed"
     | "cleanup_incomplete"
     | "revision_conflict"
@@ -500,7 +491,6 @@ export interface AnalysisErrorProjection
     | "plan_stale";
   readonly category:
     | "invalid_input"
-    | "permission_required"
     | "unsupported_provider"
     | "integrity_mismatch"
     | "truncated"
@@ -512,58 +502,16 @@ export interface AnalysisErrorProjection
   readonly retryable: boolean;
   readonly remediation: Readonly<{
     action: string;
-    restart_required: boolean;
-    elicitation_supported?: boolean;
   }>;
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
-/** One legal recovery path for a denied permission request. */
-/**
- * Legal recovery path for a denied permission.
- *
- * `grant` is deliberately distinct from `configure`: a request can be denied
- * because no grant was ever issued even though the administrator ceiling
- * already covers it. Telling that caller to widen the ceiling sends them to
- * edit configuration that is already correct.
- */
-export type PermissionRemediation =
-  | "configure"
-  | "elicit"
-  | "restart"
-  | "grant";
-
-/** Exact denied authority and its legal recovery path. */
-export interface PermissionRequiredContext {
-  readonly requested: PermissionRequest;
-  readonly missing: MissingPermissionScope;
-  readonly ceiling: PermissionScope | null;
-  readonly remediation: PermissionRemediation;
-}
-
-/** Exact denied authority used by both CLI and MCP remediation. */
-export class PermissionRequiredError extends AnalysisError {
-  readonly _tag = "PermissionRequiredError" as const;
-  readonly requested: PermissionRequest;
-  readonly missing: MissingPermissionScope;
-  readonly ceiling: PermissionScope | null;
-  readonly remediation: PermissionRemediation;
-
-  constructor(context: PermissionRequiredContext) {
-    super(`Permission required for ${context.requested.capability}`);
-    this.requested = context.requested;
-    this.missing = context.missing;
-    this.ceiling = context.ceiling;
-    this.remediation = context.remediation;
-  }
-}
-
-/** Approved replay commitment no longer matches the immediately rebuilt plan. */
+/** Replay commitment no longer matches the immediately rebuilt plan. */
 export class ReplayPlanStaleError extends AnalysisError {
   readonly _tag = "ReplayPlanStaleError" as const;
 
   constructor(
-    readonly approvedDigest: string,
+    readonly expectedDigest: string,
     readonly actualDigest: string,
   ) {
     super("Controlled replay plan changed before execution");

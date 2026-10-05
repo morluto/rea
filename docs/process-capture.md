@@ -1,6 +1,6 @@
 # Process capture
 
-Process Capture records one approved command as deterministic Evidence. It is
+Process Capture records one caller-selected command as Evidence. It is
 intended for authority-versus-reconstruction checks where terminal behavior,
 child lifetime, filesystem state, or dependency timing matters.
 
@@ -12,50 +12,27 @@ observations remain explicit; a truncated capture is never treated as
 equivalent to another capture.
 
 Every capture includes a run manifest with canonical SHA-256 commitments for
-the secret-safe full scenario projection, comparison contract, executable,
+the caller-selected scenario projection, comparison contract, executable,
 normalization rules, command-shim plan, and replay plan. The manifest also
 records the REA/provider versions, platform, architecture, PTY backend, and UTC
 start/completion timestamps. Capture creation, Evidence import, and comparison
 recompute the self-contained commitments and reject invalid lifecycle data.
 
-## Enable the capability
+## Request and host behavior
 
-Process execution is disabled until the operator supplies policy roots and
-approves host networking:
+The scenario names the command and arguments, with optional working-directory,
+environment overrides, and filesystem observation paths. An omitted working
+directory uses the invocation's current directory. The process inherits the
+host environment, then applies any declared overrides. Filesystem observation
+paths select what REA records; they do not constrain what the child process can
+read or write. Process Capture is not a security sandbox: the target runs with
+the current user's permissions.
 
-```bash
-export REA_PROCESS_CAPTURE_ENABLED=true
-export REA_PROCESS_EXECUTABLE_ROOTS_JSON='["/usr/bin","/absolute/project/bin"]'
-export REA_PROCESS_WORKING_ROOTS_JSON='["/absolute/project"]'
-export REA_PROCESS_ALLOWED_ENV_JSON='["PATH"]'
-export REA_PROCESS_ALLOW_EXTERNAL_NETWORK=true
-```
-
-By default, enabling process capture also installs an administrator-lifetime
-grant for the configured boundary. Set
-`REA_PROCESS_CAPTURE_AUTO_GRANT=false` to install the same boundary only as an
-administrator ceiling. Captures then fail with a structured permission-required
-result until a narrower grant is established; this is the prerequisite mode for
-connection-scoped MCP elicitation. It does not itself authorize a capture.
-Each MCP connection owns its elicited once and session grants. A grant accepted
-on one connection is not visible to another connection, and disconnect cleanup
-removes only the grants owned by the connection that closed. Reloaded
-administrator ceilings and persisted grants still apply immediately to every
-live connection.
-
-REA offers the once-or-session grant form only after the connection negotiates
-an MCP revision with multi-round tool results and advertises form elicitation.
-Older connections keep returning the structured
-permission-required result and never wait for an unsupported elicitation
-response. On the pinned `@modelcontextprotocol/server` 2.0.0 runtime, this is
-the official `2026-07-28` `inputRequired` continuation: the SDK seals the
-request state and validates the continuation envelope, while REA validates the
-untrusted input response before creating a connection-owned grant. The older
-push-style `elicitation/create` path is not used for this protocol revision.
-
-Executables, working directories, filesystem roots, and requested environment
-variables are checked against operator policy before launch. Process Capture is an observation tool,
-not a security sandbox: the target runs with the current user's permissions.
+Local output, arguments, environment overrides, URL query values, shim results,
+and replay bodies are preserved without credential-name or text-pattern
+redaction. Inputs explicitly marked `sensitive` use placeholders in Evidence.
+The inherited environment is not copied into the manifest; its unrecorded
+influence remains an explicit limitation.
 
 ## Capture a scenario
 
@@ -70,10 +47,9 @@ A representative scenario is:
 
 ```json
 {
-  "executable": "/absolute/path/to/node",
+  "executable": "node",
   "arguments": ["./signup.mjs"],
-  "working_directory": "/absolute/project",
-  "filesystem_roots": ["/absolute/project/state"],
+  "filesystem_observation_paths": ["./state"],
   "terminal": { "columns": 80, "rows": 24, "scrollback": 1000 },
   "events": [
     {
@@ -110,10 +86,9 @@ A representative scenario is:
 ```
 
 Input events marked `sensitive` are dispatched to the PTY but stored only as a
-byte-count placeholder. Environment values listed in `secret_aliases` are also
-redacted from recorded text. The command-shim directory is placed first in the
-captured process `PATH`; any remaining `PATH` must be explicitly supplied or
-inherited under operator policy.
+byte-count placeholder. The command-shim directory is placed first in the
+captured process `PATH`; command lookup otherwise uses the inherited or
+scenario-overridden `PATH`.
 
 Scenario arguments, environment names, timed interactions, shim routes and
 output chunks, filesystem checkpoints, and static HTTP/WebSocket scripts are

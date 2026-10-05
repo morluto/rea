@@ -6,7 +6,7 @@ import { spawn, type StdioOptions } from "node:child_process";
 
 import type {
   JavaScriptReplayHost,
-  EnabledJavaScriptReplayPolicy,
+  JavaScriptReplayConfiguration,
   ReplayExecutableIdentity,
   ReplaySourceBytes,
 } from "../application/JavaScriptReplayPlanning.js";
@@ -15,6 +15,7 @@ import { linuxX64ReplaySeccompDigest } from "./LinuxSeccompPolicy.js";
 import { resolveLinuxRuntimeClosure } from "./LinuxRuntimeClosure.js";
 
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { isSupportedControlledReplayHost } from "../application/ControlledReplayHostSupport.js";
 
 const bubblewrapProbeArguments = (command: readonly string[]): string[] => [
   "--unshare-all",
@@ -105,10 +106,10 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
     return linuxX64ReplaySeccompDigest();
   }
 
-  async probe(policy: EnabledJavaScriptReplayPolicy): Promise<void> {
-    if (process.platform !== "linux" || process.arch !== "x64")
+  async probe(configuration: JavaScriptReplayConfiguration): Promise<void> {
+    if (!isSupportedControlledReplayHost(process.platform, process.arch))
       throw new TypeError("Controlled replay requires Linux x86_64 in v1");
-    const bwrapMetadata = await stat(policy.bubblewrapPath);
+    const bwrapMetadata = await stat(configuration.bubblewrapPath);
     if ((bwrapMetadata.mode & 0o4000) !== 0)
       throw new TypeError("Setuid Bubblewrap is not admitted by replay policy");
     if (
@@ -119,12 +120,12 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
     const filter = await temporaryFilterHandle();
     try {
       await run(
-        policy.bubblewrapPath,
+        configuration.bubblewrapPath,
         bubblewrapProbeArguments(["/usr/bin/true"]),
         ["ignore", "pipe", "pipe", filter.handle.fd],
       );
       await runExpectFailure(
-        policy.bubblewrapPath,
+        configuration.bubblewrapPath,
         bubblewrapProbeArguments([
           "/usr/bin/unshare",
           "--mount",
@@ -132,7 +133,7 @@ export class SystemJavaScriptReplayHost implements JavaScriptReplayHost {
         ]),
         ["ignore", "pipe", "pipe", filter.handle.fd],
       );
-      await run(policy.systemdRunPath, [
+      await run(configuration.systemdRunPath, [
         "--user",
         "--pipe",
         "--wait",

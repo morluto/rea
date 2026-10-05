@@ -78,15 +78,12 @@ describe("workflow input contracts", () => {
       ).toBe(true);
   });
 
-  it("requires explicit approval for record-and-continue artifact inspection", () => {
-    const input = {
-      integrity_policy: "record-and-continue" as const,
-      integrity_continue_approved: false,
-    };
+  it("accepts an explicit artifact integrity continuation policy", () => {
+    const input = { integrity_policy: "record-and-continue" as const };
     const inspect = ARTIFACT_TOOL_CONTRACTS.find(
       ({ name }) => name === "inspect_artifact",
     );
     if (inspect === undefined) throw new Error("Missing inspect_artifact");
-    expect(inspect.inputSchema.safeParse(input).success).toBe(false);
+    expect(inspect.inputSchema.safeParse(input).success).toBe(true);
   });
 });

@@ -82,11 +82,17 @@ const symlinkTargetSchema = z
   .refine(
     (target) =>
       target === "<outside-root>" ||
+      isPortableAbsoluteSymlinkTarget(target) ||
       (!target.startsWith("/") &&
         !target.includes("\\") &&
         posix.normalize(target) === target),
     "Expected a normalized POSIX symlink target",
   );
+
+const isPortableAbsoluteSymlinkTarget = (target: string): boolean =>
+  target.startsWith("/") ||
+  /^[A-Za-z]:[\\/]/u.test(target) ||
+  /^\\\\[^\\/]+[\\/][^\\/]+/u.test(target);
 
 const sourceSymlinkSchema = z.strictObject({
   ...entryBaseShape,
@@ -320,14 +326,18 @@ const checkSymlinks = (
 ): void => {
   for (const [index, entry] of graph.entries.entries()) {
     if (entry.kind !== "symlink") continue;
+    const absolute = isPortableAbsoluteSymlinkTarget(entry.target);
     if (
-      (entry.target_state === "external") !==
-      (entry.target === "<outside-root>")
+      (entry.target_state === "external" &&
+        entry.target !== "<outside-root>" &&
+        !absolute) ||
+      (entry.target_state === "internal" &&
+        (entry.target === "<outside-root>" || absolute)) ||
+      (entry.target_state === "missing" && entry.target === "<outside-root>")
     )
       context.addIssue({
         code: "custom",
-        message:
-          "External symlink targets must use the sanitized <outside-root> sentinel",
+        message: "Symlink target path does not match its target state",
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;

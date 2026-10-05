@@ -21,9 +21,6 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     REA_LOG_LEVEL: "silent",
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
-    REA_BROWSER_OBSERVE_ENABLED: "true",
-    REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([endpoint]),
-    REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([origin]),
   };
   let client;
   let transport;
@@ -39,7 +36,15 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     );
     const { stdout } = await promisify(execFile)(
       process.execPath,
-      [entrypoint, "capture-web-screenshot", endpoint, target.id, "--json"],
+      [
+        entrypoint,
+        "capture-web-screenshot",
+        endpoint,
+        target.id,
+        "--allowed-origins",
+        origin,
+        "--json",
+      ],
       { env, timeout: 60000, maxBuffer: 72 * 1024 * 1024 },
     );
     const cliEvidence = parseEvidence(JSON.parse(stdout));

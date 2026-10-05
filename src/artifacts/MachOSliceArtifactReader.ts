@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
-import type { Readable } from "node:stream";
+import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
@@ -12,6 +13,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
 } from "./ArtifactReader.js";
+import { streamChunkToBuffer } from "./StreamBytes.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {
@@ -43,11 +45,24 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       exit_code: captured.value.exitCode,
       effects: ["read"],
     };
+    const fileSize = (await stat(this.path)).size;
     for (const architecture of parseLipoArchitectures(captured.value.stdout)) {
       if (architecture.file_offset === null || architecture.size === null)
         throw new ArtifactReaderFailure(
           "integrity",
           "lipo omitted a universal slice byte range",
+        );
+      if (
+        !Number.isSafeInteger(architecture.file_offset) ||
+        !Number.isSafeInteger(architecture.size) ||
+        architecture.file_offset < 0 ||
+        architecture.size <= 0 ||
+        !Number.isSafeInteger(architecture.file_offset + architecture.size) ||
+        architecture.file_offset + architecture.size > fileSize
+      )
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `lipo reported an out-of-bounds Mach-O slice: ${architecture.name}`,
         );
       yield {
         path: `slices/${architecture.name}`,
@@ -65,7 +80,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     }
   }
 
-  open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
+  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     if (signal?.aborted === true)
       return Promise.reject(
         new ArtifactReaderFailure("cancelled", "Mach-O slice read cancelled"),
@@ -76,16 +91,58 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
+      offset < 0 ||
       size <= 0
     )
-      return Promise.reject(
-        new ArtifactReaderFailure(
-          "integrity",
-          "Invalid Mach-O slice byte range",
-        ),
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Invalid Mach-O slice byte range",
       );
-    return Promise.resolve(
-      createReadStream(this.path, { start: offset, end: offset + size - 1 }),
+    const fileSize = (await stat(this.path)).size;
+    if (!Number.isSafeInteger(offset + size) || offset + size > fileSize)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Mach-O slice range is outside the artifact: ${entry.path}`,
+      );
+    const source = createReadStream(this.path, {
+      start: offset,
+      end: offset + size - 1,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    return Readable.from(
+      (async function* () {
+        let observedBytes = 0;
+        try {
+          for await (const raw of source) {
+            const chunk = streamChunkToBuffer(raw);
+            observedBytes += chunk.byteLength;
+            if (observedBytes > size)
+              throw new ArtifactReaderFailure(
+                "integrity",
+                `Mach-O slice exceeded its reported size: ${entry.path}`,
+              );
+            yield chunk;
+          }
+        } catch (cause: unknown) {
+          if (cause instanceof ArtifactReaderFailure) throw cause;
+          if (signal?.aborted === true)
+            throw new ArtifactReaderFailure(
+              "cancelled",
+              "Mach-O slice read cancelled",
+              { cause },
+            );
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Could not read Mach-O slice range: ${entry.path}`,
+            { cause },
+          );
+        }
+        if (observedBytes !== size)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Mach-O slice size disagrees with lipo metadata: ${entry.path}`,
+          );
+      })(),
     );
   }
 

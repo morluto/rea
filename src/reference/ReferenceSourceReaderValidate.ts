@@ -86,7 +86,10 @@ export const prepareRoot = async (
     const metadata = await bigLstat(root);
     if (metadata.isSymbolicLink() || !metadata.isDirectory())
       return err(
-        failure("invalid-root", "Reference source root must be a directory"),
+        failure(
+          "invalid-root",
+          `Reference source root is not a directory: ${root}`,
+        ),
       );
     const canonicalRoot = await realpath(root);
     if (isAborted(signal)) return err(cancelled());
@@ -95,13 +98,16 @@ export const prepareRoot = async (
       return err(
         failure(
           "invalid-root",
-          "Reference source root changed during resolution",
+          `Reference source root changed during resolution: ${root}`,
         ),
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
   } catch {
     return err(
-      failure("invalid-root", "Reference source root could not be resolved"),
+      failure(
+        "invalid-root",
+        `Reference source root could not be resolved: ${root}`,
+      ),
     );
   }
 };

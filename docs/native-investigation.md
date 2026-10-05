@@ -102,28 +102,30 @@ scaled ADD/BR instructions and the recovered target set. It reads exactly the
 proven count and preserves unknowns for other forms. Real ELF and host ARM64
 Mach-O fixtures check each case against source-owned return values.
 
-## Approved native desktop observation
+## Native desktop observation
 
-`observe_native_ui` captures one explicit existing PID/window ID after
-`observation_approved: true`. Screenshots use a selected-window ScreenCaptureKit
+`observe_native_ui` captures one explicitly selected existing PID/window ID.
+Screenshots use a selected-window ScreenCaptureKit
 filter on macOS 14+; accessibility reads stay within that window. Missing Screen
 Recording/Accessibility permissions produce actionable errors without broad
 capture or automatic permission prompts. Executable bytes and process launch
 time guard against a different target or PID reuse. AX selection requires one
 unique geometry match; ambiguity fails closed.
 
-`capture_native_ui_scenario` additionally requires `actions_approved: true` and
-`restore: "leave-as-is"`. Steps select AX child-index paths for press, increment/
+`capture_native_ui_scenario` takes AX child-index paths for press, increment/
 decrement scrolling and text-value entry, or bounded waits. No global event
 injection is used. Unsupported AX actions fail explicitly. The result preserves
 ordered before/after captures and gaps; an action may have occurred before a
-post-action capture fails. The caller must choose whether to recover app state.
+post-action capture fails. Application state is left as-is; REA does not attempt
+to restore it.
 
-Scenarios allow 16 steps, 30 seconds of total waits, 2,000 AX nodes per capture,
-8 MiB PNGs and 64 MiB output within a 180-second deadline. REA compiles one owned
-helper per scenario, removes its temporary compiler cache and stops its helper
-on cancellation. It does not launch or own the selected application. Approved
-UI actions may change application data or trigger network activity.
+Scenarios accept caller-selected action lists and accessibility node counts.
+Individual waits cannot exceed the operation's 180-second deadline, and the
+complete scenario result has a 64 MiB output budget. Screenshots are scaled to
+at most 2,048 pixels and captured only for the selected window. REA compiles one
+owned helper per scenario, removes its temporary compiler cache and stops its
+helper on cancellation. It does not launch or own the selected application. UI
+actions may change application data or trigger network activity.
 
 ## Provider and verification boundaries
 
@@ -143,11 +145,11 @@ to Hopper.
 - `npm run verify:apple-dispatch`: source-built Objective-C protocols/classes and
   Swift conformances/vtables, repeated after stripping local symbols.
 - `npm run verify:native-ui`: one source-owned fixture window, successful
-  selected-window capture and approved actions, changed-target rejection, and
-  cleanup. Missing OS permissions fail this lane.
+  selected-window capture and actions, changed-target rejection, and cleanup.
+  Missing OS permissions fail this lane.
 - `npm run verify:native-ui:permissions`: permits a permission-denial result and
   reports `positive_e2e: false` when capture is denied. That result verifies the
-  permission boundary, not successful UI capture or actions.
+  OS permission boundary, not successful UI capture or actions.
 
 macOS ARM64 is the real host verified during this implementation. Admission of
 macOS Intel does not claim an Intel verification run. Unsupported metadata and

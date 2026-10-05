@@ -180,19 +180,9 @@ const registerInspectionCommand = (cli: CliInstance, logger: Logger): void => {
         .enum(["fail", "record-and-continue"])
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
-      integrityContinueApproved: z
-        .boolean()
-        .default(false)
-        .describe("Approve continuing after recorded integrity mismatches"),
-      nativeMountApproved: z
-        .boolean()
-        .default(false)
-        .describe("Approve read-only native mounting when required"),
     }),
     alias: {
       integrityPolicy: "integrity-policy",
-      integrityContinueApproved: "integrity-continue-approved",
-      nativeMountApproved: "native-mount-approved",
     },
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-artifact", () =>
@@ -201,8 +191,6 @@ const registerInspectionCommand = (cli: CliInstance, logger: Logger): void => {
           "inspect_artifact",
           {
             integrity_policy: options.integrityPolicy,
-            integrity_continue_approved: options.integrityContinueApproved,
-            native_mount_approved: options.nativeMountApproved,
           },
           logger,
         ),

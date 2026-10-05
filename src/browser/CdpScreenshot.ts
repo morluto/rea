@@ -114,7 +114,7 @@ export const captureCdpScreenshot = async (
     artifact: createWebScreenshotArtifact(bytes),
     completeness: new CdpCaptureCompleteness().snapshot(),
     limitations: [
-      "The screenshot contains the visible viewport and may include sensitive on-screen content; capture requires separate approval.",
+      "The screenshot contains the visible viewport, including on-screen content.",
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
     ],
   };

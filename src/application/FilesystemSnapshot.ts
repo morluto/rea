@@ -1,4 +1,3 @@
-import { isPathWithinRoot } from "../domain/localPath.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
@@ -98,17 +97,13 @@ export const snapshotRoots = async (
         truncated = true;
         return;
       }
-      const safeTarget = isPathWithinRoot(root, target)
-        ? relative(root, target) || "."
-        : "<outside-declared-root>";
-      if (safeTarget === "<outside-declared-root>") truncated = true;
       entries.push({
         path: `${rootAlias}:${relativePath}`,
         type: "symlink",
         mode: stats.mode,
         size: stats.size,
         sha256: null,
-        symlink_target: safeTarget,
+        symlink_target: target,
       });
       return;
     }
@@ -148,7 +143,12 @@ export const snapshotRoots = async (
     for (const child of children.sort())
       await visit(root, rootAlias, join(path, child), depth + 1);
   };
-  for (const [index, root] of scenario.filesystem_roots.entries())
+  for (const [index, root] of scenario.filesystem_observation_paths.entries()) {
+    if ((await lstatIfPresent(root)) === undefined) {
+      truncated = true;
+      continue;
+    }
     await visit(root, `root_${String(index)}`, root, 0);
+  }
   return { files: entries, truncated };
 };

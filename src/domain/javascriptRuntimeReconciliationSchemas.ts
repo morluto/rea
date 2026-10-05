@@ -1,5 +1,3 @@
-import { isAbsolute, resolve } from "node:path";
-
 import { z } from "zod";
 
 import { evidenceSchema } from "./evidence.js";
@@ -27,11 +25,7 @@ const safePrefixSchema = z
 
 const runtimeFileMappingSchema = z.strictObject({
   kind: z.literal("file-root"),
-  root: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "Runtime file mapping root must be absolute")
-    .overwrite((value) => resolve(value)),
+  root: z.string().min(1),
   artifact_prefix: safePrefixSchema.default(""),
 });
 
@@ -75,7 +69,7 @@ const runtimeLocationMappingSchema = z.discriminatedUnion("kind", [
 type RuntimeLocationMapping = z.infer<typeof runtimeLocationMappingSchema>;
 
 const staticLayerSchema = z.strictObject({
-  role: z.enum(["application", "cache", "assets"]),
+  role: z.enum(["application", "cache", "assets"]).default("application"),
   analysis: evidenceSchema,
   runtime_mappings: z
     .array(runtimeLocationMappingSchema)

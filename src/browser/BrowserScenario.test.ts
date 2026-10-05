@@ -7,16 +7,12 @@ const secret = (secret_id: string) => ({ source: "secret", secret_id });
 const literal = (value: string) => ({
   source: "literal",
   value,
-  classification: "public",
 });
 
 const baseScenario = () => ({
   browser: {
     mode: "launch",
     executable_path: "/opt/chromium/chrome",
-    headless: true,
-    user_data: "temporary-owned",
-    cleanup: "close-and-delete-profile",
   },
   start_url: {
     url: "https://app.example.test/",
@@ -37,7 +33,6 @@ const baseScenario = () => ({
         kind: "role",
         role: "button",
         name: "Sign in",
-        exact: true,
       },
     },
     {
@@ -91,26 +86,16 @@ const baseScenario = () => ({
     {
       secret_id: "session",
       environment_variable: "REA_TEST_SESSION",
-      purpose: "input",
-      redaction: "replace-with-secret-reference",
     },
     {
       secret_id: "login_input",
       environment_variable: "REA_TEST_PASSWORD",
-      purpose: "input",
-      redaction: "replace-with-secret-reference",
     },
     {
       secret_id: "cookie",
       environment_variable: "REA_TEST_COOKIE",
-      purpose: "storage",
-      redaction: "replace-with-secret-reference",
     },
   ],
-  redaction: {
-    secret_values: "replace-with-secret-reference",
-    query_parameter_names: ["token"],
-  },
   capture: {
     after_each_step: ["screenshot", "url", "accessibility"],
     at_end: ["dom", "storage"],
@@ -125,6 +110,7 @@ describe("browserScenarioSchema", () => {
       "https://api.example.test",
       "https://app.example.test",
     ]);
+    expect(parsed.browser).toMatchObject({ mode: "launch", headless: true });
     expect(parsed.environment).toMatchObject({
       viewport: { width: 1_280, height: 720, device_scale_factor: 1 },
       locale: "en-US",
@@ -143,13 +129,17 @@ describe("browserScenarioSchema", () => {
       at_end: ["dom", "storage"],
       events: ["console", "page-errors", "network", "websockets"],
     });
-    expect(parsed.redaction.header_names).toEqual([
-      "authorization",
-      "cookie",
-      "proxy-authorization",
-      "set-cookie",
-    ]);
     expect(parsed).not.toHaveProperty("limits");
+  });
+
+  it("allows callers to choose visible browsers and service workers", () => {
+    const parsed = browserScenarioSchema.parse({
+      ...baseScenario(),
+      browser: { ...baseScenario().browser, headless: false },
+      environment: { service_workers: "allow" },
+    });
+    expect(parsed.browser).toMatchObject({ headless: false });
+    expect(parsed.environment.service_workers).toBe("allow");
   });
 
   it("accepts caller selected action timeouts without a fixed ceiling", () => {
@@ -182,6 +172,17 @@ describe("browserScenarioSchema", () => {
       REA_TEST_COOKIE: "cookie",
     });
     expect(secrets?.redact("prefix-suffix")).toBe("[REDACTED:login_input]");
+  });
+
+  it("does not resolve inherited environment properties as secret values", () => {
+    const scenario = browserScenarioSchema.parse(baseScenario());
+    const environment = Object.assign(
+      { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
+      Object.create({ REA_TEST_SESSION: "session" }) as object,
+    );
+    expect(
+      BrowserScenarioSecrets.resolve(scenario, environment),
+    ).toBeUndefined();
   });
 
   it("rejects unsupported actions", () => {
@@ -234,7 +235,7 @@ describe("browserScenarioSchema credential handling", () => {
     expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
   });
 
-  it("rejects missing, duplicate, and unused secret declarations", () => {
+  it("rejects missing and duplicate secret declarations but accepts redaction-only declarations", () => {
     const missing = baseScenario();
     missing.secrets = missing.secrets.filter(
       ({ secret_id }) => secret_id !== "login_input",
@@ -246,23 +247,35 @@ describe("browserScenarioSchema credential handling", () => {
     expect(browserScenarioSchema.safeParse(duplicate).success).toBe(false);
 
     const unused = baseScenario();
-    unused.secrets.push({
+    const redactionOnly = {
       secret_id: "unused",
-      environment_variable: "REA_TEST_UNUSED",
-      purpose: "input",
-      redaction: "replace-with-secret-reference",
-    });
+      environment_variable: "rea.test-unused",
+    };
+    unused.secrets.push(redactionOnly);
+    expect(browserScenarioSchema.safeParse(unused).success).toBe(true);
+
+    redactionOnly.environment_variable = "INVALID=NAME";
+    expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
+    redactionOnly.environment_variable = "INVALID\0NAME";
     expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
   });
 
-  it("rejects secret query values without named redaction", () => {
-    const scenario = baseScenario();
-    scenario.redaction.query_parameter_names = [];
-    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
-  });
+  it("accepts literal credential headers and rejects provider-owned headers", () => {
+    const credentialHeaders = baseScenario();
+    credentialHeaders.request_replay.routes[0]!.response = {
+      kind: "response",
+      status: 200,
+      headers: [
+        { name: "authorization", value: literal("Bearer caller-value") },
+        { name: "cookie", value: literal("session=caller-value") },
+        { name: "set-cookie", value: literal("session=caller-value") },
+      ],
+    } as never;
+    expect(browserScenarioSchema.safeParse(credentialHeaders).success).toBe(
+      true,
+    );
 
-  it("rejects literal credential headers and provider-owned headers", () => {
-    for (const name of ["authorization", "content-length"]) {
+    for (const name of ["content-length", "location", "transfer-encoding"]) {
       const scenario = baseScenario();
       scenario.request_replay.routes[0]!.response = {
         kind: "response",
@@ -294,31 +307,41 @@ describe("browserScenarioSchema credential handling", () => {
     expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
   });
 
-  it("rejects embedded URL credentials and query values", () => {
+  it("preserves inline URL queries and fragments but rejects userinfo", () => {
     const credentialedUrl = new URL("https://app.example.test/");
     credentialedUrl.username = String.fromCodePoint(120);
-    for (const url of [
-      credentialedUrl.href,
-      "https://app.example.test/?token=raw",
-    ]) {
-      const scenario = baseScenario();
-      scenario.start_url.url = url;
-      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
-    }
+    const invalid = baseScenario();
+    invalid.start_url.url = credentialedUrl.href;
+    expect(browserScenarioSchema.safeParse(invalid).success).toBe(false);
+
+    const scenario = baseScenario();
+    scenario.start_url.url = "https://app.example.test/?q=one&q=two#section";
+    scenario.start_url.query = [];
+    scenario.secrets = scenario.secrets.filter(
+      ({ secret_id }) => secret_id !== "session",
+    );
+    const parsed = browserScenarioSchema.parse(scenario);
+    expect(parsed.start_url.url).toBe(
+      "https://app.example.test/?q=one&q=two#section",
+    );
   });
 
-  it("requires explicit external ownership for CDP connections", () => {
-    const scenario = baseScenario();
-    scenario.browser = {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "page-1",
-      ownership: "external",
-      cleanup: "disconnect-only",
-    } as never;
+  it("derives external ownership from CDP connection mode", () => {
+    const scenario = {
+      ...baseScenario(),
+      browser: {
+        mode: "connect",
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "page-1",
+      },
+    };
     expect(browserScenarioSchema.safeParse(scenario).success).toBe(true);
 
-    scenario.browser.cleanup = "close-browser" as never;
-    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+    expect(
+      browserScenarioSchema.safeParse({
+        ...scenario,
+        browser: { ...scenario.browser, cleanup: "close-browser" },
+      }).success,
+    ).toBe(false);
   });
 });

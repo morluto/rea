@@ -26,23 +26,18 @@ describe("browser CLI parity", () => {
         sensitiveShapes: true,
       });
       browsers.push(browser);
-      const environment = {
-        ...process.env,
-        REA_BROWSER_OBSERVE_ENABLED: "true",
-        REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-        REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-          browser.allowedOrigin,
-        ]),
-      };
       const listed = await runCli(
         ["list-browser-targets", browser.endpoint, "--json"],
-        environment,
+        process.env,
       );
       expect(listed).toMatchObject({
         operation: "list_browser_targets",
         provider: { id: "rea-cdp-browser" },
         normalized_result: {
-          targets: [{ target_id: "allowed-page" }],
+          targets: expect.arrayContaining([
+            expect.objectContaining({ target_id: "allowed-page" }),
+            expect.objectContaining({ target_id: "disallowed-page" }),
+          ]),
         },
       });
       const inspected = await runCli(
@@ -57,7 +52,7 @@ describe("browser CLI parity", () => {
           "--include-websocket-shapes",
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(inspected).toMatchObject({
         operation: "inspect_web_page",
@@ -82,7 +77,7 @@ describe("browser CLI parity", () => {
           JSON.stringify({ inspection }),
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(compared).toMatchObject({
         operation: "compare_web_captures",
@@ -103,7 +98,7 @@ describe("browser CLI parity", () => {
           '{"rules":[]}',
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(scenarioCompared).toMatchObject({
         operation: "compare_web_captures",
@@ -120,7 +115,7 @@ describe("browser CLI parity", () => {
 
 describe("browser CLI capture parity", () => {
   it(
-    "returns the same analysis, session, WebMCP, screenshot, and policy contracts",
+    "runs analysis, session, WebMCP, screenshot, and comparison from explicit request scope",
     async () => {
       const browser = await startFakeCdpBrowser({
         sessionTimeline: "same_origin",
@@ -128,24 +123,18 @@ describe("browser CLI capture parity", () => {
         sensitiveShapes: true,
       });
       browsers.push(browser);
-      const environment = {
-        ...process.env,
-        REA_BROWSER_OBSERVE_ENABLED: "true",
-        REA_BROWSER_CDP_ENDPOINTS_JSON: JSON.stringify([browser.endpoint]),
-        REA_BROWSER_ALLOWED_ORIGINS_JSON: JSON.stringify([
-          browser.allowedOrigin,
-        ]),
-      };
+      const scopeArgs = ["--allowed-origins", browser.allowedOrigin];
       const analyzed = await runCli(
         [
           "analyze-web-bundle",
           browser.endpoint,
           "allowed-page",
+          ...scopeArgs,
           "--observation-ms",
           "0",
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(analyzed).toMatchObject({
         operation: "analyze_web_bundle",
@@ -159,11 +148,12 @@ describe("browser CLI capture parity", () => {
           "observe-web-session",
           browser.endpoint,
           "allowed-page",
+          ...scopeArgs,
           "--observation-ms",
           "5",
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(observedSession).toMatchObject({
         operation: "observe_web_session",
@@ -179,11 +169,12 @@ describe("browser CLI capture parity", () => {
           "discover-webmcp-tools",
           browser.endpoint,
           "allowed-page",
+          ...scopeArgs,
           "--observation-ms",
           "0",
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(webMcp).toMatchObject({
         operation: "discover_webmcp_tools",
@@ -194,8 +185,14 @@ describe("browser CLI capture parity", () => {
         },
       });
       const screenshot = await runCli(
-        ["capture-web-screenshot", browser.endpoint, "allowed-page", "--json"],
-        environment,
+        [
+          "capture-web-screenshot",
+          browser.endpoint,
+          "allowed-page",
+          ...scopeArgs,
+          "--json",
+        ],
+        process.env,
       );
       const artifact = screenshotArtifact(screenshot);
       expect(artifact).toMatchObject({ media_type: "image/png", bytes: 70 });
@@ -206,30 +203,11 @@ describe("browser CLI capture parity", () => {
           JSON.stringify(artifact),
           "--json",
         ],
-        environment,
+        process.env,
       );
       expect(visual).toMatchObject({
         operation: "compare_web_screenshots",
         normalized_result: { status: "identical", changed_pixels: 0 },
-      });
-      const policy = await runCli(
-        [
-          "policy",
-          "explain",
-          "browser_observe",
-          "--origins",
-          browser.endpoint,
-          "--origins",
-          browser.allowedOrigin,
-          "--network",
-          "loopback",
-          "--json",
-        ],
-        environment,
-      );
-      expect(policy).toEqual({
-        allowed: true,
-        grant_id: "administrator:browser_observe",
       });
     },
     INTEGRATION_TEST_TIMEOUT_MS,
