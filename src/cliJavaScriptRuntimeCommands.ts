@@ -82,7 +82,10 @@ export const registerJavaScriptRuntimeObservationCommands = (
     options: observeOptionsSchema,
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.observeJavaScriptRuntime, async () => {
-        const context = await runtimeContext("observe_javascript_runtime", environment);
+        const context = await runtimeContext(
+          "observe_javascript_runtime",
+          environment,
+        );
         if (!context.ok) return context.error;
         const parsed = observeJavaScriptRuntimeInputSchema.safeParse({
           inspector_endpoint: args.endpoint,
