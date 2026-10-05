@@ -407,16 +407,18 @@ describe("source-map dependency coverage of hard-to-parse sources", () => {
 
   it("keeps recovered edges from a partly recovered source and reports them as partial", async () => {
     const result = await fetchWithSources([
-      'with (scope) { require("./c.js"); }\nimport "./a.js";',
+      'with (scope) { require("./c.js"); }\nrequire("./outside.cjs");\nimport "./a.js";',
     ]);
     expect(result.status).toBe("partial");
     expect(result.items[0]?.status).toBe("partial");
     expect(result.items[0]?.limitation).toContain(
       "could not be parsed in full",
     );
+    // `with` can supply its own require; an unknown binding cannot establish
+    // a host-loader dependency. Recovered unbound calls outside it still can.
     expect(
       result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
-    ).toEqual(["./c.js", "./a.js"]);
+    ).toEqual(["./outside.cjs", "./a.js"]);
   });
 
   it("distinguishes an unparsable source from a source with no imports", async () => {
