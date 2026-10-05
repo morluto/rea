@@ -7,7 +7,7 @@ __pycache__/
 dist/
 build/
 docs/api/
-node_modules/
+node_modules
 *.egg-info/
 *.egg
 
