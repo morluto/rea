@@ -132,6 +132,7 @@ export function parseMachineType(machine: number): PeMachineType {
     case 0x8664:
       return "x64";
     case 0x01c0:
+    case 0x01c2:
     case 0x01c4:
       return "arm";
     case 0xaa64:

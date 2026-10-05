@@ -237,6 +237,8 @@ const peArchitecture = (machine: number): BinaryArchitecture | undefined => {
     case 0x8664:
       return "x86_64";
     case 0x1c0:
+    case 0x1c2:
+    case 0x1c4:
       return "arm";
     case 0xaa64:
       return "arm64";
