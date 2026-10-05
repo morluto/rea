@@ -109,11 +109,17 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
   const controller = new AbortController();
   const onAbort = (): void => {
     controller.abort(signal?.reason);
+    // AbortSignal listeners dispatch synchronously, so this destroy wins the race
+    // against `getData` rejecting with its own AbortError. That ordering is what
+    // keeps the caller-visible failure typed as `cancelled`.
     output.destroy(
       new ArtifactReaderFailure("cancelled", "ZIP operation cancelled"),
     );
   };
   signal?.addEventListener("abort", onAbort, { once: true });
+  // `close` covers both a consumer walking away mid-entry and normal completion
+  // after `end()`; aborting then is harmless because `getData` has already
+  // resolved, and it releases the producer in the abandoned-consumer case.
   output.once("close", () => {
     signal?.removeEventListener("abort", onAbort);
     controller.abort();
