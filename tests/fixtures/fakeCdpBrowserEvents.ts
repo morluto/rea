@@ -160,6 +160,7 @@ const emitSessionTimeline = (
         : `http://127.0.0.1:${String(port)}/redirected?token=redirect-secret`;
     event(socket, "Network.requestWillBeSent", command.sessionId, {
       requestId: "document-request",
+      type: options.sessionRedirectResourceType,
       frameId: "frame-main",
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },

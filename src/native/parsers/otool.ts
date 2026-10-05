@@ -98,7 +98,6 @@ const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
   collectBuild(kind, block, fields, state);
   collectDependency(kind, fields, state);
   collectSegment(kind, block, fields, state);
-  collectFlags(fields, state.flags);
 };
 
 const collectUuid = (
@@ -140,7 +139,12 @@ const collectDependency = (
   fields: Readonly<Record<string, string | number | null>>,
   state: ParsedLoadCommands,
 ): void => {
-  if (!kind.startsWith("LC_LOAD_") && kind !== "LC_ID_DYLIB") return;
+  if (
+    !kind.startsWith("LC_LOAD_") &&
+    kind !== "LC_ID_DYLIB" &&
+    kind !== "LC_REEXPORT_DYLIB"
+  )
+    return;
   state.dependencies.push({
     path: stripOffsetSuffix(stringField(fields, "name")),
     kind,
@@ -157,16 +161,6 @@ const collectSegment = (
 ): void => {
   if (kind === "LC_SEGMENT" || kind === "LC_SEGMENT_64")
     state.segments.push(parseSegment(block, fields));
-};
-
-const collectFlags = (
-  fields: Readonly<Record<string, string | number | null>>,
-  flags: Set<string>,
-): void => {
-  const rawFlags = stringField(fields, "flags");
-  if (rawFlags === null) return;
-  for (const flag of rawFlags.split(/\s+/u))
-    if (flag.length > 0) flags.add(flag);
 };
 
 const parseFields = (block: string): Record<string, string | number | null> => {
@@ -249,11 +243,12 @@ const permissions = (raw: string | null) => {
   return { read: null, write: null, execute: null, raw };
 };
 
+/** A whole decimal or hexadecimal integer literal, with no surrounding text. */
+const NUMERIC_PATTERN = /^(?:0x[a-fA-F0-9]+|\d+)$/u;
+
 const numeric = (value: string): number | null => {
-  const token = value.split(/\s+/u)[0];
-  if (token === undefined || !/^(?:0x[a-fA-F0-9]+|\d+)$/u.test(token))
-    return null;
-  const parsed = Number.parseInt(token, token.startsWith("0x") ? 16 : 10);
+  if (!NUMERIC_PATTERN.test(value)) return null;
+  const parsed = Number.parseInt(value, value.startsWith("0x") ? 16 : 10);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
@@ -286,7 +281,7 @@ const hexField = (
   name: string,
 ): string | null => {
   const value = stringField(fields, name);
-  if (value === null || !/^(?:0x[a-fA-F0-9]+|\d+)$/u.test(value)) return null;
+  if (value === null || !NUMERIC_PATTERN.test(value)) return null;
   return `0x${BigInt(value).toString(16)}`;
 };
 

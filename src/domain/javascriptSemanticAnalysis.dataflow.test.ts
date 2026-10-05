@@ -36,30 +36,30 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
     );
   });
 
-  it.each(["+= 1", "++", "--", "||= 1", "&&= 1", "??= 1"])(
-    "retains the property read in a read-modify-write operation: %s",
-    (operator) => {
-      const ir = analyzeJavaScriptSemantics(`
-        const source = { count: 1 };
-        source.count ${operator};
-      `);
-      expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
-        "read",
-        "write",
-      ]);
-    },
-  );
-
-  it("keeps plain member assignment write-only and member access read-only", () => {
+  it("does not invent property names for dynamic destructuring keys", () => {
     const ir = analyzeJavaScriptSemantics(`
-      const source = { count: 1 };
-      source.count = 2;
-      const value = source.count;
+      const source = { token: "TOKEN" };
+      const key = getKey();
+      const { [key]: dynamic } = source;
+      const { ["token"]: literal } = source;
+      const { token: renamed } = source;
+      const { token } = source;
+      const { [1]: numeric } = source;
     `);
-    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
-      "write",
-      "read",
+    const destructures = ir.objectOperations.filter(
+      ({ kind }) => kind === "destructure",
+    );
+
+    expect(destructures.map(({ propertyName }) => propertyName)).toEqual([
+      "token",
+      "token",
+      "token",
+      "1",
     ]);
+    expect(
+      destructures.every(({ resolution }) => resolution === "complete"),
+    ).toBe(true);
+    expect(topLevelBinding(ir, "dynamic").value.status).toBe("unknown");
   });
 
   it("does not project positional argument flow after a spread", () => {
@@ -146,6 +146,34 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
         callableId: parse.callableId,
       }),
     );
+  });
+});
+
+describe("JavaScript semantic analysis: read-modify-write", () => {
+  it.each(["+= 1", "++", "--", "||= 1", "&&= 1", "??= 1"])(
+    "retains the property read in a read-modify-write operation: %s",
+    (operator) => {
+      const ir = analyzeJavaScriptSemantics(`
+        const source = { count: 1 };
+        source.count ${operator};
+      `);
+      expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+        "read",
+        "write",
+      ]);
+    },
+  );
+
+  it("keeps plain member assignment write-only and member access read-only", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { count: 1 };
+      source.count = 2;
+      const value = source.count;
+    `);
+    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+      "write",
+      "read",
+    ]);
   });
 });
 

@@ -12,7 +12,6 @@ import {
   collectSemanticReferences,
   immutableSemanticBindings,
   immutableSemanticScopes,
-  semanticModuleOrigin,
   semanticStaticPropertyName,
 } from "./javascriptSemanticProjection.js";
 import type {
@@ -77,6 +76,9 @@ export const analyzeParsedJavaScriptSemantics = (
 ): JavaScriptSemanticIr => {
   const state = createState(file.program);
   collectDefinitions(file.program, state);
+  traverseJavaScriptAst(file.program, {
+    enter: (node) => collectSemanticModuleLink(node, state),
+  });
   const references = collectSemanticReferences(file.program, state);
   const parserPartial = file.errors.length > 0;
   const bindings = immutableSemanticBindings(state);
@@ -159,7 +161,6 @@ const collectDefinitions = (
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
-      collectSemanticModuleLink(node, state);
     },
     exit: (node) => {
       if (openedScopes.has(node)) stack.pop();
@@ -211,6 +212,16 @@ const bindInnerDeclaration = (
         parent !== null && t.isVariableDeclaration(parent)
           ? parent.kind !== "const"
           : true,
+    });
+  else if (t.isClassExpression(node) && t.isIdentifier(node.id))
+    addBinding({
+      state,
+      scope,
+      name: node.id.name,
+      kind: "class",
+      mutable: false,
+      definitionNode: node.id,
+      initializer: node,
     });
   else if (t.isFunction(node)) bindFunctionLocals(node, scope, state);
   else if (t.isCatchClause(node) && node.param != null)
@@ -329,17 +340,6 @@ const bindPattern = (input: BindPatternInput): void => {
     return;
   }
   if (t.isIdentifier(pattern)) {
-    const baseOrigin = semanticModuleOrigin(initializer, []);
-    const directOrigin =
-      baseOrigin === undefined || projection.includes(null)
-        ? undefined
-        : {
-            ...baseOrigin,
-            importedPath: [
-              ...baseOrigin.importedPath,
-              ...projection.map((segment) => String(segment)),
-            ],
-          };
     addBinding({
       state,
       scope,
@@ -348,7 +348,6 @@ const bindPattern = (input: BindPatternInput): void => {
       mutable,
       definitionNode: pattern,
       initializer,
-      ...(directOrigin === undefined ? {} : { directOrigin }),
       projection,
     });
     return;

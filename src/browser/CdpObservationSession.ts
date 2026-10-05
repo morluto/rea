@@ -266,6 +266,8 @@ class TimelineCapture {
   }
 
   #redirect(params: UnknownRecord): void {
+    const resourceType = stringValue(params.type);
+    if (resourceType !== undefined && resourceType !== "Document") return;
     if (
       stringValue(params.frameId) !== this.mainFrameId ||
       recordValue(params.redirectResponse) === undefined

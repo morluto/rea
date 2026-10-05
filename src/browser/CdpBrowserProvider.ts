@@ -188,7 +188,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       return err(providerError(cause, "observe_web_session"));
     } finally {
       if (targetSession !== undefined)
-        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
+        await closeCdpTargetSession(
+          targetSession,
+          CLEANUP_DOMAINS,
+          options.signal,
+        );
     }
   }
 
@@ -229,7 +233,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       return err(providerError(cause, "discover_webmcp_tools"));
     } finally {
       if (targetSession !== undefined)
-        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
+        await closeCdpTargetSession(
+          targetSession,
+          CLEANUP_DOMAINS,
+          options.signal,
+        );
     }
   }
 
@@ -282,7 +290,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       return err(providerError(cause, "capture_web_screenshot"));
     } finally {
       if (targetSession !== undefined)
-        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
+        await closeCdpTargetSession(
+          targetSession,
+          CLEANUP_DOMAINS,
+          options.signal,
+        );
     }
   }
 
@@ -329,7 +341,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       });
     } finally {
       if (targetSession !== undefined)
-        await closeCdpTargetSession(targetSession, CLEANUP_DOMAINS);
+        await closeCdpTargetSession(
+          targetSession,
+          CLEANUP_DOMAINS,
+          options.signal,
+        );
     }
   }
 }
