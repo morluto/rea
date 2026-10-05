@@ -86,6 +86,20 @@ cleanup behavior; artifact tools carry the input path and requested operation.
 REA runs the declared request directly and does not infer a broader target or
 action from it.
 
+REA does not require permission grants or per-call approval flags. Setup still
+prints its plan and requires confirmation before changing configuration or
+installing Hopper. MCP clients control their own confirmation UI.
+
+Tool annotations describe effects and are hints, not authorization controls
+([MCP ToolAnnotations](https://modelcontextprotocol.io/specification/2025-06-18/schema#toolannotations)).
+`readOnlyHint` includes session state: an analysis call that records additive
+Evidence is marked non-read-only even when it leaves the target unchanged.
+`destructiveHint` describes possible data loss, not ordinary Evidence recording.
+Effect metadata covers possible behavior across supported inputs: DMG inventory
+can launch `hdiutil` and create an owned temporary mount directory; extraction
+creates a fresh output directory on every call. Comparing supplied web captures
+or PNG artifacts uses local data without contacting the browser.
+
 Host requirements remain in force. macOS may deny Accessibility,
 Screen Recording, or native mounting; provider tools require their selected
 analysis runtime. These failures are reported at the operation that needs

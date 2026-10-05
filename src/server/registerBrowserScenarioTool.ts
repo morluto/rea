@@ -16,7 +16,7 @@ interface BrowserScenarioToolRegistration {
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
 
-/** Register the controlled browser scenario tool even when policy disables it. */
+/** Register the browser scenario tool with execution-time provider diagnostics. */
 export const registerBrowserScenarioTool = (
   server: McpServer,
   options: BrowserScenarioToolRegistration,
