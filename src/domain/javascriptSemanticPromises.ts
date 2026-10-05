@@ -19,6 +19,7 @@ import {
   range,
   sourceRangesEqual,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { dataEffectMemberCallee } from "./javascriptSemanticDataEffectHelpers.js";
 
 type PromiseMethod = JavaScriptSemanticPromiseOperation["method"];
 type PromiseKind = JavaScriptSemanticPromiseOperation["kind"];
@@ -139,7 +140,7 @@ const promiseCandidateDetails = (
   )
     return { kind: "constructor", method: "new" };
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-    const member = memberCallee(node);
+    const member = dataEffectMemberCallee(node);
     if (member === null) return null;
     const method = semanticStaticPropertyName(member.property, member.computed);
     if (
@@ -173,13 +174,6 @@ const isPromiseProducer = (
 
 const semanticPromiseId = (kind: PromiseKind, node: t.Node): string =>
   `promise:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
-
-const memberCallee = (
-  node: t.CallExpression | t.OptionalCallExpression,
-): t.MemberExpression | t.OptionalMemberExpression | null =>
-  t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
-    ? node.callee
-    : null;
 
 const promiseOwnership = (
   candidate: PromiseCandidate,
@@ -285,7 +279,7 @@ const outerConsumesCandidate = (
     outer.kind === "chain" &&
     (t.isCallExpression(outer.node) || t.isOptionalCallExpression(outer.node))
   ) {
-    const member = memberCallee(outer.node);
+    const member = dataEffectMemberCallee(outer.node);
     return member !== null && containsNode(member.object, candidate.node);
   }
   if (
@@ -338,7 +332,7 @@ const promiseSources = (
     const member =
       t.isCallExpression(candidate.node) ||
       t.isOptionalCallExpression(candidate.node)
-        ? memberCallee(candidate.node)
+        ? dataEffectMemberCallee(candidate.node)
         : null;
     return member === null
       ? unresolvedPromise()

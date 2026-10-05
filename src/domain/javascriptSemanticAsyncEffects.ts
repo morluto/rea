@@ -17,6 +17,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  dataEffectLiteralString,
+  dataEffectMemberCallee,
+} from "./javascriptSemanticDataEffectHelpers.js";
 
 const EVENT_REGISTER_METHODS = [
   "on",
@@ -106,7 +110,7 @@ const collectEvent = (
   state: JavaScriptSemanticAnalysisState,
   output: JavaScriptSemanticEventOperation[],
 ): void => {
-  const member = memberCallee(node);
+  const member = dataEffectMemberCallee(node);
   if (member === null) return;
   const method = EVENT_METHODS.find(
     (candidate) =>
@@ -118,7 +122,7 @@ const collectEvent = (
   const eventArgument = node.arguments[0];
   const listenerArgument = node.arguments[1];
   const emitter = emitterIdentity(member.object, state);
-  const eventName = literalString(eventArgument);
+  const eventName = dataEffectLiteralString(eventArgument);
   output.push({
     eventId: `event:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,
@@ -333,20 +337,6 @@ const bindingId = (
     ? (resolveSemanticBindingState(state, node, node.name)?.bindingId ?? null)
     : null;
 
-const literalString = (
-  node:
-    | t.Expression
-    | t.SpreadElement
-    | t.JSXNamespacedName
-    | t.ArgumentPlaceholder
-    | undefined,
-): string | null => {
-  if (t.isStringLiteral(node)) return node.value;
-  if (t.isTemplateLiteral(node) && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? null;
-  return null;
-};
-
 const timerDelay = (candidate: TimerCandidate): number | null => {
   if (candidate.kind !== "schedule" || candidate.method === "setImmediate")
     return null;
@@ -356,10 +346,3 @@ const timerDelay = (candidate: TimerCandidate): number | null => {
 
 const timerId = (candidate: TimerCandidate): string =>
   `timer:${candidate.kind}:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
-
-const memberCallee = (
-  node: t.CallExpression | t.OptionalCallExpression,
-): t.MemberExpression | t.OptionalMemberExpression | null =>
-  t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
-    ? node.callee
-    : null;

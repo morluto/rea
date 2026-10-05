@@ -20,6 +20,10 @@ import {
   propertyName,
   range,
 } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  dataEffectLiteralString,
+  dataEffectMemberCallee,
+} from "./javascriptSemanticDataEffectHelpers.js";
 
 const CHILD_PROCESS_METHODS = ["spawn", "exec", "execFile", "fork"] as const;
 const CHILD_LISTENER_METHODS = ["on", "once", "addListener"] as const;
@@ -98,7 +102,7 @@ const immutableSpawn = (
   candidate: SpawnCandidate,
 ): JavaScriptSemanticChildProcessSpawn => {
   const options = spawnOptions(candidate);
-  const command = literalString(candidate.node.arguments[0]);
+  const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
     processId: spawnId(candidate),
     method: candidate.method,
@@ -162,7 +166,7 @@ const childInteraction = (
   context: ChildInteractionContext,
 ): JavaScriptSemanticChildProcessInteraction | null => {
   const { state, spawnByNode, spawnsByBinding } = context;
-  const member = memberCallee(node);
+  const member = dataEffectMemberCallee(node);
   if (member === null) return null;
   const method = semanticStaticPropertyName(member.property, member.computed);
   const binding = objectBinding(member.object, state);
@@ -190,7 +194,7 @@ const childInteraction = (
     eventName: kind === "listener" ? eventName : null,
     signalName:
       kind === "signal"
-        ? (literalString(node.arguments[0]) ?? "SIGTERM")
+        ? (dataEffectLiteralString(node.arguments[0]) ?? "SIGTERM")
         : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
@@ -216,7 +220,7 @@ const classifyInteraction = (
   const listenerMethod = CHILD_LISTENER_METHODS.find(
     (candidate) => candidate === method,
   );
-  const eventName = literalString(argument);
+  const eventName = dataEffectLiteralString(argument);
   return listenerMethod !== undefined &&
     (eventName === "exit" || eventName === "error")
     ? { kind: "listener", interactionMethod: listenerMethod, eventName }
@@ -351,20 +355,6 @@ const assignedBindingId = (
         ?.bindingId ?? null);
 };
 
-const literalString = (
-  node:
-    | t.Expression
-    | t.SpreadElement
-    | t.JSXNamespacedName
-    | t.ArgumentPlaceholder
-    | undefined,
-): string | null => {
-  if (t.isStringLiteral(node)) return node.value;
-  if (t.isTemplateLiteral(node) && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? null;
-  return null;
-};
-
 const popCallable = (node: t.Node, stack: string[]): void => {
   const callableId = semanticCallableIdForNode(node);
   if (callableId !== null && stack.at(-1) === callableId) stack.pop();
@@ -372,10 +362,3 @@ const popCallable = (node: t.Node, stack: string[]): void => {
 
 const spawnId = (candidate: SpawnCandidate): string =>
   `child:spawn:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
-
-const memberCallee = (
-  node: t.CallExpression | t.OptionalCallExpression,
-): t.MemberExpression | t.OptionalMemberExpression | null =>
-  t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
-    ? node.callee
-    : null;

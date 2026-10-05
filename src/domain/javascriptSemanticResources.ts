@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
+  dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
   type DataEffectTraversalContext,
@@ -87,7 +88,7 @@ const collectReleases = (
   const output: JavaScriptSemanticResourceOperation[] = [];
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    const member = memberCallee(node);
+    const member = dataEffectMemberCallee(node);
     if (member === null || !t.isIdentifier(member.object)) return;
     const method = RELEASE_METHODS.find(
       (candidate) =>
@@ -189,10 +190,3 @@ const resourceModule = (specifier: string): boolean =>
 
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
-
-const memberCallee = (
-  node: t.CallExpression | t.OptionalCallExpression,
-): t.MemberExpression | t.OptionalMemberExpression | null =>
-  t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
-    ? node.callee
-    : null;
