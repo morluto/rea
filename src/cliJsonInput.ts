@@ -17,10 +17,12 @@ export const parseCliJsonInput = async (
   if (["{", "["].includes(value.trimStart()[0] ?? ""))
     return { ok: false, error: inputError(operation) };
   try {
-    const decoded = safeParseJson(await readFile(value, "utf8"));
-    return decoded.ok
-      ? { ok: true, value: decoded.value }
-      : jsonFileError(value, operation, "invalid-json");
+    // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
+    // being silently replaced by lossy "utf8" decoding.
+    const parsed = parseJson(await readFile(value));
+    return parsed === undefined
+      ? jsonFileError(value, operation, "invalid-json")
+      : { ok: true, value: parsed };
   } catch (cause: unknown) {
     return jsonFileError(value, operation, "read-failed", cause);
   }

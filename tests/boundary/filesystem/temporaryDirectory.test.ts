@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-describe.sequential("test temporary directory ownership", () => {
+describe("test temporary directory ownership", { concurrent: false }, () => {
   let completedDirectory: string | undefined;
 
   it("creates a canonical directory owned by the current test", async () => {

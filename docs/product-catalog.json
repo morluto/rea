@@ -3,9 +3,9 @@
     "name": "rea-agents",
     "version": "4.0.1",
     "sdk": {
-      "server": "2.0.0",
-      "client": "2.0.0",
-      "core": "2.0.0"
+      "server": "2.3.1",
+      "client": "2.3.1",
+      "core": "2.3.1"
     },
     "skill_version": "24"
   },

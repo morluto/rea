@@ -12,7 +12,7 @@ import { waitForExit } from "../support/process/processFixture.js";
 const execFileAsync = promisify(execFile);
 const CHILD_SHUTDOWN_GRACE_MS = 1_000;
 
-describe.sequential("verifier run identity", () => {
+describe("verifier run identity", { concurrent: false }, () => {
   it("allocates, propagates, and reuses one process-local identity", async () => {
     const previousRunId = process.env.REA_PROCESS_RUN_ID;
     process.env.REA_PROCESS_RUN_ID = "11111111-1111-4111-8111-111111111111";
