@@ -54,7 +54,11 @@ export const inspectNativeMacho = async (
   for (const [tool, prefix] of REQUIRED_COMMANDS) {
     const captured = await context.run(
       tool,
-      [...prefix, context.target.path],
+      [
+        ...prefix,
+        ...selectedArchitectureArguments(tool, context.target),
+        context.target.path,
+      ],
       context.signal,
     );
     if (!captured.ok) return err(captured.error);
@@ -64,7 +68,11 @@ export const inspectNativeMacho = async (
   const [tool, prefix] = OPTIONAL_VTOOL_COMMAND;
   const optional = await context.run(
     tool,
-    [...prefix, context.target.path],
+    [
+      ...prefix,
+      ...selectedArchitectureArguments(tool, context.target),
+      context.target.path,
+    ],
     context.signal,
   );
   if (optional.ok) captures.push(optional.value);
@@ -250,4 +258,22 @@ export const architectureLocations = (
     );
   }
   return locations;
+};
+
+const selectedArchitectureArguments = (
+  tool: string,
+  target: BinaryTarget,
+): string[] => {
+  if (
+    target.kind !== "executable" ||
+    target.availableArchitectures.length < 2 ||
+    tool === "file" ||
+    tool === "lipo"
+  )
+    return [];
+  const architecture =
+    target.architecture === "x86" ? "i386" : target.architecture;
+  return tool === "dwarfdump"
+    ? [`--arch=${architecture}`]
+    : ["-arch", architecture];
 };
