@@ -116,12 +116,17 @@ describe("function comparison normalized identity", () => {
             locals: [],
           },
         });
+      const result = compareFunctions(
+        observe("b", named("0x1000")),
+        observe("c", named("0x2000")),
+      );
+      expect(result.function_match).toMatchObject({
+        status: "matched",
+        method: "symbol",
+      });
       expect(
-        compareFunctions(
-          observe("b", named("0x1000")),
-          observe("c", named("0x2000")),
-        ).function_match,
-      ).toMatchObject({ status: "matched", method: "symbol" });
+        result.dimensions.find(({ dimension }) => dimension === "identity"),
+      ).toMatchObject({ status: "unchanged" });
     },
   );
 
@@ -138,14 +143,33 @@ describe("function comparison normalized identity", () => {
             locals: [],
           },
         });
+      const result = compareFunctions(
+        observe("d", generated("0x1000")),
+        observe("e", generated("0x2000")),
+      );
+      expect(result.function_match.status).toBe("ambiguous");
       expect(
-        compareFunctions(
-          observe("d", generated("0x1000")),
-          observe("e", generated("0x2000")),
-        ).function_match.status,
-      ).toBe("ambiguous");
+        result.dimensions.find(({ dimension }) => dimension === "identity"),
+      ).toMatchObject({ status: "unknown" });
     },
   );
+  it.each([
+    { name: "sub_deallocate", status: "unchanged" },
+    { name: "sub_deadbeef", status: "unknown" },
+  ])("preserves the calls dimension for callee $name", ({ name, status }) => {
+    const calling = (base: "0x1000" | "0x2000") =>
+      functionDossierSchema.parse({
+        ...dossier("return helper();", base),
+        callees: [{ address: base === "0x1000" ? "0x1010" : "0x2010", name }],
+      });
+    const result = compareFunctions(
+      observe("6", calling("0x1000")),
+      observe("7", calling("0x2000")),
+    );
+    expect(
+      result.dimensions.find(({ dimension }) => dimension === "calls"),
+    ).toMatchObject({ status });
+  });
 });
 
 describe("function comparison", () => {
