@@ -10,10 +10,12 @@ import { parseConfig } from "./config.js";
 import { SystemJavaScriptReplayHost } from "./replay/SystemJavaScriptReplayHost.js";
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
-export const createSystemDoctorHost = (): DoctorHost =>
+export const createSystemDoctorHost = (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): DoctorHost =>
   systemDoctorHost({
     providerInspections: async () => [await inspectSystemGhidraProvider()],
-    javascriptReplayCheck: inspectJavaScriptReplay,
+    javascriptReplayCheck: () => inspectJavaScriptReplay(environment),
     linuxDemoRuntimeCheck: inspectLinuxPrivateDisplay,
   });
 
@@ -61,8 +63,10 @@ const inspectLinuxPrivateDisplay = async (): Promise<DoctorCheck> => {
   };
 };
 
-const inspectJavaScriptReplay = async (): Promise<DoctorCheck> => {
-  const config = parseConfig(process.env);
+const inspectJavaScriptReplay = async (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<DoctorCheck> => {
+  const config = parseConfig(environment);
   if (!config.ok)
     return {
       name: "javascript-replay",

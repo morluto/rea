@@ -19,6 +19,7 @@ const OPERATION = "capture_browser_scenario";
 export const registerBrowserScenarioCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.captureBrowserScenario, {
     description:
@@ -35,7 +36,7 @@ export const registerBrowserScenarioCommands = (
         const scenario = browserScenarioSchema.safeParse(input.value);
         if (!scenario.success)
           return cliError(new AnalysisInputError(OPERATION));
-        const config = parseConfig(process.env);
+        const config = parseConfig(environment);
         if (!config.ok) return cliError(config.error);
         const authority = await loadConfiguredPermissionAuthority(config.value);
         if (!authority.ok) return cliError(authority.error);

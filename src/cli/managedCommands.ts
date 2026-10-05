@@ -18,6 +18,7 @@ import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCom
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerInspectManagedArtifact(cli, logger);
   registerInspectManagedMembers(cli, logger);
@@ -25,7 +26,7 @@ export const registerManagedCommands = (
   registerCompareManagedMembers(cli, logger);
   registerImportManagedReconstruction(cli, logger);
   registerVerifyManagedNativeBoundaries(cli, logger);
-  registerPlanManagedRuntimeCorrelation(cli, logger);
+  registerPlanManagedRuntimeCorrelation(cli, logger, environment);
   registerProjectManagedApplicationGraph(cli, logger);
 };
 
@@ -166,6 +167,7 @@ const registerVerifyManagedNativeBoundaries = (
 const registerPlanManagedRuntimeCorrelation = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.planManagedRuntimeCorrelation, {
     description:
@@ -182,7 +184,7 @@ const registerPlanManagedRuntimeCorrelation = (
           "plan-managed-runtime-correlation",
         );
         if (!input.ok) return input.error;
-        const config = parseConfig(process.env);
+        const config = parseConfig(environment);
         if (!config.ok) return projectAnalysisError(config.error);
         const authority = await loadConfiguredPermissionAuthority(config.value);
         if (!authority.ok) return projectAnalysisError(authority.error);

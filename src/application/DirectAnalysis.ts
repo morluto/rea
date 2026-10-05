@@ -195,10 +195,18 @@ const runAnalysis = async (
     readonly signal: AbortSignal;
     readonly permissionAuthority?: PermissionAuthority;
     readonly providerId?: AnalysisProviderSelector;
+    /**
+     * Environment the configuration is read from. Defaults to the process
+     * environment so existing callers are unchanged, but a caller may supply
+     * one — which is what lets the MCP path's injected environment reach this
+     * code, and what makes configuration-driven behaviour testable without
+     * mutating `process.env`.
+     */
+    readonly environment?: Readonly<Record<string, string | undefined>>;
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
-  const config = parseConfig(process.env);
+  const config = parseConfig(options.environment ?? process.env);
   if (!config.ok) return cliError(config.error);
   const authorization = await authorizeAnalysisRun({
     config: config.value,

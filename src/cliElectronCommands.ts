@@ -35,9 +35,10 @@ import { runCliJavaScriptApplicationAnalysis } from "./cli/javascriptApplication
 export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerElectronObservationCommands(cli, logger);
-  registerElectronActiveCommand(cli, logger);
+  registerElectronActiveCommand(cli, logger, environment);
   registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
@@ -45,6 +46,7 @@ export const registerElectronCommands = (
 const registerElectronActiveCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one approved, bounded owned Electron scenario",
@@ -66,7 +68,7 @@ const registerElectronActiveCommand = (
           input.value,
         );
         if (!parsed.success) return inputError("capture_electron_scenario");
-        const context = await electronContext();
+        const context = await electronContext(environment);
         if (!context.ok) return context.error;
         const result = await captureElectronScenario(
           context.activeProvider,
@@ -201,8 +203,10 @@ const registerJavaScriptApplicationCommand = (
   });
 };
 
-const electronContext = async () => {
-  const config = parseConfig(process.env);
+const electronContext = async (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const config = parseConfig(environment);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
   const authority = await loadConfiguredPermissionAuthority(config.value);
   if (!authority.ok)
@@ -216,8 +220,11 @@ const electronContext = async () => {
   };
 };
 
-const electronObservationContext = async (operation: string) => {
-  const context = await electronContext();
+const electronObservationContext = async (
+  operation: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const context = await electronContext(environment);
   if (!context.ok) return context;
   if (context.observationPolicy.status === "disabled")
     return {

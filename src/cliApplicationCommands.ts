@@ -47,6 +47,7 @@ type CliInstance = ReturnType<typeof Cli.create>;
 export const registerApplicationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerJsonCommand({
     cli,
@@ -106,7 +107,7 @@ export const registerApplicationCommands = (
           CLI_COMMANDS.runControlledReplay,
         );
         if (!input.ok) return input.error;
-        const config = parseConfig(process.env);
+        const config = parseConfig(environment);
         if (!config.ok) return projectAnalysisError(config.error);
         const authority = await loadConfiguredPermissionAuthority(config.value);
         if (!authority.ok) return projectAnalysisError(authority.error);
@@ -167,6 +168,8 @@ const registerObligationLedgerCommand = (
 interface AuthorizedJsonCommandOptions {
   readonly cli: CliInstance;
   readonly logger: Logger;
+  /** Environment the configuration is read from; defaults to the process environment. */
+  readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly name: string;
   readonly description: string;
   readonly workflow: (
@@ -182,6 +185,7 @@ interface AuthorizedJsonCommandOptions {
 const registerAuthorizedJsonCommand = ({
   cli,
   logger,
+  environment = process.env,
   name,
   description,
   workflow,
@@ -195,7 +199,7 @@ const registerAuthorizedJsonCommand = ({
       logCliCommand(logger, name, async () => {
         const input = await parseCliJsonInput(args.inputJson, name);
         if (!input.ok) return input.error;
-        const configured = await configuredAuthority();
+        const configured = await configuredAuthority(environment);
         if (!configured.ok) return configured.error;
         const result = await workflow(
           configured.config,
@@ -222,7 +226,9 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     },
   });
 
-const configuredAuthority = async (): Promise<
+const configuredAuthority = async (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<
   | {
       readonly ok: true;
       readonly config: AppConfig;
@@ -233,7 +239,7 @@ const configuredAuthority = async (): Promise<
       readonly error: ReturnType<typeof projectAnalysisError>;
     }
 > => {
-  const configured = await loadConfiguredAuthority();
+  const configured = await loadConfiguredAuthority(environment);
   return configured.ok
     ? configured
     : { ok: false, error: projectAnalysisError(configured.error) };
@@ -302,7 +308,9 @@ const registerJsonCommand = <Schema extends z.ZodType>({
   });
 };
 
-const loadConfiguredAuthority = async (): Promise<
+const loadConfiguredAuthority = async (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<
   | {
       readonly ok: true;
       readonly config: AppConfig;
@@ -310,7 +318,7 @@ const loadConfiguredAuthority = async (): Promise<
     }
   | { readonly ok: false; readonly error: AnalysisError }
 > => {
-  const config = parseConfig(process.env);
+  const config = parseConfig(environment);
   if (!config.ok) return config;
   const authority = await loadConfiguredPermissionAuthority(config.value);
   return authority.ok

@@ -24,12 +24,14 @@ import type { CliInstance } from "./cli/types.js";
  * Analysis commands acquire and close their own sessions; bare `mcp` and
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
  */
-export const createCli = (): CliInstance => {
+export const createCli = (
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): CliInstance => {
   const logger = createLogger(
     "cli",
-    process.env.REA_LOG_LEVEL === undefined
+    environment.REA_LOG_LEVEL === undefined
       ? "silent"
-      : parseLogLevel(process.env.REA_LOG_LEVEL),
+      : parseLogLevel(environment.REA_LOG_LEVEL),
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
@@ -52,17 +54,17 @@ export const createCli = (): CliInstance => {
 
   registerSetupCommands(cli, logger);
   registerCoreAnalysisCommands(cli, logger);
-  registerUtilityCommands(cli, logger);
+  registerUtilityCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
-  registerManagedCommands(cli, logger);
+  registerManagedCommands(cli, logger, environment);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger);
-  registerPolicyCommands(cli, logger);
+  registerPolicyCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);
   registerAdvancedBrowserCommands(cli, logger);
-  registerBrowserScenarioCommands(cli, logger);
-  registerElectronCommands(cli, logger);
-  registerJavaScriptRuntimeObservationCommands(cli, logger);
-  registerApplicationCommands(cli, logger);
+  registerBrowserScenarioCommands(cli, logger, environment);
+  registerElectronCommands(cli, logger, environment);
+  registerJavaScriptRuntimeObservationCommands(cli, logger, environment);
+  registerApplicationCommands(cli, logger, environment);
   return cli;
 };

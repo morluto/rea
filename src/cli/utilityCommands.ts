@@ -19,6 +19,7 @@ import type { CliInstance } from "./types.js";
 export const registerUtilityCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerCapabilityCommands(cli, logger);
   registerNativeCommands(cli, logger);
@@ -111,7 +112,7 @@ export const registerUtilityCommands = (
         ),
     });
   }
-  registerReferenceSourceCommand(cli, logger);
+  registerReferenceSourceCommand(cli, logger, environment);
 };
 
 const registerCapabilityCommands = (cli: CliInstance, logger: Logger): void => {
@@ -193,6 +194,7 @@ const registerNativeCommands = (cli: CliInstance, logger: Logger): void => {
 const registerReferenceSourceCommand = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
@@ -203,7 +205,7 @@ const registerReferenceSourceCommand = (
     }),
     run: ({ args }) =>
       logCliCommand(logger, "import-reference-source", async () => {
-        const config = parseConfig(process.env);
+        const config = parseConfig(environment);
         if (!config.ok)
           return {
             error: "Import failed",

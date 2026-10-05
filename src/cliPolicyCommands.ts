@@ -43,6 +43,7 @@ export const approvePolicyRevocation = async (options: {
 export const registerPolicyCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.policy, {
     description: "Inspect, explain, or revoke unified local permission grants",
@@ -89,7 +90,7 @@ export const registerPolicyCommands = (
     alias: { environmentNames: "environment-names", yes: "y" },
     run: ({ agent, args, formatExplicit, options }) =>
       logCliCommand(logger, "policy", async () => {
-        const config = parseConfig(process.env);
+        const config = parseConfig(environment);
         if (!config.ok) return failure(config.error);
         if (args.action === "status") return policyStatus(config.value);
         if (args.action === "list") return policyList(config.value);

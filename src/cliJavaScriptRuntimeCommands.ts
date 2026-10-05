@@ -40,6 +40,7 @@ const observeOptionsSchema = z.object({
 export const registerJavaScriptRuntimeObservationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   cli.command(CLI_COMMANDS.listJavaScriptRuntimeTargets, {
     description: "List Node/Electron V8 Inspector targets",
@@ -81,7 +82,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
     options: observeOptionsSchema,
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.observeJavaScriptRuntime, async () => {
-        const context = await runtimeContext("observe_javascript_runtime");
+        const context = await runtimeContext("observe_javascript_runtime", environment);
         if (!context.ok) return context.error;
         const parsed = observeJavaScriptRuntimeInputSchema.safeParse({
           inspector_endpoint: args.endpoint,
@@ -100,8 +101,11 @@ export const registerJavaScriptRuntimeObservationCommands = (
   });
 };
 
-const runtimeContext = async (operation: string) => {
-  const config = parseConfig(process.env);
+const runtimeContext = async (
+  operation: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const config = parseConfig(environment);
   if (!config.ok) return { ok: false as const, error: cliError(config.error) };
   const policy = config.value.v8InspectorObservationPolicy;
   if (policy.status === "disabled")

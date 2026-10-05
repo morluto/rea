@@ -32,7 +32,10 @@ export interface ProcessCliErrorOutput {
 }
 
 /** Capture one JSON scenario through the same policy and evidence contract as MCP. */
-export const captureProcessScenarioFile = async (path: string) => {
+export const captureProcessScenarioFile = async (
+  path: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) => {
   try {
     const input = await readJson(path);
     let scenario;
@@ -44,7 +47,7 @@ export const captureProcessScenarioFile = async (path: string) => {
         "Process scenario is invalid. Check its required fields and limits, then try again.",
       );
     }
-    const config = parseConfig(process.env);
+    const config = parseConfig(environment);
     if (!config.ok) return cliAnalysisError(config.error);
     const authority = await loadConfiguredPermissionAuthority(config.value);
     if (!authority.ok) return cliAnalysisError(authority.error);
