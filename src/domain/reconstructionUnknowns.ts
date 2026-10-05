@@ -1,3 +1,4 @@
+import { uniqueSorted } from "./canonicalOrdering.js";
 import type {
   ReconstructionClaim,
   ReconstructionClaimResult,
@@ -129,6 +130,3 @@ const defaultProbe = (
           rationale:
             "Capture complete artifact inventories under equal limits.",
         };
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"));

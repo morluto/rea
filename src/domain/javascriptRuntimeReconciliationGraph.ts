@@ -1,5 +1,4 @@
 import {
-  compareCodePoints,
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
   type ApplicationEdge,
@@ -10,6 +9,7 @@ import type {
   ParsedRuntimeCapture,
   ParsedStaticLayer,
 } from "./javascriptRuntimeReconciliationParsing.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { RuntimeProjection } from "./javascriptRuntimeReconciliationRuntime.js";
 
 interface ReconciledGraphInput {
@@ -246,6 +246,3 @@ const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] => [
   ...new Map(edges.map((edge) => [edge.edge_id, edge])).values(),
 ];
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);

@@ -1,5 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import { AsarArtifactReader } from "../artifacts/AsarArtifactReader.js";
 import {
   ArtifactPathRegistry,
@@ -23,7 +24,6 @@ import {
 } from "../domain/artifactGraph.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { scanArtifactInventory } from "./ArtifactInventory.js";
-import { digestCanonical } from "./ArtifactGraphConstruction.js";
 
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
@@ -188,14 +188,14 @@ const createExtractionResult = (
     selected_occurrence_ids: selected
       .map(({ occurrence }) => occurrence.occurrence_id)
       .sort((left, right) => left.localeCompare(right)),
-    files_sha256: digestCanonical(extracted),
+    files_sha256: canonicalDigest(extracted, "Artifact"),
     output_root_alias: "$OUTPUT_ROOT" as const,
   };
   return artifactExtractionResultSchema.parse({
     manifest: inventory.manifest,
     extraction_manifest: {
       ...extractionSemantic,
-      extraction_id: `aex_${digestCanonical(extractionSemantic)}`,
+      extraction_id: `aex_${canonicalDigest(extractionSemantic, "Artifact")}`,
     },
     output_root: input.outputRoot,
     artifacts: extracted,

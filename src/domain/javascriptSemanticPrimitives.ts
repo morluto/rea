@@ -4,8 +4,8 @@ import type {
   JavaScriptSemanticPrimitive,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticIr.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
-import { compareCodePoints } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Normalize one bounded collection of possible primitive values. */
 export const semanticPrimitiveSet = (

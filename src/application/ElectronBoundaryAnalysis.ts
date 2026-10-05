@@ -1,3 +1,4 @@
+import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import type { ElectronIpcFinding } from "../domain/electronStaticAnalysisTypes.js";
 import type { ElectronBoundarySummary } from "../domain/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -221,6 +222,3 @@ const resolvesToFile = (input: ResolveToFileInput): boolean => {
 
 const ipcRecordKey = (path: string, finding: ElectronIpcFinding): string =>
   `${path}\0${String(finding.location.start.line)}:${String(finding.location.start.column)}\0${finding.side}\0${finding.operation}`;
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

@@ -1,3 +1,4 @@
+import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type {
   ClientRegistrationStatus,
   UnhealthyClientRegistrationStatus,
@@ -174,9 +175,6 @@ const selectedSkillCheck = (
       ? { detail: "Installed REA skill identity is aligned." }
       : { remediation: "Run rea setup to update the installed REA skill." }),
   };
-
-const uniqueSorted = (values: readonly string[]): readonly string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right));
 
 const doctorProviderCheckName = (providerId: string, name: string): boolean =>
   name === providerId || name.startsWith(`${providerId}-`);

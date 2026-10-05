@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 
+import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import type { ApplicationNode } from "../domain/javascriptApplicationGraph.js";
 import {
   completeApplicationCoverage,
@@ -409,6 +410,3 @@ const isExportLink = (link: JavaScriptSemanticModuleLink): boolean =>
   link.kind === "export" ||
   link.kind === "re-export" ||
   link.kind === "commonjs-export";
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

@@ -1,6 +1,6 @@
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { Evidence } from "./evidence.js";
 import {
-  compareCodePoints,
   type ApplicationEdge,
   type ApplicationNode,
 } from "./javascriptApplicationGraph.js";

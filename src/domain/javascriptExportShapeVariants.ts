@@ -1,4 +1,3 @@
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import {
   canonicalExportShapeValue,
   digestExportShapeValue,
@@ -8,6 +7,7 @@ import type {
   JavaScriptExportShapeComparisonResult,
   ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { SelectedJavaScriptExport } from "./javascriptExportShapeSelection.js";
 
 type Primitive = string | number | boolean | null;
@@ -453,7 +453,3 @@ const isPrimitive = (value: unknown): value is Primitive =>
 
 const capitalize = (value: string): string =>
   `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);

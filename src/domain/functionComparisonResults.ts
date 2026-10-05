@@ -1,7 +1,4 @@
-import {
-  canonicalDigest,
-  canonicalJson as encodeCanonicalJson,
-} from "./comparisonSemantics.js";
+import { canonicalDigest } from "./comparisonSemantics.js";
 import type {
   DimensionName,
   FunctionComparisonResult,
@@ -92,10 +89,6 @@ export const summarize = (dimensions: readonly FunctionDimension[]) => ({
   truncated: dimensions.filter(({ status }) => status === "truncated").length,
   unknown: dimensions.filter(({ status }) => status === "unknown").length,
 });
-
-export const canonicalJson = (value: unknown): string => {
-  return encodeCanonicalJson(value, "Function comparison");
-};
 
 const digest = (value: unknown): string =>
   canonicalDigest(value, "Function comparison");

@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { HistoricalSourceGraph } from "./referenceSourceGraph.js";
 import {
@@ -67,7 +68,7 @@ export const sourceBearingNodes = (
 ): ApplicationNode[] =>
   nodes
     .filter(({ kind }) => RELEVANT_NODE_KINDS.has(kind))
-    .sort((left, right) => compareText(left.node_id, right.node_id));
+    .sort((left, right) => compareCodePoints(left.node_id, right.node_id));
 
 /** Keep historical source files in stable path order. */
 export const historicalSourceFiles = (
@@ -78,7 +79,7 @@ export const historicalSourceFiles = (
       (entry): entry is SourceFile =>
         entry.kind === "file" && entry.classifications.includes("source"),
     )
-    .sort((left, right) => compareText(left.path, right.path));
+    .sort((left, right) => compareCodePoints(left.path, right.path));
 
 /** Build deterministic candidate indices without assigning fuzzy matches. */
 export const buildSourceToBundleCandidateIndex = (
@@ -125,7 +126,7 @@ export const candidateIdsForSource = (
   const output: string[] = [];
   for (const group of groups) {
     if (group === undefined) continue;
-    for (const nodeId of [...group].sort(compareText)) {
+    for (const nodeId of [...group].sort(compareCodePoints)) {
       if (seen.has(nodeId)) continue;
       seen.add(nodeId);
       output.push(nodeId);
@@ -233,7 +234,7 @@ const signal = (
   kind,
   weight: signalWeight(kind),
   source_value: sourceValue,
-  current_values: [...new Set(currentValues)].sort(compareText),
+  current_values: [...new Set(currentValues)].sort(compareCodePoints),
 });
 
 const candidateConfidence = (
@@ -293,7 +294,10 @@ const uniquePaths = (paths: readonly CurrentPath[]): CurrentPath[] =>
       paths.map((path) => [`${path.kind}\0${path.value}`, path]),
     ).values(),
   ].sort((left, right) =>
-    compareText(`${left.kind}\0${left.value}`, `${right.kind}\0${right.value}`),
+    compareCodePoints(
+      `${left.kind}\0${left.value}`,
+      `${right.kind}\0${right.value}`,
+    ),
   );
 
 const pathSuffixes = (path: string): string[] => {
@@ -310,6 +314,3 @@ const addIndexValue = (
   values.add(nodeId);
   index.set(key, values);
 };
-
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

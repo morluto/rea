@@ -13,10 +13,10 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  compareCodePoints,
   propertyName,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   semanticAmbiguousProvenance,

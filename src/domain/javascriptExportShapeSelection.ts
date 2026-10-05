@@ -2,12 +2,12 @@ import type {
   ApplicationNode,
   JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import {
   projectedExportReturnShapesSchema,
   type JavaScriptExportShapeComparisonResult,
   type ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 
 type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];

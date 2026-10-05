@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 
 import type {
   ApplicationGraphEvidence,
@@ -20,22 +19,6 @@ import {
   type JavaScriptApplicationGraphInput,
 } from "./javascriptApplicationGraphSchemas.js";
 
-/** Compare strings by Unicode code point for canonical graph ordering. */
-export const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError(
-      "JavaScript Application Graph could not canonicalize data",
-    );
-  return encoded;
-};
-
-const digestCanonical = (value: unknown): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-
 const OBSERVATION_IDENTIFIER_STRATEGY = {
   strategy: "semantic-content-sha256" as const,
   stability: "observation-exact" as const,
@@ -45,13 +28,9 @@ const EDGE_IDENTIFIER_STRATEGY = {
   stability: "relationship-exact" as const,
 };
 
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);
-
 const limitKey = (
   limit: ApplicationGraphEvidence["coverage"]["limits"][number],
-) => canonicalJson(limit);
+) => canonicalJson(limit, "JavaScript Application Graph");
 
 const normalizeLimits = (
   limits: ApplicationGraphEvidence["coverage"]["limits"],
@@ -85,7 +64,7 @@ const nodeSemantic = (node: Pick<ApplicationNode, "kind" | "identity">) => ({
 });
 
 const nodeId = (node: Pick<ApplicationNode, "kind" | "identity">): string =>
-  `jag_node_${digestCanonical(nodeSemantic(node))}`;
+  `jag_node_${canonicalDigest(nodeSemantic(node), "JavaScript Application Graph")}`;
 
 const observationSemantic = (
   nodeIdentifier: string,
@@ -102,14 +81,14 @@ const observationId = (
     "observation_id"
   >,
 ): string =>
-  `jag_observation_${digestCanonical(
+  `jag_observation_${canonicalDigest(
     observationSemantic(nodeIdentifier, observation),
   )}`;
 
 type EdgeSemantic = Omit<ApplicationEdge, "edge_id">;
 
 const edgeId = (edge: EdgeSemantic): string =>
-  `jag_edge_${digestCanonical(edge)}`;
+  `jag_edge_${canonicalDigest(edge, "JavaScript Application Graph")}`;
 
 const sortedUniqueIssue = (
   values: readonly string[],
@@ -235,8 +214,11 @@ const checkNode = (
     });
   if (
     node.identity.strategy === "structural-fingerprint" &&
-    canonicalJson(node.identity.basis) !==
-      canonicalJson(uniqueSorted(node.identity.basis))
+    canonicalJson(node.identity.basis, "JavaScript Application Graph") !==
+      canonicalJson(
+        uniqueSorted(node.identity.basis),
+        "JavaScript Application Graph",
+      )
   )
     context.addIssue({
       code: "custom",
@@ -376,7 +358,10 @@ const checkGraphInvariants = (
   }
 
   const { graph_id: identifier, ...semantic } = graph;
-  if (identifier !== `jag_${digestCanonical(semantic)}`)
+  if (
+    identifier !==
+    `jag_${canonicalDigest(semantic, "JavaScript Application Graph")}`
+  )
     context.addIssue({
       code: "custom",
       message: "Graph identifier does not match its semantic content",
@@ -461,7 +446,7 @@ export const createJavaScriptApplicationGraph = (
   };
   return javascriptApplicationGraphSchema.parse({
     ...semantic,
-    graph_id: `jag_${digestCanonical(semantic)}`,
+    graph_id: `jag_${canonicalDigest(semantic, "JavaScript Application Graph")}`,
   });
 };
 
@@ -473,10 +458,17 @@ export const parseJavaScriptApplicationGraph = (
 /** Compute the byte-stable SHA-256 commitment of a verified graph. */
 export const computeJavaScriptApplicationGraphSha256 = (
   input: unknown,
-): string => digestCanonical(parseJavaScriptApplicationGraph(input));
+): string =>
+  canonicalDigest(
+    parseJavaScriptApplicationGraph(input),
+    "JavaScript Application Graph",
+  );
 
 /** Serialize a verified graph as RFC 8785 canonical JSON. */
 export const serializeJavaScriptApplicationGraph = (input: unknown): string =>
-  canonicalJson(parseJavaScriptApplicationGraph(input));
+  canonicalJson(
+    parseJavaScriptApplicationGraph(input),
+    "JavaScript Application Graph",
+  );
 
 export type { ApplicationEdge, ApplicationGraphEvidence, ApplicationNode };

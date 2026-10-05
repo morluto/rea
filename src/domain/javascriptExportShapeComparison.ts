@@ -1,4 +1,4 @@
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { digestExportShapeValue } from "./javascriptExportShapeComparisonIdentity.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
@@ -209,7 +209,3 @@ const evidencePair = (left: string, right: string): [string, string] => [
   left,
   right,
 ];
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);

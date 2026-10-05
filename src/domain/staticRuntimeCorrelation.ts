@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -484,9 +485,6 @@ const assertUnique = (evidence: readonly Evidence[], label: string): void => {
       `Static/runtime correlation rejects duplicate ${label}`,
     );
 };
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"));
 
 const sha256 = (value: string): string =>
   createHash("sha256").update(value).digest("hex");

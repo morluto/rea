@@ -23,7 +23,6 @@ import {
 } from "./browserScenarioDiffValues.js";
 import {
   commitBrowserScenarioNormalization,
-  digestCanonicalJson,
   digestNormalizedScenarioValue,
 } from "./browserScenarioNormalization.js";
 

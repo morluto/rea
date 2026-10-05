@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
-import { digestCanonical } from "../../../src/application/ArtifactGraphConstruction.js";
+import { canonicalDigest } from "../../../src/domain/comparisonSemantics.js";
 import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import type { ArtifactInventoryResult } from "../../../src/domain/artifactGraph.js";
@@ -54,23 +54,29 @@ const legacyDirectoryId = (
   inventory: ArtifactInventoryResult,
   paths: readonly string[],
 ) =>
-  `art_${digestCanonical({
-    sha256: digestCanonical({
-      kind: "directory",
-      children: paths
-        .map((path) => {
-          const child = occurrenceAt(inventory, path);
-          return {
-            name: path.split("/").at(-1),
-            artifact_id: child.artifact_id,
-            entry_kind: child.entry_kind,
-          };
-        })
-        .sort((left, right) =>
-          String(left.name).localeCompare(String(right.name)),
-        ),
-    }),
-  })}`;
+  `art_${canonicalDigest(
+    {
+      sha256: canonicalDigest(
+        {
+          kind: "directory",
+          children: paths
+            .map((path) => {
+              const child = occurrenceAt(inventory, path);
+              return {
+                name: path.split("/").at(-1),
+                artifact_id: child.artifact_id,
+                entry_kind: child.entry_kind,
+              };
+            })
+            .sort((left, right) =>
+              String(left.name).localeCompare(String(right.name)),
+            ),
+        },
+        "Artifact",
+      ),
+    },
+    "Artifact",
+  )}`;
 
 describe("virtual directory relative-path identity", () => {
   it("detects a renamed implicit intermediate directory", async () => {

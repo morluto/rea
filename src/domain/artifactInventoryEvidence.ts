@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -9,6 +5,7 @@ import {
   type ArtifactOccurrence,
   type IntegrityContradiction,
 } from "./artifactGraph.js";
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { artifactInspectionResultSchema } from "./artifactInspection.js";
 
@@ -81,7 +78,10 @@ const validateInventoryPage = (inventory: ArtifactInventoryResult): void => {
     "edge ID",
   );
   for (const node of inventory.nodes)
-    if (node.artifact_id !== `art_${digestCanonical({ sha256: node.sha256 })}`)
+    if (
+      node.artifact_id !==
+      `art_${canonicalDigest({ sha256: node.sha256 }, "Artifact inventory")}`
+    )
       throw new TypeError("Artifact node ID is not content-addressed");
 };
 
@@ -96,17 +96,29 @@ const assembleInventorySet = (
   const first = pages[0];
   if (first === undefined)
     throw new TypeError("Artifact inventory requires Evidence pages");
-  const manifestJson = canonicalJson(first.inventory.manifest);
+  const manifestJson = canonicalJson(
+    first.inventory.manifest,
+    "Artifact inventory",
+  );
   const nodes = new Map<string, ArtifactNode>();
   const occurrences = new Map<string, ArtifactOccurrence>();
   const paths = new Map<string, ArtifactOccurrence>();
   const edges = new Map<string, ArtifactInventoryResult["edges"][number]>();
   for (const page of pages) {
-    if (canonicalJson(page.inventory.manifest) !== manifestJson)
+    if (
+      canonicalJson(page.inventory.manifest, "Artifact inventory") !==
+      manifestJson
+    )
       throw new TypeError("Artifact inventory pages do not share one manifest");
     if (
-      canonicalJson(page.inventory.integrity_contradictions) !==
-      canonicalJson(first.inventory.integrity_contradictions)
+      canonicalJson(
+        page.inventory.integrity_contradictions,
+        "Artifact inventory",
+      ) !==
+      canonicalJson(
+        first.inventory.integrity_contradictions,
+        "Artifact inventory",
+      )
     )
       throw new TypeError(
         "Artifact inventory pages do not share integrity contradictions",
@@ -195,29 +207,38 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
       throw new TypeError(
         "Integrity contradiction references a missing graph member",
       );
-    const expectedId = `ic_${digestCanonical({
-      root_artifact_id: inventory.manifest.root_artifact_id,
-      logical_path: contradiction.logical_path,
-      declared_sha256: contradiction.declared_sha256,
-      observed_sha256: contradiction.observed_sha256,
-    })}`;
+    const expectedId = `ic_${canonicalDigest(
+      {
+        root_artifact_id: inventory.manifest.root_artifact_id,
+        logical_path: contradiction.logical_path,
+        declared_sha256: contradiction.declared_sha256,
+        observed_sha256: contradiction.observed_sha256,
+      },
+      "Artifact inventory",
+    )}`;
     if (contradiction.contradiction_id !== expectedId)
       throw new TypeError(
         "Integrity contradiction ID does not match its identity",
       );
   }
-  const graphSha256 = digestCanonical({
-    nodes: inventory.nodes,
-    occurrences: inventory.occurrences,
-    edges: inventory.edges,
-    integrity_contradictions: inventory.integrityContradictions,
-  });
+  const graphSha256 = canonicalDigest(
+    {
+      nodes: inventory.nodes,
+      occurrences: inventory.occurrences,
+      edges: inventory.edges,
+      integrity_contradictions: inventory.integrityContradictions,
+    },
+    "Artifact inventory",
+  );
   if (graphSha256 !== inventory.manifest.graph_sha256)
     throw new TypeError("Artifact graph commitment does not match its members");
-  const manifestId = `agm_${digestCanonical({
-    root_artifact_id: inventory.manifest.root_artifact_id,
-    graph_sha256: graphSha256,
-  })}`;
+  const manifestId = `agm_${canonicalDigest(
+    {
+      root_artifact_id: inventory.manifest.root_artifact_id,
+      graph_sha256: graphSha256,
+    },
+    "Artifact inventory",
+  )}`;
   if (manifestId !== inventory.manifest.manifest_id)
     throw new TypeError("Artifact manifest ID does not match its commitment");
 };
@@ -237,12 +258,15 @@ const validateOccurrence = (
     throw new TypeError("Artifact occurrence references a missing parent");
   const expectedId =
     occurrence.logical_path === "."
-      ? `occ_${digestCanonical({ root: inventory.manifest.root_artifact_id })}`
-      : `occ_${digestCanonical({
-          root_artifact_id: inventory.manifest.root_artifact_id,
-          logical_path: occurrence.logical_path,
-          entry_kind: occurrence.entry_kind,
-        })}`;
+      ? `occ_${canonicalDigest({ root: inventory.manifest.root_artifact_id }, "Artifact inventory")}`
+      : `occ_${canonicalDigest(
+          {
+            root_artifact_id: inventory.manifest.root_artifact_id,
+            logical_path: occurrence.logical_path,
+            entry_kind: occurrence.entry_kind,
+          },
+          "Artifact inventory",
+        )}`;
   if (occurrence.occurrence_id !== expectedId)
     throw new TypeError("Artifact occurrence ID does not match its identity");
 };
@@ -265,7 +289,9 @@ const validateEdge = (
     occurrence_id: edge.occurrence_id,
     logical_path: edge.logical_path,
   };
-  if (edge.edge_id !== `edge_${digestCanonical(semantic)}`)
+  if (
+    edge.edge_id !== `edge_${canonicalDigest(semantic, "Artifact inventory")}`
+  )
     throw new TypeError("Artifact edge ID does not match its identity");
 };
 
@@ -278,7 +304,8 @@ const mergeExact = <Value>(
   const previous = output.get(key);
   if (
     previous !== undefined &&
-    canonicalJson(previous) !== canonicalJson(value)
+    canonicalJson(previous, "Artifact inventory") !==
+      canonicalJson(value, "Artifact inventory")
   )
     throw new TypeError(`Artifact inventory has conflicting ${label} pages`);
   output.set(key, value);
@@ -287,14 +314,4 @@ const mergeExact = <Value>(
 const assertUnique = (values: readonly string[], label: string): void => {
   if (new Set(values).size !== values.length)
     throw new TypeError(`Artifact inventory contains a duplicate ${label}`);
-};
-
-const digestCanonical = (value: unknown): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Artifact inventory could not canonicalize graph data");
-  return encoded;
 };

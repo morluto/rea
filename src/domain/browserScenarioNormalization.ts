@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { canonicalDigest } from "./comparisonSemantics.js";
 
 import type {
   BrowserScenarioArtifactKind,
@@ -30,7 +28,10 @@ export const commitBrowserScenarioNormalization = (
       left.rule_id < right.rule_id ? -1 : left.rule_id > right.rule_id ? 1 : 0,
     );
   const commitment = { built_in_rules: [...BUILT_IN_RULES], rules };
-  return { ...commitment, sha256: digestCanonicalJson(commitment) };
+  return {
+    ...commitment,
+    sha256: canonicalDigest(commitment, "Browser scenario"),
+  };
 };
 
 /** Digest one artifact after applying committed exact-literal rules. */
@@ -38,14 +39,8 @@ export const digestNormalizedScenarioValue = (
   value: unknown,
   artifact: BrowserScenarioArtifactKind,
   rules: readonly BrowserScenarioNormalizationRule[],
-): string => digestCanonicalJson(normalize(value, artifact, rules));
-
-/** Compute a canonical SHA-256 commitment for JSON-compatible domain data. */
-export const digestCanonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined) throw new TypeError("Expected canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+): string =>
+  canonicalDigest(normalize(value, artifact, rules), "Browser scenario");
 
 const normalize = (
   value: unknown,

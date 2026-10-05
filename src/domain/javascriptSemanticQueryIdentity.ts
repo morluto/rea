@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import type {
   JavaScriptSemanticGraph,
   JavaScriptSemanticGraphNode,
 } from "./javascriptSemanticGraph.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { JavaScriptSemanticQueryInput } from "./javascriptSemanticQuerySchemas.js";
 
 /** Canonical JSON used by semantic query commitments and ordering. */
@@ -25,9 +25,6 @@ const digest = (value: unknown): string =>
   createHash("sha256")
     .update(canonicalJavaScriptSemanticQueryJson(value))
     .digest("hex");
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);
 
 /** Derive the stable identity for one graph-bound query. */
 export const javaScriptSemanticQueryIdentifier = (

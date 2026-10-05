@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { parseEvidenceBundle } from "./evidenceBundle.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
@@ -371,5 +372,3 @@ const count = (
 const sameSet = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length &&
   uniqueSorted(left).every((id, index) => id === uniqueSorted(right)[index]);
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"));

@@ -6,6 +6,7 @@ import type {
   InspectWebPageInput,
   WebPageInspection,
 } from "../domain/browserObservation.js";
+import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { recordValue, recordsValue, stringValue } from "./CdpCaptureValues.js";
@@ -484,6 +485,3 @@ const decodeBase64 = (value: string): Buffer | null => {
     return null;
   return Buffer.from(value, "base64");
 };
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

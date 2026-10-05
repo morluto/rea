@@ -1,3 +1,4 @@
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import type { ProviderIdentity } from "./AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioCapture } from "../domain/browserScenarioCapture.js";
@@ -8,12 +9,11 @@ import {
   type EvidenceObservation,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { digestCanonicalJson } from "../domain/browserScenarioNormalization.js";
 
 const browserScenarioParameters = (
   scenario: BrowserScenario,
 ): EvidenceObservation["parameters"] => ({
-  scenario_sha256: digestCanonicalJson(scenario),
+  scenario_sha256: canonicalDigest(scenario, "Browser scenario"),
   browser_mode: scenario.browser.mode,
   ...(scenario.browser.mode === "launch"
     ? { browser_headless: scenario.browser.headless }

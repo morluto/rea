@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -228,16 +227,6 @@ export const historicalSourceParseFailureKey = (
   failure: HistoricalSourceGraphInput["parse_failures"][number],
 ): string => `${failure.path}\u0000${failure.parser}\u0000${failure.reason}`;
 
-const canonicalJson = (value: unknown): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a graph value");
-  return serialized;
-};
-
-const digestCanonical = (value: unknown): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-
 const relationshipKey = (
   relationship: z.infer<typeof sourceRelationshipSchema>,
 ): string =>
@@ -420,8 +409,11 @@ function checkGraphInvariants(
   );
 
   if (
-    canonicalJson(graph.languages) !==
-    canonicalJson(historicalSourceLanguages(graph.entries))
+    canonicalJson(graph.languages, "Reference source graph") !==
+    canonicalJson(
+      historicalSourceLanguages(graph.entries),
+      "Reference source graph",
+    )
   )
     context.addIssue({
       code: "custom",
@@ -429,8 +421,11 @@ function checkGraphInvariants(
       path: ["languages"],
     });
   if (
-    canonicalJson(graph.manifests) !==
-    canonicalJson(historicalSourceManifests(graph.entries))
+    canonicalJson(graph.manifests, "Reference source graph") !==
+    canonicalJson(
+      historicalSourceManifests(graph.entries),
+      "Reference source graph",
+    )
   )
     context.addIssue({
       code: "custom",
@@ -479,7 +474,11 @@ const rootCommitment = (
 const computeRootSha256 = (
   entries: readonly z.infer<typeof sourceEntrySchema>[],
   exclusions: readonly z.infer<typeof exclusionSchema>[],
-): string => digestCanonical(rootCommitment(entries, exclusions));
+): string =>
+  canonicalDigest(
+    rootCommitment(entries, exclusions),
+    "Reference source graph",
+  );
 
 /** Build and internally commit a normalized historical source graph. */
 export const createHistoricalSourceGraph = (
@@ -499,7 +498,7 @@ export const parseHistoricalSourceGraph = (
 
 /** Compute a deterministic graph commitment containing no absolute root path. */
 export const computeHistoricalSourceGraphSha256 = (input: unknown): string =>
-  digestCanonical(parseHistoricalSourceGraph(input));
+  canonicalDigest(parseHistoricalSourceGraph(input), "Reference source graph");
 
 /** Build a deterministic, relocation-independent manifest for a source graph. */
 export const createHistoricalSourceManifest = (
@@ -517,7 +516,7 @@ export const createHistoricalSourceManifest = (
   };
   return historicalSourceManifestBaseSchema.parse({
     ...semantic,
-    manifest_id: `hsm_${digestCanonical(semantic)}`,
+    manifest_id: `hsm_${canonicalDigest(semantic, "Reference source graph")}`,
   });
 };
 
@@ -527,7 +526,9 @@ export const parseHistoricalSourceManifest = (
 ): HistoricalSourceManifest => {
   const manifest = historicalSourceManifestBaseSchema.parse(input);
   const { manifest_id: manifestId, ...semantic } = manifest;
-  if (`hsm_${digestCanonical(semantic)}` !== manifestId)
+  if (
+    `hsm_${canonicalDigest(semantic, "Reference source graph")}` !== manifestId
+  )
     throw new TypeError("Historical source manifest identifier does not match");
   return manifest;
 };

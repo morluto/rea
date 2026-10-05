@@ -1,4 +1,4 @@
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import type { JavaScriptSemanticQueryResult } from "./javascriptSemanticQuerySchemas.js";
@@ -77,6 +77,3 @@ const queryLimitations = (
           "Candidate relations remain ambiguous and do not establish a resolved semantic path.",
         ]),
   ]);
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);

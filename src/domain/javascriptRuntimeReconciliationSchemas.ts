@@ -1,11 +1,9 @@
 import { z } from "zod";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { evidenceSchema } from "./evidence.js";
 import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeObservation.js";
-import {
-  compareCodePoints,
-  javascriptApplicationGraphSchema,
-} from "./javascriptApplicationGraph.js";
+import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 

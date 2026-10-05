@@ -1,5 +1,4 @@
 import {
-  compareCodePoints,
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
@@ -8,6 +7,7 @@ import {
   type ApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { ApplicationVersionComparisonItem } from "./javascriptApplicationVersionComparisonSchemas.js";
 
 interface ChangeGraphInput {
@@ -256,7 +256,3 @@ const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] =>
   [...new Map(edges.map((edge) => [edge.edge_id, edge])).values()].sort(
     (left, right) => compareCodePoints(left.edge_id, right.edge_id),
   );
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);

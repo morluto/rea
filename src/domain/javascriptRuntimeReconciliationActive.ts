@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 
+import { canonicalDigest } from "./comparisonSemantics.js";
 import { isPathWithinRoot } from "./localPath.js";
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
@@ -45,7 +44,7 @@ export const parseActiveElectronCapture = (
     kind: "electron-active",
     evidence,
     inspection: normalizeInspection(result),
-    captureSha256: digestCanonical(result),
+    captureSha256: canonicalDigest(result, "Runtime reconciliation"),
     scriptsCompleteWithinScope: false,
   };
 };
@@ -84,7 +83,7 @@ const normalizeInspection = (
   readonly completeness: BrowserCompleteness;
 } => ({
   target: {
-    target_id: `electron-active:${digestCanonical(result.application.application_path).slice(0, 32)}`,
+    target_id: `electron-active:${canonicalDigest(result.application.application_path, "Runtime reconciliation").slice(0, 32)}`,
     type: "electron-application",
     title: result.application.application_path,
     attached: true,
@@ -115,10 +114,3 @@ const normalizeInspection = (
     },
   }),
 });
-
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Runtime reconciliation could not canonicalize input");
-  return createHash("sha256").update(encoded).digest("hex");
-};

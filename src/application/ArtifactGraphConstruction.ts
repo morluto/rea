@@ -1,7 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
 import type {
   ArtifactCommand,
@@ -44,7 +41,7 @@ export const createOccurrence = (
   path: string,
   parent: string | null,
 ): MutableOccurrence => ({
-  occurrence_id: `occ_${digestCanonical({ path, kind: entry.kind })}`,
+  occurrence_id: `occ_${canonicalDigest({ path, kind: entry.kind }, "Artifact")}`,
   artifact_id: null,
   parent_occurrence_id: parent,
   logical_path: path,
@@ -99,7 +96,7 @@ export const materializeDirectoryNodes = (
       }))
       .sort((left, right) => compareDirectoryChildNames(left.name, right.name));
     const node = createArtifactNode({
-      sha256: digestCanonical({ kind: "directory", children }),
+      sha256: canonicalDigest({ kind: "directory", children }, "Artifact"),
       size: 0,
       kind: directory.logical_path.toLowerCase().endsWith(".framework")
         ? "framework"
@@ -128,13 +125,16 @@ export const createRootNode = (input: {
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
-      digestCanonical({
-        kind: "directory-root",
-        children: input.occurrences.map(({ logical_path, artifact_id }) => ({
-          logical_path,
-          artifact_id,
-        })),
-      }),
+      canonicalDigest(
+        {
+          kind: "directory-root",
+          children: input.occurrences.map(({ logical_path, artifact_id }) => ({
+            logical_path,
+            artifact_id,
+          })),
+        },
+        "Artifact",
+      ),
     size: input.digest?.bytes ?? 0,
     kind:
       input.directory ||
@@ -159,7 +159,7 @@ export const createArtifactNode = (input: {
   readonly contentState: ArtifactNode["content_state"];
   readonly limitations?: readonly string[];
 }): ArtifactNode => ({
-  artifact_id: `art_${digestCanonical({ sha256: input.sha256 })}`,
+  artifact_id: `art_${canonicalDigest({ sha256: input.sha256 }, "Artifact")}`,
   kind: input.kind,
   format: input.format,
   sha256: input.sha256,
@@ -175,7 +175,7 @@ export const rootOccurrenceFor = (
   node: ArtifactNode,
   declaredSize: number,
 ): MutableOccurrence => ({
-  occurrence_id: `occ_${digestCanonical({ root: node.artifact_id })}`,
+  occurrence_id: `occ_${canonicalDigest({ root: node.artifact_id }, "Artifact")}`,
   artifact_id: node.artifact_id,
   parent_occurrence_id: null,
   logical_path: ".",
@@ -197,11 +197,14 @@ export const rekeyOccurrences = (
   for (const occurrence of occurrences)
     replacements.set(
       occurrence.occurrence_id,
-      `occ_${digestCanonical({
-        root_artifact_id: rootArtifactId,
-        logical_path: occurrence.logical_path,
-        entry_kind: occurrence.entry_kind,
-      })}`,
+      `occ_${canonicalDigest(
+        {
+          root_artifact_id: rootArtifactId,
+          logical_path: occurrence.logical_path,
+          entry_kind: occurrence.entry_kind,
+        },
+        "Artifact",
+      )}`,
     );
   for (const occurrence of occurrences) {
     occurrence.occurrence_id =
@@ -245,7 +248,7 @@ export const createArtifactEdges = (
       logical_path: occurrence.logical_path,
     };
     edges.push({
-      edge_id: `edge_${digestCanonical(semantic)}`,
+      edge_id: `edge_${canonicalDigest(semantic, "Artifact")}`,
       ...semantic,
       producer: occurrence.entry_kind === "slice" ? (producer ?? null) : null,
       ordinal: edges.length,
@@ -354,13 +357,6 @@ export const classifyArtifactContent = (
     return { kind: "unknown", format: "unknown" };
   }
   return byPath;
-};
-
-export const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Artifact value is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
 };
 
 const relationFor = (path: string): ArtifactEdge["relation"] => {

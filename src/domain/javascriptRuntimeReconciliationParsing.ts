@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
@@ -22,15 +20,14 @@ import {
   type JavaScriptRuntimeObservation,
   type JavaScriptRuntimeLocation,
 } from "./javascriptRuntimeObservation.js";
+import { canonicalDigest } from "./comparisonSemantics.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
 } from "./javascriptApplicationAnalysis.js";
-import {
-  compareCodePoints,
-  type JavaScriptApplicationGraph,
-} from "./javascriptApplicationGraph.js";
+import { type JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { parseActiveElectronCapture } from "./javascriptRuntimeReconciliationActive.js";
 import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
 
@@ -144,13 +141,6 @@ export const parseRuntimeCaptures = (
       compareCodePoints(left.evidence.evidence_id, right.evidence.evidence_id),
     );
 
-export const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Runtime reconciliation could not canonicalize input");
-  return createHash("sha256").update(encoded).digest("hex");
-};
-
 const parseStaticLayer = (layer: StaticLayerInput): ParsedStaticLayer => {
   const evidence = parseEvidence(layer.analysis);
   const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -175,11 +165,14 @@ const parseStaticLayer = (layer: StaticLayerInput): ParsedStaticLayer => {
       "JavaScript application Evidence subject disagrees with its result",
     );
   return {
-    layerId: `jrl_${digestCanonical({
-      role: layer.role,
-      evidence_id: evidence.evidence_id,
-      runtime_mappings: layer.runtime_mappings,
-    })}`,
+    layerId: `jrl_${canonicalDigest(
+      {
+        role: layer.role,
+        evidence_id: evidence.evidence_id,
+        runtime_mappings: layer.runtime_mappings,
+      },
+      "Runtime reconciliation",
+    )}`,
     role: layer.role,
     evidence,
     result,
@@ -215,7 +208,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "browser",
       evidence,
       inspection,
-      captureSha256: digestCanonical(inspection),
+      captureSha256: canonicalDigest(inspection, "Runtime reconciliation"),
       scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
     };
   }
@@ -243,7 +236,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "electron",
       evidence,
       inspection,
-      captureSha256: digestCanonical(inspection),
+      captureSha256: canonicalDigest(inspection, "Runtime reconciliation"),
       scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
     };
   }
@@ -266,7 +259,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "v8-inspector",
       evidence,
       inspection,
-      captureSha256: digestCanonical(result),
+      captureSha256: canonicalDigest(result, "Runtime reconciliation"),
       scriptsCompleteWithinScope: false,
     };
   }

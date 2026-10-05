@@ -1,3 +1,4 @@
+import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import type { JavaScriptJsonModuleObservation } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 
@@ -41,6 +42,3 @@ export const analyzeJavaScriptJsonModule = (
     limitation: null,
   };
 };
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

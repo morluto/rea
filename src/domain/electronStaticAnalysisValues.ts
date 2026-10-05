@@ -1,8 +1,8 @@
 import * as t from "@babel/types";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
-  compareCodePoints,
   propertyName,
   sourceSlice,
 } from "./javascriptStaticAnalysisHelpers.js";

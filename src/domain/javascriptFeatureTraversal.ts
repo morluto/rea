@@ -1,9 +1,9 @@
 import {
-  compareCodePoints,
   type ApplicationEdge,
   type ApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 
 interface AdjacencyEntry {
   readonly edge: ApplicationEdge;

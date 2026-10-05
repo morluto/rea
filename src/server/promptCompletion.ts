@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
@@ -41,7 +42,8 @@ export const createPromptCompletionSource = (
       context,
     );
     const prefix = normalize(value);
-    return uniqueSorted(candidates).filter((candidate) =>
+    const nonEmpty = candidates.filter((candidate) => candidate.length > 0);
+    return uniqueSorted(nonEmpty).filter((candidate) =>
       normalize(candidate).startsWith(prefix),
     );
   },
@@ -181,12 +183,6 @@ const unknownCandidates = (
         .listUnknowns()
         .filter(({ status }) => status !== "resolved")
         .map(({ unknown_id: id }) => id);
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values.filter((value) => value.length > 0))].sort(compareText);
-
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
 
 const normalize = (value: string): string =>
   value.normalize("NFKC").toLowerCase();

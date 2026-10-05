@@ -1,3 +1,4 @@
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import { absenceClaimable, canonicalDigest } from "./comparisonSemantics.js";
 
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -82,7 +83,7 @@ export const compareSourceToBundle = (
   };
   return sourceToBundleComparisonResultSchema.parse({
     ...semanticResult,
-    comparison_id: `stbc_${digestCanonical(semanticResult)}`,
+    comparison_id: `stbc_${canonicalDigest(semanticResult, "Source-to-bundle comparison")}`,
   });
 };
 
@@ -299,11 +300,14 @@ const mappingId = (
   input: SourceToBundleComparisonInput,
   item: Omit<SourceToBundleComparisonItem, "mapping_id">,
 ): string =>
-  `stbc_item_${digestCanonical({
-    reference_root_sha256: input.reference.root_sha256,
-    application_graph_id: input.application.graph.graph_id,
-    ...item,
-  })}`;
+  `stbc_item_${canonicalDigest(
+    {
+      reference_root_sha256: input.reference.root_sha256,
+      application_graph_id: input.application.graph.graph_id,
+      ...item,
+    },
+    "Source-to-bundle comparison",
+  )}`;
 
 const comparisonSummary = (
   items: readonly SourceToBundleComparisonItem[],
@@ -362,13 +366,4 @@ const compareCandidates = (
   right: SourceToBundleCandidate,
 ): number =>
   right.score - left.score ||
-  compareText(left.current_node_id, right.current_node_id);
-
-const digestCanonical = (value: unknown): string =>
-  canonicalDigest(value, "Source-to-bundle comparison");
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareText);
-
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
+  compareCodePoints(left.current_node_id, right.current_node_id);

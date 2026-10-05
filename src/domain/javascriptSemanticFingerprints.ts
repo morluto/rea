@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import * as t from "@babel/types";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { JavaScriptSemanticCallAnalysis } from "./javascriptSemanticCalls.js";
 import type {
   JavaScriptSemanticCallable,
@@ -17,7 +18,6 @@ import type {
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { compareCodePoints } from "./javascriptStaticAnalysisHelpers.js";
 
 interface SemanticFingerprintCollectionInput {
   readonly state: JavaScriptSemanticAnalysisState;

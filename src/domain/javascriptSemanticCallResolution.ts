@@ -4,13 +4,14 @@ import type {
   JavaScriptSemanticArgumentFlow,
   JavaScriptSemanticCallable,
 } from "./javascriptSemanticIr.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Resolution of one call target within the currently analyzed source. */
 export interface LocalCallableResolution {

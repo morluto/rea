@@ -1,5 +1,5 @@
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { ApplicationNode } from "./javascriptApplicationGraph.js";
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import type { JsonValue } from "./jsonValue.js";
 
 /** One deterministic one-to-one match between two graph versions. */

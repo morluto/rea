@@ -1,13 +1,11 @@
 import {
-  compareCodePoints,
   createJavaScriptApplicationEdge,
   type ApplicationEdge,
   type ApplicationGraphEvidence,
 } from "./javascriptApplicationGraph.js";
-import {
-  digestCanonical,
-  type ParsedStaticLayer,
-} from "./javascriptRuntimeReconciliationParsing.js";
+import { canonicalDigest } from "./comparisonSemantics.js";
+import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { JavaScriptRuntimeReconciliationItem } from "./javascriptRuntimeReconciliationSchemas.js";
 import type { RuntimeReconciliationEntity } from "./javascriptRuntimeReconciliationRuntime.js";
 import {
@@ -335,7 +333,7 @@ const createItem = (
     candidate_static_nodes: candidateReferences.items,
   } satisfies Omit<JavaScriptRuntimeReconciliationItem, "reconciliation_id">;
   return {
-    reconciliation_id: `jrr_item_${digestCanonical(semantic)}`,
+    reconciliation_id: `jrr_item_${canonicalDigest(semantic, "Runtime reconciliation")}`,
     ...semantic,
   };
 };

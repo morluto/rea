@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import * as t from "@babel/types";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { propertyName } from "./javascriptAstValues.js";
 
 /** Static CommonJS export names. */
@@ -125,6 +126,3 @@ const memberPath = (node: t.Node | null | undefined): string => {
 
 const stringValue = (node: t.Node | null | undefined): string | undefined =>
   t.isStringLiteral(node) ? node.value : undefined;
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;

@@ -10,6 +10,7 @@ import type {
   ProjectedPropertyCoverage,
   ProjectedReturnField,
 } from "./javascriptExportShapeComparisonSchemas.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -17,7 +18,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
-import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticReturnCoverage } from "./javascriptSemanticCoverage.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 

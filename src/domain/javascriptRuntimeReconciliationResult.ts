@@ -1,13 +1,11 @@
-import {
-  compareCodePoints,
-  type JavaScriptApplicationGraph,
-} from "./javascriptApplicationGraph.js";
+import { type JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
+import { canonicalDigest } from "./comparisonSemantics.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import type { StaticLoadStateProjection } from "./javascriptRuntimeLoadState.js";
 import type { RuntimeMatchingProjection } from "./javascriptRuntimeReconciliationMatching.js";
-import {
-  digestCanonical,
-  type ParsedRuntimeCapture,
-  type ParsedStaticLayer,
+import type {
+  ParsedRuntimeCapture,
+  ParsedStaticLayer,
 } from "./javascriptRuntimeReconciliationParsing.js";
 import {
   javascriptRuntimeReconciliationResultSchema,
@@ -51,7 +49,7 @@ export const createJavaScriptRuntimeReconciliationResult = (
     limitations: reconciliationLimitations(completion),
   };
   return javascriptRuntimeReconciliationResultSchema.parse({
-    reconciliation_id: `jrr_${digestCanonical(semantic)}`,
+    reconciliation_id: `jrr_${canonicalDigest(semantic, "Runtime reconciliation")}`,
     ...semantic,
   });
 };
@@ -210,6 +208,3 @@ const countBy = <Item extends Record<Key, string>, Key extends keyof Item>(
   key: Key,
   value: Item[Key],
 ): number => items.filter((item) => item[key] === value).length;
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);

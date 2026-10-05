@@ -15,11 +15,11 @@ import {
   electronStaticValue,
   objectProperty,
 } from "./electronStaticAnalysisValues.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
   calleeName,
-  compareCodePoints,
   propertyName,
   range,
   staticPath,

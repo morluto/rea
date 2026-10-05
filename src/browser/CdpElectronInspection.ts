@@ -1,3 +1,4 @@
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type {
   ElectronPageInspection,
@@ -7,7 +8,6 @@ import { BrowserObservationError } from "../domain/errors.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { canonicalJsonDigest } from "./CdpCanonicalJsonDigest.js";
 import {
   delayWithCancellation,
   numberValue,
@@ -289,7 +289,7 @@ const captureResources = async (
             ? null
             : Math.max(0, numberValue(resource.contentSize) ?? 0),
       };
-      const resourceKey = `electron_resource_${canonicalJsonDigest(item)}`;
+      const resourceKey = `electron_resource_${canonicalDigest(item, "CDP capture")}`;
       if (seen.has(resourceKey)) continue;
       seen.add(resourceKey);
       resources.push({

@@ -3,7 +3,7 @@ import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticPrimitive,
 } from "./javascriptSemanticIr.js";
-import { compareCodePoints } from "./javascriptStaticAnalysisHelpers.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 
 /** Construct exact local provenance without inventing module origins. */
 export const semanticLocalProvenance = (): JavaScriptBindingProvenance => ({

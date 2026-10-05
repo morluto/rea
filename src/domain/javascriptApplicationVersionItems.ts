@@ -3,9 +3,9 @@ import {
   canonicalDigest,
   canonicalJson,
 } from "./comparisonSemantics.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { Evidence } from "./evidence.js";
 import {
-  compareCodePoints,
   type ApplicationEdge,
   type ApplicationNode,
   type JavaScriptApplicationGraph,
@@ -441,7 +441,7 @@ const itemWithId = <Semantic extends ComparisonItemSemantic>(
   semantic: Semantic,
 ): Semantic & { readonly item_id: string } => ({
   ...semantic,
-  item_id: `javc_item_${digestCanonical(semantic)}`,
+  item_id: `javc_item_${canonicalDigest(semantic, "Application version item")}`,
 });
 
 const stringProperty = (node: ApplicationNode, key: string): string | null => {
@@ -458,6 +458,3 @@ const stringProperty = (node: ApplicationNode, key: string): string | null => {
 const graphsComplete = (context: ItemContext): boolean =>
   absenceClaimable(context.leftGraph.coverage) &&
   absenceClaimable(context.rightGraph.coverage);
-
-const digestCanonical = (value: unknown): string =>
-  canonicalDigest(value, "Application version item");

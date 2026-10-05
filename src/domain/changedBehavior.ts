@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
@@ -385,9 +386,6 @@ const compareFindings = (left: Finding, right: Finding): number =>
       [right.scope, right.dimension, right.source_comparison_id].join("\0"),
       "en",
     );
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"));
 
 const assertUnique = (values: readonly string[], label: string): void => {
   if (new Set(values).size !== values.length)

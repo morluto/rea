@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
+import { canonicalDigest } from "./comparisonSemantics.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -171,10 +170,13 @@ export const createArtifactInspection = (
     },
     substeps: [
       {
-        substep_id: `ais_${digestCanonical({
-          operation: "inventory_artifact",
-          evidence_id: inventoryEvidence.evidence_id,
-        })}`,
+        substep_id: `ais_${canonicalDigest(
+          {
+            operation: "inventory_artifact",
+            evidence_id: inventoryEvidence.evidence_id,
+          },
+          "Artifact inspection",
+        )}`,
         operation: "inventory_artifact" as const,
         status: "completed" as const,
         evidence_id: inventoryEvidence.evidence_id,
@@ -209,7 +211,7 @@ export const createArtifactInspection = (
   };
   return artifactInspectionResultSchema.parse({
     ...semantic,
-    inspection_id: `ai_${digestCanonical(semantic)}`,
+    inspection_id: `ai_${canonicalDigest(semantic, "Artifact inspection")}`,
   });
 };
 
@@ -255,7 +257,10 @@ const observation = (
     value: jsonValueSchema.parse(value),
     evidence_id: evidenceId,
   };
-  return { observation_id: `aio_${digestCanonical(semantic)}`, ...semantic };
+  return {
+    observation_id: `aio_${canonicalDigest(semantic, "Artifact inspection")}`,
+    ...semantic,
+  };
 };
 
 const allRelationships = (
@@ -272,7 +277,7 @@ const allRelationships = (
       evidence_id: evidenceId,
     };
     return {
-      relationship_id: `air_${digestCanonical(semantic)}`,
+      relationship_id: `air_${canonicalDigest(semantic, "Artifact inspection")}`,
       ...semantic,
     };
   });
@@ -299,7 +304,10 @@ const allHypotheses = (
       limitation:
         "Format classification proposes a bounded follow-up; it is not semantic proof.",
     };
-    return { hypothesis_id: `aih_${digestCanonical(semantic)}`, ...semantic };
+    return {
+      hypothesis_id: `aih_${canonicalDigest(semantic, "Artifact inspection")}`,
+      ...semantic,
+    };
   });
 };
 
@@ -316,7 +324,7 @@ const contradictions = (
       evidence_id: evidenceId,
     };
     return {
-      contradiction_id: `aic_${digestCanonical(semantic)}`,
+      contradiction_id: `aic_${canonicalDigest(semantic, "Artifact inspection")}`,
       ...semantic,
     };
   });
@@ -409,7 +417,10 @@ const branch = (
     next_probe: nextProbe,
     evidence_id: evidenceId,
   };
-  return { branch_id: `aib_${digestCanonical(semantic)}`, ...semantic };
+  return {
+    branch_id: `aib_${canonicalDigest(semantic, "Artifact inspection")}`,
+    ...semantic,
+  };
 };
 
 const inspectionCoverage = (
@@ -419,15 +430,3 @@ const inspectionCoverage = (
   if (Object.values(omissions).some((count) => count > 0)) return "truncated";
   return "complete-within-substeps";
 };
-
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Artifact inspection could not canonicalize");
-  return createHash("sha256").update(encoded).digest("hex");
-};
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );

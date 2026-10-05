@@ -6,6 +6,7 @@ import type {
   JavaScriptSemanticConfigurationOperation,
   JavaScriptSemanticRequestOperation,
 } from "./javascriptSemanticIr.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticStaticPropertyName } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -27,7 +28,7 @@ import {
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 interface DataEffectAnalysis {
   readonly configurationOperations: readonly JavaScriptSemanticConfigurationOperation[];

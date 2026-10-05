@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { canonicalDigest } from "./comparisonSemantics.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { Evidence } from "./evidence.js";
 import {
-  compareCodePoints,
   createJavaScriptApplicationGraph,
   type ApplicationEdge,
   type ApplicationNode,
@@ -87,7 +84,7 @@ export const traceApplicationFeature = (
   };
   return applicationFeatureTraceResultSchema.parse({
     ...semantic,
-    trace_id: `jatr_${digestCanonical(semantic)}`,
+    trace_id: `jatr_${canonicalDigest(semantic, "Feature trace")}`,
   });
 };
 
@@ -127,7 +124,7 @@ const noMatchResult = (
   };
   return applicationFeatureTraceResultSchema.parse({
     ...semantic,
-    trace_id: `jatr_${digestCanonical(semantic)}`,
+    trace_id: `jatr_${canonicalDigest(semantic, "Feature trace")}`,
   });
 };
 
@@ -206,7 +203,10 @@ const pathTo = (
       ({ evidence }) => evidence.state === "inferred",
     ),
   };
-  return { ...semantic, path_id: `jatp_${digestCanonical(semantic)}` };
+  return {
+    ...semantic,
+    path_id: `jatp_${canonicalDigest(semantic, "Feature trace")}`,
+  };
 };
 
 const isTerminal = (node: ApplicationNode): boolean =>
@@ -253,14 +253,3 @@ const sourceCoverageLimitations = (
     : [
         "The source application graph is incomplete; unmatched seeds and frontiers remain unknown.",
       ];
-
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Feature trace could not canonicalize data");
-  return createHash("sha256").update(encoded).digest("hex");
-};
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);

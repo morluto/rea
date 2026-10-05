@@ -1,9 +1,7 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
@@ -23,22 +21,6 @@ import {
   type JavaScriptSemanticGraphRelation,
 } from "./javascriptSemanticGraphSchemas.js";
 
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError(
-      "JavaScript semantic graph could not canonicalize data",
-    );
-  return encoded;
-};
-
-const digestCanonical = (value: unknown): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);
-
 const normalizeEvidence = (
   evidence: ApplicationGraphEvidence,
 ): ApplicationGraphEvidence => ({
@@ -46,7 +28,10 @@ const normalizeEvidence = (
   coverage: {
     ...evidence.coverage,
     limits: [...evidence.coverage.limits].sort((left, right) =>
-      compareCodePoints(canonicalJson(left), canonicalJson(right)),
+      compareCodePoints(
+        canonicalJson(left, "JavaScript semantic graph"),
+        canonicalJson(right, "JavaScript semantic graph"),
+      ),
     ),
   },
   limitations: uniqueSorted(evidence.limitations),
@@ -56,7 +41,7 @@ const normalizeEvidence = (
 const nodeId = (
   node: Pick<JavaScriptSemanticGraphNode, "kind" | "identity">,
 ): string =>
-  `jsrg_node_${digestCanonical({ kind: node.kind, identity: node.identity })}`;
+  `jsrg_node_${canonicalDigest({ kind: node.kind, identity: node.identity }, "JavaScript semantic graph")}`;
 
 /** Normalize one semantic entity and derive its artifact-version identifier. */
 export const createJavaScriptSemanticGraphNode = (
@@ -93,7 +78,7 @@ export const createJavaScriptSemanticGraphRelation = (
   };
   return javaScriptSemanticRelationSchema.parse({
     ...semantic,
-    relation_id: `jsrg_relation_${digestCanonical(semantic)}`,
+    relation_id: `jsrg_relation_${canonicalDigest(semantic, "JavaScript semantic graph")}`,
   });
 };
 
@@ -108,7 +93,7 @@ export const createJavaScriptSemanticGraphUnknown = (input: unknown) => {
   };
   return javaScriptSemanticUnknownSchema.parse({
     ...semantic,
-    unknown_id: `jsrg_unknown_${digestCanonical(semantic)}`,
+    unknown_id: `jsrg_unknown_${canonicalDigest(semantic, "JavaScript semantic graph")}`,
   });
 };
 
@@ -124,15 +109,21 @@ export const createJavaScriptSemanticFingerprint = (input: unknown) => {
     limitations: uniqueSorted(parsed.limitations),
     evidence: normalizeEvidence(parsed.evidence),
   };
-  const fingerprintSha256 = digestCanonical(semantic.components);
+  const fingerprintSha256 = canonicalDigest(
+    semantic.components,
+    "JavaScript semantic graph",
+  );
   return javaScriptSemanticFingerprintSchema.parse({
     ...semantic,
     fingerprint_sha256: fingerprintSha256,
-    fingerprint_id: `jsrg_fingerprint_${digestCanonical({
-      function_node_id: semantic.function_node_id,
-      algorithm: semantic.algorithm,
-      fingerprint_sha256: fingerprintSha256,
-    })}`,
+    fingerprint_id: `jsrg_fingerprint_${canonicalDigest(
+      {
+        function_node_id: semantic.function_node_id,
+        algorithm: semantic.algorithm,
+        fingerprint_sha256: fingerprintSha256,
+      },
+      "JavaScript semantic graph",
+    )}`,
   });
 };
 
@@ -159,8 +150,11 @@ const sortedUniqueIssue = (
 const checkCoverage = (graph: GraphRecord, context: z.RefinementCtx): void => {
   const families = graph.coverage.families.map(({ family }) => family);
   if (
-    canonicalJson(families) !==
-    canonicalJson(JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)
+    canonicalJson(families, "JavaScript semantic graph") !==
+    canonicalJson(
+      JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
+      "JavaScript semantic graph",
+    )
   )
     context.addIssue({
       code: "custom",
@@ -307,7 +301,10 @@ const checkRelations = (
 ): void => {
   for (const [index, relation] of graph.relations.entries()) {
     const { relation_id: identifier, ...semantic } = relation;
-    if (identifier !== "jsrg_relation_" + digestCanonical(semantic))
+    if (
+      identifier !==
+      "jsrg_relation_" + canonicalDigest(semantic, "JavaScript semantic graph")
+    )
       context.addIssue({
         code: "custom",
         path: ["relations", index, "relation_id"],
@@ -347,7 +344,10 @@ const checkUnknowns = (
 ): void => {
   for (const [index, unknown] of graph.unknowns.entries()) {
     const { unknown_id: identifier, ...semantic } = unknown;
-    if (identifier !== "jsrg_unknown_" + digestCanonical(semantic))
+    if (
+      identifier !==
+      "jsrg_unknown_" + canonicalDigest(semantic, "JavaScript semantic graph")
+    )
       context.addIssue({
         code: "custom",
         path: ["unknowns", index, "unknown_id"],
@@ -413,7 +413,8 @@ const checkFingerprints = (
         message: "Fingerprint must name a function node",
       });
     if (
-      fingerprint.fingerprint_sha256 !== digestCanonical(fingerprint.components)
+      fingerprint.fingerprint_sha256 !==
+      canonicalDigest(fingerprint.components, "JavaScript semantic graph")
     )
       context.addIssue({
         code: "custom",
@@ -422,11 +423,14 @@ const checkFingerprints = (
       });
     const expectedIdentifier =
       "jsrg_fingerprint_" +
-      digestCanonical({
-        function_node_id: fingerprint.function_node_id,
-        algorithm: fingerprint.algorithm,
-        fingerprint_sha256: fingerprint.fingerprint_sha256,
-      });
+      canonicalDigest(
+        {
+          function_node_id: fingerprint.function_node_id,
+          algorithm: fingerprint.algorithm,
+          fingerprint_sha256: fingerprint.fingerprint_sha256,
+        },
+        "JavaScript semantic graph",
+      );
     if (fingerprint.fingerprint_id !== expectedIdentifier)
       context.addIssue({
         code: "custom",
@@ -462,7 +466,10 @@ const checkGraph = (graph: GraphRecord, context: z.RefinementCtx): void => {
       message: "Non-complete graph coverage requires a limitation",
     });
   const { graph_id: identifier, ...semantic } = graph;
-  if (identifier !== "jsrg_" + digestCanonical(semantic))
+  if (
+    identifier !==
+    "jsrg_" + canonicalDigest(semantic, "JavaScript semantic graph")
+  )
     context.addIssue({
       code: "custom",
       path: ["graph_id"],
@@ -502,7 +509,10 @@ export const createJavaScriptSemanticGraph = (
     coverage: {
       ...parsed.coverage,
       limits: [...parsed.coverage.limits].sort((left, right) =>
-        compareCodePoints(canonicalJson(left), canonicalJson(right)),
+        compareCodePoints(
+          canonicalJson(left, "JavaScript semantic graph"),
+          canonicalJson(right, "JavaScript semantic graph"),
+        ),
       ),
       families: [...parsed.coverage.families]
         .map((family) => ({
@@ -515,7 +525,7 @@ export const createJavaScriptSemanticGraph = (
   };
   return javaScriptSemanticGraphSchema.parse({
     ...semantic,
-    graph_id: `jsrg_${digestCanonical(semantic)}`,
+    graph_id: `jsrg_${canonicalDigest(semantic, "JavaScript semantic graph")}`,
   });
 };
 

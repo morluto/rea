@@ -13,12 +13,9 @@ import {
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import {
-  compareCodePoints,
-  range,
-  sourceRangesEqual,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { range, sourceRangesEqual } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
   containsSemanticNode,

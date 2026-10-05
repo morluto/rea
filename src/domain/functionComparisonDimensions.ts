@@ -1,3 +1,4 @@
+import { canonicalJson } from "./comparisonSemantics.js";
 import { diffLines } from "diff";
 
 import type {
@@ -21,7 +22,6 @@ import type {
   FunctionDimension,
 } from "./functionComparisonSchemas.js";
 import {
-  canonicalJson,
   dimensionResult,
   unresolvedDimension as buildUnresolvedDimension,
 } from "./functionComparisonResults.js";
@@ -289,7 +289,10 @@ const compareReferences = (
       true,
       providersDiffer,
     );
-  if (canonicalJson(leftProjection) !== canonicalJson(rightProjection))
+  if (
+    canonicalJson(leftProjection, "Function comparison") !==
+    canonicalJson(rightProjection, "Function comparison")
+  )
     return dimensionResult({
       dimension: "references",
       status: "changed",
@@ -448,8 +451,8 @@ const compareValues = (
 ): FunctionDimension => {
   if (!leftComplete || !rightComplete)
     return unresolvedDimension(dimension, "unknown", links, null, null, []);
-  const leftJson = canonicalJson(left);
-  const rightJson = canonicalJson(right);
+  const leftJson = canonicalJson(left, "Function comparison");
+  const rightJson = canonicalJson(right, "Function comparison");
   return dimensionResult({
     dimension,
     status: leftJson === rightJson ? "unchanged" : "changed",

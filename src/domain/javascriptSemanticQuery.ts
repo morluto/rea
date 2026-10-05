@@ -1,9 +1,9 @@
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import type {
   JavaScriptSemanticGraph,
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
 } from "./javascriptSemanticGraph.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import { isJavaScriptSemanticOwnershipRelation as ownershipRelation } from "./javascriptSemanticQueryRelations.js";
 import {

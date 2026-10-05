@@ -14,8 +14,9 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   dataEffectLiteralString,
   dataEffectMemberCallee,

@@ -1,11 +1,11 @@
 import * as t from "@babel/types";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { ElectronNativeAddonBindingFinding } from "./electronStaticAnalysisTypes.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
   calleeName,
-  compareCodePoints,
   propertyName,
   range,
   stringValue,

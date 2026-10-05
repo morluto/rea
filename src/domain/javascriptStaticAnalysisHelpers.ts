@@ -11,6 +11,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 
 export {
   propertyName,
@@ -413,10 +414,6 @@ export const sortedUnique = <Value>(
 /** Hash exact UTF-8 source text. */
 export const sha256Text = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
-
-/** Compare strings by Unicode code point for canonical ordering. */
-export const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
 
 /** Recognized route-construction call suffixes. */
 export const STATIC_ROUTE_CALL_NAMES = [

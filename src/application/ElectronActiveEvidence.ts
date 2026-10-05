@@ -1,3 +1,4 @@
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import type { ProviderIdentity } from "./AnalysisProvider.js";
 import type { Evidence, EvidenceObservation } from "../domain/evidence.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -6,7 +7,6 @@ import type {
   ElectronActiveObservationResult,
 } from "../domain/electronActiveObservation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { digestCanonicalJson } from "../domain/browserScenarioNormalization.js";
 
 type CanonicalElectronActiveObservationInput =
   ElectronActiveObservationInput & {
@@ -52,5 +52,8 @@ const parameters = (
   input: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
   ...scenarioProjection(input),
-  scenario_sha256: digestCanonicalJson(scenarioProjection(input)),
+  scenario_sha256: canonicalDigest(
+    scenarioProjection(input),
+    "Browser scenario",
+  ),
 });

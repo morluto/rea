@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { canonicalDigest } from "./comparisonSemantics.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import type { Evidence } from "./evidence.js";
 import { buildJavaScriptApplicationChangeGraph } from "./javascriptApplicationChangeGraph.js";
 import {
@@ -9,7 +7,6 @@ import {
   type ApplicationVersionComparisonResult,
 } from "./javascriptApplicationVersionComparisonSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import { compareCodePoints } from "./javascriptApplicationGraph.js";
 import { classifyJavaScriptApplicationVersions } from "./javascriptApplicationVersionItems.js";
 import { matchJavaScriptApplicationVersions } from "./javascriptApplicationVersionKeys.js";
 
@@ -81,7 +78,7 @@ export const compareJavaScriptApplicationVersions = (
   };
   return applicationVersionComparisonResultSchema.parse({
     ...semantic,
-    comparison_id: `javc_${digestCanonical(semantic)}`,
+    comparison_id: `javc_${canonicalDigest(semantic, "Application version comparison")}`,
   });
 };
 
@@ -164,16 +161,3 @@ const comparisonLimitations = (
           "At least one source graph is incomplete; unmatched entities on the opposite side remain unknown rather than added or removed.",
         ]),
   ]);
-
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError(
-      "Application version comparison could not canonicalize data",
-    );
-  return createHash("sha256").update(encoded).digest("hex");
-};
-
-const uniqueSorted = <Value extends string>(
-  values: readonly Value[],
-): Value[] => [...new Set(values)].sort(compareCodePoints);

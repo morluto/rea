@@ -1,7 +1,5 @@
-import {
-  compareCodePoints,
-  type ApplicationNode,
-} from "./javascriptApplicationGraph.js";
+import { type ApplicationNode } from "./javascriptApplicationGraph.js";
+import { uniqueSorted } from "./canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type {
   JavaScriptRuntimeReconciliationItem,
@@ -173,6 +171,3 @@ const state = (
   runtime_node_ids: [...input.runtimeNodeIds],
   reason: input.reason,
 });
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);

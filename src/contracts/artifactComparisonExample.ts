@@ -1,14 +1,11 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
 const inventory = (digit: string) => {
   const sha = digit.repeat(64);
-  const artifactId = `art_${digestCanonical({ sha256: sha })}`;
-  const occurrenceId = `occ_${digestCanonical({ root: artifactId })}`;
+  const artifactId = `art_${canonicalDigest({ sha256: sha }, "Artifact example")}`;
+  const occurrenceId = `occ_${canonicalDigest({ root: artifactId }, "Artifact example")}`;
   const nodes = [
     {
       artifact_id: artifactId,
@@ -39,18 +36,24 @@ const inventory = (digit: string) => {
       limitations: [],
     },
   ];
-  const graphSha256 = digestCanonical({
-    nodes,
-    occurrences,
-    edges: [],
-    integrity_contradictions: [],
-  });
+  const graphSha256 = canonicalDigest(
+    {
+      nodes,
+      occurrences,
+      edges: [],
+      integrity_contradictions: [],
+    },
+    "Artifact example",
+  );
   return jsonValueSchema.parse({
     manifest: {
-      manifest_id: `agm_${digestCanonical({
-        root_artifact_id: artifactId,
-        graph_sha256: graphSha256,
-      })}`,
+      manifest_id: `agm_${canonicalDigest(
+        {
+          root_artifact_id: artifactId,
+          graph_sha256: graphSha256,
+        },
+        "Artifact example",
+      )}`,
       root_artifact_id: artifactId,
       root_sha256: sha,
       root_format: "file",
@@ -65,13 +68,6 @@ const inventory = (digit: string) => {
     provenance: [],
     limitations: [],
   });
-};
-
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Artifact example is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
 };
 
 const provider = {

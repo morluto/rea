@@ -14,13 +14,13 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import {
-  compareCodePoints,
   propertyName,
   range,
   stringValue,

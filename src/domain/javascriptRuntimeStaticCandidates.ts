@@ -1,10 +1,10 @@
 import { posix, relative, win32 } from "node:path";
 
 import {
-  compareCodePoints,
   type ApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { compareCodePoints, uniqueSorted } from "./canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type { RuntimeReconciliationEntity } from "./javascriptRuntimeReconciliationRuntime.js";
 
@@ -316,6 +316,3 @@ const uniqueMappedPaths = (
       compareCodePoints(left.path, right.path) ||
       compareCodePoints(left.basis, right.basis),
   );
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);

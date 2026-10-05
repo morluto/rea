@@ -4,12 +4,12 @@ import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,
 } from "./javascriptAstFingerprint.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { addFindingOnce } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentValue,
   calleeName,
   chunkRuntime,
-  compareCodePoints,
   factoryRequireName,
   moduleFactory,
   modulePropertyName,

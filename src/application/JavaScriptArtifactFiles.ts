@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
+import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import { AsarArtifactReader } from "../artifacts/AsarArtifactReader.js";
 import {
   ArtifactPathRegistry,
@@ -331,6 +332,3 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
       "JavaScript artifact reconstruction cancelled",
     );
 };
-
-const compareCodePoints = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
