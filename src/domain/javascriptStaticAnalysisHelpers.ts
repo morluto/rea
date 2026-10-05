@@ -10,9 +10,12 @@ import type {
   JavaScriptStaticPathContext,
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
-import { propertyName } from "./javascriptAstValues.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 
-export { propertyName } from "./javascriptAstValues.js";
+export {
+  propertyName,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -59,7 +62,11 @@ export const chunkRuntime = (call: t.CallExpression): string | undefined => {
     !t.isOptionalMemberExpression(call.callee)
   )
     return undefined;
-  if (propertyName(call.callee.property) !== "push") return undefined;
+  if (
+    semanticStaticPropertyName(call.callee.property, call.callee.computed) !==
+    "push"
+  )
+    return undefined;
   return findChunkRuntime(call.callee.object);
 };
 
@@ -67,7 +74,7 @@ const findChunkRuntime = (node: t.Node): string | undefined => {
   if (t.isIdentifier(node) && /(?:webpack|rspack)Chunk/iu.test(node.name))
     return node.name;
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const property = propertyName(node.property);
+    const property = semanticStaticPropertyName(node.property, node.computed);
     if (/(?:webpack|rspack)Chunk/iu.test(property)) return property;
     return t.isNode(node.object) ? findChunkRuntime(node.object) : undefined;
   }
@@ -107,7 +114,7 @@ export const modulePropertyName = (
       !t.isStringLiteral(property.key) &&
       !t.isNumericLiteral(property.key)
       ? `[computed@${String(property.start ?? -1)}]`
-      : propertyName(property.key) ||
+      : semanticStaticPropertyName(property.key, property.computed) ||
         `[unknown@${String(property.start ?? -1)}]`
     : `[unknown@${String(property.start ?? -1)}]`;
 
@@ -241,7 +248,7 @@ const isFileIdentity = (node: t.Node | undefined): boolean => {
     t.isMetaProperty(node.object) &&
     node.object.meta.name === "import" &&
     node.object.property.name === "meta" &&
-    propertyName(node.property) === "url"
+    semanticStaticPropertyName(node.property, node.computed) === "url"
   )
     return true;
   if (!t.isCallExpression(node)) return false;
@@ -312,7 +319,7 @@ const memberPropertyName = (
   !t.isStringLiteral(node.property) &&
   !t.isNumericLiteral(node.property)
     ? `[computed@${String(node.property.start ?? -1)}]`
-    : propertyName(node.property);
+    : semanticStaticPropertyName(node.property, node.computed);
 
 /** Return a string literal value without evaluating an expression. */
 export const stringValue = (

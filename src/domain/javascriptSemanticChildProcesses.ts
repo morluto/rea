@@ -15,14 +15,13 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import {
-  compareCodePoints,
-  propertyName,
-  range,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   dataEffectLiteralString,
   dataEffectMemberCallee,
+  assignedSemanticResultBindings,
+  scalarAssignedResultBinding,
+  semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
 const CHILD_PROCESS_METHODS = ["spawn", "exec", "execFile", "fork"] as const;
@@ -38,6 +37,11 @@ interface SpawnCandidate {
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly projectedResultBindings: readonly {
+    readonly bindingId: string;
+    readonly projectionPath: readonly (string | number | null)[];
+    readonly resolution: "complete" | "partial";
+  }[];
 }
 
 interface ChildInteractionContext {
@@ -77,23 +81,41 @@ const collectSpawns = (
     callables.map(({ callableId }) => callableId),
   );
   const callableStack: string[] = [];
+  const ancestors: t.Node[] = [];
   traverseJavaScriptAst(program, {
-    enter: (node, parent) => {
+    enter: (node) => {
       const callableId = semanticCallableIdForNode(node);
       if (callableId !== null && admittedCallables.has(callableId))
         callableStack.push(callableId);
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return;
-      const method = childProcessMethod(node.callee, state);
-      if (method === null) return;
-      output.push({
-        node,
-        method,
-        ownerCallableId: callableStack.at(-1) ?? null,
-        resultBindingId: assignedBindingId(parent, node, state),
-      });
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        const method = childProcessMethod(node.callee, state);
+        if (method !== null) {
+          const projectedResultBindings = assignedSemanticResultBindings(
+            node,
+            ancestors,
+            state,
+          );
+          output.push({
+            node,
+            method,
+            ownerCallableId: callableStack.at(-1) ?? null,
+            resultBindingId: scalarAssignedResultBinding(
+              projectedResultBindings,
+            ),
+            projectedResultBindings: semanticProjectedBindingFacts(
+              projectedResultBindings.filter(
+                ({ projectionPath }) => projectionPath.length > 0,
+              ),
+            ),
+          });
+        }
+      }
+      ancestors.push(node);
     },
-    exit: (node) => popCallable(node, callableStack),
+    exit: (node) => {
+      ancestors.pop();
+      popCallable(node, callableStack);
+    },
   });
   return output;
 };
@@ -109,6 +131,7 @@ const immutableSpawn = (
     location: range(candidate.node),
     ownerCallableId: candidate.ownerCallableId,
     resultBindingId: candidate.resultBindingId,
+    projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount: spawnArgvCount(candidate),
     environmentSupplied: objectHasProperty(options, "env"),
@@ -130,10 +153,15 @@ const collectInteractions = (
   const spawnsByBinding = new Map<string, SpawnCandidate[]>();
   for (const spawn of spawns) {
     spawnByNode.set(spawn.node, spawn);
-    if (spawn.resultBindingId === null) continue;
-    const existing = spawnsByBinding.get(spawn.resultBindingId) ?? [];
-    existing.push(spawn);
-    spawnsByBinding.set(spawn.resultBindingId, existing);
+    const ids = [
+      ...(spawn.resultBindingId === null ? [] : [spawn.resultBindingId]),
+      ...spawn.projectedResultBindings.map(({ bindingId }) => bindingId),
+    ];
+    for (const id of ids) {
+      const existing = spawnsByBinding.get(id) ?? [];
+      existing.push(spawn);
+      spawnsByBinding.set(id, existing);
+    }
   }
   const context: ChildInteractionContext = {
     state,
@@ -198,7 +226,13 @@ const childInteraction = (
         : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: linked.length === 1 ? "complete" : "partial",
+    resolution:
+      linked.length === 1 &&
+      !linked[0]?.projectedResultBindings.some(
+        ({ bindingId }) => bindingId === binding?.bindingId,
+      )
+        ? "complete"
+        : "partial",
   };
 };
 
@@ -333,27 +367,6 @@ const objectBinding = (
   t.isIdentifier(node)
     ? resolveSemanticBindingState(state, node, node.name)
     : undefined;
-
-const assignedBindingId = (
-  parent: t.Node | null,
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): string | null => {
-  const identifier =
-    t.isVariableDeclarator(parent) &&
-    parent.init === node &&
-    t.isIdentifier(parent.id)
-      ? parent.id
-      : t.isAssignmentExpression(parent) &&
-          parent.right === node &&
-          t.isIdentifier(parent.left)
-        ? parent.left
-        : null;
-  return identifier === null
-    ? null
-    : (resolveSemanticBindingState(state, identifier, identifier.name)
-        ?.bindingId ?? null);
-};
 
 const popCallable = (node: t.Node, stack: string[]): void => {
   const callableId = semanticCallableIdForNode(node);

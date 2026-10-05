@@ -25,6 +25,7 @@ import {
   range,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -201,14 +202,7 @@ const semanticModuleOrigin = (
       };
 };
 
-/** Read a property only when its syntax commits an exact name. */
-export const semanticStaticPropertyName = (
-  property: t.Node,
-  computed: boolean,
-): string =>
-  computed && !t.isStringLiteral(property) && !t.isNumericLiteral(property)
-    ? ""
-    : propertyName(property);
+export { semanticStaticPropertyName } from "./javascriptAstValues.js";
 
 const callableKind = (
   node: t.Node,
@@ -642,8 +636,4 @@ const commonJsExportName = (
 const memberKey = (
   node: t.MemberExpression | t.OptionalMemberExpression,
 ): string | null =>
-  node.computed &&
-  !t.isStringLiteral(node.property) &&
-  !t.isNumericLiteral(node.property)
-    ? null
-    : propertyName(node.property);
+  semanticStaticPropertyName(node.property, node.computed) || null;

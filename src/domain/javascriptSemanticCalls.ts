@@ -27,6 +27,7 @@ import {
 } from "./javascriptSemanticCallResolution.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -56,6 +57,7 @@ interface CallCollectionContext {
     string,
     readonly JavaScriptSemanticBindingState[]
   >;
+  readonly ancestors: t.Node[];
 }
 
 /** Recover direct-call and lexical-capture candidates from inert syntax. */
@@ -81,6 +83,7 @@ export const collectJavaScriptSemanticCalls = (
     output,
     bindingResolutionCache: new Map(),
     parameterBindingCache: new Map(),
+    ancestors: [],
   };
   const callableStack: JavaScriptSemanticCallable[] = [];
   traverseJavaScriptAst(program, {
@@ -99,8 +102,10 @@ export const collectJavaScriptSemanticCalls = (
         t.isNewExpression(node)
       )
         collectCallSite(node, parent, owner, context);
+      context.ancestors.push(node);
     },
     exit: (node) => {
+      context.ancestors.pop();
       const callableId = semanticCallableIdForNode(node);
       if (
         callableId !== null &&
@@ -151,7 +156,7 @@ const collectCallSite = (
     arguments: argumentsValue,
   };
   output.callSites.push(site);
-  collectCallResultFlow(site, node, parent, context);
+  collectCallResultFlow(site, node, context);
   if (site.resolution !== "exact")
     addFrontier(
       {
@@ -171,39 +176,32 @@ const collectCallSite = (
 const collectCallResultFlow = (
   site: JavaScriptSemanticCallSite,
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
-  parent: t.Node | null,
   context: CallCollectionContext,
 ): void => {
-  const identifier =
-    t.isVariableDeclarator(parent) &&
-    parent.init === node &&
-    t.isIdentifier(parent.id)
-      ? parent.id
-      : t.isAssignmentExpression(parent) &&
-          parent.right === node &&
-          t.isIdentifier(parent.left)
-        ? parent.left
-        : null;
-  if (identifier === null) return;
-  const binding = resolveSemanticBindingState(
+  for (const assigned of assignedSemanticResultBindings(
+    node,
+    context.ancestors,
     context.state,
-    identifier,
-    identifier.name,
-  );
-  const identifierRange = range(identifier);
-  const definition = binding?.definitions.find(
-    ({ location }) =>
-      location.start.line === identifierRange.start.line &&
-      location.start.column === identifierRange.start.column &&
-      location.end.line === identifierRange.end.line &&
-      location.end.column === identifierRange.end.column,
-  );
-  if (binding === undefined || definition === undefined) return;
-  context.output.callResultFlows.push({
-    callSiteId: site.callSiteId,
-    bindingId: binding.bindingId,
-    definitionLocation: definition.location,
-  });
+  ).filter(({ projectionPath }) => projectionPath.length === 0)) {
+    const binding = [...context.state.bindingsById.values()].find(
+      ({ bindingId }) => bindingId === assigned.bindingId,
+    );
+    if (binding === undefined) continue;
+    const identifierRange = range(assigned.identifier);
+    const definition = binding.definitions.find(
+      ({ location }) =>
+        location.start.line === identifierRange.start.line &&
+        location.start.column === identifierRange.start.column &&
+        location.end.line === identifierRange.end.line &&
+        location.end.column === identifierRange.end.column,
+    );
+    if (definition === undefined) continue;
+    context.output.callResultFlows.push({
+      callSiteId: site.callSiteId,
+      bindingId: binding.bindingId,
+      definitionLocation: definition.location,
+    });
+  }
 };
 
 const retainedArguments = (
