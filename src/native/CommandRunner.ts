@@ -223,7 +223,7 @@ const captureProcess = (
         finish(err(new NativeCommandFailure(tool, reason, code)));
         return;
       }
-      if (code !== 0 && options.acceptNonZero !== true) {
+      if (signal !== null || (code !== 0 && options.acceptNonZero !== true)) {
         finish(err(new NativeCommandFailure(tool, "nonzero-exit", code)));
         return;
       }
