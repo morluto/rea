@@ -84,9 +84,16 @@ const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
+  /**
+   * Host platform, injected so availability and launch-mode decisions can be
+   * exercised for any host rather than only the machine running the suite.
+   * Mirrors `GhidraProvider`, which already threads its installation host's
+   * platform the same way.
+   */
   constructor(
     private readonly config: AppConfig,
     private readonly logger: Logger,
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -100,13 +107,13 @@ export class HopperProvider implements AnalysisProviderCandidate {
   inspectAvailability(): ProviderAvailability {
     const diagnostics = {
       launcher_path: this.config.hopperLauncherPath,
-      platform: process.platform,
+      platform: this.platform,
     };
-    if (process.platform !== "darwin" && process.platform !== "linux")
+    if (this.platform !== "darwin" && this.platform !== "linux")
       return {
         status: "unavailable",
         code: "unsupported_host",
-        reason: `Hopper integration is not supported on ${process.platform}.`,
+        reason: `Hopper integration is not supported on ${this.platform}.`,
         diagnostics,
       };
     try {
@@ -205,7 +212,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/hopper_bridge.py", import.meta.url),
         ),
-        ...(process.platform === "linux"
+        ...(this.platform === "linux"
           ? {
               launchMode: "verified_linux_demo" as const,
               demoHelperPath: fileURLToPath(

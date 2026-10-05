@@ -7,9 +7,20 @@ import {
 } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 
-/** Load the configured passive browser authority and provider for one CLI operation. */
-export const browserContext = async (operation: string) => {
-  const config = parseConfig(process.env);
+/**
+ * Load the configured passive browser authority and provider for one CLI
+ * operation.
+ *
+ * `environment` defaults to the process environment so CLI callers stay
+ * unchanged, but every caller may supply the environment explicitly. That is
+ * what makes configuration-driven behaviour testable without mutating
+ * `process.env` for the duration of a test.
+ */
+export const browserContext = async (
+  operation: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) => {
+  const config = parseConfig(environment);
   if (!config.ok)
     return { ok: false as const, error: browserCliError(config.error) };
   const policy = config.value.browserObservationPolicy;
