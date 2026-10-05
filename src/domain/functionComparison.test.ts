@@ -102,6 +102,52 @@ const observe = (
     },
   );
 
+describe("function comparison normalized identity", () => {
+  it.each(["sub_deallocate", "sub_deadbeef_handler", "fcn.dispatch"])(
+    "recognizes the explicit symbol %s without a generated-name prefix false positive",
+    (name) => {
+      const named = (base: "0x1000" | "0x2000") =>
+        functionDossierSchema.parse({
+          ...dossier("return 0;", base),
+          procedure: {
+            address: base,
+            name,
+            signature: "int helper(void)",
+            locals: [],
+          },
+        });
+      expect(
+        compareFunctions(
+          observe("b", named("0x1000")),
+          observe("c", named("0x2000")),
+        ).function_match,
+      ).toMatchObject({ status: "matched", method: "symbol" });
+    },
+  );
+
+  it.each(["sub_deadbeef", "fcn.00401000"])(
+    "keeps %s as an address-derived name",
+    (name) => {
+      const generated = (base: "0x1000" | "0x2000") =>
+        functionDossierSchema.parse({
+          ...dossier("return 0;", base),
+          procedure: {
+            address: base,
+            name,
+            signature: "int helper(void)",
+            locals: [],
+          },
+        });
+      expect(
+        compareFunctions(
+          observe("d", generated("0x1000")),
+          observe("e", generated("0x2000")),
+        ).function_match.status,
+      ).toBe("ambiguous");
+    },
+  );
+});
+
 describe("function comparison", () => {
   it("preserves text changes alongside complete inline dossier facets", () => {
     const result = compareFunctions(

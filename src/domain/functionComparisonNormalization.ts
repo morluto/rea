@@ -192,7 +192,7 @@ export const project = <Input, Output>(
 ): Output[] => collection.items.map(mapper);
 
 export const isAutoName = (name: string): boolean =>
-  /^(?:sub_[0-9a-f]+|fcn\.)/iu.test(name);
+  /^(?:sub_[0-9a-f]+|fcn\.[0-9a-f]+)$/iu.test(name);
 
 const parseAddress = (value: string): bigint | null =>
   /^0x[0-9a-f]+$/iu.test(value) ? BigInt(value) : null;
