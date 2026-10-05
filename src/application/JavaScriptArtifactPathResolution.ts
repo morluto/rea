@@ -108,12 +108,18 @@ const rejectDeclaration = (
     return unresolvedOutcome(input, "rejected", [
       "NUL and backslash path syntax are not admitted for canonical artifact paths.",
     ]);
-  if (/%(?:2e|2f|5c)/iu.test(declared))
+  if (!admitsCanonicalPathSyntax(declared))
     return unresolvedOutcome(input, "rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
   return null;
 };
+
+/** Path syntax admitted for a canonical artifact path. */
+const admitsCanonicalPathSyntax = (value: string): boolean =>
+  !value.includes("\0") &&
+  !value.includes("\\") &&
+  !/%(?:2e|2f|5c)/iu.test(value);
 
 const contextualCandidate = (
   input: ResolveArtifactPathInput,
@@ -226,12 +232,30 @@ const htmlCandidate = (
   if (declared.startsWith("/")) return declared.slice(1);
   if (base === undefined || base === null || base === "")
     return posix.join(posix.dirname(input.sourcePath), declared);
+  // A local base href is a second untrusted path input; apply the same
+  // admission rules a declared path gets so it cannot smuggle traversal or
+  // separator syntax past canonicalization.
+  if (!admitsCanonicalPathSyntax(base))
+    return unresolvedOutcome(input, "rejected", [
+      "The document base href uses NUL, backslash, or encoded dot and separator bytes that are not admitted for canonical artifact paths.",
+    ]);
   const basePath = base.startsWith("/")
     ? base.slice(1)
     : posix.join(posix.dirname(input.sourcePath), base);
-  const baseDirectory = base.endsWith("/") ? basePath : posix.dirname(basePath);
-  return posix.join(baseDirectory, declared);
+  return posix.join(htmlBaseDirectory(base, basePath), declared);
 };
+
+/**
+ * The directory a relative HTML reference resolves against. A base path
+ * ending in "/" or in a "." or ".." segment is already a directory, because a
+ * relative reference resolves against the base URL's directory and those
+ * segments are dropped rather than stepped through.
+ */
+const htmlBaseDirectory = (base: string, basePath: string): string =>
+  base.endsWith("/") || base.endsWith("/.") || base.endsWith("/..") ||
+    base === "." || base === ".."
+    ? basePath
+    : posix.dirname(basePath);
 
 const confineCandidate = (
   input: ResolveArtifactPathInput,

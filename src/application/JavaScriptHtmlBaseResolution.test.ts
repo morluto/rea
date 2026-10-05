@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
-const paths = ["renderer/index.html", "assets/app.js"];
+const paths = ["renderer/index.html", "assets/app.js", "renderer/app.js", "renderer/a/app.js", "app.js"];
 const files = new Map<string, JavaScriptArtifactFile>(
   paths.map((path) => [
     path,
@@ -25,6 +25,7 @@ const resolve = (declaredPath: string, htmlBaseHref: string) =>
     context: "html-reference",
     files,
   });
+const documentUrl = "https://artifact.test/renderer/index.html";
 describe("HTML base href URL components", () => {
   it.each([
     "/assets/?cache=/wrong/",
@@ -51,4 +52,45 @@ describe("HTML base href URL components", () => {
       });
     },
   );
+});
+describe("HTML base href dot segments", () => {
+  it.each([
+    [".", "renderer/app.js"],
+    ["./", "renderer/app.js"],
+    ["a/.", "renderer/a/app.js"],
+    ["a/..", "renderer/app.js"],
+    ["..", "app.js"],
+  ])("resolves %s against the document directory like the URL parser", (base, expected) => {
+    // A relative reference resolves against the base URL's directory, which
+    // drops a trailing "." or ".." segment instead of stepping through it.
+    expect(
+      decodeURIComponent(new URL("app.js", new URL(base, documentUrl)).pathname).replace(/^\/+/, ""),
+    ).toBe(expected);
+    expect(resolve("app.js", base)).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: expected,
+    });
+  });
+});
+describe("HTML base href path syntax", () => {
+  it.each(["%2e%2e/secret/", "/a/%2e%2e/", "/a\\b/", "a\0b"])(
+    "rejects base href %j with the same admission rules a declared path gets",
+    (base) => {
+      const outcome = resolve("app.js", base);
+      expect(outcome.resolution_status).toBe("rejected");
+      expect(outcome.limitations[0]).toContain("not admitted for canonical artifact paths");
+    },
+  );
+  it("still confines a base href that escapes the artifact root", () => {
+    expect(resolve("app.js", "/a/../../secret/")).toMatchObject({
+      resolution_status: "rejected",
+      limitations: ["The resolved candidate escapes the canonical artifact root."],
+    });
+  });
+  it("reports an external base href as external rather than malformed", () => {
+    expect(resolve("app.js", "https://external.test/%2e%2e/")).toMatchObject({
+      resolution_status: "external",
+      resolved_path: null,
+    });
+  });
 });
