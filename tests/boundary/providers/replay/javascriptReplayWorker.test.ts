@@ -260,3 +260,48 @@ describe("deterministic replay Date compatibility", () => {
     });
   });
 });
+
+describe("replay array projection", () => {
+  it.each([
+    ["Array(3)", [null, null, null]],
+    [
+      "(() => { const value = Array(3); value[1] = 42; return value; })()",
+      [null, 42, null],
+    ],
+    ["[1, null, 3]", [1, null, 3]],
+    ["[]", []],
+  ])("preserves JSON array positions for %s", async (expression, expected) => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: `export default function () { return ${expression}; }`,
+    };
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value: expected }],
+    });
+  });
+
+  it("accounts for holes in the existing result node budget", async () => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: "export default function () { return Array(4); }",
+    };
+    workerRequest.limits.resultNodes = 3;
+    const result = await runWorker(workerRequest);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [
+        {
+          outcome: "serialization_error",
+          exception: { message: "Replay result projection limit exceeded" },
+        },
+      ],
+    });
+  });
+});

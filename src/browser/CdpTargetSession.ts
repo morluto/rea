@@ -47,21 +47,56 @@ export const openCdpTargetSession = async (
 export const closeCdpTargetSession = async (
   targetSession: CdpTargetSession,
   enabledDomains: readonly string[],
+  signal?: AbortSignal,
 ): Promise<void> => {
   const { connection, sessionId } = targetSession;
-  for (const domain of enabledDomains)
+  for (const [index, domain] of enabledDomains.entries()) {
+    if (signal?.aborted === true) {
+      await closeCancelledTargetSession(
+        targetSession,
+        enabledDomains.slice(index),
+      );
+      return;
+    }
     try {
-      await connection.send(`${domain}.disable`, {}, sessionId);
+      await connection.send(`${domain}.disable`, {}, sessionId, signal);
     } catch {
       // Cleanup continues to the detach or direct-socket close boundary.
     }
+  }
+  if (signal?.aborted === true) {
+    await closeCancelledTargetSession(targetSession, []);
+    return;
+  }
   if (sessionId !== undefined)
     try {
-      await connection.send("Target.detachFromTarget", { sessionId });
+      await connection.send(
+        "Target.detachFromTarget",
+        { sessionId },
+        undefined,
+        signal,
+      );
     } catch {
       // Closing REA's socket is the final non-destructive cleanup boundary.
     }
   await connection.close();
+};
+
+const closeCancelledTargetSession = async (
+  { connection, sessionId }: CdpTargetSession,
+  enabledDomains: readonly string[],
+): Promise<void> => {
+  const commands = enabledDomains.map((domain) =>
+    connection.send(`${domain}.disable`, {}, sessionId),
+  );
+  if (sessionId !== undefined)
+    commands.push(connection.send("Target.detachFromTarget", { sessionId }));
+  const settled = Promise.allSettled(commands);
+  try {
+    await connection.close();
+  } finally {
+    await settled;
+  }
 };
 
 const attachedSessionId = (
