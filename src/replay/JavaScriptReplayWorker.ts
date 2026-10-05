@@ -213,7 +213,7 @@ const loadEntry = async (
     return module.exports;
   };
 
-  const loadEsm = async (alias: string): Promise<Module> => {
+  const loadEsm = (alias: string): Module => {
     const cached = esmCache.get(alias);
     if (cached !== undefined) return cached;
     const descriptor = requiredModule(modules, alias);
@@ -245,13 +245,6 @@ const loadEntry = async (
       });
     }
     esmCache.set(alias, module);
-    await module.link(async (specifier) => {
-      const dependency = descriptor.dependencies[specifier];
-      if (dependency === undefined)
-        throw new ReplayDeniedError(`Undeclared import: ${specifier}`);
-      return loadEsm(dependency);
-    });
-    await module.evaluate();
     return module;
   };
 
@@ -262,7 +255,19 @@ const loadEntry = async (
       ? (exported.default ?? exported)
       : exported[side.entryExport];
   }
-  const namespace = (await loadEsm(side.entryAlias)).namespace;
+  const entryModule = loadEsm(side.entryAlias);
+  await entryModule.link((specifier, referencingModule) => {
+    const descriptor = requiredModule(
+      modules,
+      referencingModule.identifier.slice("rea:".length),
+    );
+    const dependency = descriptor.dependencies[specifier];
+    if (dependency === undefined)
+      throw new ReplayDeniedError(`Undeclared import: ${specifier}`);
+    return loadEsm(dependency);
+  });
+  await entryModule.evaluate();
+  const namespace = entryModule.namespace;
   return Reflect.get(namespace, side.entryExport);
 };
 
@@ -276,8 +281,13 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
   };
   const epoch = Date.parse(request.determinism.clockIso);
   class ReplayDate extends Date {
-    constructor(...arguments_: [] | [string | number]) {
-      super(arguments_.length === 0 ? epoch : arguments_[0]);
+    constructor(...arguments_: unknown[]) {
+      super(epoch);
+      if (arguments_.length > 0) {
+        const date: unknown = Reflect.construct(Date, arguments_, new.target);
+        if (!types.isDate(date)) throw new TypeError("Invalid Date instance");
+        return date;
+      }
     }
     static override now(): number {
       return epoch;
@@ -286,7 +296,12 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
   const replayMath: Math = Object.create(Math);
   Object.defineProperty(replayMath, "random", { value: random });
   return createContext(
-    { Date: ReplayDate, Math: replayMath },
+    {
+      Date: new Proxy(ReplayDate, {
+        apply: () => new ReplayDate().toString(),
+      }),
+      Math: replayMath,
+    },
     {
       name: "rea-controlled-replay",
       codeGeneration: { strings: false, wasm: false },
@@ -428,6 +443,17 @@ const projectComplexValue = (
     } else {
       output[key] = projectValueRecursive(
         descriptor.value,
+        depth + 1,
+        ancestors,
+        context,
+      );
+    }
+  }
+  if (Array.isArray(candidate) && Array.isArray(output)) {
+    for (let index = 0; index < candidate.length; index += 1) {
+      if (Object.hasOwn(descriptors, String(index))) continue;
+      output[index] = projectValueRecursive(
+        null,
         depth + 1,
         ancestors,
         context,

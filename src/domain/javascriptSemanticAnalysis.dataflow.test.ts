@@ -36,6 +36,32 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
     );
   });
 
+  it("does not invent property names for dynamic destructuring keys", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { token: "TOKEN" };
+      const key = getKey();
+      const { [key]: dynamic } = source;
+      const { ["token"]: literal } = source;
+      const { token: renamed } = source;
+      const { token } = source;
+      const { [1]: numeric } = source;
+    `);
+    const destructures = ir.objectOperations.filter(
+      ({ kind }) => kind === "destructure",
+    );
+
+    expect(destructures.map(({ propertyName }) => propertyName)).toEqual([
+      "token",
+      "token",
+      "token",
+      "1",
+    ]);
+    expect(
+      destructures.every(({ resolution }) => resolution === "complete"),
+    ).toBe(true);
+    expect(topLevelBinding(ir, "dynamic").value.status).toBe("unknown");
+  });
+
   it("does not project positional argument flow after a spread", () => {
     const ir = analyzeJavaScriptSemantics(`
       function target(first, second, third) { return third; }

@@ -54,6 +54,7 @@ export interface FakeOptions {
     | "outside_policy"
     | "target_detached";
   readonly sessionTimelineEventCount?: number;
+  readonly sessionRedirectResourceType?: "Document" | "Fetch" | "Script";
   readonly closeAfterMethod?: string;
   readonly sensitiveShapes?: boolean;
   readonly cachedResponseBody?: string;

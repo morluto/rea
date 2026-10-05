@@ -251,8 +251,8 @@ const diffPair = (
   const rightFields = new Map(right.fields.map((field) => [field.path, field]));
   const paths = uniqueSorted([...leftFields.keys(), ...rightFields.keys()]);
   return paths.flatMap((path) => {
-    const leftField = leftFields.get(path);
-    const rightField = rightFields.get(path);
+    const leftField = fieldAtPath(left, leftFields, path);
+    const rightField = fieldAtPath(right, rightFields, path);
     const status = fieldChangeStatus({
       leftShape: left,
       rightShape: right,
@@ -280,6 +280,24 @@ const diffPair = (
       }),
     ];
   });
+};
+
+const fieldAtPath = (
+  shape: Shape,
+  fields: ReadonlyMap<string, Field>,
+  path: string,
+): Field | undefined => {
+  const field = fields.get(path);
+  if (field !== undefined) return field;
+  if (!shape.property_coverage.some((coverage) => coverage.path === path))
+    return undefined;
+  return {
+    path,
+    state: "unknown",
+    value: null,
+    reason:
+      "A static container is retained at this path, but no primitive field value is projected.",
+  };
 };
 
 interface FieldChangeInput {

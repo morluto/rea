@@ -44,6 +44,7 @@ describe("web capture diff", () => {
       }),
     );
     if (!captured.ok) throw captured.error;
+    markSectionsComplete(captured.value, ["scripts"]);
     const after = structuredClone(captured.value);
     after.scripts.items = [];
     const request = after.network.requests[0];
@@ -160,6 +161,64 @@ describe("web capture diff", () => {
     expect(result.dimensions.network.status).toBe("unknown");
     expect(result.dimensions.network.total_changes).toBe(0);
   });
+});
+
+describe("web capture diff incomplete inventories", () => {
+  it.each(["truncated_sections", "unavailable_sections"] as const)(
+    "does not infer script additions or removals from %s",
+    async (section) => {
+      const browser = await startFakeCdpBrowser();
+      browsers.push(browser);
+      const captured = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!captured.ok) throw captured.error;
+      const complete = structuredClone(captured.value);
+      markSectionsComplete(complete, ["scripts"]);
+      expect(complete.scripts.items).toHaveLength(1);
+      const incomplete = structuredClone(complete);
+      incomplete.scripts.items = [];
+      incomplete.completeness[section].push("scripts");
+      const compare = (before: typeof complete, after: typeof complete) =>
+        compareWebCaptures(
+          compareWebCapturesInputSchema.parse({
+            before: { inspection: before },
+            after: { inspection: after },
+          }),
+        ).dimensions.scripts;
+
+      expect(compare(complete, incomplete)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+        changes: [],
+      });
+      expect(compare(incomplete, complete)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+        changes: [],
+      });
+      markSectionsComplete(incomplete, ["scripts"]);
+      expect(compare(complete, incomplete).changes).toEqual([
+        expect.objectContaining({ change: "removed" }),
+      ]);
+      expect(compare(incomplete, complete).changes).toEqual([
+        expect.objectContaining({ change: "added" }),
+      ]);
+      const modified = structuredClone(complete);
+      modified.completeness[section].push("scripts");
+      const script = modified.scripts.items[0];
+      if (script === undefined) throw new Error("Missing captured script");
+      script.url = `${script.url}?revision=2`;
+      expect(compare(complete, modified).changes).toEqual([
+        expect.objectContaining({ change: "modified" }),
+      ]);
+    },
+  );
 });
 
 describe("web capture diff semantics and fingerprints", () => {

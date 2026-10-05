@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import type { WorkerModule } from "../../../../src/replay/JavaScriptReplayWorkerTypes.js";
 
 const fixture = async (name: string): Promise<string> =>
   readFile(resolve("tests/fixtures/replay", name), "utf8");
@@ -325,6 +326,218 @@ describe("ESM imports of CommonJS replay factories", () => {
     const result = await runWorker(workerRequest);
     expect(JSON.parse(result.stdout)).toMatchObject({
       left: [{ outcome: "return", value: 42 }],
+    });
+  });
+});
+
+describe("replay ESM graph linking", () => {
+  const esmModule = (
+    alias: string,
+    source: string,
+    dependencies: Record<string, string> = {},
+  ): WorkerModule => ({ alias, source, dependencies, format: "esm" });
+  it.each([
+    {
+      name: "two-module cycle",
+      value: 8,
+      modules: [
+        esmModule(
+          "entry",
+          "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
+          { "./dep": "dep" },
+        ),
+        esmModule(
+          "dep",
+          "import { base } from './entry'; export function value(){ return base()+1; }",
+          { "./entry": "entry" },
+        ),
+      ],
+    },
+    {
+      name: "three-module cycle",
+      value: 8,
+      modules: [
+        esmModule(
+          "entry",
+          "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
+          { "./dep": "dep" },
+        ),
+        esmModule(
+          "dep",
+          "import { value as next } from './third'; export function value(){ return next(); }",
+          { "./third": "third" },
+        ),
+        esmModule(
+          "third",
+          "import { base } from './entry'; export function value(){ return base()+1; }",
+          { "./entry": "entry" },
+        ),
+      ],
+    },
+    {
+      name: "acyclic evaluation order",
+      value: 8,
+      modules: [
+        esmModule(
+          "entry",
+          "import { value } from './dep'; const answer=value+1; export default function(){ return answer; }",
+          { "./dep": "dep" },
+        ),
+        esmModule("dep", "export const value=7;"),
+      ],
+    },
+    {
+      name: "diamond single initialization",
+      value: [1, 1],
+      modules: [
+        esmModule(
+          "entry",
+          "import { a } from './a'; import { b } from './b'; export default function(){ return [a,b]; }",
+          { "./a": "a", "./b": "b" },
+        ),
+        esmModule(
+          "a",
+          "import { value } from './shared'; export const a=value;",
+          {
+            "./shared": "shared",
+          },
+        ),
+        esmModule(
+          "b",
+          "import { value } from './shared'; export const b=value;",
+          {
+            "./shared": "shared",
+          },
+        ),
+        esmModule(
+          "shared",
+          "globalThis.initializations=(globalThis.initializations??0)+1; export const value=globalThis.initializations;",
+        ),
+      ],
+    },
+    {
+      name: "mixed CommonJS factory",
+      value: 8,
+      modules: [
+        esmModule(
+          "entry",
+          "import value from './dep'; export default function(){ return value.answer; }",
+          { "./dep": "dep" },
+        ),
+        {
+          alias: "dep",
+          source: "function(module) { module.exports={answer:8}; }",
+          dependencies: {},
+          format: "commonjs-factory" as const,
+        },
+      ],
+    },
+  ])("links $name before evaluation", async ({ modules, value }) => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules = modules;
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value }],
+    });
+  });
+
+  it("still denies undeclared static imports", async () => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules = [
+      esmModule(
+        "entry",
+        "import './undeclared'; export default function(){ return 1; }",
+      ),
+    ];
+    const result = await runWorker(workerRequest);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [
+        {
+          outcome: "denied",
+          exception: { message: "Undeclared import: ./undeclared" },
+        },
+      ],
+    });
+  });
+});
+
+describe("deterministic replay Date compatibility", () => {
+  it.each([
+    ["new Date(2020, 0, 2).getFullYear()", 2020],
+    ["new Date(2020, 0, 2, 3, 4, 5, 6).getMilliseconds()", 6],
+    ["typeof Date()", "string"],
+    ["Date() === new Date().toString()", true],
+    ["new Date().toISOString()", "2000-01-01T00:00:00.000Z"],
+    ["Date.now()", 946684800000],
+    ["new Date(0).getTime()", 0],
+    [
+      "new Date('2020-01-02T00:00:00Z').toISOString()",
+      "2020-01-02T00:00:00.000Z",
+    ],
+    ["new Date() instanceof Date", true],
+    [
+      "(() => { class ChildDate extends Date {} const date = new ChildDate(2020, 0, 2); return [date instanceof ChildDate, date instanceof Date, date.getFullYear(), date.constructor === ChildDate]; })()",
+      [true, true, 2020, true],
+    ],
+    ["Date.UTC(2020, 0, 2)", 1577923200000],
+  ])("preserves %s", async (expression, expected) => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: `export default function () { return ${expression}; }`,
+    };
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value: expected }],
+    });
+  });
+});
+
+describe("replay array projection", () => {
+  it.each([
+    ["Array(3)", [null, null, null]],
+    [
+      "(() => { const value = Array(3); value[1] = 42; return value; })()",
+      [null, 42, null],
+    ],
+    ["[1, null, 3]", [1, null, 3]],
+    ["[]", []],
+  ])("preserves JSON array positions for %s", async (expression, expected) => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: `export default function () { return ${expression}; }`,
+    };
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value: expected }],
+    });
+  });
+
+  it("accounts for holes in the existing result node budget", async () => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: "export default function () { return Array(4); }",
+    };
+    workerRequest.limits.resultNodes = 3;
+    const result = await runWorker(workerRequest);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [
+        {
+          outcome: "serialization_error",
+          exception: { message: "Replay result projection limit exceeded" },
+        },
+      ],
     });
   });
 });
