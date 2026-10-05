@@ -14,7 +14,10 @@ export interface RuntimeReconciliationEntity {
   readonly node: ApplicationNode;
   readonly capture: ParsedRuntimeCapture;
   readonly runtimeKey: string;
-  readonly location: { readonly kind: "file" | "url"; readonly value: string };
+  readonly location: {
+    readonly kind: "file" | "url" | "unresolved";
+    readonly value: string;
+  };
   readonly frameKey: string | null;
   readonly sourceSha256: string | null;
   readonly staticKind: "renderer" | "javascript" | "worker" | "service-worker";
@@ -73,9 +76,14 @@ const targetEntity = (
 ): RuntimeReconciliationEntity => {
   const target = capture.inspection.target;
   const location =
-    "url" in target
-      ? ({ kind: "url", value: target.url } as const)
-      : ({ kind: "file", value: target.file_path } as const);
+    "unresolved_location" in target
+      ? ({
+          kind: "unresolved",
+          value: target.unresolved_location.reported_url,
+        } as const)
+      : "url" in target
+        ? ({ kind: "url", value: target.url } as const)
+        : ({ kind: "file", value: target.file_path } as const);
   return runtimeEntity(capture, {
     kind: "target",
     nodeKind: "target",
@@ -89,7 +97,13 @@ const targetEntity = (
     label: target.title,
     properties: {
       runtime_type: target.type,
-      location: location.value,
+      ...(location.kind === "unresolved"
+        ? {
+            reported_url: location.value,
+            location_kind: "unresolved",
+            location_reason: "unverifiable-file-location",
+          }
+        : { location: location.value }),
       attached: target.attached,
     },
     section: "target",

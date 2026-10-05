@@ -27,6 +27,38 @@ array.
 
 For the MCP follow-up call, pass the same literal-loopback endpoint and the selected target ID to `observe_javascript_runtime`. REA rediscovers targets and validates the ID against the live endpoint before observation.
 
+### Discovery file locations
+
+Node's `/json/list` reports a best-effort pathname prefixed with `file://`,
+without URI encoding. On POSIX, REA interprets unambiguous paths literally,
+including `#` and `%` in filenames. Node also replaces backslashes and double
+quotes with underscores. That transformation cannot be reversed reliably:
+an underscore may already be part of the original filename.
+
+Windows paths, ambiguous underscore paths, and local discovery paths that
+cannot be verified remain eligible by their endpoint and exact target ID.
+Their target location preserves the reported value:
+
+```json
+{
+  "kind": "unresolved",
+  "reported_url": "file://C:_tools_entry.js",
+  "reason": "unverifiable-file-location"
+}
+```
+
+This location does not claim that a file exists or authorize reading its
+contents. Listing remains HTTP-only. Observation resolves loaded script
+locations independently from `Debugger.scriptParsed` file URLs, preserving
+the existing checks for local files and encoded separators. Unsupported
+schemes, remote file hosts, and a bare `file://` remain excluded. These Node
+discovery rules do not apply to page targets or other runtime products.
+
+Reconciliation retains an unresolved `target_location` object and reports
+`runtime-location-unresolved` with unknown confidence for that target. It
+does not derive a static match from the reported pathname; verified loaded
+script locations remain available for independent matching.
+
 ## Passive protocol boundary
 
 The provider sends exactly two protocol commands:

@@ -11,6 +11,7 @@ interface InspectorCommand {
 interface FakeV8InspectorOptions {
   readonly targetUrl: string;
   readonly targetType?: "node" | "page";
+  readonly runtimeProduct?: string;
   readonly scriptUrls?: readonly string[];
   readonly scriptHashes?: readonly string[];
   readonly additionalTargetUrl?: string;
@@ -39,7 +40,7 @@ export const startFakeV8Inspector = async (
     if (request.url === "/json/version") {
       response.end(
         JSON.stringify({
-          Browser: "node.js/v24.4.1",
+          Browser: options.runtimeProduct ?? "node.js/v24.4.1",
           "Protocol-Version": "1.3",
           "V8-Version": "13.6",
         }),

@@ -90,7 +90,10 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
       const allowed: AuthorizedV8InspectorTarget[] = [];
       const excluded = createInspectorExclusionCounts();
       for (const target of discovery.targets) {
-        const decision = await authorizeRuntimeTargetLocation(target.url);
+        const decision = await authorizeRuntimeTargetLocation(target.url, {
+          type: target.type,
+          product: discovery.runtime.product,
+        });
         if (!decision.allowed) {
           excluded[decision.reason] += 1;
           continue;
@@ -128,7 +131,11 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         "observe_javascript_runtime",
         options.signal,
       );
-      const target = await authorizedTarget(discovery.targets, input);
+      const target = await authorizedTarget(
+        discovery.targets,
+        input,
+        discovery.runtime.product,
+      );
       if (input.runtime_kind !== undefined)
         assertRuntimeKind(target, input.runtime_kind);
       connection = await CdpConnection.connect(
@@ -172,6 +179,7 @@ const projectTarget = (target: AuthorizedV8InspectorTarget) => ({
 const authorizedTarget = async (
   targets: readonly V8InspectorTarget[],
   input: ObserveJavaScriptRuntimeInput,
+  product: string,
 ): Promise<AuthorizedV8InspectorTarget> => {
   const target = targets.find(({ id }) => id === input.target_id);
   if (target === undefined)
@@ -179,7 +187,10 @@ const authorizedTarget = async (
       "observe_javascript_runtime",
       "target_not_found",
     );
-  const decision = await authorizeRuntimeTargetLocation(target.url);
+  const decision = await authorizeRuntimeTargetLocation(target.url, {
+    type: target.type,
+    product,
+  });
   if (
     target.attached ||
     !decision.allowed ||

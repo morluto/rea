@@ -109,6 +109,13 @@ fixture. It checks the recovered case values against the source cases and
 requires unresolved table bounds or case mappings to remain visible as
 residual unknowns.
 
+`npm run verify:inspector` requires the supported Node.js runtime and installed
+REA dependencies. CI runs it on Linux and Windows. It starts owned loopback
+Node Inspector fixtures and verifies discovery and passive observation through
+the CLI and stdio MCP, including special filenames, unresolved discovery
+locations, and independently resolved loaded scripts. Double-quote filenames
+are tested on POSIX only because Windows does not support them.
+
 ## Apple Interface Builder archives
 
 `npm run verify:interface-builder` compiles the source-owned AppKit XIB into a

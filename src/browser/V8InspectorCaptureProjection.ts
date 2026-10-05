@@ -24,7 +24,8 @@ export const createInspectorExclusionCounts = (): Record<
 export const describeInspectorTargetLimitations = (): string[] => [
   "REA attaches to an already-running exact target and never launches, resumes, evaluates, pauses, or mutates it.",
   "Only Runtime.enable and Debugger.enable are sent; source text, object values, EventEmitter activity, and Electron IPC are not inspected.",
-  "Target IDs and locations are authorized, but the Inspector protocol does not authenticate an operating-system process ID or Electron role.",
+  "The selected endpoint and target ID authorize observation; discovery file locations can remain unresolved and do not prove filesystem identity.",
+  "Node discovery reports a best-effort pathname rather than an encoded file URL; lossy Windows paths and ambiguous underscores are preserved without guessing a file path.",
   "Every target exposed by the selected Inspector endpoint is eligible for observation; target IDs and locations are not authenticated as operating-system process identity.",
   "No runtime graph depth is traversed because passive Inspector events do not establish require/import caller edges.",
 ];
@@ -120,6 +121,11 @@ export const finalizeInspectorCapture = async ({
       "script unload events",
     ],
     unknowns: [
+      ...(target.location.kind === "unresolved"
+        ? [
+            "The discovery-reported file location cannot be verified; loaded script locations are resolved independently from Debugger.scriptParsed.",
+          ]
+        : []),
       "Scripts collected before attachment may have been garbage-collected and therefore omitted.",
       "A bounded observation window cannot establish that an unobserved script or behavior never occurs.",
       "The declared Node/Electron process role is not authenticated by the Inspector protocol.",

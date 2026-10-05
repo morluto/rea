@@ -64,11 +64,27 @@ export type JavaScriptRuntimeLocation = z.infer<
   typeof javascriptRuntimeLocationSchema
 >;
 
+/** Discovery metadata can identify an endpoint target without verifying its file location. */
+export const javascriptRuntimeUnresolvedLocationSchema = z.strictObject({
+  kind: z.literal("unresolved"),
+  reported_url: z.string().min(1),
+  reason: z.literal("unverifiable-file-location"),
+});
+
+/** Verified locations and explicitly unresolved discovery metadata. */
+export const javascriptRuntimeTargetLocationSchema = z.union([
+  javascriptRuntimeLocationSchema,
+  javascriptRuntimeUnresolvedLocationSchema,
+]);
+export type JavaScriptRuntimeTargetLocation = z.infer<
+  typeof javascriptRuntimeTargetLocationSchema
+>;
+
 const javascriptRuntimeTargetSchema = z.strictObject({
   target_id: z.string().min(1),
   protocol_type: z.string().min(1),
   attached: z.boolean(),
-  location: javascriptRuntimeLocationSchema,
+  location: javascriptRuntimeTargetLocationSchema,
 });
 
 /** Complete V8 Inspector target inventory exposed by the selected endpoint. */

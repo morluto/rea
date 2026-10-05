@@ -281,10 +281,14 @@ jobs:
           retention-days: 30
 
   javascript-runtime-observation:
-    name: JavaScript runtime observation
+    name: JavaScript runtime observation (${{ matrix.os }})
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

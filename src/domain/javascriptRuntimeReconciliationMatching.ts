@@ -66,6 +66,14 @@ const reconcileEntity = (
   index: CandidateIndex,
   layers: readonly ParsedStaticLayer[],
 ): EvaluatedMatch => {
+  if (entity.location.kind === "unresolved")
+    return unresolved(entity, {
+      status: "unknown",
+      basis: "none",
+      confidence: "unknown",
+      reason: "runtime-location-unresolved",
+      candidates: [],
+    });
   const locations = candidatesWithLocation(entity, index, layers);
   if (entity.sourceSha256 !== null) {
     const content =

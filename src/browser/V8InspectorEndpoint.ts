@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type {
   JavaScriptRuntimeTargetList,
-  JavaScriptRuntimeLocation,
+  JavaScriptRuntimeTargetLocation,
 } from "../domain/javascriptRuntimeObservation.js";
 import {
   BrowserObservationError,
@@ -111,5 +111,5 @@ const validatedInspectorWebSocket = (
 
 /** Authorized target plus its durable location. */
 export interface AuthorizedV8InspectorTarget extends V8InspectorTarget {
-  readonly location: JavaScriptRuntimeLocation;
+  readonly location: JavaScriptRuntimeTargetLocation;
 }

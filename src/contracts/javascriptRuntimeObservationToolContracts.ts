@@ -16,7 +16,7 @@ export const JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS = [
     name: "list_javascript_runtime_targets",
     ...toolContractMetadata("list_javascript_runtime_targets"),
     description:
-      "List every attachable Node/Electron V8 Inspector target from an explicit literal-loopback endpoint. Every returned target and script location exposed by that Inspector endpoint is eligible for Evidence.",
+      "List every eligible Node/Electron V8 Inspector target from an explicit literal-loopback endpoint. Node discovery file locations that cannot be verified are preserved as unresolved reported URLs; they do not prove filesystem identity. Listing does not attach to targets.",
     kind: "runtime-provider",
     inputSchema: listJavaScriptRuntimeTargetsInputSchema,
     outputSchema: evidenceResultOf(javascriptRuntimeTargetListSchema),
@@ -33,7 +33,7 @@ export const JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS = [
     name: "observe_javascript_runtime",
     ...toolContractMetadata("observe_javascript_runtime"),
     description:
-      "Attach passively to one Node/Electron V8 Inspector target by supplying its loopback Inspector endpoint and target ID. The provider rechecks that the target currently exists at that endpoint and is an attachable file or URL target. Captures Debugger.scriptParsed and Runtime execution-context events. REA never evaluates, pauses, resumes, reads source, or instruments the target; require/import edges, EventEmitter activity, and Electron IPC remain explicit unknowns. Reconcile the result with static Application Graph Evidence using reconcile_javascript_runtime. The selected endpoint exposes every target it serves to this tool.",
+      "Attach passively to one Node/Electron V8 Inspector target by supplying its loopback Inspector endpoint and target ID. The provider rechecks target presence and attachability; a Node discovery file location may remain unresolved. Loaded script locations are validated independently from Debugger.scriptParsed. Captures script and Runtime execution-context metadata. REA never evaluates, pauses, resumes, reads source, or instruments the target; require/import edges, EventEmitter activity, and Electron IPC remain explicit unknowns. Reconcile the result with static Application Graph Evidence using reconcile_javascript_runtime. The selected endpoint exposes every target it serves to this tool.",
     kind: "runtime-provider",
     inputSchema: observeJavaScriptRuntimeInputSchema,
     outputSchema: evidenceResultOf(javascriptRuntimeObservationSchema),

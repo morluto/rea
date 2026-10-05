@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 
 import { evidenceSchema } from "./evidence.js";
+import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeObservation.js";
 import {
   compareCodePoints,
   javascriptApplicationGraphSchema,
@@ -152,7 +153,10 @@ const captureSummarySchema = z.strictObject({
   kind: z.enum(["browser", "electron", "v8-inspector", "electron-active"]),
   target_node_id: nodeIdSchema,
   target_key: boundedTextSchema,
-  target_location: z.string().min(1),
+  target_location: z
+    .string()
+    .min(1)
+    .or(javascriptRuntimeUnresolvedLocationSchema),
   frames: z.number().int().min(0),
   scripts: z.number().int().min(0),
   workers: z.number().int().min(0),
@@ -167,6 +171,7 @@ const reconciliationReasonSchema = z.enum([
   "captured-content-disagrees-with-static-location",
   "no-static-content-match",
   "no-authorized-location-mapping",
+  "runtime-location-unresolved",
   "runtime-frame-unattributed",
   "static-or-runtime-coverage-incomplete",
   "reconciliation-limit-reached",

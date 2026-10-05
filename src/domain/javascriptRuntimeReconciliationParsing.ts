@@ -20,6 +20,7 @@ import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeKindSchema,
   type JavaScriptRuntimeObservation,
+  type JavaScriptRuntimeLocation,
 } from "./javascriptRuntimeObservation.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import {
@@ -67,6 +68,16 @@ interface NormalizedV8Inspection {
         readonly title: string;
         readonly attached: boolean;
         readonly url: string;
+      }
+    | {
+        readonly target_id: string;
+        readonly type: string;
+        readonly title: string;
+        readonly attached: boolean;
+        readonly unresolved_location: Extract<
+          JavaScriptRuntimeObservation["target"]["location"],
+          { kind: "unresolved" }
+        >;
       };
   readonly frames: readonly [];
   readonly scripts: {
@@ -305,7 +316,9 @@ const normalizeV8Inspection = (
     type: result.target.protocol_type,
     title: result.target.runtime_kind,
     attached: result.target.attached,
-    ...runtimeLocation(result.target.location),
+    ...(result.target.location.kind === "unresolved"
+      ? { unresolved_location: result.target.location }
+      : runtimeLocation(result.target.location)),
   },
   frames: [],
   scripts: {
@@ -359,7 +372,7 @@ const normalizeV8Inspection = (
 });
 
 const runtimeLocation = (
-  location: JavaScriptRuntimeObservation["target"]["location"],
+  location: JavaScriptRuntimeLocation,
 ): { readonly file_path: string } | { readonly url: string } => {
   if (location.kind === "file") return { file_path: location.file_path };
   if (location.kind === "url") return { url: location.sanitized_url };
