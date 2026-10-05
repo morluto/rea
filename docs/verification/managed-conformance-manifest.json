@@ -1,5 +1,5 @@
 {
-  "manifest_id": "ecm_d8e34c1218d199b3639830b184f02f87642c42aa9e8e8e2474f8daa60e1645ac",
+  "manifest_id": "ecm_c47e33ff69b099583ff6a3b19cb06b602040ecc735351cbac21b897501c4cffe",
   "verifier": {
     "id": "rea-managed-conformance",
     "version": "1"
@@ -13,7 +13,7 @@
   "skill_digests": [
     {
       "skill_id": "reverse-engineer-anything",
-      "sha256": "7d767925a840318504e9f1712a6ecc4a985cd7a08f00bffe36105b75481a54c2"
+      "sha256": "54490266ef46ed8e57354dbca8cc1ad74ab6b7f21d38116bebfc87a04bfb55a5"
     }
   ],
   "claims": [
@@ -163,20 +163,6 @@
       },
       "artifact_sha256s": [
         "cdc11ec7fd0f392e43b9b23971cb41ec49fd0a997fc33c24fcc553cd4386ae37"
-      ],
-      "provider": {
-        "id": "rea-managed-conformance",
-        "version": "1"
-      }
-    },
-    {
-      "claim_id": "managed.runtime-correlation-admission-plan",
-      "scenario": {
-        "id": "runtime-correlation-admission-plan",
-        "version": 1
-      },
-      "artifact_sha256s": [
-        "cead4cc99733e4e56a5fd0cec8a0813bbc24e249aa72a10eca4c47ee3b0e129d"
       ],
       "provider": {
         "id": "rea-managed-conformance",

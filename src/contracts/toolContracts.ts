@@ -31,7 +31,6 @@ import {
   processScenarioSchema,
   reconstructionVerificationInputSchema,
   recordUnknownInputSchema,
-  replayMachineRunInputSchema,
   getEvidenceBundleInputSchema,
   staticRuntimeCorrelationInputSchema,
   updateUnknownInputSchema,
@@ -359,11 +358,6 @@ export const ENHANCED_TOOL_CONTRACTS = [
     enhancedInputSchemas.trace_feature,
   ),
   enhanced(
-    "find_code_for_string",
-    "Resolve one literal string query across analyzed string entries, xrefs, and truthful containing-procedure candidates. Returns observations, operation count, and residual unknowns; it never infers reference kinds or runtime reachability.",
-    enhancedInputSchemas.find_code_for_string,
-  ),
-  enhanced(
     "trace_call_path",
     "Trace direct callers or callees from one exact procedure address until the graph is exhausted or the optional goal is reached. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns; unresolved indirect calls remain unknown.",
     enhancedInputSchemas.trace_call_path,
@@ -479,11 +473,6 @@ export const SESSION_TOOL_CONTRACTS = [
     verifyUnknownResolutionInputSchema,
   ),
   session(
-    "run_replay_machine",
-    "Evaluate ordered HTTP and WebSocket events directly against one validated finite replay machine without opening sockets or launching a target. Returns every decision, a capture-value-free transition journal, one redacted action table entry per used transition, captured aliases, final state, and exact configured and consumed limits.",
-    replayMachineRunInputSchema,
-  ),
-  session(
     "get_evidence_bundle",
     "Return every Evidence record and residual unknown currently retained by this session as one inline bundle for direct inspection or follow-up workflows.",
     getEvidenceBundleInputSchema,
@@ -514,3 +503,21 @@ export const TOOL_CONTRACTS = [
   ...APPLICATION_TOOL_CONTRACTS,
   ...SESSION_TOOL_CONTRACTS,
 ] as const;
+
+/** Resolve a public contract by name while retaining its exact schema types. */
+export const toolContract = <
+  Name extends (typeof TOOL_CONTRACTS)[number]["name"],
+>(
+  name: Name,
+): Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }> => {
+  const contract = TOOL_CONTRACTS.find(
+    (
+      candidate,
+    ): candidate is Extract<
+      (typeof TOOL_CONTRACTS)[number],
+      { readonly name: Name }
+    > => candidate.name === name,
+  );
+  if (contract === undefined) throw new Error(`Missing tool contract: ${name}`);
+  return contract;
+};

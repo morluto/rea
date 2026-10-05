@@ -4,8 +4,8 @@ Accepted decisions describe the architecture that implementation PRs must
 follow. Acceptance does not by itself mean the behavior is shipped; each record
 states its implementation status separately.
 
-| ADR                                                                                                                | Status   | Implementation                                                                                              |
-| ------------------------------------------------------------------------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------- |
-| [0001: Provider selection and analysis profiles](0001-provider-selection-and-analysis-profiles.md)                 | Accepted | Provider selection and 22 Ghidra operations shipped on Linux/macOS; Windows analysis blocked                |
-| [0002: Controlled JavaScript replay authority and sandbox policy](0002-controlled-replay-authority-and-sandbox.md) | Accepted | Linux x86_64 extracted-module replay shipped                                                                |
-| [0003: Managed-code evidence and provider boundary](0003-managed-code-evidence-and-provider-boundary.md)           | Accepted | Eight static-analysis and runtime-planning tools shipped; native-body mapping and runtime execution planned |
+| ADR                                                                                                                | Status               | Implementation                                                                               |
+| ------------------------------------------------------------------------------------------------------------------ | -------------------- | -------------------------------------------------------------------------------------------- |
+| [0001: Provider selection and analysis profiles](0001-provider-selection-and-analysis-profiles.md)                 | Accepted             | Provider selection and 22 Ghidra operations shipped on Linux/macOS; Windows analysis blocked |
+| [0002: Controlled JavaScript replay authority and sandbox policy](0002-controlled-replay-authority-and-sandbox.md) | Superseded           | Historical design; the controlled JavaScript replay tool was removed                         |
+| [0003: Managed-code evidence and provider boundary](0003-managed-code-evidence-and-provider-boundary.md)           | Partially superseded | Seven static managed tools remain; runtime planning removed                                  |

@@ -1,23 +1,13 @@
 import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
-import {
-  processReactiveScenarioSchema,
-  type ProcessReactiveScenario,
-} from "./processReactiveScenario.js";
-import { replayMachineSchema } from "./replayMachine.js";
 
 const positiveBudget = z.number().int().safe().positive();
 const timedEventBase = { at_ms: z.number().int().safe().nonnegative() };
 const environmentName = z
   .string()
   .regex(/^[^=\0]+$/u, "Environment names cannot contain '=' or NUL");
-const reservedEnvironment = new Set([
-  "REA_PROCESS_RUN_ID",
-  "REA_REPLAY_HTTP_URL",
-  "REA_REPLAY_WEBSOCKET_URL",
-  "REA_SHIM_LEDGER_URL",
-]);
+const reservedEnvironment = new Set(["REA_PROCESS_RUN_ID"]);
 export const normalizationSchema = z.object({
   paths: z.boolean(),
   pids: z.boolean(),
@@ -30,13 +20,6 @@ export const normalizationSchema = z.object({
     }),
   ),
 });
-const checkpointNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/u);
-const commandNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
-const outputChunkSchema = z.object({
-  at_ms: z.number().int().safe().nonnegative(),
-  stream: z.enum(["stdout", "stderr"]),
-  data: z.string(),
-});
 
 /** Compute a canonical SHA-256 commitment independent of object key order. */
 export const digestProcessCommitment = (value: unknown): string => {
@@ -45,29 +28,6 @@ export const digestProcessCommitment = (value: unknown): string => {
     throw new TypeError("Process capture commitment is not canonical JSON");
   return createHash("sha256").update(serialized).digest("hex");
 };
-
-const reactiveScenarioCommitment = (
-  scenario: ProcessReactiveScenario | null,
-): Readonly<Record<string, unknown>> | null =>
-  scenario === null
-    ? null
-    : {
-        ...scenario,
-        states: scenario.states.map((state) => ({
-          ...state,
-          on: state.on.map((transition) => ({
-            ...transition,
-            actions: transition.actions.map((action) =>
-              action.type === "send_input" && action.sensitive
-                ? {
-                    ...action,
-                    data: `<redacted-input:${String(Buffer.byteLength(action.data))}-bytes>`,
-                  }
-                : action,
-            ),
-          })),
-        })),
-      };
 
 const committedScenarioEvents = (
   events: ProcessScenario["events"],
@@ -91,7 +51,6 @@ export const processScenarioCommitment = (
 ): Readonly<Record<string, unknown>> => ({
   ...scenario,
   events: committedScenarioEvents(scenario.events, true),
-  reactive: reactiveScenarioCommitment(scenario.reactive),
   executable_sha256: executableSha256 ?? null,
 });
 
@@ -104,7 +63,6 @@ export const processComparisonContract = (
   ambient_environment: "unknown",
   filesystem_observation_paths: scenario.filesystem_observation_paths,
   terminal: scenario.terminal,
-  checkpoints: scenario.checkpoints,
   // Input bytes are intentionally absent from compatibility identity. Their
   // redacted observations remain unknown, so equal commitments never imply
   // that two secret values were the same.
@@ -114,9 +72,6 @@ export const processComparisonContract = (
   settle_ms: scenario.settle_ms,
   limits: scenario.limits,
   normalization: scenario.normalization,
-  command_shims: scenario.command_shims,
-  replay: scenario.replay,
-  reactive: reactiveScenarioCommitment(scenario.reactive),
 });
 
 /**
@@ -137,52 +92,6 @@ export const processScenarioSchema = z
         scrollback: z.number().int().min(0).default(1_000),
       })
       .default({ columns: 80, rows: 24, scrollback: 1_000 }),
-    checkpoints: z
-      .array(
-        z.object({
-          name: checkpointNameSchema,
-          trigger: z.discriminatedUnion("type", [
-            z.object({
-              type: z.literal("time"),
-              at_ms: z.number().int().safe().nonnegative(),
-            }),
-            z.object({
-              type: z.literal("terminal_literal"),
-              value: z.string().min(1),
-              occurrence: positiveBudget.default(1),
-            }),
-            z.object({ type: z.literal("root_exit") }),
-            z.object({ type: z.literal("settled") }),
-          ]),
-        }),
-      )
-      .default([]),
-    command_shims: z
-      .array(
-        z.object({
-          name: commandNameSchema,
-          routes: z
-            .array(
-              z.object({
-                arguments: z.array(z.string()),
-                outputs: z.array(outputChunkSchema).default([]),
-                termination: z.discriminatedUnion("type", [
-                  z.object({
-                    type: z.literal("exit"),
-                    code: z.number().int().min(0).max(255),
-                  }),
-                  z.object({
-                    type: z.literal("signal"),
-                    signal: z.enum(["SIGINT", "SIGTERM", "SIGKILL"]),
-                  }),
-                ]),
-                max_calls: positiveBudget.default(1),
-              }),
-            )
-            .min(1),
-        }),
-      )
-      .default([]),
     events: z
       .array(
         z.discriminatedUnion("type", [
@@ -215,9 +124,6 @@ export const processScenarioSchema = z
         files: positiveBudget.default(10_000),
         file_bytes: positiveBudget.default(10_000_000),
         processes: positiveBudget.default(1_000),
-        protocol_events: positiveBudget.default(10_000),
-        protocol_body_bytes: positiveBudget.default(1_000_000),
-        connections: positiveBudget.default(100),
         filesystem_depth: z.number().int().safe().nonnegative().default(16),
       })
       .strict()
@@ -226,9 +132,6 @@ export const processScenarioSchema = z
         files: 10_000,
         file_bytes: 10_000_000,
         processes: 1_000,
-        protocol_events: 10_000,
-        protocol_body_bytes: 1_000_000,
-        connections: 100,
         filesystem_depth: 16,
       }),
     normalization: z
@@ -253,47 +156,6 @@ export const processScenarioSchema = z
         time_bucket_ms: 10,
         patterns: [],
       }),
-    replay: z
-      .object({
-        machine: replayMachineSchema.nullable().default(null),
-        http: z
-          .array(
-            z.object({
-              method: z.string(),
-              path: z.string().startsWith("/"),
-              status: z.number().int().min(100).max(599),
-              body: z.string(),
-              request_headers: z.record(z.string(), z.string()).default({}),
-              request_body: z.string().optional(),
-              response_headers: z.record(z.string(), z.string()).default({}),
-              delay_ms: z.number().int().safe().nonnegative().default(0),
-              disconnect: z.boolean().default(false),
-              max_calls: positiveBudget.default(1),
-            }),
-          )
-          .default([]),
-        websocket_messages: z.array(z.string()).default([]),
-        websocket_connections: z
-          .array(
-            z.object({
-              messages: z.array(
-                z.object({
-                  data: z.string(),
-                  delay_ms: z.number().int().safe().nonnegative().default(0),
-                }),
-              ),
-              disconnect_after: z.boolean().default(false),
-            }),
-          )
-          .default([]),
-      })
-      .default({
-        machine: null,
-        http: [],
-        websocket_messages: [],
-        websocket_connections: [],
-      }),
-    reactive: processReactiveScenarioSchema.nullable().default(null),
   })
   .strict()
   .superRefine((scenario, context) => {
@@ -327,40 +189,6 @@ export const processScenarioSchema = z
         });
       }
     }
-    const checkpointNames = scenario.checkpoints.map(({ name }) => name);
-    for (const [index, name] of checkpointNames.entries()) {
-      if (name === "before" || name === "after_settlement")
-        context.addIssue({
-          code: "custom",
-          message: "checkpoint name is reserved by the capture lifecycle",
-          path: ["checkpoints", index, "name"],
-        });
-    }
-    if (new Set(checkpointNames).size !== checkpointNames.length)
-      context.addIssue({
-        code: "custom",
-        message: "checkpoint names must be unique",
-        path: ["checkpoints"],
-      });
-    const shimNames = scenario.command_shims.map(({ name }) => name);
-    if (new Set(shimNames).size !== shimNames.length)
-      context.addIssue({
-        code: "custom",
-        message: "command shim names must be unique",
-        path: ["command_shims"],
-      });
-    if (
-      scenario.replay.machine !== null &&
-      (scenario.replay.http.length > 0 ||
-        scenario.replay.websocket_messages.length > 0 ||
-        scenario.replay.websocket_connections.length > 0)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "a replay machine cannot be combined with static HTTP or WebSocket scripts",
-        path: ["replay"],
-      });
   });
 
 const eventsOutOfOrder = (

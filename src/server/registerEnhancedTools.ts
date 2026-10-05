@@ -14,10 +14,7 @@ import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
 } from "../application/InvestigationProviders.js";
-import {
-  ENHANCED_TOOL_CONTRACTS,
-  type ToolContract,
-} from "../contracts/toolContracts.js";
+import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { UnknownRegistryError } from "../domain/errors.js";
@@ -47,23 +44,22 @@ export const registerEnhancedTools = (
   analysis: AnalysisOperationPort,
   options: EnhancedToolRegistration,
 ): void => {
-  const [
-    nativeDispatchMetadata,
-    objcClasses,
-    objcProtocols,
-    batchDecompile,
-    callGraph,
-    swiftTypes,
-    xrefsToName,
-    binaryOverview,
-    analyzeFunction,
-    inspectNativeApi,
-    traceFeature,
-    codeForString,
-    traceCallPath,
-    traceNativeUiAction,
-    traceNativeValues,
-  ] = ENHANCED_TOOL_CONTRACTS;
+  const nativeDispatchMetadata = toolContract(
+    "inspect_native_dispatch_metadata",
+  );
+  const objcClasses = toolContract("get_objc_classes");
+  const objcProtocols = toolContract("get_objc_protocols");
+  const batchDecompile = toolContract("batch_decompile");
+  const callGraph = toolContract("get_call_graph");
+  const swiftTypes = toolContract("analyze_swift_types");
+  const xrefsToName = toolContract("find_xrefs_to_name");
+  const binaryOverview = toolContract("binary_overview");
+  const analyzeFunction = toolContract("analyze_function");
+  const inspectNativeApi = toolContract("inspect_native_api");
+  const traceFeature = toolContract("trace_feature");
+  const traceCallPath = toolContract("trace_call_path");
+  const traceNativeUiAction = toolContract("trace_native_ui_action");
+  const traceNativeValues = toolContract("trace_native_values");
   server.registerTool(
     traceNativeValues.name,
     toolRegistrationOptions(traceNativeValues),
@@ -169,15 +165,6 @@ export const registerEnhancedTools = (
     (input, context) =>
       executeEnhancedTool(analysis, options, traceFeature, {
         validatedCall: { name: "trace_feature", input },
-        context,
-      }),
-  );
-  server.registerTool(
-    codeForString.name,
-    toolRegistrationOptions(codeForString),
-    (input, context) =>
-      executeEnhancedTool(analysis, options, codeForString, {
-        validatedCall: { name: "find_code_for_string", input },
         context,
       }),
   );
@@ -298,12 +285,9 @@ const recordWorkflowUnknowns = ({
   | ReturnType<BinarySessionPort["recordUnknown"]>
   | { readonly ok: true; readonly value: null } => {
   if (
-    ![
-      "trace_feature",
-      "find_code_for_string",
-      "trace_call_path",
-      "inspect_native_api",
-    ].includes(name) ||
+    !["trace_feature", "trace_call_path", "inspect_native_api"].includes(
+      name,
+    ) ||
     recordUnknown === undefined ||
     typeof result !== "object" ||
     result === null ||

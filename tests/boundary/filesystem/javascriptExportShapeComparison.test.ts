@@ -64,11 +64,9 @@ describe("JavaScript export return-shape comparison", () => {
       unpaired_left_variants: 0,
       unpaired_right_variants: 0,
     });
-    expect(first.runtime_validation).toEqual({
-      recommended_tool: "run_controlled_replay",
-      automatically_started: false,
-      required_for: "runtime-semantics",
-    });
+    expect(first.limitations).toContain(
+      "This static comparison cannot establish runtime semantics; run behavioral probes directly against the relevant application versions when that evidence is required.",
+    );
   });
 
   it("keeps additions unknown when spread coverage is incomplete", async () => {

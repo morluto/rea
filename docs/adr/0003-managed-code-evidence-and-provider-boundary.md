@@ -1,11 +1,10 @@
 # ADR-0003: Managed-code evidence and provider boundary
 
-> Historical design note: The admission record described below remains a
-> plan-only output. The separate administrator and per-call approval workflow
-> was removed; current tool requests directly declare their target and
-> lifecycle.
+> Historical design record: The non-executing runtime-correlation planning
+> tool described in earlier revisions was removed. This ADR's current
+> implementation status below covers only the static managed tools that ship.
 
-- Status: Accepted
+- Status: Superseded for runtime planning; static evidence boundary remains in force
 - Date: 2026-07-16
 - Implementation status: Read-only PE/CLI triage and exact identity are shipped
   through `inspect_managed_artifact` / `rea inspect-managed-artifact`. Bounded
@@ -24,11 +23,8 @@ inspect-managed-members` provides CLI parity. Static member comparison and build
   addresses. Decompiler reconstruction import is
   shipped through `import_managed_reconstruction` /
   `rea import-managed-reconstruction`; it records user-supplied C#/IL/pseudocode
-  as analyst inference only after exact static member locks match. Non-executing
-  runtime-correlation planning is shipped through
-  `plan_managed_runtime_correlation` / `rea plan-managed-runtime-correlation`;
-  it does not probe a runtime, establish confinement, attach, load, debug,
-  reflect, instrument, invoke, or execute target code. Managed static graph
+  as analyst inference only after exact static member locks match. Managed
+  inspection does not execute assemblies or observe CLR internals. Managed static graph
   projection is shipped through
   `project_managed_application_graph` /
   `rea project-managed-application-graph`; it projects authenticated managed
@@ -56,7 +52,7 @@ makes names especially weak while tokens remain coordinates in only one build.
 REA already separates one selected deep native provider from disjoint auxiliary
 providers under [ADR-0001](0001-provider-selection-and-analysis-profiles.md).
 It also separates static evidence, passive observation, process capture, and
-controlled replay authorities. Managed analysis must fit those boundaries
+interactive observation authorities. Managed analysis must fit those boundaries
 without requiring a CLR to inspect an artifact, loading target code into the
 REA process, or treating a managed token as a native address.
 
@@ -362,22 +358,13 @@ emit full IL, decompiled source, runtime logs, user data, credentials, or
 service/account material. No proprietary binary, hash-locked application
 manifest, or derived dump is committed to REA.
 
-### 8. Keep runtime correlation planning distinct from execution
+### 8. Keep runtime behavior separate from static managed analysis
 
-Runtime-correlation planning records requested effects and bounds without
-probing the runtime or establishing confinement. It binds to the exact artifact
-SHA-256, MVID, method signature, and CIL/body shape observed by the static
-path, and records that no target code ran. A future executor requires its own
-provider and threat model before any effect can occur.
-
-Runtime admission must additionally validate host OS, CLR family, architecture,
-and supported build/tool versions; bound time, threads, outputs, UI and network
-effects; avoid real services and accounts; and own all created processes and
-artifacts through complete cleanup. Reflection-only loading is still a CLR load
-and is not a substitute for the static byte parser.
-
-Runtime execution is intentionally outside the current managed-code track and
-requires its own threat model and admission decision.
+No managed runtime planning or execution tool ships. Managed inspection does
+not execute assemblies or establish which methods ran. Where supported, direct
+process capture can record target-level inputs and outputs, but it does not
+prove CLR method execution or resolution. Internal managed behavior remains
+unknown until independently observed with suitable runtime evidence.
 
 ## Public contract consequences
 
@@ -444,9 +431,7 @@ or development-only oracles.
 5. Add source-built, pinned real-tool, package, CLI, and MCP conformance.
    Source-owned conformance is shipped; pinned external real-tool checks remain
    planned.
-6. Add non-executing runtime-correlation planning. Shipped; runtime execution
-   and confinement remain planned.
-7. Project authenticated managed static Evidence into the application graph.
+6. Project authenticated managed static Evidence into the application graph.
    Shipped.
 
 Every gate must keep unsupported ReadyToRun, NativeAOT, IL2CPP, mixed-mode, or

@@ -1,5 +1,4 @@
 import type { BinarySessionPort } from "../../application/BinarySession.js";
-import type { JavaScriptReplayDependencies } from "../../application/JavaScriptReplayService.js";
 import type { Logger } from "../../logger.js";
 
 /** Shared services for registering JavaScript application graph workflows. */
@@ -9,5 +8,4 @@ export interface ApplicationToolRegistration {
   readonly recordEvidenceWithUnknown:
     | BinarySessionPort["recordEvidenceWithUnknown"]
     | undefined;
-  readonly replay: JavaScriptReplayDependencies;
 }

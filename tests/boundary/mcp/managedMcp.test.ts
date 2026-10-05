@@ -29,13 +29,11 @@ it("opens a managed PE and executes the managed static provider through MCP", as
     ]),
   );
   const server = createServer(session, session, {
-    managedRuntimeConfiguration: () => ({ executablePath: process.execPath }),
     availabilityPolicy: () => ({
       processCaptureEnabled: false,
       investigationInputRoots: 0,
       browserObservationEnabled: false,
       electronObservationEnabled: false,
-      javascriptReplayEnabled: false,
     }),
   });
   const client = new Client({ name: "managed-mcp-test", version: "1.0.0" });
@@ -66,7 +64,6 @@ const verifyManagedCatalogAndNativeWorkflow = async (
       "compare_managed_members",
       "import_managed_reconstruction",
       "verify_managed_native_boundaries",
-      "plan_managed_runtime_correlation",
     ]),
   );
   for (const evidence of [
@@ -221,7 +218,6 @@ const verifyManagedComparisonAndReconstruction = async (
   expect(method).toBeDefined();
   if (method === undefined) return;
   await verifyImport(client, members, method);
-  await verifyRuntimePlan(client, members, method);
 };
 
 type ManagedMethod = NonNullable<ReturnType<typeof methodFrom>>;
@@ -274,51 +270,6 @@ const verifyImport = async (
           validation: { canonical_observation: false },
         },
       ],
-    },
-  });
-};
-
-const verifyRuntimePlan = async (
-  client: Client,
-  members: Record<string, unknown>,
-  method: ManagedMethod,
-): Promise<void> => {
-  const planned = inlineEvidence(
-    structured(
-      await client.callTool({
-        name: "plan_managed_runtime_correlation",
-        arguments: {
-          static_members: members,
-          method: {
-            token: method.token,
-            signature_sha256: method.signature.raw_sha256,
-            normalized_il_sha256: method.body.normalized_il_sha256,
-          },
-          requested_effect: "attach",
-          host: {
-            os: "linux",
-            clr_family: "dotnet",
-            architecture: "x86_64",
-          },
-          bounds: {
-            timeout_ms: 5000,
-            max_threads: 32,
-            max_output_bytes: 65536,
-            allow_network: false,
-            allow_ui: false,
-          },
-        },
-      }),
-    ),
-  );
-  expect(planned).toMatchObject({
-    operation: "plan_managed_runtime_correlation",
-    provider: { id: "rea-dotnet-workflows" },
-    confidence: "derived",
-    normalized_result: {
-      executed: false,
-      requested_runtime: { effect: "attach", network: "none" },
-      effect_taxonomy: { attaches_process: true },
     },
   });
 };

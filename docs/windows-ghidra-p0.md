@@ -21,9 +21,9 @@ Once the required native controls are implemented, the intended P0 is limited to
 - an explicit native, non-managed, non-DLL x86-64 PE application; and
 - the 22 read-only Ghidra inventory and function-analysis operations.
 
-Hopper, Ghidra GUI state, mutation, controlled JavaScript replay, process
-capture, browser/Electron observation, artifact extraction, and general
-Windows feature parity are not implied by this boundary. Managed PE/CLI
+Hopper, Ghidra GUI state, mutation, process capture, browser/Electron
+observation, artifact extraction, and general Windows feature parity are not
+implied by this boundary. Managed PE/CLI
 inspection remains a separate execution-free provider and is not routed
 through Windows Ghidra P0.
 

@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { ProcessCheckpoints } from "./ProcessCheckpoints.js";
 import { normalizeProcessSamples } from "./ProcessNormalization.js";
 import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
@@ -19,7 +18,7 @@ const base = {
   working_directory: "/tmp",
 };
 
-it("returns detached terminal and filesystem checkpoint observations", async () => {
+it("returns detached terminal observations", async () => {
   const observed: string[] = [];
   const renderer = new TerminalRenderer({
     columns: 40,
@@ -46,21 +45,6 @@ it("returns detached terminal and filesystem checkpoint observations", async () 
   expect(reread).toHaveLength(frames.length);
   expect(reread[0]?.cursor_x).toBe(originalCursor);
   await renderer.dispose();
-
-  const scenario = parseProcessScenario(base);
-  const checkpoints = new ProcessCheckpoints(
-    scenario,
-    Date.now(),
-    { files: [], truncated: false },
-    { signal: undefined },
-  );
-  const first = await checkpoints.finish({ files: [], truncated: false });
-  const checkpoint = first[0];
-  if (checkpoint === undefined) throw new Error("expected checkpoint");
-  Reflect.set(checkpoint, "name", "tampered");
-  const second = await checkpoints.finish({ files: [], truncated: false });
-  expect(second[0]?.name).toBe("before");
-  await checkpoints.dispose();
 });
 
 it("preserves rendered observation order instead of timestamp sorting", () => {
@@ -93,14 +77,6 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
     frames: [],
     exit: { exitCode: 0, reason: "exited" },
     samples: [],
-    replay: {
-      httpUrl: "http://127.0.0.1",
-      websocketUrl: "ws://127.0.0.1/ws",
-      events: [],
-      transitions: [],
-      truncated: false,
-      close: () => Promise.resolve(),
-    },
     before: { files: [], truncated: false },
     after: { files: [], truncated: false },
     truncated: false,
@@ -110,7 +86,6 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
     renderedFrames,
     interactions: [],
     checkpoints: capture.filesystem_checkpoints,
-    shimEvents: [],
     settlement: {
       state: capture.settlement.state,
       elapsed_ms: capture.settlement.elapsed_ms,
@@ -128,14 +103,6 @@ it("marks redacted scripted input as an interaction unknown", () => {
     frames: [],
     exit: { exitCode: 0, reason: "exited" },
     samples: [],
-    replay: {
-      httpUrl: "http://127.0.0.1",
-      websocketUrl: "ws://127.0.0.1/ws",
-      events: [],
-      transitions: [],
-      truncated: false,
-      close: () => Promise.resolve(),
-    },
     before: { files: [], truncated: false },
     after: { files: [], truncated: false },
     truncated: false,
@@ -157,7 +124,6 @@ it("marks redacted scripted input as an interaction unknown", () => {
       },
     ],
     checkpoints: capture.filesystem_checkpoints,
-    shimEvents: [],
     settlement: {
       state: capture.settlement.state,
       elapsed_ms: capture.settlement.elapsed_ms,
@@ -259,7 +225,7 @@ it("admits PTY samples only after stable session and token setup", () => {
   ).toBe(true);
 });
 
-it("keeps interaction and shim residual uncertainty in separate scopes", () => {
+it("keeps interaction and process residual uncertainty in separate scopes", () => {
   const baseCapture = emptyCapture();
   const interaction = parseProcessCapture({
     ...baseCapture,
@@ -267,22 +233,24 @@ it("keeps interaction and shim residual uncertainty in separate scopes", () => {
       { scope: "interaction", reason: "Interaction capture was partial." },
     ],
   });
-  const shim = parseProcessCapture({
+  const process = parseProcessCapture({
     ...baseCapture,
-    residual_unknowns: [{ scope: "shim", reason: "Shim capture was partial." }],
+    residual_unknowns: [
+      { scope: "process", reason: "Process sampling was partial." },
+    ],
   });
 
   expect(compareProcessCaptures(interaction, baseCapture)).toMatchObject({
     status: "unknown",
     terminal: "unchanged",
     interaction: "unknown",
-    shim: "unchanged",
+    process: "unchanged",
   });
-  expect(compareProcessCaptures(shim, baseCapture)).toMatchObject({
+  expect(compareProcessCaptures(process, baseCapture)).toMatchObject({
     status: "unknown",
     terminal: "unchanged",
     interaction: "unchanged",
-    shim: "unknown",
+    process: "unknown",
   });
 });
 

@@ -71,11 +71,6 @@ export const compareJavaScriptExportShapes = (
     coverage,
     evidence_links: evidenceLinks,
     limitations,
-    runtime_validation: {
-      recommended_tool: "run_controlled_replay" as const,
-      automatically_started: false as const,
-      required_for: "runtime-semantics" as const,
-    },
   };
   return javaScriptExportShapeComparisonResultSchema.parse({
     ...semantic,
@@ -181,7 +176,7 @@ const comparisonLimitations = (
     "Return shapes are inferred from inert syntax and do not prove runtime behavior.",
     "Return variants are paired only by unique exact literal discriminants, never by source order.",
     "Dynamic values, incomplete object coverage, and ambiguous variants remain unknown.",
-    "Controlled replay is recommended separately for runtime semantics and was not started.",
+    "This static comparison cannot establish runtime semantics; run behavioral probes directly against the relevant application versions when that evidence is required.",
     ...left.limitations,
     ...right.limitations,
     ...(status === "truncated"

@@ -81,7 +81,6 @@ const captureFor = (scenario: BrowserScenario): BrowserScenarioCapture => {
     },
     scenario: {
       start_origin: new URL(start).origin,
-      allowed_origins: scenario.allowed_origins,
       action_count: scenario.actions.length,
       secret_references: scenario.secrets.map(({ secret_id: id }) => id),
     },
@@ -109,7 +108,6 @@ const minimalScenario = (origin = "https://app.example.test") => ({
     executable_path: process.execPath,
   },
   start_url: { url: `${origin}/`, query: [] },
-  allowed_origins: [origin],
   actions: [
     {
       step_id: "settle",
@@ -173,7 +171,6 @@ describe("browser scenario MCP tool", () => {
     expect(provider.scenarios[0]).toMatchObject({
       environment: { color_scheme: "light", service_workers: "block" },
       storage: { cookies: [], local_storage: [], session_storage: [] },
-      request_replay: { mode: "disabled" },
       capture: { after_each_step: [], at_end: ["url"], events: [] },
     });
 

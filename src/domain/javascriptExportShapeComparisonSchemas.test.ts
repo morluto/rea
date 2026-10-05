@@ -152,11 +152,6 @@ it("accepts complete candidate and change inventories without page ceilings", ()
       },
       evidence_links: [evidenceId, `ev_${"c".repeat(64)}`],
       limitations: [],
-      runtime_validation: {
-        recommended_tool: "run_controlled_replay",
-        automatically_started: false,
-        required_for: "runtime-semantics",
-      },
     }).changes,
   ).toHaveLength(10_001);
 });

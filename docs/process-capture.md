@@ -1,54 +1,33 @@
 # Process capture
 
-Process Capture records one caller-selected command as Evidence. It is
-intended for authority-versus-reconstruction checks where terminal behavior,
-child lifetime, filesystem state, or dependency timing matters.
+Process Capture runs one caller-selected command and records bounded evidence
+about its terminal behavior, scheduled interactions, process lifetime, and
+selected filesystem state. Use it to compare two direct runs of the same
+scenario, such as an authority build and a reconstruction. It does not replay a
+previous execution or emulate dependencies.
 
-The harness records both raw PTY chunks and terminal states rendered by xterm.
-It also records scripted input, resize and signal delivery, sampled process
-metadata, named filesystem checkpoints, command-shim invocations, loopback
-HTTP/WebSocket exchanges, and process exit ownership. Missing or bounded
-observations remain explicit; a truncated capture is never treated as
-equivalent to another capture.
+The command runs with the current user's permissions and inherits the host
+environment before applying the scenario's explicit overrides. This is not a
+sandbox. Filesystem observation paths select what REA snapshots; they do not
+restrict what the process can read or write. The inherited environment is not
+recorded, so its influence may remain unknown.
 
-Every capture includes a run manifest with canonical SHA-256 commitments for
-the caller-selected scenario projection, comparison contract, executable,
-normalization rules, command-shim plan, and replay plan. The manifest also
-records the REA/provider versions, platform, architecture, PTY backend, and UTC
-start/completion timestamps. Capture creation, Evidence import, and comparison
-recompute the self-contained commitments and reject invalid lifecycle data.
+## Capture a command
 
-## Request and host behavior
+Write a JSON scenario and pass its path to the CLI:
 
-The scenario names the command and arguments, with optional working-directory,
-environment overrides, and filesystem observation paths. An omitted working
-directory uses the invocation's current directory. The process inherits the
-host environment, then applies any declared overrides. Filesystem observation
-paths select what REA records; they do not constrain what the child process can
-read or write. Process Capture is not a security sandbox: the target runs with
-the current user's permissions.
-
-Local output, arguments, environment overrides, URL query values, shim results,
-and replay bodies are preserved without credential-name or text-pattern
-redaction. Inputs explicitly marked `sensitive` use placeholders in Evidence.
-The inherited environment is not copied into the manifest; its unrecorded
-influence remains an explicit limitation.
-
-## Capture a scenario
-
-`rea capture-process` reads a JSON scenario and writes process capture
-Evidence to stdout:
-
-```bash
+```sh
 rea capture-process ./scenario.json > capture.json
 ```
 
-A representative scenario is:
+For example:
 
 ```json
 {
   "executable": "node",
   "arguments": ["./signup.mjs"],
+  "working_directory": ".",
+  "environment": { "APP_MODE": "test" },
   "filesystem_observation_paths": ["./state"],
   "terminal": { "columns": 80, "rows": 24, "scrollback": 1000 },
   "events": [
@@ -58,196 +37,63 @@ A representative scenario is:
       "data": "user@example.test\r",
       "sensitive": true
     },
-    { "type": "resize", "at_ms": 500, "columns": 100, "rows": 30 }
+    { "type": "resize", "at_ms": 500, "columns": 100, "rows": 30 },
+    { "type": "signal", "at_ms": 1000, "signal": "SIGINT" }
   ],
-  "checkpoints": [
-    {
-      "name": "signup_ready",
-      "trigger": { "type": "terminal_literal", "value": "All set!" }
-    },
-    { "name": "root_exited", "trigger": { "type": "root_exit" } }
-  ],
-  "command_shims": [
-    {
-      "name": "codex",
-      "routes": [
-        {
-          "arguments": ["--version"],
-          "outputs": [
-            { "at_ms": 0, "stream": "stdout", "data": "codex 1.2.3\n" }
-          ],
-          "termination": { "type": "exit", "code": 0 },
-          "max_calls": 1
-        }
-      ]
-    }
-  ]
+  "timeout_ms": 30000,
+  "idle_timeout_ms": 30000,
+  "settle_ms": 100
 }
 ```
 
-Input events marked `sensitive` are dispatched to the PTY but stored only as a
-byte-count placeholder. The command-shim directory is placed first in the
-captured process `PATH`; command lookup otherwise uses the inherited or
-scenario-overridden `PATH`.
+`executable` is required. `arguments`, `working_directory`, `environment`,
+`filesystem_observation_paths`, terminal settings, timed `events`, timeouts,
+resource limits, and normalization settings have defaults; see
+`processScenarioSchema` for the exact contract. Event times are milliseconds
+from launch, must be ordered, and must fall within `timeout_ms`. Inputs marked
+`sensitive` are sent to the process but persisted as a byte-count placeholder.
+Environment overrides are recorded in the scenario commitment; inherited
+values are not copied into Evidence.
 
-Scenario arguments, environment names, timed interactions, shim routes and
-output chunks, filesystem checkpoints, and static HTTP/WebSocket scripts are
-accepted without fixed item-count ceilings. The run still obeys its timeout
-and the configured output-byte, process, filesystem, protocol-event, body-byte,
-and connection budgets; each filesystem checkpoint uses those same
-bounded snapshot limits.
+The capture contains raw PTY output chunks and rendered terminal states,
+interaction dispatch outcomes, exit reason, sampled process-tree observations,
+and settlement status. When filesystem paths are selected, REA records
+`files_before` and `files_after`, then classifies observed entries as created,
+deleted, modified, or unchanged. These are bounded snapshots, not a syscall
+trace; short-lived changes between snapshots may be missed. With no selected
+paths, filesystem effects remain unknown.
 
-## Reactive process scenarios
+Output, file count, file size, process sampling, filesystem depth, total
+runtime, idle time, and post-exit settlement are bounded by the scenario's
+limits. The result marks truncated observations and residual unknowns rather
+than treating missing data as proof of equivalence. Cancellation and timeout
+run the same owned-process cleanup path. Settlement reports whether the
+sampled process group quiesced or whether cleanup was needed or unverifiable;
+sampling cannot prove that every short-lived or detached descendant was seen.
 
-Set `reactive` to a process reactive scenario declaration when interaction
-must follow observed output instead of guessed delays. The graph declares an
-initial state, absolute scenario and state deadlines, explicitly prioritized
-transitions, caller-chosen use and visit counts, trigger predicates, ordered
-actions, and either a next state or `passed` outcome.
+## Compare two captures
 
-The admitted runtime slice matches decoded UTF-8 terminal literals and exact
-`terminal_raw`, `interaction`, `process`, `filesystem`, `http`, `websocket`, or
-`shim` journal events. Process events are sampled observations, not an
-event-complete lifecycle. Filesystem events identify named checkpoints; shim
-events identify a command and route. Live predicates receive the same normalized
-and redacted payload later persisted in Evidence. Predicates may compose with
-`all`, `any`, `sequence`, and `repeat` nodes and may select a frontier at
-scenario start, state entry, a prior checkpoint, or an exact event ID. Actions
-can write PTY input, resize it, signal the root process, or capture a named
-filesystem checkpoint. `terminal_rendered`, `lifecycle`, and `replay_transition`
-event triggers and non-root signal selectors fail during preflight before the
-target launches.
+Compare saved capture Evidence with:
 
-Reactive results are recorded in `reactive_run`, including the terminal outcome,
-active state, matched event IDs, action evidence IDs, and deterministic
-transition journal. The reducer retains and evaluates every admitted
-observation through the scenario deadline; it has no fixed state, transition,
-predicate, action, repeat, or history-count ceilings. Recursive input depth has
-a stack safety guard. Terminal controls also commit the last admitted
-observation order, so later output cannot be moved ahead of a timeout,
-cancellation, or target loss during validation. If the process exits before the graph finishes,
-the outcome is `target_lost`; state/scenario deadlines remain distinct
-`predicate_timeout`/`scenario_deadline` outcomes. Timed `events` remain
-available for fixed schedules, but they are not silently translated into the
-reactive graph.
-
-## Checkpoints and deterministic shims
-
-Checkpoint triggers may use an elapsed time, a terminal literal and occurrence
-count, root exit, or settlement. REA always includes `before` and
-`after_settlement` snapshots. Snapshot effects are relative to the preceding
-checkpoint, so transient files remain visible even when the final tree matches
-the initial tree.
-
-Each command shim matches an exact argument array. Routes can emit timed stdout
-or stderr chunks and then exit or receive `SIGINT`, `SIGTERM`, or `SIGKILL`.
-Unmatched and exhausted calls are recorded. Shim observations are included in
-the capture without a separate fixed count ceiling. Other configured
-observation and byte budgets remain explicit in the capture result when they
-affect completeness.
-
-## Run a replay machine directly
-
-Use `rea run-replay-machine ./run.json` to validate a finite replay machine
-against an ordered `events` array without launching a process or opening a
-socket. MCP clients use `run_replay_machine` with the same `{ machine, events }`
-input. The result retains one decision per offered event, a transition journal
-with capture alias metadata, and one redacted action-table entry per used
-transition. It never returns request bodies, request headers, or captured
-values. It also reports the initial and final states, whether the final state is
-terminal, configured limits, and committed usage.
-
-The direct evaluator has no fixed state, transition, event, guard, capture,
-action, or action-byte count ceiling. It indexes transitions by protocol and
-path, evaluates events in order, and returns a decision for each offered event
-plus actions for used transitions. Caller-declared `max_uses`, `max_visits`,
-`max_transitions`, and protocol budgets determine the finite run; there is no
-upper schema cap on those values. Result size follows the input and is not
-truncated by an arbitrary item quota.
-
-Refused events remain data rather than aborting the run. Outcomes distinguish
-unmatched events, invalid states, failed guards, exhausted transitions, invalid
-captures, unexpected reconnects, and exhausted limits. This direct runner
-evaluates the same domain runtime used by loopback Process Capture, but performs
-no network or target execution.
-
-## Compare captures
-
-Compare two saved Evidence records with:
-
-```bash
+```sh
 rea compare-process-captures authority.json reconstruction.json
 ```
 
-Pass an optional third path, `rea compare-process-captures authority.json
-reconstruction.json trace.json`, when valid executions may differ in declared
-concurrent ordering. MCP callers pass the same object as `trace_spec` to
-`compare_process_captures`. A trace specification declares exact named events
-and chooses one language:
+The comparison checks terminal, interaction, exit, filesystem, and
+process observations under a shared comparison contract. It reports observed
+differences with their locations, while residual unknowns or truncated
+observations prevent a complete-equivalence claim. Matching scenario
+commitments do not reveal whether redacted sensitive inputs were equal.
 
-- `partial_order` requires every event pair to be related by a
-  `happens_before` edge (including transitive edges) or an explicit
-  `unordered_groups` declaration. `not_before` expresses negative ordering
-  constraints without inferring causality. Optional `prefix` and `suffix`
-  arrays remain exact.
-- `finite_traces` lists the complete accepted variants. An `unordered` token
-  accepts permutations of exactly its declared event multiset; it does not
-  drop or broadly sort events.
+For scenarios where independent scheduling can change event order, the CLI
+also accepts an optional trace-specification JSON file as the third argument.
+That specification must state the exact events and ordering constraints to
+accept; it does not discard unmatched observations or make timestamps into
+causal evidence. Trace comparison returns `unknown` when a capture lacks the
+required complete event journal or contains relevant residual unknowns.
 
-Each event uses one source family (`terminal_raw`, `terminal_rendered`,
-`interaction`, `lifecycle`, `process`, `filesystem`, `http`, `websocket`,
-`shim`, or `replay_transition`), an exact JSON payload, and a discriminated
-cardinality: `required`, `optional`, `exact`, or `range`. Specifications with
-duplicate or overlapping predicates, unknown references, cycles, implicit
-ordering gaps, ordered/unordered conflicts, or finite variants that violate
-cardinality are rejected before comparison.
-
-Event payloads are exact by default. To compare schedules whose recorder
-metadata necessarily changes, an event may explicitly list top-level
-`ignore_fields` from the bounded set `sequence`, `at_ms`, `scheduled_at_ms`,
-`dispatched_at_ms`, and `elapsed_ms`; its `exact` object must omit those fields.
-All predicates for one source use the same ignore set, so relaxed metadata
-cannot create declaration-order matching ambiguity. Other payload fields are
-never dropped or normalized by trace comparison.
-
-Process Capture records a monotonic `event_journal` at observation time. Trace
-comparison uses only this capture order for cross-source causality; timestamps
-are retained as event data but never promoted into happens-before evidence.
-Older captures without a complete journal, truncated captures, and relevant
-residual unknowns return a trace verdict of `unknown`. A passing result retains
-each side's raw journal locations and identifies either the matched finite
-variant or the complete satisfied constraint set. A failure returns the first
-declaration-ordered predicate, cardinality, edge, prefix, suffix, or language
-violation with its relevant event locations.
-If both captures have the same invalid declared trace, the nested verdict is
-`nonconforming` while the top-level capture comparison remains unchanged. Side
-statuses and the diagnostic distinguish conformance from pairwise difference.
-
-The result classifies terminal, interaction, exit, filesystem, protocol,
-process, and shim behavior. `first_divergence` points to the earliest observed
-difference. Residual unknowns prevent a claim of complete equivalence, but they
-do not hide an observed difference in another dimension.
-
-Captures must have equal comparison-contract commitments, but may identify
-different scenarios and executables. MCP callers may set `max_capture_age_ms`;
-the application clock then rejects stale captures before comparison.
-
-## Limits and lifecycle behavior
-
-Scenarios bound output bytes, frames, files, file bytes, process observations,
-protocol/shim events, connections, filesystem depth, total runtime, idle time,
-and settlement time. Process trees are sampled rather than syscall-traced, and
-short-lived descendants may be missed. Filesystem observations are snapshots,
-not filesystem event streams.
-
-REA tags launched processes with a private run identifier. During cleanup it
-revalidates that identifier before signaling sampled process groups, including
-groups detached from the original parent. Temporary HOME, replay, shim,
-terminal, checkpoint, and sampling resources are released on success, failure,
-timeout, and cancellation.
-
-After root exit, REA checks token-owned process groups every 50 ms. Two
-consecutive empty observations establish `quiesced`; the settlement deadline
-otherwise produces `alive_at_deadline`, while inspection or identity failures
-produce `unverifiable`. Sampling can still miss short-lived or early-detached
-descendants, which remains a residual unknown.
+Each capture carries commitments for the selected scenario, executable,
+comparison contract, and normalization rules. Comparison rejects captures
+whose comparison contracts differ. Captures are local Evidence files; keep
+their source artifacts and invocation context available when interpreting a
+difference.

@@ -9,7 +9,7 @@ deterministic Evidence.
 
 Each request supplies the loopback Inspector endpoint and, for observation, the
 target ID. This surface is separate from browser CDP, Electron file-page
-inspection, Process Capture, and controlled JavaScript replay:
+inspection, and Process Capture:
 
 ```bash
 rea list-javascript-runtime-targets http://127.0.0.1:9229 \

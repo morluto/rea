@@ -7,7 +7,6 @@ import type {
   DoctorHost,
   DoctorProviderInspection,
 } from "./Doctor.js";
-import type { RuntimeExecutableInventory } from "./RuntimeExecutableDiagnostics.js";
 
 const DEFAULT_HOPPER =
   "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -18,7 +17,6 @@ export interface DoctorDiagnostics {
   readonly checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
   readonly providerInspections?: readonly DoctorProviderInspection[];
-  readonly runtimeExecutables?: RuntimeExecutableInventory;
 }
 
 /** Collect host, provider, and optional-target diagnostics without mutation. */
@@ -26,11 +24,7 @@ export const collectDoctorDiagnostics = async (
   target: string | undefined,
   host: DoctorHost,
 ): Promise<DoctorDiagnostics> => {
-  const runtimeExecutables = await host.runtimeExecutables?.();
-  const checks: DoctorCheck[] = [
-    nodeCheck(host),
-    ...runtimeChecks(runtimeExecutables),
-  ];
+  const checks: DoctorCheck[] = [nodeCheck(host)];
   checks.push(await hostCheck(host));
 
   const hopperPath = await findHopper(host);
@@ -42,8 +36,6 @@ export const collectDoctorDiagnostics = async (
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
 
-  const javascriptReplayCheck = await host.javascriptReplayCheck?.();
-  if (javascriptReplayCheck !== undefined) checks.push(javascriptReplayCheck);
   const ilspyCheck = await optionalIlspyCheck(host);
   if (ilspyCheck !== undefined) checks.push(ilspyCheck);
   const hopperDemoCheck = await optionalHopperDemoCheck(host, hopperPath);
@@ -55,7 +47,6 @@ export const collectDoctorDiagnostics = async (
     checks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
-    ...(runtimeExecutables === undefined ? {} : { runtimeExecutables }),
   };
 };
 
@@ -70,19 +61,16 @@ export const doctorHealthy = (
       | undefined;
   },
 ): boolean => {
-  const requiredChecks = checks.filter(
-    ({ name }) => !isOptionalDoctorCheck(name),
-  );
   if (providers.providerInspections === undefined)
-    return requiredChecks.every(({ ok }) => ok);
-  const providerChecks = requiredChecks.filter(
+    return checks.every(({ ok }) => ok);
+  const providerChecks = checks.filter(
     ({ name }) =>
       name.startsWith("hopper") ||
       providers.providerInspections?.some((inspection) =>
         providerCheckName(inspection.id, name),
       ) === true,
   );
-  const coreHealthy = requiredChecks
+  const coreHealthy = checks
     .filter((candidate) => !providerChecks.includes(candidate))
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
@@ -102,35 +90,11 @@ export const doctorHealthy = (
   );
 };
 
-/** Identify workflow diagnostics that do not gate core installation readiness. */
-export const isOptionalDoctorCheck = (name: string): boolean =>
-  name === "javascript-replay";
-
 const nodeCheck = (host: DoctorHost): DoctorCheck =>
   check("node", supportsNodeVersion(host.nodeVersion), host.nodeVersion, {
     remediation: "Install Node.js 22.19+ or 24.11+.",
     classification: "missing_dependency",
   });
-
-const runtimeChecks = (
-  inventory: RuntimeExecutableInventory | undefined,
-): readonly DoctorCheck[] => {
-  if (inventory === undefined) return [];
-  const broken = inventory.candidates.filter(({ healthy }) => !healthy);
-  const detail =
-    broken.length === 0
-      ? `${String(inventory.candidates.length)} runtime executable candidates passed bounded version probes.`
-      : `${String(broken.length)} of ${String(inventory.candidates.length)} runtime executable candidates failed bounded version probes: ${broken
-          .map(({ lexical_path: path }) => path)
-          .join(", ")}`;
-  return [
-    check("node-toolchains", broken.length === 0, detail, {
-      remediation:
-        "Select a verified healthy Node toolchain or repair the failing installation, then rerun rea doctor. Do not create compatibility-library symlinks.",
-      classification: "missing_dependency",
-    }),
-  ];
-};
 
 const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
   const macosVersion =

@@ -82,7 +82,7 @@ try {
           "depth = 1",
         ],
         ["static", "inferred"],
-        ["runtime", "replay"],
+        ["runtime", "behavioral probes"],
       ],
       prompt: `Without directly reading target files, compare the default export in parser.mjs between ${targets.javascriptShapeLeft} and ${targets.javascriptShapeRight}. Use REA to analyze each shipped artifact and then compare its exact static export return shapes. State the exact heading-shape change, cite produced Evidence, and distinguish static inference from runtime semantics.`,
     },
@@ -283,13 +283,13 @@ async function createTargets(root, includeManaged) {
     mkdir(javascriptShapeRight, { recursive: true }),
   ]);
   await Promise.all([
-    cp(
-      join(repositoryRoot, "tests/fixtures/replay/parser.mjs"),
+    writeFile(
       join(javascriptShapeLeft, "parser.mjs"),
+      'export default function parse() { return { heading: "Title" }; }\n',
     ),
-    cp(
-      join(repositoryRoot, "tests/fixtures/replay/parser-v2.mjs"),
+    writeFile(
       join(javascriptShapeRight, "parser.mjs"),
+      'export default function parse() { return { heading: { text: "Title", level: 1 } }; }\n',
     ),
   ]);
 

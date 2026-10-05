@@ -1,15 +1,14 @@
 # ADR-0002: Controlled JavaScript replay authority and sandbox policy
 
-- Status: Accepted
+- Status: Superseded; the controlled JavaScript replay tool was removed
 - Date: 2026-07-16
-- Implementation status: Implemented by `run_controlled_replay` with a
-  Linux-x86_64 Bubblewrap, seccomp, and delegated systemd user-cgroup backend.
-  Hosts that cannot establish every required boundary fail closed.
+- Implementation status: The implementation was removed. The design below is
+  retained as historical context and does not describe a supported REA tool.
 
-> Historical design note: REA's separate permission-policy, grant, and
-> per-call approval workflow was later removed. Current tool requests directly
-> name their target and lifecycle. The sandbox and exact plan-digest behavior
-> described here remain part of controlled replay.
+> Historical design note: The tool, sandbox backend, and plan/execute workflow
+> described here are no longer part of REA. For runtime behavior, run probes
+> directly against the application and use the available browser, Electron, or
+> process capture workflows.
 
 ## Context
 

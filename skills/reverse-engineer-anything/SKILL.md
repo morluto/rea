@@ -3,14 +3,14 @@ name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
   version: "23"
-  tool_count: 122
-  catalog_digest: "3a0e6d66df95b913797ce2e4548e97d409d6e8768023f8a7a23d8d85ae9d766f"
+  tool_count: 116
+  catalog_digest: "73a4cdf4fc83b1728426931ff89e2113f1c8beb1b3bf337c179f2c349ce3c0f2"
 ---
 
 # REA
 
 Use REA when a claim depends on a shipped binary or package, decompilation,
-passive application runtime evidence, controlled replay, or comparison with
+passive application runtime evidence, or comparison with
 behavior not established by available source. For ordinary analysis of a
 complete source repository, use normal repository tools and do not run REA
 readiness or provider commands.
@@ -71,8 +71,10 @@ For requests that span multiple features or subsystems, use a staged workflow:
    they affect the question. Use format-aware inventory and parsers; do not
    infer behavior from filenames, strings, or layout alone.
 5. Corroborate a conclusion with the evidence type it requires. Use runtime
-   observation or controlled replay only when static evidence cannot answer the
-   question and the required host runtime and OS access are available.
+   observation only when static evidence cannot answer the question and the
+   required host runtime and OS access are available. For JavaScript behavior,
+   run probes against the actual app through the available browser, Electron,
+   or process capture workflow.
 6. Decompose work into independent questions. When parallel workers are
    available and the questions do not depend on one another, assign distinct
    scopes, point workers to existing evidence, and ask them to return sources,
@@ -96,8 +98,6 @@ as complete while required questions remain open.
   [references/runtime-observation.md](references/runtime-observation.md)
 - Evidence paging, comparisons, residual unknowns, and verification:
   [references/evidence-workflows.md](references/evidence-workflows.md)
-- Controlled JavaScript replay:
-  [references/controlled-replay.md](references/controlled-replay.md)
 
 ## Readiness and setup
 

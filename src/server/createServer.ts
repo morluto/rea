@@ -6,18 +6,9 @@ import type { BrowserObservationPort } from "../application/BrowserObservationPo
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
-import type {
-  JavaScriptReplayConfiguration,
-  JavaScriptReplayHost,
-  JavaScriptReplayRunner,
-} from "../application/JavaScriptReplayPlanning.js";
-import type { ManagedRuntimeConfiguration } from "../application/ManagedRuntimeCorrelationService.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { defaultJavaScriptReplayConfiguration } from "../config/runtimeConfiguration.js";
 import { silentLogger, type Logger } from "../logger.js";
-import { LinuxJavaScriptReplayRunner } from "../replay/LinuxJavaScriptReplayRunner.js";
-import { SystemJavaScriptReplayHost } from "../replay/SystemJavaScriptReplayHost.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
@@ -47,10 +38,6 @@ export interface CreateServerOptions {
   readonly electronObservation?: ElectronObservationPort;
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
-  readonly javascriptReplayConfiguration?: () => JavaScriptReplayConfiguration;
-  readonly javascriptReplayHost?: JavaScriptReplayHost;
-  readonly javascriptReplayRunner?: JavaScriptReplayRunner;
-  readonly managedRuntimeConfiguration?: () => ManagedRuntimeConfiguration;
   readonly availabilityPolicy?: () => SessionAvailability;
 }
 
@@ -170,7 +157,6 @@ const registerBinaryAnalysisTools = ({
   server,
   analysis,
   session,
-  options,
   logger,
   activeTarget,
   recordEvidence,
@@ -208,11 +194,6 @@ const registerBinaryAnalysisTools = ({
       recordEvidence,
       recordEvidenceWithUnknown,
       session,
-      runtime: {
-        configuration:
-          options.managedRuntimeConfiguration ??
-          (() => ({ executablePath: undefined })),
-      },
     });
 };
 
@@ -245,13 +226,5 @@ const registerObservationTools = ({
     logger,
     recordEvidence,
     recordEvidenceWithUnknown,
-    replay: {
-      configuration:
-        options.javascriptReplayConfiguration ??
-        defaultJavaScriptReplayConfiguration,
-      host: options.javascriptReplayHost ?? new SystemJavaScriptReplayHost(),
-      runner:
-        options.javascriptReplayRunner ?? new LinuxJavaScriptReplayRunner(),
-    },
   });
 };

@@ -284,11 +284,6 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(textSchema),
-  runtime_validation: z.strictObject({
-    recommended_tool: z.literal("run_controlled_replay"),
-    automatically_started: z.literal(false),
-    required_for: z.literal("runtime-semantics"),
-  }),
 });
 
 export type ProjectedExportReturnShapes = z.output<

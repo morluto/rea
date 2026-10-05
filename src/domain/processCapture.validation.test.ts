@@ -28,10 +28,6 @@ it("never considers truncated captures equivalent", () => {
     exit: { code: 0, signal: null, reason: "exited" as const },
     process_samples: [],
     filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -145,77 +141,6 @@ it("accepts old captures without a journal and validates complete journals", () 
     );
   }
 });
-
-it.each([
-  ["machine limit", 1, 5, 10],
-  ["transition use limit", 5, 1, 10],
-  ["state visit limit", 5, 5, 1],
-])(
-  "rejects replay journals that exceed the declared %s",
-  (_name, maxTransitions, maxUses, maxVisits) => {
-    const replayPlan = {
-      machine: {
-        initial_state: "active",
-        states: [
-          { name: "active", max_visits: maxVisits },
-          { name: "complete", terminal: true },
-        ],
-        transitions: [
-          {
-            id: "again",
-            from: "active",
-            to: "active",
-            trigger: {
-              protocol: "websocket_message",
-              path: "/ws",
-              body: "again",
-            },
-            actions: [{ type: "websocket_send", data: "again" }],
-            max_uses: maxUses,
-          },
-          {
-            id: "finish",
-            from: "active",
-            to: "complete",
-            trigger: {
-              protocol: "websocket_message",
-              path: "/ws",
-              body: "finish",
-            },
-            actions: [{ type: "websocket_send", data: "done" }],
-            max_uses: 1,
-          },
-        ],
-        max_transitions: maxTransitions,
-      },
-    };
-    const capture = emptyCapture();
-    const candidate: UnverifiedProcessCapture = {
-      ...capture,
-      manifest: {
-        ...capture.manifest,
-        replay_plan: replayPlan,
-        replay_plan_sha256: digestProcessCommitment(replayPlan),
-      },
-      replay_transitions: [0, 1].map((sequence) => ({
-        sequence,
-        at_ms: sequence,
-        transition_id: "again",
-        state_before: "active",
-        state_after: "active",
-        sensitive_aliases: [],
-      })),
-    };
-
-    expect(processCaptureIssues(candidate)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.stringContaining("limit"),
-        }),
-      ]),
-    );
-  },
-);
 
 it("requires compatible contracts and enforces capture age through a clock seam", () => {
   const capture = emptyCapture();

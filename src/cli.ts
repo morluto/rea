@@ -55,7 +55,7 @@ export const createCli = (
   registerCoreAnalysisCommands(cli, logger);
   registerUtilityCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
-  registerManagedCommands(cli, logger, environment);
+  registerManagedCommands(cli, logger);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);
@@ -63,6 +63,6 @@ export const createCli = (
   registerBrowserScenarioCommands(cli, logger);
   registerElectronCommands(cli, logger);
   registerJavaScriptRuntimeObservationCommands(cli, logger);
-  registerApplicationCommands(cli, logger, environment);
+  registerApplicationCommands(cli, logger);
   return cli;
 };

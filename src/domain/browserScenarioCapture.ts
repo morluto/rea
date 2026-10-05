@@ -33,7 +33,6 @@ export const browserScenarioCaptureSchema = z
     }),
     scenario: z.strictObject({
       start_origin: z.string().min(1),
-      allowed_origins: z.array(z.string().min(1)).min(1),
       action_count: z.number().int().min(1),
       secret_references: z.array(z.string().min(1)),
     }),

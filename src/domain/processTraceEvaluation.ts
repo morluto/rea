@@ -84,15 +84,8 @@ const scopesFor = (
     [...sources].map((source) => {
       if (source.startsWith("terminal_")) return "terminal";
       if (source === "lifecycle") return "exit";
-      if (
-        source === "http" ||
-        source === "websocket" ||
-        source === "replay_transition"
-      )
-        return "protocol";
       if (source === "filesystem") return "filesystem";
       if (source === "process") return "process";
-      if (source === "shim") return "shim";
       return "interaction";
     }),
   );

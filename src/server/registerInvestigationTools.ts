@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { buildCallPath } from "../domain/callPath.js";
 import { findChangedBehavior } from "../domain/changedBehavior.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -29,23 +29,29 @@ import { toCallToolResult } from "./toolResult.js";
 export const registerInvestigationTools = (
   server: McpServer,
   session: BinarySessionPort,
-  contracts: readonly [
-    (typeof SESSION_TOOL_CONTRACTS)[10],
-    (typeof SESSION_TOOL_CONTRACTS)[11],
-    (typeof SESSION_TOOL_CONTRACTS)[12],
-    (typeof SESSION_TOOL_CONTRACTS)[13],
-  ],
 ): void => {
-  registerChangedBehavior(server, session, contracts[0]);
-  registerCallPath(server, session, contracts[1]);
-  registerStaticRuntime(server, session, contracts[2]);
-  registerReconstruction(server, session, contracts[3]);
+  registerChangedBehavior(
+    server,
+    session,
+    toolContract("find_changed_behavior"),
+  );
+  registerCallPath(server, session, toolContract("build_call_path"));
+  registerStaticRuntime(
+    server,
+    session,
+    toolContract("correlate_static_and_runtime"),
+  );
+  registerReconstruction(
+    server,
+    session,
+    toolContract("verify_reconstruction"),
+  );
 };
 
 const registerChangedBehavior = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[10],
+  contract: ReturnType<typeof toolContract<"find_changed_behavior">>,
 ): void => {
   server.registerTool(
     contract.name,
@@ -103,7 +109,7 @@ const registerChangedBehavior = (
 const registerCallPath = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[11],
+  contract: ReturnType<typeof toolContract<"build_call_path">>,
 ): void => {
   server.registerTool(
     contract.name,
@@ -160,7 +166,7 @@ const registerCallPath = (
 const registerStaticRuntime = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[12],
+  contract: ReturnType<typeof toolContract<"correlate_static_and_runtime">>,
 ): void => {
   server.registerTool(
     contract.name,
@@ -221,7 +227,7 @@ const registerStaticRuntime = (
 const registerReconstruction = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[13],
+  contract: ReturnType<typeof toolContract<"verify_reconstruction">>,
 ): void => {
   server.registerTool(
     contract.name,

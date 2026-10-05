@@ -15,7 +15,7 @@ export const registerCloseLifecycleTool = ({
   server,
   session,
   logger,
-  contracts: [, closeContract],
+  closeContract,
 }: LifecycleToolRegistration): void => {
   server.registerTool(
     closeContract.name,

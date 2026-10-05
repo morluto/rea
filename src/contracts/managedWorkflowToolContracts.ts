@@ -2,7 +2,6 @@ import { z } from "zod";
 import { evidenceSchema } from "../domain/evidence.js";
 
 import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
-import { managedRuntimeCorrelationInputSchema } from "../domain/managedRuntimeCorrelation.js";
 import type { ToolContract } from "./toolContracts.js";
 import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
 import {
@@ -10,7 +9,6 @@ import {
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
-  MANAGED_RUNTIME_CORRELATION_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
@@ -28,12 +26,6 @@ export const compareManagedMembersReferenceInputSchema = z
         path: ["right"],
         message: "Managed member Evidence must be distinct",
       });
-  });
-
-/** MCP reference for planning from one session-owned managed observation. */
-export const managedRuntimeCorrelationReferenceInputSchema =
-  managedRuntimeCorrelationInputSchema.extend({
-    static_members: evidenceSchema,
   });
 
 /** Inline Evidence input for importing reconstruction. */
@@ -115,10 +107,6 @@ const comparisonOutputSchema = requireOutputSchema(
   managedWorkflowOutputSchemas,
   "compare_managed_members",
 );
-const runtimeOutputSchema = requireOutputSchema(
-  managedWorkflowOutputSchemas,
-  "plan_managed_runtime_correlation",
-);
 const reconstructionOutputSchema = requireOutputSchema(
   managedWorkflowOutputSchemas,
   "import_managed_reconstruction",
@@ -188,28 +176,6 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
           decompiler: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.decompiler,
           methods: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.methods,
           notes: MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.notes,
-        },
-      },
-    ],
-  },
-  {
-    name: "plan_managed_runtime_correlation",
-    ...toolContractMetadata("plan_managed_runtime_correlation"),
-    description:
-      "Prepare a non-executing managed runtime-correlation plan from authenticated inspect_managed_members Evidence. Planning does not probe or launch a runtime; it records the configured executable or the default command name, locks the exact artifact SHA-256, MVID, method signature, and decoded-IL hash, and describes requested effects and bounds without claiming execution or confinement.",
-    kind: "application",
-    inputSchema: managedRuntimeCorrelationReferenceInputSchema,
-    outputSchema: runtimeOutputSchema,
-    examples: [
-      {
-        title: "Plan an exact-build managed runtime correlation",
-        input: {
-          static_members: MANAGED_RUNTIME_CORRELATION_EXAMPLE.static_members,
-          method: MANAGED_RUNTIME_CORRELATION_EXAMPLE.method,
-          requested_effect:
-            MANAGED_RUNTIME_CORRELATION_EXAMPLE.requested_effect,
-          host: MANAGED_RUNTIME_CORRELATION_EXAMPLE.host,
-          bounds: MANAGED_RUNTIME_CORRELATION_EXAMPLE.bounds,
         },
       },
     ],

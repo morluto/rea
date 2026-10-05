@@ -45,10 +45,13 @@ The process-global Vitest configuration contract rejects new direct temporary-ro
 creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
 
-Real Hopper, Ghidra, browser, package, managed-code, and controlled-replay
-claims belong to their explicit `npm run verify:*` lanes. They are not inferred
-from mocks or folded into the deterministic local gate. Real model trials are
-manual; Vitest covers only deterministic evaluator logic.
+Real Hopper, Ghidra, browser, package, and managed-code claims belong to their
+explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
+checks deterministic rerun, tamper, and stale-input handling; those checks do
+not execute extracted JavaScript modules. When application runtime behavior is
+needed, exercise the actual target through browser, Electron, or process
+capture. Real model trials are manual; Vitest covers deterministic evaluator
+logic.
 
 ## End-to-end, integration and golden evidence
 

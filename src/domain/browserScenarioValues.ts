@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  browserAllowedOriginsSchema,
   browserEndpointSchema,
   browserOriginSchema,
 } from "./browserObservation.js";
@@ -255,58 +254,6 @@ export const browserScenarioStorageSchema = z
     "Optional initial cookies, local storage, or session storage. Defaults to empty; every supplied value and origin must be declared and within the allowed origins.",
   );
 
-const headerNameSchema = z
-  .string()
-  .min(1)
-  .regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u)
-  .transform((value) => value.toLowerCase());
-
-const replayHeaderSchema = z.strictObject({
-  name: headerNameSchema,
-  value: browserScenarioValueSchema,
-});
-
-const replayResponseSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("response"),
-    status: z.number().int().min(100).max(599),
-    headers: z.array(replayHeaderSchema).default([]),
-    body: browserScenarioValueSchema.optional(),
-  }),
-  z.strictObject({
-    kind: z.literal("redirect"),
-    status: z.union([
-      z.literal(301),
-      z.literal(302),
-      z.literal(303),
-      z.literal(307),
-      z.literal(308),
-    ]),
-    destination: browserScenarioUrlSchema,
-  }),
-]);
-
-const replayRouteSchema = z.strictObject({
-  route_id: scenarioIdentifierSchema,
-  method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]),
-  request: browserScenarioUrlSchema,
-  response: replayResponseSchema,
-});
-
-export const browserScenarioRequestReplaySchema = z
-  .discriminatedUnion("mode", [
-    z.strictObject({ mode: z.literal("disabled") }),
-    z.strictObject({
-      mode: z.literal("exact"),
-      unmatched: z.enum(["abort", "passthrough-declared-origins"]),
-      routes: z.array(replayRouteSchema).min(1),
-    }),
-  ])
-  .default({ mode: "disabled" })
-  .describe(
-    "Optional exact request replay. Defaults to disabled; replay routes and unmatched-request behavior must be explicitly declared when enabled.",
-  );
-
 export const browserScenarioSecretSchema = z.strictObject({
   secret_id: scenarioIdentifierSchema,
   environment_variable: z
@@ -350,5 +297,3 @@ export const browserScenarioCaptureSchema = z
   .describe(
     "Optional retained artifacts and event families. Defaults to only a final sanitized URL; request screenshots, DOM, accessibility, history, storage, and event capture explicitly.",
   );
-
-export const browserScenarioAllowedOriginsSchema = browserAllowedOriginsSchema;

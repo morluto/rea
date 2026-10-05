@@ -58,7 +58,7 @@ versions against this historical capture.
 
 `mcp-initialize.json` captures the `initialize` request emitted by the pinned
 `@modelcontextprotocol/client` 2.0.0 SDK on 2026-10-04. The client connected to
-the actual `scripts/rea.mjs mcp` subprocess and completed `listTools` (122 tools).
+the actual `scripts/rea.mjs mcp` subprocess and completed `listTools` (the current catalog).
 The recorder intercepted `transport.send`, serialized the message, and delegated
 the unchanged message to the real SDK transport. The committed JSON is formatted
 for review; whitespace is not a wire identity claim. No provider was launched.

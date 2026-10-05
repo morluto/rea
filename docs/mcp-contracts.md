@@ -82,10 +82,10 @@ REA runs the declared request directly and does not infer a broader target or
 action from it.
 
 Host requirements remain in force. macOS may deny Accessibility,
-Screen Recording, or native mounting; Linux replay requires its sandbox
-prerequisites; provider tools require their selected analysis runtime. These
-failures are reported at the operation that needs them. A configured provider
-or an endpoint alone does not establish that a target is supported.
+Screen Recording, or native mounting; provider tools require their selected
+analysis runtime. These failures are reported at the operation that needs
+them. A configured provider or an endpoint alone does not establish that a
+target is supported.
 
 Evidence bundles, snapshots, and extraction use the paths and output behavior
 declared by their tools. Artifact extraction materializes the selected regular

@@ -74,7 +74,6 @@ const exampleScenarioCapture = () => ({
   },
   scenario: {
     start_origin: origin,
-    allowed_origins: [origin],
     action_count: 1,
     secret_references: [],
   },

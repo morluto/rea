@@ -12,7 +12,6 @@ import {
   HopperTimeoutError,
   NoBinaryOpenError,
   ProviderSelectionError,
-  ReplayPlanStaleError,
   UnknownRegistryError,
   type AnalysisError,
   type AnalysisErrorProjection,
@@ -38,15 +37,12 @@ export const analysisErrorRemediationAction = (
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
-  if (error instanceof ReplayPlanStaleError)
-    return "Rebuild the replay plan and retry with its current digest.";
   return analysisErrorUserMessage(error);
 };
 
 export const analysisErrorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
-  if (error instanceof ReplayPlanStaleError) return "integrity_mismatch";
   if (
     error instanceof ProviderSelectionError &&
     error.reason === "provider_unavailable"
@@ -109,8 +105,6 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
-  if (error instanceof ReplayPlanStaleError)
-    return "The controlled replay plan changed before execution. Refresh the current state and try again.";
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
   const hopperMessage = hopperErrorUserMessage(error);
@@ -250,7 +244,6 @@ const KNOWN_ERROR_TAGS = {
   ConfigurationError: true,
   NoBinaryOpenError: true,
   BinaryTargetError: true,
-  ReplayPlanStaleError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 
 export const assertKnownAnalysisErrorTag = (tag: AnalysisErrorTag): void => {

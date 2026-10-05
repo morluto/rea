@@ -10,7 +10,6 @@ import { processScenarioSchema } from "../domain/processCapture.js";
 import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
 import { recordUnknownInputSchema } from "../domain/residualUnknown.js";
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
-import { replayMachineRunInputSchema } from "../domain/replayMachineRun.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { evidenceSchema } from "../domain/evidence.js";
 import { updateUnknownInputSchema } from "../domain/residualUnknown.js";
@@ -75,7 +74,6 @@ export {
   processScenarioSchema,
   reconstructionVerificationInputSchema,
   recordUnknownInputSchema,
-  replayMachineRunInputSchema,
   staticRuntimeCorrelationInputSchema,
   updateUnknownInputSchema,
 };

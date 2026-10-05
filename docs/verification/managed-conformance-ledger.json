@@ -1,5 +1,5 @@
 {
-  "ledger_id": "ecl_b01c0b28362b48128765d176113471a5a82637fca0acfcd3182971155942e0d4",
+  "ledger_id": "ecl_132e857a8a93f0b366cd72f9cfa1c338ffd4100460a7834ef69abff936c84472",
   "records": [
     {
       "claim_id": "managed.application-graph-projection",
@@ -79,13 +79,6 @@
       ]
     },
     {
-      "claim_id": "managed.runtime-correlation-admission-plan",
-      "status": "pass",
-      "evidence_ids": [
-        "ev_3e546c20493faf9696502171a5cfe9504569cffb22f0561ee3000f0027b9bbd8"
-      ]
-    },
-    {
       "claim_id": "managed.unicode-obfuscated-identifiers",
       "status": "pass",
       "evidence_ids": [
@@ -101,8 +94,8 @@
     }
   ],
   "summary": {
-    "total": 14,
-    "pass": 12,
+    "total": 13,
+    "pass": 11,
     "fail": 0,
     "unsupported": 2,
     "truncated": 0,

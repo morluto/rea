@@ -1,68 +1,42 @@
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { describe, expect, it } from "vitest";
 
-import { run } from "../../../src/main.js";
-import {
-  createServer,
-  type CreateServerOptions,
-} from "../../../src/server/createServer.js";
-
-type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
+import { parseConfig } from "../../../src/config.js";
+import { silentLogger } from "../../../src/logger.js";
+import { registerConfigReload } from "../../../src/main/reload.js";
+import type { RuntimeDependencies } from "../../../src/main/types.js";
+import { createRuntimeState } from "../../../src/main/state.js";
 
 describe("runtime configuration reload", () => {
-  it("updates runtime executable configuration for connected server factories", async () => {
-    const env: NodeJS.ProcessEnv = {
-      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/first/node",
-      REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/first/dotnet",
-    };
-    const runtime = await startRuntime(env);
+  it("applies a valid configuration reload", () => {
+    const env: NodeJS.ProcessEnv = { REA_LOG_LEVEL: "info" };
+    const runtime = setupReload(env);
 
-    expect(runtime.options.javascriptReplayConfiguration?.()).toMatchObject({
-      nodePath: "/first/node",
-    });
-    expect(runtime.options.managedRuntimeConfiguration?.()).toEqual({
-      executablePath: "/first/dotnet",
-    });
-
-    env.REA_JAVASCRIPT_REPLAY_NODE_PATH = "/second/node";
-    env.REA_MANAGED_RUNTIME_EXECUTABLE_PATH = "/second/dotnet";
+    env.REA_LOG_LEVEL = "debug";
     runtime.reload();
 
-    expect(runtime.options.javascriptReplayConfiguration?.()).toMatchObject({
-      nodePath: "/second/node",
-    });
-    expect(runtime.options.managedRuntimeConfiguration?.()).toEqual({
-      executablePath: "/second/dotnet",
-    });
+    expect(runtime.state.currentConfig.logLevel).toBe("debug");
   });
 
-  it("retains the last valid runtime configuration after an invalid reload", async () => {
-    const env: NodeJS.ProcessEnv = {
-      REA_JAVASCRIPT_REPLAY_NODE_PATH: "/valid/node",
-      REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/valid/dotnet",
-    };
-    const runtime = await startRuntime(env);
+  it("retains the last valid configuration after an invalid reload", () => {
+    const env: NodeJS.ProcessEnv = { REA_LOG_LEVEL: "info" };
+    const runtime = setupReload(env);
 
-    env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH = "relative/bwrap";
+    env.REA_LOG_LEVEL = "invalid";
     runtime.reload();
 
-    expect(runtime.options.javascriptReplayConfiguration?.()).toMatchObject({
-      nodePath: "/valid/node",
-    });
-    expect(runtime.options.managedRuntimeConfiguration?.()).toEqual({
-      executablePath: "/valid/dotnet",
-    });
+    expect(runtime.state.currentConfig.logLevel).toBe("info");
   });
 });
 
-const startRuntime = async (env: NodeJS.ProcessEnv) => {
+const setupReload = (env: NodeJS.ProcessEnv) => {
+  const parsed = parseConfig(env);
+  if (!parsed.ok) throw parsed.error;
+  const state = createRuntimeState(parsed.value);
   let reload: (() => void) | undefined;
-  let options: CreateServerOptions | undefined;
   const dependencies: RuntimeDependencies = {
     env,
-    serve: (factory) => {
-      void factory({ era: "legacy" });
-      return { close: () => Promise.resolve() };
-    },
+    serve: serveStdio,
     writeStderr: () => undefined,
     setExitCode: () => undefined,
     registerShutdown: () => () => undefined,
@@ -70,14 +44,13 @@ const startRuntime = async (env: NodeJS.ProcessEnv) => {
       reload = handler;
       return () => undefined;
     },
-    createServer: (analysis, session, received) => {
-      options = received;
-      return createServer(analysis, session, received);
-    },
   };
-
-  expect(await run(dependencies)).toBe(0);
-  if (reload === undefined || options === undefined)
-    throw new Error("Runtime reload seam was not initialized");
-  return { reload, options };
+  registerConfigReload({
+    dependencies,
+    runtimeState: state,
+    serverLogger: silentLogger,
+  });
+  if (reload === undefined)
+    throw new Error("Reload handler was not registered");
+  return { reload, state };
 };

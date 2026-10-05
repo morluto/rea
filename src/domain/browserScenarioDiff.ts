@@ -266,9 +266,7 @@ const captureContextsMatch = (
 ): boolean =>
   before.browser.product === after.browser.product &&
   before.browser.version === after.browser.version &&
-  before.scenario.start_origin === after.scenario.start_origin &&
-  digestCanonicalJson([...before.scenario.allowed_origins].sort()) ===
-    digestCanonicalJson([...after.scenario.allowed_origins].sort());
+  before.scenario.start_origin === after.scenario.start_origin;
 
 interface CompareStepArtifactsInput {
   readonly beforeCapture: BrowserScenarioCapture;

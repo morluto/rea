@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { ReplayDelayScheduler } from "./LoopbackReplayRecorder.js";
 import { scheduleProcessDelay } from "./ProcessTimer.js";
 
 describe("process delay scheduling", () => {
@@ -35,16 +34,5 @@ describe("process delay scheduling", () => {
     expect(scheduled[1]?.cancelled).toBe(true);
     scheduled[1]?.callback();
     expect(fired).toBe(false);
-  });
-
-  it("releases owned replay delays when the endpoint closes", async () => {
-    const scheduler = new ReplayDelayScheduler();
-    const waiting = scheduler.wait(Number.MAX_SAFE_INTEGER);
-
-    scheduler.close();
-    scheduler.close();
-    await waiting;
-
-    await scheduler.wait(Number.MAX_SAFE_INTEGER);
   });
 });

@@ -13,7 +13,6 @@ import {
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { REPLAY_MACHINE_RUN_EXAMPLE } from "../../../src/contracts/replayMachineExample.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
 
 const execute = promisify(execFile);
@@ -269,7 +268,7 @@ describe("application workflow CLI export Evidence", () => {
   }, 20_000);
 });
 
-describe("application workflow CLI validation and replay", () => {
+describe("application workflow CLI validation", () => {
   it("returns safe actionable JSON validation details", async () => {
     const malformed = await runCli([
       "trace-application-feature",
@@ -297,64 +296,6 @@ describe("application workflow CLI validation and replay", () => {
         ]),
       },
     });
-  }, 20_000);
-
-  it("runs a replay machine from inline and file-backed JSON", async () => {
-    const input = REPLAY_MACHINE_RUN_EXAMPLE;
-    const inline = await runCli([
-      "run-replay-machine",
-      JSON.stringify(input),
-      "--json",
-    ]);
-    expect(inline).toMatchObject({
-      final_state: "complete",
-      decisions: [{ outcome: "matched" }],
-      transition_journal: [
-        { captured_aliases: [{ name: "token", sensitive: true }] },
-      ],
-    });
-    expect(JSON.stringify(inline)).not.toContain("opaque");
-
-    const root = await createTestTempDirectory("rea-replay-machine-cli-");
-    temporary.push(root);
-    const inputPath = join(root, "run.json");
-    await writeFile(inputPath, JSON.stringify(input));
-    const fileBacked = await runCli([
-      "run-replay-machine",
-      inputPath,
-      "--json",
-    ]);
-    expect(fileBacked).toEqual(inline);
-
-    const invalid = await runCli([
-      "run-replay-machine",
-      JSON.stringify({
-        machine: input.machine,
-        events: [
-          {
-            protocol: "http",
-            connection: "not_applicable",
-            at_ms: 0,
-            method: null,
-            path: "/callback",
-            headers: {},
-            body: "private-cli-body",
-          },
-        ],
-      }),
-      "--json",
-    ]);
-    expect(invalid).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: expect.arrayContaining([
-          expect.objectContaining({
-            path: ["events", 0, "method"],
-          }),
-        ]),
-      },
-    });
-    expect(JSON.stringify(invalid)).not.toContain("private-cli-body");
   }, 20_000);
 });
 

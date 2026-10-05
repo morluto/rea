@@ -48,21 +48,9 @@ const allowedBrowserEnvironment = (
   );
 };
 
-const originAllowed = (
-  value: string,
-  allowedOrigins: ReadonlySet<string>,
-): boolean => {
-  try {
-    return allowedOrigins.has(new URL(value).origin);
-  } catch {
-    return false;
-  }
-};
-
 const findConnectedPage = async (
   browser: Browser,
   targetId: string,
-  allowedOrigins: ReadonlySet<string>,
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
@@ -70,11 +58,6 @@ const findConnectedPage = async (
       try {
         const { targetInfo } = await session.send("Target.getTargetInfo");
         if (targetInfo.targetId !== targetId) continue;
-        if (
-          page.url() !== "about:blank" &&
-          !originAllowed(page.url(), allowedOrigins)
-        )
-          throw new BrowserObservationError(OPERATION, "target_not_allowed");
         return { context, page };
       } finally {
         await session.detach();
@@ -128,7 +111,6 @@ export const openPlaywrightScenarioBrowser = async (
       const target = await findConnectedPage(
         browser,
         scenario.browser.target_id,
-        new Set(scenario.allowed_origins),
       );
       await configureAttachedEnvironment(target.context, target.page, scenario);
       return { ...target, browser, profilePath: undefined };

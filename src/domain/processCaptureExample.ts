@@ -10,8 +10,6 @@ const normalization = {
 };
 const scenario = { executable_sha256: "0".repeat(64) };
 const comparisonContract = {};
-const shimPlan: JsonValue[] = [];
-const replayPlan = {};
 
 /** Minimal valid process capture retained as a public contract example. */
 export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
@@ -25,14 +23,10 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
     completed_at: "2026-01-01T00:00:00.001Z",
     scenario,
     comparison_contract: comparisonContract,
-    shim_plan: shimPlan,
-    replay_plan: replayPlan,
     full_scenario_sha256: digestProcessCommitment(scenario),
     comparison_contract_sha256: digestProcessCommitment(comparisonContract),
     executable_sha256: "0".repeat(64),
     normalization_sha256: digestProcessCommitment(normalization),
-    shim_plan_sha256: digestProcessCommitment(shimPlan),
-    replay_plan_sha256: digestProcessCommitment(replayPlan),
   },
   normalization,
   frames: [],
@@ -55,9 +49,6 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
       truncated: false,
     },
   ],
-  shim_events: [],
-  protocol_events: [],
-  replay_transitions: [],
   files_before: [],
   files_after: [],
   filesystem_effects: [],

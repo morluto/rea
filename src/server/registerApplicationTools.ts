@@ -5,8 +5,6 @@ import { registerTraceJavaScriptSemanticsTool } from "./registerApplicationTools
 import { registerCompareApplicationVersionsTool } from "./registerApplicationTools/compareVersions.js";
 import { registerCompareSourceToBundleTool } from "./registerApplicationTools/compareSourceToBundle.js";
 import { registerCompareJavaScriptExportShapesTool } from "./registerApplicationTools/compareExportShapes.js";
-import { registerControlledReplayTool } from "./registerApplicationTools/controlledReplay.js";
-import { registerCharacterizationTools } from "./registerApplicationTools/characterization.js";
 import { registerCoverageTools } from "./registerApplicationTools/coverage.js";
 import { registerReconstructionObligationLedgerTool } from "./registerApplicationTools/obligationLedger.js";
 import type { ApplicationToolRegistration } from "./registerApplicationTools/types.js";
@@ -23,8 +21,6 @@ export const registerApplicationTools = (
   registerCompareApplicationVersionsTool(server, options);
   registerCompareSourceToBundleTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);
-  registerControlledReplayTool(server, options);
-  registerCharacterizationTools(server, options);
   registerReconstructionObligationLedgerTool(server, options);
   registerCoverageTools(server, options);
 };

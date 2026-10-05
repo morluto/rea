@@ -9,14 +9,11 @@ import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
 import type { Evidence } from "../domain/evidence.js";
-import type {
-  ProcessCapture,
-  ProcessScenario,
-} from "../domain/processCapture.js";
+import type { ProcessCapture } from "../domain/processCapture.js";
 import { ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -26,7 +23,6 @@ import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
 import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
-import { registerReplayMachineTool } from "./registerReplayMachineTool.js";
 import {
   registerEvidenceTools,
   registerUnknownTools,
@@ -42,7 +38,6 @@ import { toCallToolResult } from "./toolResult.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
-  scenario: ProcessScenario,
   evidence: Evidence,
   residuals: ProcessCapture["residual_unknowns"],
 ): Result<null, AnalysisError> => {
@@ -81,7 +76,9 @@ interface ProcessToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
-  readonly captureContract: (typeof SESSION_TOOL_CONTRACTS)[5];
+  readonly captureContract: ReturnType<
+    typeof toolContract<"capture_process_scenario">
+  >;
 }
 
 const registerProcessTools = ({
@@ -120,7 +117,6 @@ const registerProcessTools = ({
       if (!recorded.ok) return toCallToolResult(recorded, captureContract);
       const unknowns = recordProcessResidualUnknowns(
         session,
-        scenario,
         evidence,
         captured.value.residual_unknowns,
       );
@@ -134,11 +130,9 @@ export interface LifecycleToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
-  readonly contracts: readonly [
-    (typeof SESSION_TOOL_CONTRACTS)[0],
-    (typeof SESSION_TOOL_CONTRACTS)[1],
-    (typeof SESSION_TOOL_CONTRACTS)[2],
-  ];
+  readonly openContract: ReturnType<typeof toolContract<"open_binary">>;
+  readonly closeContract: ReturnType<typeof toolContract<"close_binary">>;
+  readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => SessionAvailability;
 }
@@ -146,14 +140,14 @@ export interface LifecycleToolRegistration {
 const registerLifecycleTools = (
   registration: LifecycleToolRegistration,
 ): void => {
-  const { server, session, contracts, startedAt, availabilityPolicy } =
+  const { server, session, statusContract, startedAt, availabilityPolicy } =
     registration;
   registerOpenLifecycleTool(registration);
   registerCloseLifecycleTool(registration);
   registerSessionStatusTool({
     server,
     session,
-    contract: contracts[2],
+    contract: statusContract,
     startedAt,
     availabilityPolicy,
   });
@@ -163,7 +157,7 @@ const registerOpenLifecycleTool = ({
   server,
   session,
   logger,
-  contracts: [openContract],
+  openContract,
 }: LifecycleToolRegistration): void => {
   server.registerTool(
     openContract.name,
@@ -212,25 +206,12 @@ export interface SessionToolOptions {
   readonly availabilityPolicy?: () => SessionAvailability;
 }
 
-const registerRecordAndReplayTools = (
-  server: McpServer,
-  session: BinarySessionPort,
-  logger: Logger,
-): void => {
-  registerUnknownTools({
-    server,
-    session,
-    contracts: SESSION_TOOL_CONTRACTS,
-  });
-  registerReplayMachineTool(server, logger);
-};
-
 const registerContextTools = (
   server: McpServer,
   session: BinarySessionPort,
 ): void => {
-  const navigationContract = SESSION_TOOL_CONTRACTS[20];
-  const addressContract = SESSION_TOOL_CONTRACTS[21];
+  const navigationContract = toolContract("get_navigation_context");
+  const addressContract = toolContract("inspect_address_context");
   server.registerTool(
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
@@ -259,28 +240,24 @@ export const registerSessionTools = (
   logger: Logger,
   options: SessionToolOptions = {},
 ): void => {
-  const [
-    openContract,
-    closeContract,
-    statusContract,
-    exportContract,
-    importContract,
-    captureContract,
-    compareContract,
-    compareArtifactsContract,
-    compareFunctionsContract,
-    compareBundlesContract,
-    changedBehaviorContract,
-    callPathContract,
-    staticRuntimeContract,
-    reconstructionContract,
-  ] = SESSION_TOOL_CONTRACTS;
-  const snapshotContract = SESSION_TOOL_CONTRACTS[19];
+  const openContract = toolContract("open_binary");
+  const closeContract = toolContract("close_binary");
+  const statusContract = toolContract("binary_session");
+  const exportContract = toolContract("export_evidence_bundle");
+  const importContract = toolContract("import_evidence_bundle");
+  const captureContract = toolContract("capture_process_scenario");
+  const compareContract = toolContract("compare_process_captures");
+  const compareArtifactsContract = toolContract("compare_artifacts");
+  const compareFunctionsContract = toolContract("compare_functions");
+  const compareBundlesContract = toolContract("compare_bundles");
+  const snapshotContract = toolContract("get_evidence_bundle");
   registerLifecycleTools({
     server,
     session,
     logger,
-    contracts: [openContract, closeContract, statusContract],
+    openContract,
+    closeContract,
+    statusContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
@@ -304,13 +281,7 @@ export const registerSessionTools = (
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerBundleComparisonTool(server, session, compareBundlesContract);
-  const investigationContracts = [
-    changedBehaviorContract,
-    callPathContract,
-    staticRuntimeContract,
-    reconstructionContract,
-  ] as const;
-  registerInvestigationTools(server, session, investigationContracts);
-  registerRecordAndReplayTools(server, session, logger);
+  registerInvestigationTools(server, session);
+  registerUnknownTools({ server, session });
   registerContextTools(server, session);
 };

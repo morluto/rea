@@ -24,10 +24,6 @@ describe("the CLI takes its environment as an input", () => {
     expect(createSystemDoctorHost()).toBeDefined();
   });
 
-  it("builds a doctor host from an explicit environment", () => {
-    expect(createSystemDoctorHost({})).toBeDefined();
-  });
-
   it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
     skip,
   }) => {

@@ -288,7 +288,6 @@ const runScenario = async (
     },
     scenario: {
       start_origin: new URL(scenario.start_url.url).origin,
-      allowed_origins: scenario.allowed_origins,
       action_count: scenario.actions.length,
       secret_references: scenario.secrets.map(({ secret_id: id }) => id).sort(),
     },

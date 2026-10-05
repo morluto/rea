@@ -22,10 +22,6 @@ it("classifies missing observations as unknown and one-sided evidence as added",
     exit: { code: 0, signal: null, reason: "exited" as const },
     process_samples: [],
     filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -61,7 +57,6 @@ it("classifies missing observations as unknown and one-sided evidence as added",
     base,
   );
   expect(unknown.process).toBe("unknown");
-  expect(unknown.shim).toBe("unchanged");
   expect(unknown.status).toBe("unknown");
 });
 
@@ -102,10 +97,6 @@ it("compares raw terminal chunks even when rendered states agree", () => {
     exit: { code: 0, signal: null, reason: "exited" as const },
     process_samples: [],
     filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -146,10 +137,6 @@ it("keeps filesystem evidence unknown when stable snapshots match", () => {
     exit: { code: 0, signal: null, reason: "exited" as const },
     process_samples: [],
     filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    shim_events: [],
-    protocol_events: [],
-    replay_transitions: [],
-    reactive_run: null,
     files_before: [],
     files_after: [],
     filesystem_effects: [],
@@ -169,26 +156,43 @@ it("keeps filesystem evidence unknown when stable snapshots match", () => {
   expect(comparison.status).toBe("unknown");
 
   const complete = { ...capture, residual_unknowns: [] };
-  const transient = compareProcessCaptures(complete, {
+  const finalFile = {
+    path: "root_0:created.txt",
+    type: "file" as const,
+    mode: 0o644,
+    size: 4,
+    sha256: "a".repeat(64),
+    symlink_target: null,
+  };
+  const changed = compareProcessCaptures(complete, {
     ...complete,
     filesystem_checkpoints: [
       { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
       {
-        name: "during_run",
-        at_ms: 10,
-        files: [],
-        effects: [],
-        truncated: false,
-      },
-      {
         name: "after_settlement",
-        at_ms: 50,
-        files: [],
-        effects: [],
+        at_ms: 10,
+        files: [finalFile],
+        effects: [
+          {
+            path: finalFile.path,
+            status: "created",
+            before: null,
+            after: finalFile,
+          },
+        ],
         truncated: false,
       },
     ],
+    files_after: [finalFile],
+    filesystem_effects: [
+      {
+        path: finalFile.path,
+        status: "created",
+        before: null,
+        after: finalFile,
+      },
+    ],
   });
-  expect(transient.filesystem).toBe("changed");
-  expect(transient.status).toBe("changed");
+  expect(changed.filesystem).toBe("changed");
+  expect(changed.status).toBe("changed");
 });

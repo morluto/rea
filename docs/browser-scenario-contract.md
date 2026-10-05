@@ -3,22 +3,21 @@
 `capture_browser_scenario` accepts the provider-neutral
 `browserScenarioSchema` through both MCP and the
 `capture-browser-scenario INPUT_JSON` CLI command. The request is declarative:
-it admits a fixed action vocabulary, exact HTTP(S) origins, deterministic
-browser settings, explicit storage and request replay, and provider-owned
+it admits a fixed action vocabulary, explicit HTTP(S) targets, deterministic
+browser settings, explicit storage seeds, and provider-owned
 liveness deadlines. `INPUT_JSON` may be inline JSON or a JSON file path.
 
 The minimal request contains only browser launch/connect selection, `start_url`,
 and at least one `actions` entry. Launch `headless` defaults to `true` and can
-be set to `false` where the host supports a visible browser. `allowed_origins`
-defaults to the origin of
-`start_url`; add exact origins only when navigation, storage, or replay needs
-another origin. Environment settings (including service workers blocked by
-default), empty storage, disabled request replay, and a final sanitized URL
-capture are supplied by default. Set `environment.service_workers` to `allow`
-when the application requires them. Add secret declarations, storage seeds,
-replay routes, and additional artifact or event capture only when the
-investigation needs them. Action, secret, storage,
-and replay-route counts are not capped. Duration, action, and navigation
+be set to `false` where the host supports a visible browser. Navigations follow
+the destinations named by the scenario and the page's ordinary browser requests;
+there is no separate origin allowlist or request-interception layer. Environment
+settings (including service workers blocked by default), empty storage, and a
+final sanitized URL capture are supplied by default. Set
+`environment.service_workers` to `allow` when the application requires them.
+Add secret declarations, storage seeds, and additional artifact or event
+capture only when needed. Action, secret, and storage counts are not capped.
+Duration, action, and navigation
 timeouts remain fixed provider-owned liveness limits; the request does not
 accept a caller-controlled `limits` object.
 
@@ -32,23 +31,21 @@ confirms that an attached external browser remains alive.
 
 HTTP(S) URLs may include ordinary query values and fragments directly. Use
 ordered structured query entries when a value needs to reference a declared
-environment-backed secret. Form, storage, cookie, and replay values are either
-literal strings or declared secret references. Raw URL userinfo credentials
-and provider-owned replay headers are rejected. Captured credential-header
+environment-backed secret. Form, storage, and cookie values are either literal
+strings or declared secret references. Raw URL userinfo credentials are rejected.
+Captured credential-header
 values are not retained, and declared secret values are redacted automatically.
 A secret may be declared solely to
 redact matching observed content; every secret reference in an action, URL,
-storage value, or replay route still needs a declaration. Ordinary query values
+storage value still needs a declaration. Ordinary query values
 and fragments remain intact. Durable results replace resolved secret values
 with their secret references.
 
-Every start, navigation, storage, replay, and redirect origin must be in the
-effective origin set: the explicit `allowed_origins`, or the `start_url` origin
-when the list is omitted or empty. Unsupported action tags, unknown fields, duplicate step or
-route IDs, undeclared secret references, and provider-owned replay headers fail
-validation. HTTP and WebSocket routing enforces the same declared scope. Exact
-replay may abort unmatched requests or pass through only origins included in
-`allowed_origins`.
+The exact `start_url`, navigation destinations, and storage-seed origins define
+the inputs to a scenario; ordinary page requests are handled by the browser.
+Storage cookies are scoped to the page URL at each capture. Unsupported action
+tags, unknown fields, duplicate step IDs, and undeclared secret references fail
+validation.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,

@@ -10,7 +10,6 @@ import {
   HopperStartError,
   HopperTimeoutError,
   ProviderAdapterError,
-  ReplayPlanStaleError,
   UnknownRegistryError,
   projectAnalysisError,
 } from "./errors.js";
@@ -18,7 +17,7 @@ import {
 describe("analysis error projection: provider failures", () => {
   it("reports a timed-out active Hopper request and actionable retry guidance", () => {
     const projected = projectAnalysisError(
-      new HopperTimeoutError(30_000, "find_code_for_string", 42, "busy"),
+      new HopperTimeoutError(30_000, "trace_feature", 42, "busy"),
     );
 
     expect(projected).toMatchObject({
@@ -27,7 +26,7 @@ describe("analysis error projection: provider failures", () => {
       retryable: true,
       details: {
         stage: "analysis",
-        operation: "find_code_for_string",
+        operation: "trace_feature",
         request_id: 42,
         provider_state: "busy",
         timeout_ms: 30_000,
@@ -64,7 +63,7 @@ describe("analysis error projection: provider failures", () => {
           "Hopper analysis failed in the selected document",
           {
             diagnosticType: "bridge_exception",
-            operation: "find_code_for_string",
+            operation: "trace_feature",
             requestId: 43,
           },
         ),
@@ -75,7 +74,7 @@ describe("analysis error projection: provider failures", () => {
         stage: "analysis",
         provider_code: 7,
         diagnostic_type: "bridge_exception",
-        operation: "find_code_for_string",
+        operation: "trace_feature",
         request_id: 43,
       },
       message: expect.stringContaining("Hopper analysis failed"),
@@ -144,16 +143,12 @@ describe("analysis error projection: caller contract", () => {
           cause: secretCause,
         }),
       ),
-      projectAnalysisError(
-        new ReplayPlanStaleError("a".repeat(64), "b".repeat(64)),
-      ),
     ];
 
     expect(projected.map(({ code }) => code)).toEqual([
       "invalid_request",
       "capability_unavailable",
       "target_unavailable",
-      "plan_stale",
     ]);
     expect(projected[1]).toMatchObject({ category: "unsupported_provider" });
     expect(projected[2]).toMatchObject({

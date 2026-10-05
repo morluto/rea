@@ -1,9 +1,7 @@
 import type { UnverifiedProcessCapture } from "./processCapture.js";
-import { validateProcessCaptureReactiveRun } from "./processCaptureReactiveValidation.js";
-import { replayMachineSchema, type ReplayMachine } from "./replayMachine.js";
 import { digestProcessCommitment } from "./processScenario.js";
 
-/** One pure semantic validation failure in an otherwise shaped v4 capture. */
+/** One pure semantic validation failure in a shaped process capture. */
 export interface ProcessCaptureValidationIssue {
   readonly path: string;
   readonly message: string;
@@ -23,12 +21,6 @@ const orderedTimestamps = (
     return previous === undefined || value.at_ms >= previous.at_ms;
   });
 
-const transitionsAreContiguous = (
-  previous: UnverifiedProcessCapture["replay_transitions"][number] | undefined,
-  current: UnverifiedProcessCapture["replay_transitions"][number],
-): boolean =>
-  previous !== undefined && previous.state_after === current.state_before;
-
 const validateCommitments = (
   capture: UnverifiedProcessCapture,
   require: RequireInvariant,
@@ -40,8 +32,6 @@ const validateCommitments = (
     ["full_scenario_sha256", manifest.scenario],
     ["comparison_contract_sha256", manifest.comparison_contract],
     ["normalization_sha256", capture.normalization],
-    ["shim_plan_sha256", manifest.shim_plan],
-    ["replay_plan_sha256", manifest.replay_plan],
   ] as const)
     require(manifest[field] ===
       digestProcessCommitment(
@@ -61,9 +51,6 @@ const validateOrdering = (
     ["frames", capture.frames],
     ["rendered_frames", capture.rendered_frames],
     ["interaction_events", capture.interaction_events],
-    ["shim_events", capture.shim_events],
-    ["protocol_events", capture.protocol_events],
-    ["replay_transitions", capture.replay_transitions],
   ] as const)
     require(values.every(
       ({ sequence }, index) => sequence === index,
@@ -72,34 +59,9 @@ const validateOrdering = (
     ["frames", capture.frames],
     ["rendered_frames", capture.rendered_frames],
     ["process_samples", capture.process_samples],
-    ["filesystem_checkpoints", capture.filesystem_checkpoints],
-    ["shim_events", capture.shim_events],
-    ["protocol_events", capture.protocol_events],
-    ["replay_transitions", capture.replay_transitions],
   ] as const)
     require(orderedTimestamps(values), name, "timestamps must be ordered");
 };
-
-const journalCollectionSizes = (
-  capture: UnverifiedProcessCapture,
-): Readonly<
-  Record<
-    NonNullable<
-      UnverifiedProcessCapture["event_journal"]
-    >[number]["collection"],
-    number
-  >
-> => ({
-  frames: capture.frames.length,
-  rendered_frames: capture.rendered_frames.length,
-  interaction_events: capture.interaction_events.length,
-  lifecycle: 2,
-  process_samples: capture.process_samples.length,
-  filesystem_checkpoints: capture.filesystem_checkpoints.length,
-  shim_events: capture.shim_events.length,
-  protocol_events: capture.protocol_events.length,
-  replay_transitions: capture.replay_transitions.length,
-});
 
 const validateEventJournal = (
   capture: UnverifiedProcessCapture,
@@ -107,7 +69,14 @@ const validateEventJournal = (
 ): void => {
   const journal = capture.event_journal ?? [];
   if (journal.length === 0) return;
-  const sizes = journalCollectionSizes(capture);
+  const sizes = {
+    frames: capture.frames.length,
+    rendered_frames: capture.rendered_frames.length,
+    interaction_events: capture.interaction_events.length,
+    lifecycle: 2,
+    process_samples: capture.process_samples.length,
+    filesystem_checkpoints: capture.filesystem_checkpoints.length,
+  };
   const references = new Set<string>();
   for (const [position, entry] of journal.entries()) {
     require(entry.capture_order ===
@@ -134,180 +103,19 @@ const validateLifecycle = (
   capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
-  const checkpointNames = capture.filesystem_checkpoints.map(
-    ({ name }) => name,
-  );
-  require(new Set(checkpointNames).size ===
-    checkpointNames.length, "filesystem_checkpoints", "checkpoint names must be unique");
-  require(checkpointNames[0] ===
-    "before", "filesystem_checkpoints", "first checkpoint must be before");
-  require(checkpointNames.at(-1) ===
-    "after_settlement", "filesystem_checkpoints", "last checkpoint must be after_settlement");
+  require(capture.filesystem_checkpoints.map(({ name }) => name).join(",") ===
+    "before,after_settlement", "filesystem_checkpoints", "capture must include initial and final filesystem snapshots");
+  require(orderedTimestamps(
+    capture.filesystem_checkpoints,
+  ), "filesystem_checkpoints", "filesystem snapshot times must be ordered");
   require(!capture.filesystem_checkpoints.some(({ truncated }) => truncated) ||
-    capture.truncated, "truncated", "checkpoint truncation must propagate to the capture");
+    capture.truncated, "truncated", "filesystem snapshot truncation must propagate to the capture");
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");
 };
 
-const shimPlans = (capture: UnverifiedProcessCapture) =>
-  capture.manifest.shim_plan.flatMap((shim) =>
-    typeof shim === "object" &&
-    shim !== null &&
-    "name" in shim &&
-    "routes" in shim &&
-    typeof shim.name === "string" &&
-    Array.isArray(shim.routes)
-      ? shim.routes.map((route, routeIndex) => ({
-          command: shim.name,
-          route,
-          routeIndex,
-        }))
-      : [],
-  );
-
-const validateShimEvents = (
-  capture: UnverifiedProcessCapture,
-  require: RequireInvariant,
-): void => {
-  const plans = shimPlans(capture);
-  for (const event of capture.shim_events) {
-    const declared = plans.some(
-      ({ command, routeIndex }) =>
-        command === event.command && routeIndex === event.route_index,
-    );
-    require(event.outcome === "unmatched"
-      ? event.route_index === null
-      : declared, "shim_events", "shim event has no declared route");
-  }
-  for (const plan of plans) {
-    const maximum =
-      typeof plan.route === "object" &&
-      plan.route !== null &&
-      "max_calls" in plan.route &&
-      typeof plan.route.max_calls === "number"
-        ? plan.route.max_calls
-        : 0;
-    const matches = capture.shim_events.filter(
-      (event) =>
-        event.command === plan.command &&
-        event.route_index === plan.routeIndex &&
-        event.outcome === "matched",
-    ).length;
-    require(matches <=
-      maximum, "shim_events", "matched shim events exceed the declared route max_calls");
-  }
-};
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null;
-
-const machinePlan = (
-  replayPlan: Readonly<Record<string, unknown>>,
-): ReplayMachine | undefined => {
-  const parsed = replayMachineSchema.safeParse(replayPlan["machine"]);
-  return parsed.success ? parsed.data : undefined;
-};
-
-const matchesHttpPlan = (
-  value: unknown,
-  event: UnverifiedProcessCapture["protocol_events"][number],
-): boolean => {
-  if (!isRecord(value)) return false;
-  const route = isRecord(value["trigger"]) ? value["trigger"] : value;
-  return (
-    (route["protocol"] === undefined || route["protocol"] === "http") &&
-    route["method"] === event.method &&
-    route["path"] === event.path
-  );
-};
-
-const validateMatchedHttpEvents = (
-  capture: UnverifiedProcessCapture,
-  plans: readonly unknown[],
-  require: RequireInvariant,
-): void => {
-  for (const event of capture.protocol_events) {
-    if (
-      event.protocol !== "http" ||
-      event.direction !== "request" ||
-      event.outcome !== "matched"
-    )
-      continue;
-    require(plans.some((plan) =>
-      matchesHttpPlan(plan, event),
-    ), "protocol_events", "matched HTTP event has no declared replay route");
-  }
-};
-
-const validateReplayEvents = (
-  capture: UnverifiedProcessCapture,
-  require: RequireInvariant,
-): void => {
-  const replayPlan = capture.manifest.replay_plan;
-  const routes = Array.isArray(replayPlan["http"]) ? replayPlan["http"] : [];
-  const machine = machinePlan(replayPlan);
-  require(replayPlan["machine"] === undefined ||
-    replayPlan["machine"] === null ||
-    machine !==
-      undefined, "manifest.replay_plan.machine", "replay machine does not satisfy its declared schema");
-  validateMatchedHttpEvents(
-    capture,
-    [...routes, ...(machine?.transitions ?? [])],
-    require,
-  );
-  const plans = new Map(
-    (machine?.transitions ?? []).map((transition) => [
-      transition.id,
-      transition,
-    ]),
-  );
-  const transitionUses = new Map<string, number>();
-  const stateVisits = new Map<string, number>();
-  if (machine !== undefined) stateVisits.set(machine.initial_state, 1);
-  require(machine === undefined ||
-    capture.replay_transitions.length <=
-      machine.max_transitions, "replay_transitions", "replay transition journal exceeds the declared machine limit");
-  for (const [index, transition] of capture.replay_transitions.entries()) {
-    const plan = plans.get(transition.transition_id);
-    require(plan !==
-      undefined, "replay_transitions", "replay transition has no declared machine transition");
-    if (plan === undefined) continue;
-    require(transition.state_before === plan.from &&
-      transition.state_after ===
-        plan.to, "replay_transitions", "replay transition states do not match the declared transition");
-    require(JSON.stringify(transition.sensitive_aliases) ===
-      JSON.stringify(
-        plan.captures
-          .filter(({ sensitive }) => sensitive)
-          .map(({ variable }) => variable)
-          .sort(),
-      ), "replay_transitions", "replay transition sensitive aliases do not match the declared captures");
-    const uses = (transitionUses.get(plan.id) ?? 0) + 1;
-    transitionUses.set(plan.id, uses);
-    require(uses <=
-      plan.max_uses, "replay_transitions", "replay transition journal exceeds the transition use limit");
-    const visits = (stateVisits.get(transition.state_after) ?? 0) + 1;
-    stateVisits.set(transition.state_after, visits);
-    const state = machine?.states.find(
-      ({ name }) => name === transition.state_after,
-    );
-    require(state === undefined ||
-      visits <=
-        state.max_visits, "replay_transitions", "replay transition journal exceeds the state visit limit");
-    if (index === 0)
-      require(transition.state_before ===
-        machine?.initial_state, "replay_transitions", "first replay transition does not start at the declared initial state");
-    const previous = capture.replay_transitions[index - 1];
-    if (index > 0)
-      require(transitionsAreContiguous(
-        previous,
-        transition,
-      ), "replay_transitions", "replay transition states are not contiguous");
-  }
-};
-
-/** Recompute v4 commitments and cross-field invariants without side effects. */
+/** Recompute commitments and cross-field invariants without side effects. */
 export const collectProcessCaptureIssues = (
   capture: UnverifiedProcessCapture,
 ): readonly ProcessCaptureValidationIssue[] => {
@@ -319,8 +127,5 @@ export const collectProcessCaptureIssues = (
   validateOrdering(capture, require);
   validateEventJournal(capture, require);
   validateLifecycle(capture, require);
-  validateShimEvents(capture, require);
-  validateReplayEvents(capture, require);
-  validateProcessCaptureReactiveRun(capture, require);
   return issues;
 };

@@ -250,9 +250,7 @@ const processFindings = (evidence: Evidence): Finding[] => {
     ["interaction", result.interaction, "runtime"],
     ["exit", result.exit, "runtime"],
     ["filesystem", result.filesystem, "resource"],
-    ["protocol", result.protocol, "protocol"],
     ["process", result.process, "runtime"],
-    ["shim", result.shim, "protocol"],
   ] as const;
   return dimensions.flatMap(([dimension, status, scope]) =>
     status === "unchanged"

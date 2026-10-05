@@ -82,7 +82,7 @@ try {
   });
   const endpoint = `http://127.0.0.1:${String(port)}`;
   const provider = new CdpBrowserProvider();
-  const target = await pageTarget(provider, endpoint, site.origin);
+  const target = await pageTarget(provider, endpoint);
   const observed = await provider.inspectPage(
     inspectWebPageInputSchema.parse({
       cdp_endpoint: endpoint,
@@ -355,7 +355,7 @@ try {
 }
 
 async function verifyPageScopedTransport(provider, proxy, origin) {
-  const target = await pageTarget(provider, proxy.endpoint, origin);
+  const target = await pageTarget(provider, proxy.endpoint);
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: proxy.endpoint,
     allowed_origins: [origin],
@@ -432,12 +432,11 @@ async function browserExecutable() {
   );
 }
 
-async function pageTarget(provider, endpoint, origin) {
+async function pageTarget(provider, endpoint) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const listed = await provider.listTargets(
       listBrowserTargetsInputSchema.parse({
         cdp_endpoint: endpoint,
-        allowed_origins: [origin],
       }),
     );
     if (listed.ok && listed.value.targets[0] !== undefined)

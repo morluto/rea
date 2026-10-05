@@ -37,8 +37,8 @@ related-tool change; setup must never install Java.
 Before enabling Windows Ghidra operations, add current-user-only DACL creation and
 readback, handle-based reparse-point-safe path authority, a DACL-protected IPC
 backend, and Job Object assignment before provider execution. Process capture,
-controlled replay, Hopper, and broad filesystem-sensitive workflows remain
-separate Windows projects rather than implied parity.
+Hopper, and broad filesystem-sensitive workflows remain separate Windows
+projects rather than implied parity.
 
 ## Capability-selective setup
 

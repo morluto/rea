@@ -18,7 +18,6 @@ const baseScenario = () => ({
     url: "https://app.example.test/",
     query: [{ name: "token", value: secret("session") }],
   },
-  allowed_origins: ["https://api.example.test", "https://app.example.test"],
   actions: [
     {
       step_id: "login",
@@ -60,28 +59,6 @@ const baseScenario = () => ({
       },
     ],
   },
-  request_replay: {
-    mode: "exact",
-    unmatched: "abort",
-    routes: [
-      {
-        route_id: "profile",
-        method: "GET",
-        request: { url: "https://api.example.test/profile" },
-        response: {
-          kind: "response",
-          status: 200,
-          headers: [
-            {
-              name: "content-type",
-              value: literal("application/json"),
-            },
-          ],
-          body: literal('{"name":"Ada"}'),
-        },
-      },
-    ],
-  },
   secrets: [
     {
       secret_id: "session",
@@ -106,10 +83,6 @@ const baseScenario = () => ({
 describe("browserScenarioSchema", () => {
   it("accepts and normalizes a declared scenario", () => {
     const parsed = browserScenarioSchema.parse(baseScenario());
-    expect(parsed.allowed_origins).toEqual([
-      "https://api.example.test",
-      "https://app.example.test",
-    ]);
     expect(parsed.browser).toMatchObject({ mode: "launch", headless: true });
     expect(parsed.environment).toMatchObject({
       viewport: { width: 1_280, height: 720, device_scale_factor: 1 },
@@ -118,11 +91,6 @@ describe("browserScenarioSchema", () => {
       color_scheme: "light",
       reduced_motion: "reduce",
       service_workers: "block",
-    });
-    expect(parsed.request_replay).toEqual({
-      mode: "exact",
-      unmatched: "abort",
-      routes: expect.any(Array),
     });
     expect(parsed.capture).toEqual({
       after_each_step: ["screenshot", "url", "accessibility"],
@@ -197,44 +165,18 @@ describe("browserScenarioSchema", () => {
     expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
   });
 
-  it("rejects every undeclared navigation, storage, and replay origin", () => {
-    for (const mutate of [
-      (scenario: ReturnType<typeof baseScenario>) => {
-        scenario.start_url.url = "https://other.example.test/";
-      },
-      (scenario: ReturnType<typeof baseScenario>) => {
-        scenario.actions[2] = {
-          ...scenario.actions[2],
-          destination: { url: "https://other.example.test/" },
-        } as never;
-      },
-      (scenario: ReturnType<typeof baseScenario>) => {
-        scenario.storage.local_storage[0]!.origin =
-          "https://other.example.test";
-      },
-      (scenario: ReturnType<typeof baseScenario>) => {
-        scenario.request_replay.routes[0]!.request.url =
-          "https://other.example.test/data";
-      },
-    ]) {
-      const scenario = baseScenario();
-      mutate(scenario);
-      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
-    }
+  it("accepts explicitly selected navigation and storage origins without an allowlist", () => {
+    const scenario = baseScenario();
+    scenario.actions[2] = {
+      ...scenario.actions[2],
+      destination: { url: "https://other.example.test/" },
+    } as never;
+    scenario.storage.local_storage[0]!.origin = "https://storage.example.test";
+    expect(browserScenarioSchema.safeParse(scenario).success).toBe(true);
   });
 });
 
-describe("browserScenarioSchema credential handling", () => {
-  it("rejects redirects outside declared origins", () => {
-    const scenario = baseScenario();
-    scenario.request_replay.routes[0]!.response = {
-      kind: "redirect",
-      status: 302,
-      destination: { url: "https://other.example.test/" },
-    } as never;
-    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
-  });
-
+describe("browserScenarioSchema secret declarations", () => {
   it("rejects missing and duplicate secret declarations but accepts redaction-only declarations", () => {
     const missing = baseScenario();
     missing.secrets = missing.secrets.filter(
@@ -260,42 +202,17 @@ describe("browserScenarioSchema credential handling", () => {
     expect(browserScenarioSchema.safeParse(unused).success).toBe(false);
   });
 
-  it("accepts literal credential headers and rejects provider-owned headers", () => {
-    const credentialHeaders = baseScenario();
-    credentialHeaders.request_replay.routes[0]!.response = {
-      kind: "response",
-      status: 200,
-      headers: [
-        { name: "authorization", value: literal("Bearer caller-value") },
-        { name: "cookie", value: literal("session=caller-value") },
-        { name: "set-cookie", value: literal("session=caller-value") },
-      ],
-    } as never;
-    expect(browserScenarioSchema.safeParse(credentialHeaders).success).toBe(
-      true,
-    );
-
-    for (const name of ["content-length", "location", "transfer-encoding"]) {
-      const scenario = baseScenario();
-      scenario.request_replay.routes[0]!.response = {
-        kind: "response",
-        status: 200,
-        headers: [{ name, value: literal("raw") }],
-      } as never;
-      expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
-    }
-  });
-
-  it("rejects duplicate replay response headers case-insensitively", () => {
-    const scenario = baseScenario();
-    const response = scenario.request_replay.routes[0]!.response;
-    if (response.kind !== "response")
-      throw new Error("Expected replay response fixture");
-    response.headers.push({
-      name: "Content-Type",
-      value: literal("text/plain"),
-    });
-    expect(browserScenarioSchema.safeParse(scenario).success).toBe(false);
+  it("rejects removed replay and origin policy options", () => {
+    for (const legacyField of [
+      { request_replay: { mode: "disabled" } },
+      { allowed_origins: ["https://app.example.test"] },
+    ])
+      expect(
+        browserScenarioSchema.safeParse({
+          ...baseScenario(),
+          ...legacyField,
+        }).success,
+      ).toBe(false);
   });
 
   it("rejects raw secret-shaped action values", () => {

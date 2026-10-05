@@ -60,7 +60,7 @@ const processResult = (
     terminal: "unchanged" | "changed" | "unknown" | "truncated";
     interaction: "unchanged" | "changed" | "unknown" | "truncated";
     exit: "unchanged" | "changed" | "unknown" | "truncated";
-    shim: "unchanged" | "changed" | "unknown" | "truncated";
+    process: "unchanged" | "changed" | "unknown" | "truncated";
   }> = {},
 ): JsonValue => ({
   status: overrides.status ?? "unchanged",
@@ -68,9 +68,7 @@ const processResult = (
   interaction: overrides.interaction ?? "unchanged",
   exit: overrides.exit ?? "unchanged",
   filesystem: "unchanged",
-  protocol: "unchanged",
-  process: "unchanged",
-  shim: overrides.shim ?? "unchanged",
+  process: overrides.process ?? "unchanged",
   first_divergence:
     overrides.status === "changed"
       ? {
@@ -133,13 +131,13 @@ describe("changed behavior", () => {
     expect(result.behavior_status).toBe("observed_unchanged");
   });
 
-  it("reports interaction and shim-only process changes", () => {
+  it("reports interaction and process changes", () => {
     const evidence = comparison(
       "compare_process_captures",
       processResult({
         status: "changed",
         interaction: "changed",
-        shim: "changed",
+        process: "changed",
       }),
     );
 
@@ -152,7 +150,7 @@ describe("changed behavior", () => {
             dimension: "interaction",
             scope: "runtime",
           }),
-          expect.objectContaining({ dimension: "shim", scope: "protocol" }),
+          expect.objectContaining({ dimension: "process", scope: "runtime" }),
         ]),
       },
     });

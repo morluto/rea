@@ -20,7 +20,6 @@ describe("PlaywrightScenarioEvents", () => {
         executable_path: "/opt/chromium",
       },
       start_url: { url: "https://app.example.test/" },
-      allowed_origins: ["https://app.example.test"],
       environment: {
         viewport: { width: 1_280, height: 720 },
         locale: "en-US",
@@ -36,7 +35,6 @@ describe("PlaywrightScenarioEvents", () => {
         },
       ],
       storage: {},
-      request_replay: { mode: "disabled" },
       secrets: [],
       capture: {
         after_each_step: [],
@@ -50,7 +48,6 @@ describe("PlaywrightScenarioEvents", () => {
       page,
       enabled: new Set(["page-errors"]),
       secrets,
-      allowedOrigins: scenario.allowed_origins,
     });
     const error = new Error("m".repeat(70_000));
     error.stack = "s".repeat(300_000);
@@ -79,7 +76,6 @@ describe("PlaywrightScenarioEvents", () => {
         executable_path: "/opt/chromium",
       },
       start_url: { url: "https://app.example.test/" },
-      allowed_origins: ["https://app.example.test"],
       actions: [
         { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
       ],
@@ -91,7 +87,6 @@ describe("PlaywrightScenarioEvents", () => {
       page,
       enabled: new Set(["page-errors"]),
       secrets,
-      allowedOrigins: scenario.allowed_origins,
     });
     for (let index = 0; index < 2_001; index += 1)
       listeners

@@ -96,7 +96,6 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   analyze_function: evidence,
   inspect_native_api: effects({ mutatesSession: true, idempotent: false }),
   trace_feature: effects({ mutatesSession: true, idempotent: false }),
-  find_code_for_string: effects({ mutatesSession: true, idempotent: false }),
   trace_call_path: effects({ mutatesSession: true, idempotent: false }),
   observe_native_ui: effects({
     mutatesSession: true,
@@ -129,7 +128,6 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   compare_managed_members: sessionEvidence,
   verify_managed_native_boundaries: sessionEvidence,
   import_managed_reconstruction: sessionEvidence,
-  plan_managed_runtime_correlation: sessionEvidence,
   project_managed_application_graph: sessionEvidence,
   list_browser_targets: browserEvidence,
   inspect_web_page: browserEvidence,
@@ -171,21 +169,6 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   compare_source_to_bundle: evidence,
   compare_javascript_export_shapes: evidence,
   build_reconstruction_obligation_ledger: evidence,
-  run_replay_machine: effects(),
-  run_controlled_replay: effects({
-    mutatesSession: true,
-    writesFilesystem: true,
-    launchesProcess: true,
-  }),
-  prepare_node_characterization: effects({
-    mutatesSession: true,
-    launchesProcess: true,
-  }),
-  execute_node_characterization: effects({
-    mutatesSession: true,
-    writesFilesystem: true,
-    launchesProcess: true,
-  }),
   evaluate_reconstruction_coverage: effects(),
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
   close_binary: effects({

@@ -31,5 +31,6 @@ Include the complete Evidence records from both analysis calls. Accept variant
 pairing only through the tool's unique exact literal discriminant. Cite the
 comparison Evidence and report JSON Pointer changes; dynamic values, ambiguous
 variants, and incomplete parent-property coverage stay unknown. This is static
-inference, not runtime behavior. Use `run_controlled_replay` separately only
-when the user needs approved runtime semantics.
+inference, not runtime behavior. When runtime semantics are needed, run
+behavioral probes against the relevant application versions and capture them
+through the available browser, Electron, or process workflows.

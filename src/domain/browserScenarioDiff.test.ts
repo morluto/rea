@@ -344,7 +344,6 @@ const scenarioCapture = (
     },
     scenario: {
       start_origin: "https://app.example.test",
-      allowed_origins: ["https://app.example.test"],
       action_count: 1,
       secret_references: [],
     },

@@ -141,12 +141,8 @@ it("accepts complete storage, history, and text artifacts beyond former caps", (
   expect(parsed.success).toBe(true);
 });
 
-it("accepts complete scenario output beyond former string and origin caps", () => {
+it("accepts complete scenario output beyond former string caps", () => {
   const longText = "detail".repeat(1_000);
-  const origins = Array.from(
-    { length: 33 },
-    (_, index) => `https://site-${index}.example.test`,
-  );
   const step = (index: number) => ({
     step_index: index,
     step_id: longText,
@@ -183,7 +179,6 @@ it("accepts complete scenario output beyond former string and origin caps", () =
     },
     scenario: {
       start_origin: longText,
-      allowed_origins: origins,
       action_count: 1,
       secret_references: [longText],
     },
@@ -199,7 +194,6 @@ it("accepts complete scenario output beyond former string and origin caps", () =
     limitations: Array.from({ length: 65 }, () => longText),
   });
 
-  expect(parsed.scenario.allowed_origins).toHaveLength(33);
   expect(parsed.steps[0]?.step_id).toBe(longText);
   expect(parsed.limitations).toHaveLength(65);
 });

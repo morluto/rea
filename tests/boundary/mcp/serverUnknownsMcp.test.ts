@@ -128,7 +128,7 @@ it("does not record capability unavailability without supporting Evidence", asyn
   });
 });
 
-it("records approved capture disagreement as a contradicted unknown", async () => {
+it("records capture disagreement as a contradicted unknown", async () => {
   const session = createTestBinarySession(
     () =>
       ({
@@ -147,17 +147,6 @@ it("records approved capture disagreement as a contradicted unknown", async () =
         type: "input",
         data: "fixture",
         outcome: "dispatched",
-      },
-    ],
-    shim_events: [
-      {
-        sequence: 0,
-        at_ms: 0,
-        command: "fixture",
-        route_index: null,
-        arguments: [],
-        working_directory: "/tmp",
-        outcome: "unmatched",
       },
     ],
   });
@@ -213,7 +202,7 @@ it("records approved capture disagreement as a contradicted unknown", async () =
         {
           status: "contradicted",
           domain: "process-comparison",
-          question: "Process captures disagree across: interaction, shim",
+          question: "Process captures disagree across: interaction",
           contradicting_evidence_ids: [rightEvidence.evidence_id],
         },
       ],

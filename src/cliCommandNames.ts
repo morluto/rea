@@ -33,7 +33,6 @@ export const CLI_COMMANDS = Object.freeze({
   compareManagedMembers: "compare-managed-members",
   verifyManagedNativeBoundaries: "verify-managed-native-boundaries",
   importManagedReconstruction: "import-managed-reconstruction",
-  planManagedRuntimeCorrelation: "plan-managed-runtime-correlation",
   projectManagedApplicationGraph: "project-managed-application-graph",
   observeNativeUi: "observe-native-ui",
   captureNativeUiScenario: "capture-native-ui-scenario",
@@ -68,10 +67,6 @@ export const CLI_COMMANDS = Object.freeze({
   compareApplicationVersions: "compare-application-versions",
   compareSourceToBundle: "compare-source-to-bundle",
   compareJavaScriptExportShapes: "compare-javascript-export-shapes",
-  runReplayMachine: "run-replay-machine",
-  runControlledReplay: "run-controlled-replay",
-  prepareNodeCharacterization: "prepare-node-characterization",
-  executeNodeCharacterization: "execute-node-characterization",
   buildReconstructionObligationLedger: "build-reconstruction-obligation-ledger",
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
 });

@@ -11,7 +11,6 @@ const scenario = browserScenarioSchema.parse({
     executable_path: "/opt/chromium",
   },
   start_url: { url: "https://app.example.test/" },
-  allowed_origins: ["https://app.example.test"],
   actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
 });
 const secrets = BrowserScenarioSecrets.resolve(scenario, {});
@@ -27,7 +26,6 @@ it("returns a complete requested text artifact beyond the former inline ceiling"
   const result = await capturePlaywrightStepArtifacts({
     context: {} as BrowserContext,
     page,
-    scenario,
     secrets,
     requested: new Set(["dom"]),
   });
@@ -80,7 +78,6 @@ it("redacts declared secrets from current and historical URL artifacts", async (
   const result = await capturePlaywrightStepArtifacts({
     context: {} as BrowserContext,
     page,
-    scenario: scenarioWithSecretUrl,
     secrets: scenarioSecrets,
     requested: new Set(["url", "history"]),
   });

@@ -6,16 +6,11 @@ import {
 import { fileURLToPath } from "node:url";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
-import { parseConfig } from "./config.js";
-import { SystemJavaScriptReplayHost } from "./replay/SystemJavaScriptReplayHost.js";
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
-export const createSystemDoctorHost = (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): DoctorHost =>
+export const createSystemDoctorHost = (): DoctorHost =>
   systemDoctorHost({
     providerInspections: async () => [await inspectSystemGhidraProvider()],
-    javascriptReplayCheck: () => inspectJavaScriptReplay(environment),
     linuxDemoRuntimeCheck: inspectLinuxPrivateDisplay,
   });
 
@@ -61,41 +56,4 @@ const inspectLinuxPrivateDisplay = async (): Promise<DoctorCheck> => {
           ? "Install Xvfb, xauth, Python 3, libX11, and libXtst, then rerun rea doctor --provider hopper."
           : "Inspect the private-display diagnostic, correct the reported local condition, and rerun rea doctor --provider hopper.",
   };
-};
-
-const inspectJavaScriptReplay = async (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<DoctorCheck> => {
-  const config = parseConfig(environment);
-  if (!config.ok)
-    return {
-      name: "javascript-replay",
-      ok: false,
-      classification: "config_drift",
-      detail: config.error.message,
-      remediation: "Fix the reported REA_JAVASCRIPT_REPLAY_* configuration.",
-    };
-  try {
-    await new SystemJavaScriptReplayHost().probe(
-      config.value.javascriptReplayConfiguration,
-    );
-    return {
-      name: "javascript-replay",
-      ok: true,
-      classification: "healthy",
-      detail: "Linux namespace, seccomp, and delegated cgroup probes passed",
-    };
-  } catch (cause: unknown) {
-    return {
-      name: "javascript-replay",
-      ok: false,
-      classification:
-        process.platform === "linux"
-          ? "missing_dependency"
-          : "unsupported_host",
-      detail: cause instanceof Error ? cause.message : "sandbox probe failed",
-      remediation:
-        "Install and configure compatible Bubblewrap and systemd user cgroup delegation on a Linux host, then retry controlled replay.",
-    };
-  }
 };

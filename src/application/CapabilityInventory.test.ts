@@ -4,7 +4,6 @@ import { buildCapabilityInventory } from "./CapabilityInventory.js";
 
 const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   processCaptureEnabled: true,
-  controlledReplayEnabled: true,
   browserObservationEnabled: true,
   browserScenarioEnabled: true,
   electronObservationEnabled: true,
@@ -158,26 +157,6 @@ describe("capability inventory: provider status", () => {
     expect(byName.get("inspect_web_page")).toMatchObject({
       available: false,
       reason: "provider_missing",
-    });
-    expect(byName.get("run_controlled_replay")).toMatchObject({
-      available: true,
-      reason: "available",
-    });
-    expect(byName.get("plan_managed_runtime_correlation")).toMatchObject({
-      available: true,
-      reason: "available",
-    });
-  });
-
-  it("reports controlled replay as unsupported on other host targets", () => {
-    const replay = entry("run_controlled_replay", status(), {
-      ...enabledPolicy,
-      controlledReplayEnabled: false,
-    });
-    expect(replay).toMatchObject({
-      available: false,
-      reason: "unsupported_host",
-      remediation: "Run controlled replay on a Linux x86_64 host.",
     });
   });
 });

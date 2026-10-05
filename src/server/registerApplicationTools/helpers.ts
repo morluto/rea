@@ -55,18 +55,10 @@ const unknownRegistration = (
           {
             operation: "reconcile_javascript_runtime",
             rationale:
-              "Add approved passive runtime Evidence without promoting it to static fact.",
+              "Add passive runtime Evidence without promoting it to static fact.",
           },
         ]
-      : kind === "source-to-bundle-comparison"
-        ? []
-        : [
-            {
-              operation: "run_controlled_replay",
-              rationale:
-                "Validate exact approved module behavior separately when runtime semantics are required.",
-            },
-          ]),
+      : []),
   ],
   relationships: [],
 });

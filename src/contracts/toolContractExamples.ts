@@ -7,7 +7,6 @@ import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
 } from "./investigationExamples.js";
-import { REPLAY_MACHINE_RUN_EXAMPLE } from "./replayMachineExample.js";
 
 /** Canonical examples for contracts whose required inputs have no defaults. */
 export const TOOL_EXAMPLE_OVERRIDES: Readonly<
@@ -46,7 +45,6 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   analyze_swift_types: { category: "classes", pattern: "Account" },
   inspect_native_api: { procedure: "main" },
   trace_feature: { query: "license" },
-  find_code_for_string: { query: "authorization failed" },
   trace_call_path: { start: "0x1000", goal: "0x1100" },
   trace_native_ui_action: { action: "buildTapped:" },
   open_binary: { path: "/tmp/fixture" },
@@ -57,7 +55,6 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
     executable: "/usr/bin/true",
     working_directory: "/tmp",
   },
-  run_replay_machine: REPLAY_MACHINE_RUN_EXAMPLE,
   compare_process_captures: {
     left: PROCESS_CAPTURE_REFERENCE,
     right: PROCESS_CAPTURE_RECONSTRUCTION,

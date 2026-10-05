@@ -77,7 +77,6 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
         name: "capture_web_screenshot",
         arguments: {
           cdp_endpoint: endpoint,
-          allowed_origins: [origin],
           target_id: target.id,
         },
       },

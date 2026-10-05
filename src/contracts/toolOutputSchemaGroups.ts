@@ -39,7 +39,6 @@ import {
 import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
 import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
 import { managedReconstructionImportResultSchema } from "../domain/managedReconstruction.js";
-import { managedRuntimeCorrelationResultSchema } from "../domain/managedRuntimeCorrelation.js";
 import { managedApplicationGraphResultSchema } from "../domain/managedApplicationGraph.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
 import { functionComparisonResultSchema } from "../domain/functionComparison.js";
@@ -48,7 +47,6 @@ import { changedBehaviorResultSchema } from "../domain/changedBehavior.js";
 import { callPathResultSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
-import { replayMachineRunOutputSchema } from "../domain/replayMachineRun.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/nativeInvestigationGraph.js";
@@ -313,7 +311,6 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   analyze_function: functionDossierOutput,
   inspect_native_api: resultOf(nativeApiInspectionResultSchema),
   trace_feature: literalTraceOutput,
-  find_code_for_string: literalTraceOutput,
   trace_call_path: callPathTraceOutput,
 };
 
@@ -356,9 +353,6 @@ export const managedWorkflowOutputSchemas: Readonly<
   ),
   import_managed_reconstruction: resultOf(
     managedReconstructionImportResultSchema,
-  ),
-  plan_managed_runtime_correlation: resultOf(
-    managedRuntimeCorrelationResultSchema,
   ),
   project_managed_application_graph: resultOf(
     managedApplicationGraphResultSchema,
@@ -462,5 +456,4 @@ export const sessionOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       unknown: residualUnknownSchema,
     }),
   ),
-  run_replay_machine: lifecycleResultOf(replayMachineRunOutputSchema),
 };

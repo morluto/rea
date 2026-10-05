@@ -104,10 +104,6 @@ describe("local application workflow verifier", () => {
           right: { availability: "literal", value: 1 },
         },
       ],
-      runtime_validation: {
-        recommended_tool: "run_controlled_replay",
-        automatically_started: false,
-      },
     });
   }, 20_000);
 });

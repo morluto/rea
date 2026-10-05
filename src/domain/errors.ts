@@ -44,7 +44,6 @@ const ANALYSIS_ERROR_TAGS = [
   "ConfigurationError",
   "NoBinaryOpenError",
   "BinaryTargetError",
-  "ReplayPlanStaleError",
 ] as const;
 
 /** Stable tag for an expected analysis failure. */
@@ -487,8 +486,7 @@ export interface AnalysisErrorProjection
     | "revision_conflict"
     | "configuration_invalid"
     | "target_unavailable"
-    | "execution_failure"
-    | "plan_stale";
+    | "execution_failure";
   readonly category:
     | "invalid_input"
     | "unsupported_provider"
@@ -504,16 +502,4 @@ export interface AnalysisErrorProjection
     action: string;
   }>;
   readonly details?: Readonly<Record<string, JsonValue>>;
-}
-
-/** Replay commitment no longer matches the immediately rebuilt plan. */
-export class ReplayPlanStaleError extends AnalysisError {
-  readonly _tag = "ReplayPlanStaleError" as const;
-
-  constructor(
-    readonly expectedDigest: string,
-    readonly actualDigest: string,
-  ) {
-    super("Controlled replay plan changed before execution");
-  }
 }

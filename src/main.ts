@@ -93,7 +93,6 @@ export const run = async (
           javascriptRuntimeObservation: new V8InspectorProvider(),
         };
       }),
-    runtimeState,
   });
   if (!transport.ok) return 1;
   const unregisterReload = registerConfigReload({

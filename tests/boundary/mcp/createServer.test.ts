@@ -18,6 +18,5 @@ describe("MCP server composition", () => {
     expect(client.getInstructions()).not.toContain("open_binary");
     const names = (await client.listTools()).tools.map(({ name }) => name);
     expect(names).not.toContain("compare_managed_members");
-    expect(names).not.toContain("plan_managed_runtime_correlation");
   });
 });

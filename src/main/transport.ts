@@ -7,7 +7,6 @@ import {
   type CreateServerOptions,
 } from "../server/createServer.js";
 import type { RuntimeDependencies } from "./types.js";
-import type { RuntimeState } from "./state.js";
 import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
@@ -27,7 +26,6 @@ interface ServerContext {
   readonly logger: Logger;
   readonly serverLogger: Logger;
   readonly loadOptionalProviders: () => Promise<OptionalProviders>;
-  readonly runtimeState: RuntimeState;
 }
 
 export const startMcpTransport = async (
@@ -57,12 +55,6 @@ export const startMcpTransport = async (
         (dependencies.createServer ?? createServer)(session, session, {
           logger: serverContext.logger,
           ...optionalProviders,
-          javascriptReplayConfiguration: () =>
-            serverContext.runtimeState.currentConfig
-              .javascriptReplayConfiguration,
-          managedRuntimeConfiguration: () =>
-            serverContext.runtimeState.currentConfig
-              .managedRuntimeConfiguration,
         }),
       {
         onerror: () => {

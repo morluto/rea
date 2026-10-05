@@ -3,14 +3,11 @@ import { rm, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
-import {
-  captureProcessScenario,
-  ProcessCaptureError,
-} from "../../../src/application/ProcessHarness.js";
+import { captureProcessScenario } from "../../../src/application/ProcessHarness.js";
 import { parseProcessScenario } from "../../../src/domain/processCapture.js";
 
 const processFixture = fileURLToPath(
@@ -86,15 +83,8 @@ itWithCaptureCapability(
   },
 );
 
-// Each action is triggered by observed terminal output rather than a wall-clock
-// offset. A fixed `at_ms` can fire before the child has written its prompt under
-// host contention, which drops the input and the resize echo and made this test
-// load-flaky.
-//
-// This also covers the reactive `resize` path against time bucketing: rendered
-// frames must share the normalized clock used by captured frames. They did not,
-// so the capture failed validation with "rendered_frames: timestamps must be
-// ordered" until the renderer call in ProcessReactiveEffects was normalized.
+// Events are scheduled relative to PTY startup, so the child is already live
+// before the input, resize, and signal are delivered.
 itWithCaptureCapability(
   "captures source-owned interactive, resize, Unicode, and signal behavior",
   async () => {
@@ -103,86 +93,14 @@ itWithCaptureCapability(
         executable: process.execPath,
         arguments: [processFixture, "interactive"],
         working_directory: dirname(processFixture),
+        events: [
+          { type: "input", at_ms: 200, data: "answer" },
+          { type: "resize", at_ms: 400, columns: 100, rows: 40 },
+          { type: "signal", at_ms: 700, signal: "SIGINT" },
+        ],
         normalization: { time_bucket_ms: 10 },
         timeout_ms: 20_000,
         idle_timeout_ms: 10_000,
-        reactive: {
-          initial_state: "awaiting_prompt",
-          deadline_ms: 15_000,
-          states: [
-            {
-              id: "awaiting_prompt",
-              max_visits: 1,
-              deadline_ms: 10_000,
-              on: [
-                {
-                  id: "answer",
-                  priority: 0,
-                  max_uses: 1,
-                  when: {
-                    kind: "terminal_text",
-                    literal: "prompt>",
-                    occurrence: 1,
-                    since: { kind: "scenario_start" },
-                    consume: true,
-                  },
-                  actions: [
-                    { type: "send_input", data: "answer", sensitive: false },
-                  ],
-                  target: { kind: "goto", state: "awaiting_resize" },
-                },
-              ],
-            },
-            {
-              id: "awaiting_resize",
-              max_visits: 1,
-              deadline_ms: 10_000,
-              on: [
-                {
-                  id: "resize",
-                  priority: 0,
-                  max_uses: 1,
-                  when: {
-                    kind: "terminal_text",
-                    literal: "input:answer",
-                    occurrence: 1,
-                    since: { kind: "scenario_start" },
-                    consume: true,
-                  },
-                  actions: [{ type: "resize", columns: 100, rows: 40 }],
-                  target: { kind: "goto", state: "awaiting_signal" },
-                },
-              ],
-            },
-            {
-              id: "awaiting_signal",
-              max_visits: 1,
-              deadline_ms: 10_000,
-              on: [
-                {
-                  id: "signal",
-                  priority: 0,
-                  max_uses: 1,
-                  when: {
-                    kind: "terminal_text",
-                    literal: "resize:100x40",
-                    occurrence: 1,
-                    since: { kind: "scenario_start" },
-                    consume: true,
-                  },
-                  actions: [
-                    {
-                      type: "send_signal",
-                      target: { kind: "root" },
-                      signal: "SIGINT",
-                    },
-                  ],
-                  target: { kind: "finish" },
-                },
-              ],
-            },
-          ],
-        },
       }),
     );
     if (!result.ok) throw result.error;

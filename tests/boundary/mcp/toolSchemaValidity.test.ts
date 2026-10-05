@@ -99,24 +99,6 @@ describe("MCP JSON Schema validity", () => {
       const { tools } = await client.listTools();
       const advertised = new Map(tools.map((tool) => [tool.name, tool]));
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const replayContract = TOOL_CONTRACTS.find(
-        ({ name }) => name === "run_controlled_replay",
-      );
-      const replayTool = advertised.get("run_controlled_replay");
-      if (replayContract === undefined || replayTool === undefined)
-        throw new Error("Controlled replay tool was not advertised");
-      const replayExample = replayContract.examples[0];
-      if (replayExample === undefined)
-        throw new Error("Controlled replay tool has no valid example");
-      const invalidReplay = {
-        ...replayExample.input,
-        cases: [],
-      };
-      expect(replayContract.inputSchema.safeParse(invalidReplay).success).toBe(
-        false,
-      );
-      expect(ajv.compile(replayTool.inputSchema)(invalidReplay)).toBe(false);
-
       const graphContract = TOOL_CONTRACTS.find(
         ({ name }) => name === "project_managed_application_graph",
       );

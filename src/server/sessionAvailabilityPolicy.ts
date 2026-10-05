@@ -1,6 +1,5 @@
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
-import { arch, platform } from "node:process";
-import { isSupportedControlledReplayHost } from "../application/ControlledReplayHostSupport.js";
+import { platform } from "node:process";
 
 export type SessionAvailability = AvailabilityPolicy;
 
@@ -23,7 +22,6 @@ export const sessionAvailabilityPolicy = (
   configured ??
   (() => ({
     processCaptureEnabled: platform !== "win32",
-    controlledReplayEnabled: isSupportedControlledReplayHost(platform, arch),
     browserObservationEnabled:
       defaults.optionalFeatures?.browserObservationEnabled ?? false,
     browserScenarioEnabled:

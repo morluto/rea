@@ -126,9 +126,6 @@ describe("canonical product catalog", () => {
       "compare_javascript_export_shapes",
       "compare_source_to_bundle",
       "evaluate_reconstruction_coverage",
-      "execute_node_characterization",
-      "prepare_node_characterization",
-      "run_controlled_replay",
       "trace_application_feature",
       "trace_javascript_semantics",
     ]);
@@ -138,7 +135,6 @@ describe("canonical product catalog", () => {
     ).toEqual([
       "compare_managed_members",
       "import_managed_reconstruction",
-      "plan_managed_runtime_correlation",
       "project_managed_application_graph",
       "verify_managed_native_boundaries",
     ]);

@@ -10,23 +10,12 @@ import {
   traceApplicationFeatureRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
 } from "./applicationWorkflowInputContracts.js";
-import {
-  controlledReplayInputSchema,
-  controlledReplayOutputSchema,
-} from "../domain/javascriptReplay.js";
-import {
-  nodeCharacterizationExecutionInputSchema,
-  nodeCharacterizationExecutionOutputSchema,
-  nodeCharacterizationPreparationInputSchema,
-  nodeCharacterizationPreparationOutputSchema,
-} from "../domain/nodeRuntimeCharacterization.js";
 import { reconstructionCoverageEvaluationInputSchema } from "../application/ReconstructionCoverageService.js";
 import { reconstructionClosureResultSchema } from "../domain/reconstructionCoverage.js";
 import {
   reconstructionObligationLedgerInputSchema,
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { ToolContract } from "./toolContracts.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
@@ -54,37 +43,6 @@ const reconstructionObligationLedgerOutputSchema = evidenceResultOf(
   reconstructionObligationLedgerSchema,
 );
 const HASH = "0".repeat(64);
-const NODE_PREPARATION_EXAMPLE = jsonObjectSchema.parse({
-  selected_alias: "bundle",
-  expected_effect: "pure",
-  instrumentation: {
-    artifact_path: "/tmp/example/bundle.js",
-    artifact_sha256: HASH,
-    selection: {
-      byte_start: 100,
-      byte_end: 120,
-      selected_sha256: HASH,
-      export_name: "selected",
-    },
-  },
-  replay: {
-    mode: "plan",
-    left: {
-      modules: [
-        {
-          alias: "bundle",
-          path: "/tmp/example/bundle.js",
-          format: "commonjs-factory",
-          role: "module",
-          dependencies: {},
-        },
-      ],
-      entry_alias: "bundle",
-      entry_export: "selected",
-    },
-    cases: [{ case_id: "empty", arguments: [""] }],
-  },
-});
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
@@ -159,7 +117,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_javascript_export_shapes",
     ...toolContractMetadata("compare_javascript_export_shapes"),
     description:
-      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes and recommends controlled replay separately without executing JavaScript.",
+      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
     kind: "application",
     inputSchema: compareJavaScriptExportShapesRequestSchema,
     outputSchema: exportShapeComparisonOutputSchema,
@@ -167,91 +125,6 @@ export const APPLICATION_TOOL_CONTRACTS = [
       {
         title: "Compare one exact parser export without execution",
         input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
-      },
-    ],
-  },
-  {
-    name: "run_controlled_replay",
-    ...toolContractMetadata("run_controlled_replay"),
-    description:
-      "Plan or execute a content-bound extracted-module JavaScript replay inside the Linux Bubblewrap, seccomp, and cgroup boundary. Execution requires the exact plan digest. Supports deterministic boundary cases and optional left/right differential comparison; observations have controlled-replay authority and do not claim real application runtime behavior.",
-    kind: "application",
-    inputSchema: controlledReplayInputSchema,
-    outputSchema: controlledReplayOutputSchema,
-    examples: [
-      {
-        title: "Plan one extracted ESM parser replay",
-        input: {
-          mode: "plan",
-          left: {
-            modules: [
-              {
-                alias: "parser",
-                path: "/tmp/example/parser.mjs",
-                format: "esm",
-                role: "module",
-                dependencies: {},
-              },
-            ],
-            entry_alias: "parser",
-            entry_export: "default",
-          },
-          cases: [{ case_id: "empty", arguments: [""] }],
-          determinism: {
-            clock_iso: "2000-01-01T00:00:00.000Z",
-            random_seed: 0,
-            locale: "en-US",
-            timezone: "UTC",
-            platform: "linux",
-          },
-          limits: {
-            wall_time_ms: 3000,
-            memory_bytes: 134217728,
-            tasks: 8,
-            cpu_quota_percent: 50,
-            tmpfs_bytes: 16777216,
-            module_bytes: 4194304,
-            input_bytes: 262144,
-            protocol_bytes: 16777216,
-            output_bytes: 524288,
-            stderr_bytes: 32768,
-            result_depth: 16,
-            result_nodes: 10000,
-          },
-        },
-      },
-    ],
-  },
-  {
-    name: "prepare_node_characterization",
-    ...toolContractMetadata("prepare_node_characterization"),
-    description:
-      "Prepare a hash-bound Node/JavaScript characterization plan and deterministic reversible export transformation without executing target code. The exact source, selected byte range, runtime closure, sandbox profile, cases, and limits are committed for later execution.",
-    kind: "application",
-    inputSchema: nodeCharacterizationPreparationInputSchema,
-    outputSchema: nodeCharacterizationPreparationOutputSchema,
-    examples: [
-      {
-        title: "Prepare one exact bundled callable characterization",
-        input: NODE_PREPARATION_EXAMPLE,
-      },
-    ],
-  },
-  {
-    name: "execute_node_characterization",
-    ...toolContractMetadata("execute_node_characterization"),
-    description:
-      "Recompute and execute one exact Node characterization plan in the owned controlled-replay boundary. The supplied plan_sha256 is checked against the freshly computed plan_sha256 as content identity; a mismatch fails before execution. Returns transformation, replay, cleanup, and provider-neutral characterization Evidence.",
-    kind: "application",
-    inputSchema: nodeCharacterizationExecutionInputSchema,
-    outputSchema: nodeCharacterizationExecutionOutputSchema,
-    examples: [
-      {
-        title: "Execute one exact characterization plan",
-        input: {
-          plan_sha256: HASH,
-          preparation: NODE_PREPARATION_EXAMPLE,
-        },
       },
     ],
   },
@@ -355,20 +228,11 @@ export function applicationToolContract(
   name: "compare_javascript_export_shapes",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[4];
 export function applicationToolContract(
-  name: "run_controlled_replay",
+  name: "build_reconstruction_obligation_ledger",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[5];
 export function applicationToolContract(
-  name: "prepare_node_characterization",
-): (typeof APPLICATION_TOOL_CONTRACTS)[6];
-export function applicationToolContract(
-  name: "execute_node_characterization",
-): (typeof APPLICATION_TOOL_CONTRACTS)[7];
-export function applicationToolContract(
-  name: "build_reconstruction_obligation_ledger",
-): (typeof APPLICATION_TOOL_CONTRACTS)[8];
-export function applicationToolContract(
   name: "evaluate_reconstruction_coverage",
-): (typeof APPLICATION_TOOL_CONTRACTS)[9];
+): (typeof APPLICATION_TOOL_CONTRACTS)[6];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

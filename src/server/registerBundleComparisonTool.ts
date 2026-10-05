@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { readEvidenceBundle } from "../application/EvidenceBundleFiles.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { compareBundles } from "../domain/bundleComparison.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -16,7 +16,7 @@ import { toCallToolResult } from "./toolResult.js";
 export const registerBundleComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[9],
+  contract: ReturnType<typeof toolContract<"compare_bundles">>,
 ): void => {
   server.registerTool(
     contract.name,

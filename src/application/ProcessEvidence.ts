@@ -9,7 +9,7 @@ import type {
 /** Provider identity for controlled process capture evidence. */
 export const PROCESS_PROVIDER = {
   id: "rea-process",
-  name: "REA deterministic process harness",
+  name: "REA process capture",
   version: "3",
 } as const;
 
@@ -22,8 +22,6 @@ const processEvidenceParameters = (
   event_count: scenario.events.length,
   filesystem_observation_path_count:
     scenario.filesystem_observation_paths.length,
-  checkpoint_count: scenario.checkpoints.length,
-  command_shim_count: scenario.command_shims.length,
   normalization: scenario.normalization,
 });
 

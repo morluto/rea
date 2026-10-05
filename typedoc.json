@@ -16,13 +16,7 @@
   "entryPointStrategy": "expand",
   "out": "build/api-docs",
   "tsconfig": "tsconfig.json",
-  "exclude": [
-    "**/*.test.ts",
-    "tests/**",
-    "dist/**",
-    "node_modules/**",
-    "src/application/LoopbackReplayRecorder.ts"
-  ],
+  "exclude": ["**/*.test.ts", "tests/**", "dist/**", "node_modules/**"],
   "excludeExternals": true,
   "excludePrivate": true,
   "excludeProtected": false,

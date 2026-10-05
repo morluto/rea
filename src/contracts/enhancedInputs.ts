@@ -43,7 +43,6 @@ export const enhancedInputSchemas = {
     procedure: z.string().describe("A procedure name or address"),
   }),
   trace_feature: traceLiteralInputSchema,
-  find_code_for_string: traceLiteralInputSchema,
   trace_call_path: z.strictObject({
     start: z.string().describe("A provider-normalized procedure address"),
     goal: z

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
@@ -9,7 +9,6 @@ import { inspectManagedNativeBoundariesBytes } from "../dist/dotnet/ManagedNativ
 import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesEvidence } from "../dist/application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
-import { planManagedRuntimeCorrelationEvidence } from "../dist/application/ManagedRuntimeCorrelationService.js";
 import { projectManagedApplicationGraphEvidence } from "../dist/application/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../dist/application/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
@@ -249,9 +248,8 @@ try {
   assert.equal(obfuscatedMembers.types[0]?.full_name, "Fixture.ꙮType");
   assert.equal(obfuscatedMembers.methods[0]?.name, "λ⛧");
   assert.equal(obfuscatedMembers.fields[0]?.name, "字段");
-  const runtimeExecutable = process.execPath;
-  const runtimeMethod = obfuscatedMembers.methods[0];
-  assert.ok(runtimeMethod);
+  const reconstructionMethod = obfuscatedMembers.methods[0];
+  assert.ok(reconstructionMethod);
   const obfuscatedMembersEvidence = createEvidence(
     undefined,
     MANAGED_STATIC_PROVIDER,
@@ -274,9 +272,9 @@ try {
     },
     methods: [
       {
-        token: runtimeMethod.token,
-        signature_sha256: runtimeMethod.signature.raw_sha256,
-        normalized_il_sha256: runtimeMethod.body.normalized_il_sha256,
+        token: reconstructionMethod.token,
+        signature_sha256: reconstructionMethod.signature.raw_sha256,
+        normalized_il_sha256: reconstructionMethod.body.normalized_il_sha256,
         reconstruction: {
           kind: "decompiled-csharp",
           language: "csharp",
@@ -293,45 +291,6 @@ try {
     false,
   );
   assert.equal(reconstructionImport.value.confidence, "inferred");
-  const runtimePlan = await planManagedRuntimeCorrelationEvidence(
-    { configuration: () => ({ executablePath: runtimeExecutable }) },
-    {
-      static_members: obfuscatedMembersEvidence,
-      method: {
-        token: runtimeMethod.token,
-        signature_sha256: runtimeMethod.signature.raw_sha256,
-        normalized_il_sha256: runtimeMethod.body.normalized_il_sha256,
-      },
-      requested_effect: "debugger",
-      host: {
-        os: "linux",
-        clr_family: "dotnet",
-        architecture: "x86_64",
-      },
-      bounds: {
-        timeout_ms: 5_000,
-        max_threads: 32,
-        max_output_bytes: 65_536,
-        allow_network: false,
-        allow_ui: false,
-      },
-    },
-  );
-  assert.equal(runtimePlan.ok, true);
-  assert.equal(runtimePlan.value.normalized_result.executed, false);
-  assert.equal(
-    runtimePlan.value.normalized_result.unsupported_until_executor_exists,
-    true,
-  );
-  assert.equal(
-    runtimePlan.value.normalized_result.effect_taxonomy.uses_debugger,
-    true,
-  );
-  assert.equal(
-    runtimePlan.value.normalized_result.requested_runtime.confinement,
-    "not-established",
-  );
-
   const left = await fixture("token-drift-left.exe", {
     methodName: "StableSemanticSlice",
   });
@@ -410,7 +369,7 @@ try {
   process.stdout.write(
     `${JSON.stringify({
       verified:
-        12 +
+        11 +
         (operatorManifest === null ? 0 : 1) +
         (ilspyOracle === null ? 0 : 1),
       managedSurfaces: [
@@ -420,7 +379,6 @@ try {
         "compare_managed_members",
         "verify_managed_native_boundaries",
         "import_managed_reconstruction",
-        "plan_managed_runtime_correlation",
         "project_managed_application_graph",
       ],
       coverage: [
@@ -431,7 +389,6 @@ try {
         "managed-application-graph-projection",
         "unicode-obfuscated-identifiers",
         "decompiler-reconstruction-import",
-        "runtime-correlation-admission-plan",
         "mvid-and-token-drift",
         "not-managed",
         "malformed-metadata",

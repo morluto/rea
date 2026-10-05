@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 
 import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
 import { createRunManifest } from "./ProcessCaptureLifecycle.js";
-import { normalizeProtocolEvents } from "./ProcessNormalization.js";
 import { emptyUnverifiedProcessCapture } from "../domain/processCapture.fixture.js";
 import {
   compareProcessCaptures,
@@ -61,28 +60,6 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     working_directory: "/tmp",
     environment: { API_TOKEN: value },
     events: [{ type: "input", at_ms: 0, data: value }],
-    command_shims: [
-      {
-        name: "echo",
-        routes: [
-          {
-            arguments: [],
-            outputs: [{ at_ms: 0, stream: "stdout", data: value }],
-            termination: { type: "exit", code: 0 },
-          },
-        ],
-      },
-    ],
-    replay: {
-      http: [
-        {
-          method: "GET",
-          path: `/token?token=${value}`,
-          status: 200,
-          body: value,
-        },
-      ],
-    },
   });
   const base = emptyUnverifiedProcessCapture();
   const manifest = await createRunManifest(scenario, new Date(0), new Date(1));
@@ -94,21 +71,6 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     ...base,
     normalization: scenario.normalization,
     frames: [{ sequence: 0, at_ms: 0, data: "observed-output" }],
-    protocol_events: normalizeProtocolEvents(
-      [
-        {
-          sequence: 0,
-          at_ms: 0,
-          protocol: "http",
-          direction: "request",
-          method: "GET",
-          path: `/token?token=${value}`,
-          data: "",
-          outcome: "matched",
-        },
-      ],
-      scenario,
-    ),
     residual_unknowns: [
       {
         scope: "environment",
@@ -143,7 +105,7 @@ it("does not treat captures with different redacted inputs as equivalent", () =>
   ).toMatchObject({ status: "unknown", interaction: "unknown" });
 });
 
-it("preserves selected local environment, shim, replay, and protocol values", async () => {
+it("preserves selected local environment and input values", async () => {
   const left = await captureEvidenceForEnvironmentSecret("secret-left");
   const right = await captureEvidenceForEnvironmentSecret("secret-right");
   const serialized = JSON.stringify(left);
@@ -151,7 +113,6 @@ it("preserves selected local environment, shim, replay, and protocol values", as
   const rightCapture = parseProcessCapture(right.normalized_result);
 
   expect(serialized).toContain("secret-left");
-  expect(serialized).toContain("/token?token=secret-left");
   expect(leftCapture.manifest.scenario).toMatchObject({
     environment: { API_TOKEN: "secret-left" },
   });

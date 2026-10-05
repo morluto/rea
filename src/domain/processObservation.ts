@@ -11,10 +11,6 @@ export const processObservationSourceSchema = z.enum([
   "lifecycle",
   "process",
   "filesystem",
-  "http",
-  "websocket",
-  "shim",
-  "replay_transition",
 ]);
 export type ProcessObservationSource = z.infer<
   typeof processObservationSourceSchema
@@ -29,9 +25,6 @@ export const processObservationLocationSchema = z.strictObject({
     "lifecycle",
     "process_samples",
     "filesystem_checkpoints",
-    "shim_events",
-    "protocol_events",
-    "replay_transitions",
   ]),
   index: z.number().int().nonnegative(),
   capture_order: z.number().int().nonnegative(),
@@ -40,7 +33,7 @@ export type ProcessObservationLocation = z.infer<
   typeof processObservationLocationSchema
 >;
 
-/** Provider-neutral event offered to a reactive scenario or offline assertion. */
+/** Provider-neutral event projected into an offline trace assertion. */
 export interface ProcessObservation {
   readonly event_id: string;
   readonly source: ProcessObservationSource;
@@ -124,14 +117,6 @@ export const processObservationSubject = (
     typeof value.name === "string"
   )
     return `checkpoint:${value.name}`;
-  if (
-    source === "shim" &&
-    "command" in value &&
-    typeof value.command === "string"
-  )
-    return "route_index" in value && typeof value.route_index === "number"
-      ? `shim:${value.command}:route:${String(value.route_index)}`
-      : `shim:${value.command}:unmatched`;
   return null;
 };
 
@@ -177,22 +162,6 @@ const projectedRecord = (
         return {
           source: "filesystem" as const,
           value: capture.filesystem_checkpoints[location.index],
-        };
-      case "shim_events":
-        return {
-          source: "shim" as const,
-          value: capture.shim_events[location.index],
-        };
-      case "protocol_events": {
-        const event = capture.protocol_events[location.index];
-        return event === undefined
-          ? null
-          : { source: event.protocol, value: event };
-      }
-      case "replay_transitions":
-        return {
-          source: "replay_transition" as const,
-          value: capture.replay_transitions[location.index],
         };
     }
   })();

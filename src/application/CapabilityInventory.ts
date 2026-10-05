@@ -11,7 +11,6 @@ import {
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
-import { isSupportedControlledReplayHost } from "./ControlledReplayHostSupport.js";
 import {
   clientRequirementsFor,
   NO_CLIENT_FEATURES,
@@ -29,7 +28,6 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
-  readonly controlledReplayEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
@@ -214,16 +212,6 @@ const workflowAvailabilityFor = ({
       reason: "unsupported_host",
       remediation: "Run process capture on a supported Linux or macOS host.",
     };
-  if (name === "run_controlled_replay")
-    return (policy.controlledReplayEnabled ??
-      isSupportedControlledReplayHost(process.platform, process.arch))
-      ? { reason: "available", remediation: null }
-      : {
-          reason: "unsupported_host",
-          remediation: "Run controlled replay on a Linux x86_64 host.",
-        };
-  if (name === "plan_managed_runtime_correlation")
-    return { reason: "available", remediation: null };
   if (kind === "application") return { reason: "available", remediation: null };
   const electron = electronProviderAvailability(name, kind, policy);
   if (electron !== null) return electron;

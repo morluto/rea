@@ -5,7 +5,7 @@ import {
   readEvidenceBundle,
   writeEvidenceBundle,
 } from "../application/EvidenceBundleFiles.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { ok } from "../domain/result.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -14,9 +14,15 @@ import { toCallToolResult } from "./toolResult.js";
 interface EvidenceToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
-  readonly exportContract: (typeof SESSION_TOOL_CONTRACTS)[3];
-  readonly importContract: (typeof SESSION_TOOL_CONTRACTS)[4];
-  readonly snapshotContract: (typeof SESSION_TOOL_CONTRACTS)[19];
+  readonly exportContract: ReturnType<
+    typeof toolContract<"export_evidence_bundle">
+  >;
+  readonly importContract: ReturnType<
+    typeof toolContract<"import_evidence_bundle">
+  >;
+  readonly snapshotContract: ReturnType<
+    typeof toolContract<"get_evidence_bundle">
+  >;
 }
 
 /** Register evidence bundle import and export tools. */
@@ -113,16 +119,14 @@ const unknownRevisionKey = (
 interface UnknownToolRegistration {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
-  readonly contracts: typeof SESSION_TOOL_CONTRACTS;
 }
 
 /** Register residual-unknown query and mutation tools. */
 const registerListUnknownsTool = ({
   server,
   session,
-  contracts,
 }: UnknownToolRegistration): void => {
-  const listContract = contracts[14];
+  const listContract = toolContract("list_unknowns");
   server.registerTool(
     listContract.name,
     toolRegistrationOptions(listContract),
@@ -149,9 +153,8 @@ const registerListUnknownsTool = ({
 const registerRecordUnknownTool = ({
   server,
   session,
-  contracts,
 }: UnknownToolRegistration): void => {
-  const recordContract = contracts[15];
+  const recordContract = toolContract("record_unknown");
   server.registerTool(
     recordContract.name,
     toolRegistrationOptions(recordContract),
@@ -165,9 +168,8 @@ const registerRecordUnknownTool = ({
 const registerUpdateUnknownTool = ({
   server,
   session,
-  contracts,
 }: UnknownToolRegistration): void => {
-  const updateContract = contracts[16];
+  const updateContract = toolContract("update_unknown");
   server.registerTool(
     updateContract.name,
     toolRegistrationOptions(updateContract),
@@ -181,9 +183,8 @@ const registerUpdateUnknownTool = ({
 const registerVerifyUnknownTool = ({
   server,
   session,
-  contracts,
 }: UnknownToolRegistration): void => {
-  const verifyContract = contracts[17];
+  const verifyContract = toolContract("verify_unknown_resolution");
   server.registerTool(
     verifyContract.name,
     toolRegistrationOptions(verifyContract),

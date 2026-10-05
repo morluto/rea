@@ -134,12 +134,15 @@ const captureHistory = async (page: Page, secrets: BrowserScenarioSecrets) => {
 const captureStorage = async (input: {
   readonly context: BrowserContext;
   readonly page: Page;
-  readonly scenario: BrowserScenario;
   readonly secrets: BrowserScenarioSecrets;
 }) => {
-  const { context, page, scenario, secrets } = input;
+  const { context, page, secrets } = input;
   try {
-    const cookies = await context.cookies(scenario.allowed_origins);
+    const pageUrl = new URL(page.url());
+    const cookies =
+      pageUrl.protocol === "http:" || pageUrl.protocol === "https:"
+        ? await context.cookies(pageUrl.href)
+        : [];
     const pageStorage = storageValueSchema.parse(
       await page.evaluate(`(() => ({
         local_storage: Object.entries(window.localStorage),
@@ -171,39 +174,20 @@ const captureStorage = async (input: {
   }
 };
 
-const isAllowedPage = (
-  page: Page,
-  allowedOrigins: ReadonlySet<string>,
-): boolean => {
-  try {
-    return allowedOrigins.has(new URL(page.url()).origin);
-  } catch {
-    return false;
-  }
-};
-
 /** Capture selected step artifacts without retaining data after scope loss. */
 export const capturePlaywrightStepArtifacts = async (input: {
   readonly context: BrowserContext;
   readonly page: Page;
-  readonly scenario: BrowserScenario;
   readonly secrets: BrowserScenarioSecrets;
   readonly requested: ReadonlySet<SnapshotKind>;
 }): Promise<BrowserStepArtifacts> => {
-  const { context, page, scenario, secrets, requested } = input;
-  const allowed = isAllowedPage(page, new Set(scenario.allowed_origins));
-  const denied = () => missing("current page is outside approved origins");
+  const { context, page, secrets, requested } = input;
   const state = <Value>(
     kind: SnapshotKind,
     capture: () => Promise<Value>,
   ): Promise<
     Value | ReturnType<typeof notRequested> | ReturnType<typeof missing>
-  > =>
-    !requested.has(kind)
-      ? Promise.resolve(notRequested())
-      : allowed || kind === "url"
-        ? capture()
-        : Promise.resolve(denied());
+  > => (!requested.has(kind) ? Promise.resolve(notRequested()) : capture());
   return browserStepArtifactsSchema.parse({
     screenshot: await state("screenshot", () => captureScreenshot(page)),
     dom: await state("dom", () => captureDom({ page, secrets })),
@@ -216,7 +200,7 @@ export const capturePlaywrightStepArtifacts = async (input: {
     })),
     history: await state("history", () => captureHistory(page, secrets)),
     storage: await state("storage", () =>
-      captureStorage({ context, page, scenario, secrets }),
+      captureStorage({ context, page, secrets }),
     ),
   });
 };

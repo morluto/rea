@@ -1,9 +1,4 @@
-import {
-  type BrowserContext,
-  type Page,
-  type Route,
-  type WebSocketRoute,
-} from "playwright-core";
+import { type BrowserContext, type Page } from "playwright-core";
 
 import type {
   BrowserScenario,
@@ -26,17 +21,6 @@ import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 
 const OPERATION = "capture_browser_scenario" as const;
-
-const originAllowed = (
-  value: string,
-  allowedOrigins: ReadonlySet<string>,
-): boolean => {
-  try {
-    return allowedOrigins.has(new URL(value).origin);
-  } catch {
-    return false;
-  }
-};
 
 const storageSeeds = (
   blocks: BrowserScenario["storage"]["local_storage"],
@@ -81,111 +65,6 @@ const installStorageSeeds = async (
   })()`);
 };
 
-const installHttpPolicy = async (input: {
-  readonly context: BrowserContext;
-  readonly scenario: BrowserScenario;
-  readonly secrets: BrowserScenarioSecrets;
-  readonly ownedPages: Set<Page>;
-  readonly claimOwnedPage: (page: Page) => Promise<boolean>;
-}): Promise<void> => {
-  const { context, scenario, secrets, ownedPages, claimOwnedPage } = input;
-  const routes =
-    scenario.request_replay.mode === "exact"
-      ? new Map(
-          scenario.request_replay.routes.map((route) => [
-            `${route.method} ${secrets.url(route.request)}`,
-            route,
-          ]),
-        )
-      : new Map();
-  await context.route("**/*", async (route, request) => {
-    let requestPage: Page | undefined;
-    try {
-      requestPage = request.frame().page();
-    } catch {
-      requestPage = undefined;
-    }
-    if (
-      scenario.browser.mode === "connect" &&
-      requestPage !== undefined &&
-      !ownedPages.has(requestPage)
-    )
-      await claimOwnedPage(requestPage);
-    if (
-      scenario.browser.mode === "connect" &&
-      (requestPage === undefined || !ownedPages.has(requestPage))
-    ) {
-      await route.continue();
-      return;
-    }
-    if (!originAllowed(request.url(), new Set(scenario.allowed_origins))) {
-      await route.abort("blockedbyclient");
-      return;
-    }
-    const replay = routes.get(`${request.method()} ${request.url()}`);
-    if (replay !== undefined) {
-      await fulfillReplayRoute(route, replay.response, secrets);
-      return;
-    }
-    if (
-      scenario.request_replay.mode === "exact" &&
-      scenario.request_replay.unmatched === "abort"
-    ) {
-      await route.abort("blockedbyclient");
-      return;
-    }
-    await route.continue();
-  });
-};
-
-type ReplayResponse = Extract<
-  BrowserScenario["request_replay"],
-  { readonly mode: "exact" }
->["routes"][number]["response"];
-
-const fulfillReplayRoute = async (
-  route: Route,
-  response: ReplayResponse,
-  secrets: BrowserScenarioSecrets,
-): Promise<void> => {
-  if (response.kind === "redirect") {
-    await route.fulfill({
-      status: response.status,
-      headers: { location: secrets.url(response.destination) },
-    });
-    return;
-  }
-  await route.fulfill({
-    status: response.status,
-    headers: Object.fromEntries(
-      response.headers.map(({ name, value }) => [name, secrets.value(value)]),
-    ),
-    ...(response.body === undefined
-      ? {}
-      : { body: secrets.value(response.body) }),
-  });
-};
-
-const installWebSocketPolicy = async (
-  owner: BrowserContext | Page,
-  scenario: BrowserScenario,
-): Promise<void> => {
-  const allowed = new Set(scenario.allowed_origins);
-  await owner.routeWebSocket("**/*", async (route: WebSocketRoute) => {
-    const url = new URL(route.url());
-    const httpOrigin = `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
-    if (
-      !allowed.has(httpOrigin) ||
-      (scenario.request_replay.mode === "exact" &&
-        scenario.request_replay.unmatched === "abort")
-    ) {
-      await route.close({ code: 1008, reason: "outside scenario policy" });
-      return;
-    }
-    route.connectToServer();
-  });
-};
-
 const blockAttachedServiceWorkers = async (page: Page): Promise<void> => {
   const controller = await page.evaluate(
     "Boolean(navigator.serviceWorker?.controller)",
@@ -210,40 +89,12 @@ const initializePage = async (
   page: Page,
   scenario: BrowserScenario,
   secrets: BrowserScenarioSecrets,
-): Promise<Set<Page>> => {
+): Promise<void> => {
   context.setDefaultTimeout(0);
   context.setDefaultNavigationTimeout(0);
-  const ownedPages = new Set([page]);
   if (scenario.browser.mode === "connect")
     await blockAttachedServiceWorkers(page);
-  await installWebSocketPolicy(
-    scenario.browser.mode === "launch" ? context : page,
-    scenario,
-  );
-  const claimOwnedPage = async (candidate: Page): Promise<boolean> => {
-    if (ownedPages.has(candidate)) return true;
-    const opener = await candidate.opener();
-    if (opener === null || !ownedPages.has(opener)) return false;
-    await installWebSocketPolicy(candidate, scenario);
-    ownedPages.add(candidate);
-    return true;
-  };
-  await installHttpPolicy({
-    context,
-    scenario,
-    secrets,
-    ownedPages,
-    claimOwnedPage,
-  });
-  page.on("popup", (popup) => {
-    if (scenario.browser.mode === "connect")
-      void claimOwnedPage(popup).catch(async () => {
-        await popup.close().catch(() => undefined);
-      });
-    else ownedPages.add(popup);
-  });
   await installStorageSeeds(context, page, scenario, secrets);
-  return ownedPages;
 };
 
 export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
@@ -256,13 +107,12 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
 
   private constructor(
     private readonly opened: OpenedScenarioBrowser,
-    private readonly scenario: BrowserScenario,
+    mode: BrowserScenario["browser"]["mode"],
     private readonly secrets: BrowserScenarioSecrets,
     private readonly eventCapture: PlaywrightScenarioEvents,
   ) {
-    this.mode = scenario.browser.mode;
-    this.processOwnership =
-      scenario.browser.mode === "launch" ? "provider-owned" : "external";
+    this.mode = mode;
+    this.processOwnership = mode === "launch" ? "provider-owned" : "external";
     this.version = opened.browser.version();
     this.initialUrl = opened.page.url();
   }
@@ -303,11 +153,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         page: opened.page,
         enabled: new Set(scenario.capture.events),
         secrets,
-        allowedOrigins: scenario.allowed_origins,
       });
       const session = new PlaywrightScenarioSession(
         opened,
-        scenario,
+        scenario.browser.mode,
         secrets,
         events,
       );
@@ -378,7 +227,6 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         capturePlaywrightStepArtifacts({
           context: this.opened.context,
           page: this.opened.page,
-          scenario: this.scenario,
           secrets: this.secrets,
           requested,
         }),

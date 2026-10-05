@@ -11,11 +11,8 @@ export function managedWorkflowContract(
   name: "import_managed_reconstruction",
 ): (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[2];
 export function managedWorkflowContract(
-  name: "plan_managed_runtime_correlation",
-): (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[3];
-export function managedWorkflowContract(
   name: "project_managed_application_graph",
-): (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[4];
+): (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[3];
 export function managedWorkflowContract(
   name: (typeof MANAGED_WORKFLOW_TOOL_CONTRACTS)[number]["name"],
 ) {

@@ -1,8 +1,6 @@
 import type { LogLevel } from "../logger.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import type { ManagedRuntimeConfiguration } from "../application/ManagedRuntimeCorrelationService.js";
-import type { JavaScriptReplayConfiguration } from "../application/JavaScriptReplayPlanning.js";
 
 export interface AppConfig {
   readonly analysisProvider: AnalysisProviderSelector;
@@ -15,6 +13,4 @@ export interface AppConfig {
   readonly hopperLoaderArgs: readonly string[];
   readonly logLevel: LogLevel;
   readonly referenceSourcePolicy: ReferenceSourcePolicy;
-  readonly javascriptReplayConfiguration: JavaScriptReplayConfiguration;
-  readonly managedRuntimeConfiguration: ManagedRuntimeConfiguration;
 }

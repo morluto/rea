@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { EvidenceIntegrityError } from "../domain/errors.js";
 import {
   createEvidence,
@@ -37,7 +37,7 @@ const sourceLocations = (
 export const registerProcessComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[6],
+  contract: ReturnType<typeof toolContract<"compare_process_captures">>,
   now: () => number = Date.now,
 ): void => {
   server.registerTool(
@@ -153,9 +153,7 @@ const comparisonUnknownInput = (
     ["interaction", comparison.interaction],
     ["exit", comparison.exit],
     ["filesystem", comparison.filesystem],
-    ["protocol", comparison.protocol],
     ["process", comparison.process],
-    ["shim", comparison.shim],
   ]
     .filter(([, status]) => status !== "unchanged")
     .map(([scope]) => scope)

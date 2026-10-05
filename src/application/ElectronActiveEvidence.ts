@@ -6,7 +6,7 @@ import type {
   ElectronActiveObservationResult,
 } from "../domain/electronActiveObservation.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { digestJson } from "./JavaScriptReplayPlanning.js";
+import { digestCanonicalJson } from "../domain/browserScenarioNormalization.js";
 
 type CanonicalElectronActiveObservationInput =
   ElectronActiveObservationInput & {
@@ -49,5 +49,5 @@ const parameters = (
   input: CanonicalElectronActiveObservationInput,
 ): EvidenceObservation["parameters"] => ({
   ...scenarioProjection(input),
-  scenario_sha256: digestJson(scenarioProjection(input)),
+  scenario_sha256: digestCanonicalJson(scenarioProjection(input)),
 });

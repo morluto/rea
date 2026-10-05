@@ -25,12 +25,9 @@ interface ReferenceTraceRequest {
   readonly signal?: AbortSignal;
 }
 
-const FEATURE_SEARCH_SOURCES: readonly LiteralSearchSource[] = [
+const LITERAL_SEARCH_SOURCES: readonly LiteralSearchSource[] = [
   ["search_strings", "string"],
   ["search_procedures", "procedure"],
-];
-const STRING_SEARCH_SOURCES: readonly LiteralSearchSource[] = [
-  ["search_strings", "string"],
 ];
 
 export interface LiteralTraceInput {
@@ -38,16 +35,18 @@ export interface LiteralTraceInput {
   readonly case_sensitive: boolean;
 }
 
-/** Trace every matching feature or string literal through provider xrefs. */
+/** Trace matching strings and procedures through provider xrefs. */
 export const traceLiteralFeature = async (
   call: AnalysisCall,
   input: LiteralTraceInput,
-  scope: "feature" | "string",
   signal?: AbortSignal,
 ): EnhancedResult => {
-  const sources =
-    scope === "feature" ? FEATURE_SEARCH_SOURCES : STRING_SEARCH_SOURCES;
-  const searched = await literalMatches(call, input, sources, signal);
+  const searched = await literalMatches(
+    call,
+    input,
+    LITERAL_SEARCH_SOURCES,
+    signal,
+  );
   if (!searched.ok) return searched;
   const traced = await traceReferences(call, {
     matches: searched.value.matches,

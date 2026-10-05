@@ -214,7 +214,6 @@ describe("enhanced MCP tools", () => {
       ["analyze_function", { procedure: "0x1" }],
       ["inspect_native_api", { procedure: "0x1" }],
       ["trace_feature", { query: "hello" }],
-      ["find_code_for_string", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
       ["trace_native_ui_action", { action: "missing-selector" }],
       ["inspect_native_dispatch_metadata", { max_records: 100 }],
@@ -294,11 +293,6 @@ describe("enhanced MCP tools", () => {
       ],
     });
     expect(results[10]).toMatchObject({
-      query: "hello",
-      matches: [{ type: "string", address: "0x30", value: "hello" }],
-      truncated: false,
-    });
-    expect(results[11]).toMatchObject({
       start: "0x1",
       goal: "0x2",
       direction: "forward",
@@ -310,11 +304,11 @@ describe("enhanced MCP tools", () => {
       ],
       truncated: false,
     });
-    expect(results[12]).toMatchObject({
+    expect(results[11]).toMatchObject({
       start: "missing-selector",
       reason: "ui_action_or_object_not_found",
     });
-    expect(results[13]).toMatchObject({
+    expect(results[12]).toMatchObject({
       target_sha256: "a".repeat(64),
       provider: {
         id: "fixture",
@@ -327,7 +321,7 @@ describe("enhanced MCP tools", () => {
         ]),
       },
     });
-    expect(results[14]).toMatchObject({
+    expect(results[13]).toMatchObject({
       target_sha256: "a".repeat(64),
       decompilations: 1,
       unknowns: [

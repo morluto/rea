@@ -56,11 +56,7 @@ export class EnhancedTools {
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
-    if (
-      name === "trace_feature" ||
-      name === "find_code_for_string" ||
-      name === "trace_call_path"
-    )
+    if (name === "trace_feature" || name === "trace_call_path")
       return this.#executeTracing(name, input, signal);
     if (name === "trace_native_values") {
       const parsed = enhancedInputSchemas.trace_native_values.safeParse(input);
@@ -163,15 +159,6 @@ export class EnhancedTools {
           (name, arguments_, operationSignal) =>
             this.#call(name, arguments_, operationSignal),
           call.input,
-          "feature",
-          signal,
-        );
-      case "find_code_for_string":
-        return traceLiteralFeature(
-          (name, arguments_, operationSignal) =>
-            this.#call(name, arguments_, operationSignal),
-          call.input,
-          "string",
           signal,
         );
       case "trace_call_path":
@@ -190,7 +177,7 @@ export class EnhancedTools {
   }
 
   #executeTracing(
-    name: "trace_feature" | "find_code_for_string" | "trace_call_path",
+    name: "trace_feature" | "trace_call_path",
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
@@ -199,12 +186,7 @@ export class EnhancedTools {
       if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
       return this.executeValidated({ name, input: parsed.data }, signal);
     }
-    if (name === "trace_feature") {
-      const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
-      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
-      return this.executeValidated({ name, input: parsed.data }, signal);
-    }
-    const parsed = enhancedInputSchemas.find_code_for_string.safeParse(input);
+    const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
     if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
     return this.executeValidated({ name, input: parsed.data }, signal);
   }

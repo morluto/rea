@@ -24,12 +24,6 @@ describe("runtime configuration", () => {
       expect(result.value.referenceSourcePolicy).toEqual({
         secretPatterns: [],
       });
-      expect(result.value.javascriptReplayConfiguration.nodePath).toBe(
-        process.execPath,
-      );
-      expect(
-        result.value.managedRuntimeConfiguration.executablePath,
-      ).toBeUndefined();
     }
   });
 
@@ -86,28 +80,6 @@ describe("runtime target configuration", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected invalid target kind");
     expect(result.error.message).toContain("Invalid REA environment");
-  });
-
-  it("configures runtime executable paths without authority settings", () => {
-    expect(
-      parseConfig({
-        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "/opt/dotnet/dotnet",
-        REA_JAVASCRIPT_REPLAY_NODE_PATH: "/opt/node/bin/node",
-      }),
-    ).toMatchObject({
-      ok: true,
-      value: {
-        managedRuntimeConfiguration: { executablePath: "/opt/dotnet/dotnet" },
-        javascriptReplayConfiguration: { nodePath: "/opt/node/bin/node" },
-      },
-    });
-    expect(
-      parseConfig({ REA_MANAGED_RUNTIME_EXECUTABLE_PATH: "relative/dotnet" })
-        .ok,
-    ).toBe(false);
-    expect(
-      parseConfig({ REA_JAVASCRIPT_REPLAY_NODE_PATH: "relative/node" }).ok,
-    ).toBe(false);
   });
 
   it("parses database kind and loader arguments", () => {

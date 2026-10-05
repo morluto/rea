@@ -115,69 +115,6 @@ const verifyManagedReconstruction = async ({
     throw new Error("packaged managed reconstruction import CLI failed");
 };
 
-const verifyManagedRuntimePlan = async ({
-  cli,
-  managedMembers,
-  managedMethod,
-  workspace,
-  environment,
-}) => {
-  const managedRuntimePlanInput = {
-    static_members: managedMembers,
-    method: {
-      token: managedMethod.token,
-      signature_sha256: managedMethod.signature.raw_sha256,
-      normalized_il_sha256: managedMethod.body.normalized_il_sha256,
-    },
-    requested_effect: "attach",
-    host: {
-      os: "linux",
-      clr_family: "dotnet",
-      architecture: "x86_64",
-    },
-    bounds: {
-      timeout_ms: 5_000,
-      max_threads: 32,
-      max_output_bytes: 65_536,
-      allow_network: false,
-      allow_ui: false,
-    },
-  };
-  const managedRuntimePlan = json(
-    await run(
-      cli,
-      [
-        "plan-managed-runtime-correlation",
-        JSON.stringify(managedRuntimePlanInput),
-        "--json",
-      ],
-      {
-        ...environment,
-        REA_MANAGED_RUNTIME_EXECUTABLE_PATH: process.execPath,
-      },
-    ),
-  );
-  if (
-    managedRuntimePlan.operation !== "plan_managed_runtime_correlation" ||
-    managedRuntimePlan.provider?.id !== "rea-dotnet-workflows" ||
-    managedRuntimePlan.normalized_result?.executed !== false ||
-    managedRuntimePlan.normalized_result?.unsupported_until_executor_exists !==
-      true ||
-    managedRuntimePlan.normalized_result?.effect_taxonomy?.attaches_process !==
-      true ||
-    managedRuntimePlan.normalized_result?.effect_taxonomy
-      ?.invokes_target_code !== false
-  )
-    throw new Error("packaged managed runtime-correlation CLI failed");
-  if (
-    managedRuntimePlan.normalized_result?.requested_runtime?.confinement !==
-    "not-established"
-  )
-    throw new Error(
-      "packaged managed runtime plan claimed unverified confinement",
-    );
-};
-
 const verifyManagedBoundaries = async ({ cli, managedPath, environment }) => {
   const managedBoundaries = json(
     await run(
@@ -361,13 +298,6 @@ export async function verifyManaged({ cli, workspace, environment }) {
     cli,
     managedMembers,
     managedMethod,
-    environment,
-  });
-  await verifyManagedRuntimePlan({
-    cli,
-    managedMembers,
-    managedMethod,
-    workspace,
     environment,
   });
   const managedBoundaries = await verifyManagedBoundaries({

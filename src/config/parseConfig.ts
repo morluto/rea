@@ -34,15 +34,5 @@ export const parseConfig = (
     hopperLoaderArgs: loaderArgs.value,
     logLevel: env.REA_LOG_LEVEL,
     referenceSourcePolicy: { secretPatterns: secretPatterns.value },
-    javascriptReplayConfiguration: {
-      nodePath: env.REA_JAVASCRIPT_REPLAY_NODE_PATH,
-      bubblewrapPath: env.REA_JAVASCRIPT_REPLAY_BWRAP_PATH,
-      systemdRunPath: env.REA_JAVASCRIPT_REPLAY_SYSTEMD_RUN_PATH,
-      systemctlPath: env.REA_JAVASCRIPT_REPLAY_SYSTEMCTL_PATH,
-      shellPath: env.REA_JAVASCRIPT_REPLAY_SHELL_PATH,
-    },
-    managedRuntimeConfiguration: {
-      executablePath: env.REA_MANAGED_RUNTIME_EXECUTABLE_PATH,
-    },
   });
 };

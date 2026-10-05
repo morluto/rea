@@ -36,7 +36,6 @@ interface EventCaptureOptions {
   readonly page: Page;
   readonly enabled: ReadonlySet<EventName>;
   readonly secrets: BrowserScenarioSecrets;
-  readonly allowedOrigins: readonly string[];
 }
 
 /** Arrival-ordered Playwright event capture with current-step attribution. */
@@ -46,12 +45,10 @@ export class PlaywrightScenarioEvents {
   private sequence = 0;
   private readonly enabled: ReadonlySet<EventName>;
   private readonly secrets: BrowserScenarioSecrets;
-  private readonly allowedOrigins: ReadonlySet<string>;
 
   constructor(options: EventCaptureOptions) {
     this.enabled = options.enabled;
     this.secrets = options.secrets;
-    this.allowedOrigins = new Set(options.allowedOrigins);
     this.observePage(options.page);
   }
 
@@ -91,67 +88,38 @@ export class PlaywrightScenarioEvents {
 
   private observePage(page: Page): void {
     if (this.enabled.has("console"))
-      page.on("console", (message) => {
-        if (this.pageInScope(page)) this.console(message);
-      });
+      page.on("console", (message) => this.console(message));
     if (this.enabled.has("page-errors"))
       page.on("pageerror", (error) => {
-        if (this.pageInScope(page))
-          this.push({
-            kind: "page-error",
-            message: this.secrets.redact(error.message),
-            stack:
-              error.stack === undefined
-                ? null
-                : this.secrets.redact(error.stack),
-          });
+        this.push({
+          kind: "page-error",
+          message: this.secrets.redact(error.message),
+          stack:
+            error.stack === undefined ? null : this.secrets.redact(error.stack),
+        });
       });
     if (this.enabled.has("network")) {
-      page.on("request", (request) => {
-        if (this.pageInScope(page)) this.request("request", request);
-      });
-      page.on("response", (response) => {
-        if (this.pageInScope(page)) this.response(response);
-      });
-      page.on("requestfailed", (request) => {
-        if (this.pageInScope(page)) this.request("request-failed", request);
-      });
+      page.on("request", (request) => this.request("request", request));
+      page.on("response", (response) => this.response(response));
+      page.on("requestfailed", (request) =>
+        this.request("request-failed", request),
+      );
     }
     if (this.enabled.has("websockets"))
-      page.on("websocket", (socket) => {
-        if (this.pageInScope(page)) this.webSocket(page, socket);
-      });
+      page.on("websocket", (socket) => this.webSocket(socket));
     if (this.enabled.has("frames")) {
-      page.on("frameattached", (frame) => {
-        if (this.pageInScope(page)) this.frame("frame-attached", frame);
-      });
-      page.on("framedetached", (frame) => {
-        if (this.pageInScope(page)) this.frame("frame-detached", frame);
-      });
-      page.on("framenavigated", (frame) => {
-        if (this.pageInScope(page)) this.frame("frame-navigated", frame);
-      });
+      page.on("frameattached", (frame) => this.frame("frame-attached", frame));
+      page.on("framedetached", (frame) => this.frame("frame-detached", frame));
+      page.on("framenavigated", (frame) =>
+        this.frame("frame-navigated", frame),
+      );
     }
     if (this.enabled.has("workers"))
-      page.on("worker", (worker) => {
-        if (this.pageInScope(page)) this.worker(page, worker);
-      });
+      page.on("worker", (worker) => this.worker(worker));
     if (this.enabled.has("popups"))
-      page.on("popup", (popup) => {
-        if (this.pageInScope(page)) this.popup(popup);
-      });
+      page.on("popup", (popup) => this.popup(popup));
     if (this.enabled.has("downloads"))
-      page.on("download", (download) => {
-        if (this.pageInScope(page)) this.download(download);
-      });
-  }
-
-  private pageInScope(page: Page): boolean {
-    try {
-      return this.allowedOrigins.has(new URL(page.url()).origin);
-    } catch {
-      return false;
-    }
+      page.on("download", (download) => this.download(download));
   }
 
   private safeUrl(value: string) {
@@ -209,20 +177,16 @@ export class PlaywrightScenarioEvents {
     });
   }
 
-  private webSocket(page: Page, socket: WebSocket): void {
+  private webSocket(socket: WebSocket): void {
     const url = this.safeUrl(socket.url());
     this.push({ kind: "websocket-opened", url });
-    socket.on("framesent", ({ payload }) => {
-      if (this.pageInScope(page))
-        this.webSocketFrame("websocket-frame-sent", url, payload);
-    });
-    socket.on("framereceived", ({ payload }) => {
-      if (this.pageInScope(page))
-        this.webSocketFrame("websocket-frame-received", url, payload);
-    });
-    socket.on("close", () => {
-      if (this.pageInScope(page)) this.push({ kind: "websocket-closed", url });
-    });
+    socket.on("framesent", ({ payload }) =>
+      this.webSocketFrame("websocket-frame-sent", url, payload),
+    );
+    socket.on("framereceived", ({ payload }) =>
+      this.webSocketFrame("websocket-frame-received", url, payload),
+    );
+    socket.on("close", () => this.push({ kind: "websocket-closed", url }));
   }
 
   private webSocketFrame(
@@ -265,36 +229,27 @@ export class PlaywrightScenarioEvents {
     });
   }
 
-  private worker(page: Page, worker: Worker): void {
+  private worker(worker: Worker): void {
     const details = {
       url: this.safeUrl(worker.url()),
       name: null,
     };
     this.push({ kind: "worker-created", ...details });
-    worker.on("close", () => {
-      if (this.pageInScope(page))
-        this.push({ kind: "worker-closed", ...details });
-    });
+    worker.on("close", () => this.push({ kind: "worker-closed", ...details }));
   }
 
   private popup(page: Page): void {
-    if (!this.pageInScope(page)) {
-      void page.close().catch(() => undefined);
-      return;
-    }
     const opened = {
       url: page.url() === "" ? null : this.safeUrl(page.url()),
       name: null,
     };
     this.push({ kind: "popup-opened", ...opened });
     page.on("close", () =>
-      this.pageInScope(page)
-        ? this.push({
-            kind: "popup-closed",
-            url: page.url() === "" ? null : this.safeUrl(page.url()),
-            name: null,
-          })
-        : undefined,
+      this.push({
+        kind: "popup-closed",
+        url: page.url() === "" ? null : this.safeUrl(page.url()),
+        name: null,
+      }),
     );
     this.observePage(page);
   }

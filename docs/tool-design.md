@@ -8,14 +8,14 @@ protocol, authority, and resource-safety constraints, and report their effects.
 
 ## Choose the tool shape
 
-| Shape                            | Use it for                                                           | Contract should return                                                                                         |
-| -------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `inspect`                        | Facts about one explicit target, address, object, or resource        | Relevant fields, source locations, and facet-level availability                                                |
-| `search` / `list`                | Finding candidate targets or entities                                | Stable ordering and useful result context; expose pagination when the result format or caller's query needs it |
-| `trace`                          | Relationships across code, metadata, UI resources, or observations   | Typed edges, supporting evidence, and unresolved paths; identify any genuine traversal boundary                |
-| `compare`                        | Two explicitly identified artifacts, versions, or evidence sets      | Paired identity, comparable coverage, and deltas with evidence                                                 |
-| `workflow`                       | A distinct analyst outcome that benefits from composition inside REA | A useful inline result, contributing evidence, and partial/unavailable facets                                  |
-| `observe` / `capture` / `replay` | A question that requires runtime behavior                            | Required authority, launch/attach behavior, real operational constraints, lifecycle, and cleanup status        |
+| Shape                 | Use it for                                                           | Contract should return                                                                                         |
+| --------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `inspect`             | Facts about one explicit target, address, object, or resource        | Relevant fields, source locations, and facet-level availability                                                |
+| `search` / `list`     | Finding candidate targets or entities                                | Stable ordering and useful result context; expose pagination when the result format or caller's query needs it |
+| `trace`               | Relationships across code, metadata, UI resources, or observations   | Typed edges, supporting evidence, and unresolved paths; identify any genuine traversal boundary                |
+| `compare`             | Two explicitly identified artifacts, versions, or evidence sets      | Paired identity, comparable coverage, and deltas with evidence                                                 |
+| `workflow`            | A distinct analyst outcome that benefits from composition inside REA | A useful inline result, contributing evidence, and partial/unavailable facets                                  |
+| `observe` / `capture` | A question that requires runtime behavior                            | Required authority, launch/attach behavior, real operational constraints, lifecycle, and cleanup status        |
 
 These are task shapes, not required prefixes. Name a tool for the action and
 object agents reason about; keep the name distinct from nearby alternatives.

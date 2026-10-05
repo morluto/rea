@@ -3,9 +3,7 @@ import { z } from "incur";
 import { compareManagedMemberPaths } from "../application/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
-import { planManagedRuntimeCorrelationEvidence } from "../application/ManagedRuntimeCorrelationService.js";
 import { runProviderAnalysis } from "../application/DirectAnalysis.js";
-import { parseConfig } from "../config.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { projectAnalysisError } from "../domain/errors.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -17,7 +15,6 @@ import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCom
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): void => {
   registerInspectManagedArtifact(cli, logger);
   registerInspectManagedMembers(cli, logger);
@@ -25,7 +22,6 @@ export const registerManagedCommands = (
   registerCompareManagedMembers(cli, logger);
   registerImportManagedReconstruction(cli, logger);
   registerVerifyManagedNativeBoundaries(cli, logger);
-  registerPlanManagedRuntimeCorrelation(cli, logger, environment);
   registerProjectManagedApplicationGraph(cli, logger);
 };
 
@@ -158,37 +154,6 @@ const registerVerifyManagedNativeBoundaries = (
         );
         if (!input.ok) return input.error;
         const result = verifyManagedNativeBoundariesEvidence(input.value);
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
-  });
-};
-
-const registerPlanManagedRuntimeCorrelation = (
-  cli: CliInstance,
-  logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): void => {
-  cli.command(CLI_COMMANDS.planManagedRuntimeCorrelation, {
-    description:
-      "Plan a managed runtime-correlation request without probing or executing a runtime",
-    args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed runtime-correlation JSON or JSON file path"),
-    }),
-    run: ({ args }) =>
-      logCliCommand(logger, "plan-managed-runtime-correlation", async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          "plan-managed-runtime-correlation",
-        );
-        if (!input.ok) return input.error;
-        const config = parseConfig(environment);
-        if (!config.ok) return projectAnalysisError(config.error);
-        const result = await planManagedRuntimeCorrelationEvidence(
-          { configuration: () => config.value.managedRuntimeConfiguration },
-          input.value,
-        );
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });

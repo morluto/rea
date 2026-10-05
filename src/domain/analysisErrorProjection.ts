@@ -15,7 +15,6 @@ import {
   HopperTimeoutError,
   ProviderAdapterError,
   ProviderSelectionError,
-  ReplayPlanStaleError,
   UnknownRegistryError,
   type AnalysisError,
   type AnalysisErrorProjection,
@@ -49,7 +48,6 @@ export const projectAnalysisError = (
 
 const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
   if (error.cleanupIncomplete) return "cleanup_incomplete";
-  if (error instanceof ReplayPlanStaleError) return "plan_stale";
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"
@@ -121,7 +119,6 @@ type SpecializedErrorTag =
   | "EvidenceFileError"
   | "ProcessCaptureError"
   | "ProviderSelectionError"
-  | "ReplayPlanStaleError"
   | "UnknownRegistryError";
 
 const STATIC_ERROR_CODES = {
@@ -158,7 +155,6 @@ const staticErrorCode = (
     case "EvidenceFileError":
     case "ProcessCaptureError":
     case "ProviderSelectionError":
-    case "ReplayPlanStaleError":
     case "UnknownRegistryError":
       throw new TypeError(`Unhandled specialized analysis error: ${tag}`);
     default:
@@ -195,12 +191,6 @@ const requestErrorDetails = (
       reason: error.reason,
       expected: error.expected,
       actual: error.actual,
-    };
-  if (error instanceof ReplayPlanStaleError)
-    return {
-      expected_plan_digest: error.expectedDigest,
-      actual_plan_digest: error.actualDigest,
-      application_code_admitted: false,
     };
   return undefined;
 };

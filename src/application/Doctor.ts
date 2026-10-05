@@ -21,13 +21,8 @@ import {
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import {
-  inspectRuntimeExecutables,
-  type RuntimeExecutableInventory,
-} from "./RuntimeExecutableDiagnostics.js";
-import {
   collectDoctorDiagnostics,
   doctorHealthy,
-  isOptionalDoctorCheck,
 } from "./DoctorDiagnostics.js";
 import {
   normalizeDoctorScope,
@@ -91,9 +86,7 @@ export interface DoctorHost {
   installationPaths?(): Promise<readonly string[]>;
   installedSkillIdentity?(): Promise<InstalledSkillIdentity | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
-  javascriptReplayCheck?(): Promise<DoctorCheck>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
-  runtimeExecutables?(): Promise<RuntimeExecutableInventory>;
 }
 
 /** Parsed identity committed by an installed REA skill. */
@@ -145,7 +138,6 @@ interface DoctorIdentity {
     readonly remediation: string | null;
   };
   readonly registrations: readonly ClientRegistrationStatus[];
-  readonly runtime_executables: RuntimeExecutableInventory | null;
 }
 
 /**
@@ -162,9 +154,8 @@ export const runDoctor = async (
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
-    runtimeExecutables,
   } = await collectDoctorDiagnostics(target, host);
-  const identity = await collectDoctorIdentity(host, runtimeExecutables);
+  const identity = await collectDoctorIdentity(host);
   const checks = [...diagnosticChecks, ...identity.checks];
   const providers = {
     hopperAvailable:
@@ -188,14 +179,9 @@ export const runDoctor = async (
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
     scope,
-    scope_checks:
-      scope.mode === "audit-wide"
-        ? checks.filter(({ name }) => !isOptionalDoctorCheck(name))
-        : scoped.scopeChecks,
+    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
     informational_checks:
-      scope.mode === "audit-wide"
-        ? checks.filter(({ name }) => isOptionalDoctorCheck(name))
-        : scoped.informationalChecks,
+      scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(providerInspections === undefined ? {} : { providerInspections }),
     checks,
@@ -205,7 +191,6 @@ export const runDoctor = async (
 
 const collectDoctorIdentity = async (
   host: DoctorHost,
-  runtimeExecutables: RuntimeExecutableInventory | undefined,
 ): Promise<{
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
@@ -253,7 +238,6 @@ const collectDoctorIdentity = async (
           : "Run rea setup to update the installed REA skill.",
       },
       registrations,
-      runtime_executables: runtimeExecutables ?? null,
     },
   };
 };
@@ -298,7 +282,6 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: () => Promise<
     readonly DoctorProviderInspection[]
   >;
-  readonly javascriptReplayCheck?: () => Promise<DoctorCheck>;
   readonly linuxDemoRuntimeCheck?: () => Promise<DoctorCheck>;
 }
 
@@ -344,9 +327,6 @@ export const systemDoctorHost = (
   ...(options.providerInspections === undefined
     ? {}
     : { providerInspections: options.providerInspections }),
-  ...(options.javascriptReplayCheck === undefined
-    ? {}
-    : { javascriptReplayCheck: options.javascriptReplayCheck }),
   async ilspyCmdVersion(path) {
     try {
       await access(path, constants.X_OK);
@@ -357,15 +337,6 @@ export const systemDoctorHost = (
       return undefined;
     }
   },
-  runtimeExecutables: () =>
-    inspectRuntimeExecutables({
-      platform: process.platform,
-      path: process.env.PATH ?? "",
-      launcherNode: process.execPath,
-      ...(process.env.PATHEXT === undefined
-        ? {}
-        : { pathExtensions: process.env.PATHEXT.split(delimiter) }),
-    }),
   async installationPaths() {
     try {
       const command = process.platform === "win32" ? "where" : "which";

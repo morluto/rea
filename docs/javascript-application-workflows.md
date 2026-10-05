@@ -132,8 +132,10 @@ unique occurrence on each side and pairing is reciprocal. Changes use JSON
 Pointer paths with `added`, `removed`, `changed`, or `unknown` status. A missing
 field is added or removed only when the relevant parent-property coverage is
 complete on both shapes. The output includes exact selector candidates,
-omissions, Evidence links, coverage, limitations, and a separate controlled
-replay recommendation; it does not execute JavaScript.
+omissions, Evidence links, coverage, and limitations; it does not execute
+JavaScript. When runtime semantics matter, run behavioral probes directly
+against the relevant application versions and capture them through the
+available browser, Electron, or process workflows.
 
 ## CLI and verification
 
@@ -162,22 +164,10 @@ Because source Evidence and derived Evidence are retained by the normal session
 ledger, evidence bundles and analysis snapshots can carry these records without
 another persistence format.
 
-## Controlled replay boundary
+## Runtime evidence
 
-Static graph workflows never execute a graph node or recovered module.
-`run_controlled_replay` is the separate extracted-module boundary. A plan
-request and execute request share the same manifest; execution must include the
-exact plan digest, and the worker runs inside the mandatory Linux OS sandbox.
-The sandbox is an execution boundary; it does not make replay a real application
-runtime observation.
-
-Replay observations retain `controlled-replay` authority. They cannot
-promote static inference into passive runtime observation or prove that the
-original application, renderer, preload, main process, or remote service
-behaved identically.
-
-Module, explicit case, and preset-generated case lists have no fixed
-item-count ceiling. Replay plans commit the caller's resource budgets, and the
-worker protocol checks the complete request against that declared byte budget
-before probing executables or reading modules. Aggregate module-source and
-case-input bytes are likewise checked against the caller's declared budgets.
+Static graph workflows do not execute recovered code. When runtime semantics
+matter, run behavioral probes directly against the relevant application
+versions and capture them through the available browser, Electron, or process
+workflows. Those observations do not prove behavior in an unobserved app
+version or environment.

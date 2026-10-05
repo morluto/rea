@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "./browserScenario.js";
 
-it("accepts scenarios beyond former action, secret, storage, and replay-route counts", () => {
+it("accepts large action, secret, and storage selections", () => {
   const actions = Array.from({ length: 129 }, (_, index) => ({
     step_id: `fill_${index}`,
     action: "fill",
@@ -25,12 +25,6 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
     name: `entry_${index}`,
     value: { source: "literal", value: "value" },
   }));
-  const routes = Array.from({ length: 257 }, (_, index) => ({
-    route_id: `route_${index}`,
-    method: "GET",
-    request: { url: `https://app.example.test/${index}` },
-    response: { kind: "response", status: 200 },
-  }));
 
   const result = browserScenarioSchema.parse({
     browser: {
@@ -38,7 +32,6 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
       executable_path: "/opt/chromium",
     },
     start_url: { url: "https://app.example.test/" },
-    allowed_origins: ["https://app.example.test"],
     actions,
     secrets,
     storage: {
@@ -50,11 +43,6 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
         { origin: "https://app.example.test", entries: storageEntries },
       ],
     },
-    request_replay: {
-      mode: "exact",
-      unmatched: "abort",
-      routes,
-    },
   });
 
   expect(result.actions).toHaveLength(129);
@@ -62,12 +50,9 @@ it("accepts scenarios beyond former action, secret, storage, and replay-route co
   expect(result.storage.cookies).toHaveLength(129);
   expect(result.storage.local_storage[0]?.entries).toHaveLength(129);
   expect(result.storage.session_storage[0]?.entries).toHaveLength(129);
-  expect(
-    result.request_replay.mode === "exact" && result.request_replay.routes,
-  ).toHaveLength(257);
 });
 
-it("defaults scenario scope to the start URL origin", () => {
+it("does not require duplicate origin scope declarations", () => {
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "launch",
@@ -75,11 +60,31 @@ it("defaults scenario scope to the start URL origin", () => {
     },
     start_url: { url: "https://app.example.test/" },
     actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+      {
+        step_id: "navigate",
+        action: "goto",
+        destination: { url: "https://other.example.test/" },
+        wait_until: "load",
+      },
     ],
+    storage: {
+      local_storage: [
+        {
+          origin: "https://storage.example.test",
+          entries: [
+            { name: "theme", value: { source: "literal", value: "dark" } },
+          ],
+        },
+      ],
+    },
   });
 
-  expect(scenario.allowed_origins).toEqual(["https://app.example.test"]);
+  expect(scenario.actions[0]).toMatchObject({
+    destination: { url: "https://other.example.test/" },
+  });
+  expect(scenario.storage.local_storage[0]?.origin).toBe(
+    "https://storage.example.test",
+  );
 });
 
 it("accepts complete browser inputs beyond former string length caps", () => {
@@ -93,7 +98,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
       executable_path: longPath,
     },
     start_url: { url: `https://app.example.test${longPath}` },
-    allowed_origins: ["https://app.example.test"],
     secrets: [
       {
         secret_id: longToken,
@@ -123,30 +127,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
         },
       ],
     },
-    request_replay: {
-      mode: "exact",
-      unmatched: "abort",
-      routes: [
-        {
-          route_id: longToken,
-          method: "GET",
-          request: { url: "https://app.example.test/" },
-          response: {
-            kind: "response",
-            status: 200,
-            headers: [
-              {
-                name: longToken,
-                value: {
-                  source: "literal",
-                  value: longValue,
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
   });
 
   expect(result.actions[0]?.step_id).toBe(longToken);
@@ -158,15 +138,6 @@ it("accepts complete browser inputs beyond former string length caps", () => {
   ).toBe(longToken);
   expect(result.storage.cookies[0]?.name).toBe(longToken);
   expect(result.secrets[0]?.environment_variable).toBe(longEnvironmentVariable);
-  const replayRoute =
-    result.request_replay.mode === "exact"
-      ? result.request_replay.routes[0]
-      : undefined;
-  expect(
-    replayRoute?.response.kind === "response"
-      ? replayRoute.response.headers[0]?.name
-      : undefined,
-  ).toBe(longToken);
 });
 
 it("accepts caller-selected viewport sizes and click counts without ceilings", () => {
@@ -176,7 +147,6 @@ it("accepts caller-selected viewport sizes and click counts without ceilings", (
       executable_path: "/opt/chromium",
     },
     start_url: { url: "https://app.example.test/" },
-    allowed_origins: ["https://app.example.test"],
     environment: {
       viewport: { width: 20_000, height: 10_000, device_scale_factor: 8 },
     },

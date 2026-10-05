@@ -10,7 +10,7 @@
     "skill_version": "23"
   },
   "tools": {
-    "total": 122,
+    "total": 116,
     "families": [
       {
         "id": "direct",
@@ -61,13 +61,12 @@
       {
         "id": "enhanced",
         "surface": "enhanced",
-        "count": 15,
+        "count": 14,
         "tools": [
           "analyze_function",
           "analyze_swift_types",
           "batch_decompile",
           "binary_overview",
-          "find_code_for_string",
           "find_xrefs_to_name",
           "get_call_graph",
           "get_objc_classes",
@@ -109,14 +108,13 @@
       {
         "id": "managed",
         "surface": "managed",
-        "count": 8,
+        "count": 7,
         "tools": [
           "compare_managed_members",
           "import_managed_reconstruction",
           "inspect_managed_artifact",
           "inspect_managed_members",
           "inspect_managed_native_boundaries",
-          "plan_managed_runtime_correlation",
           "project_managed_application_graph",
           "verify_managed_native_boundaries"
         ]
@@ -161,16 +159,13 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 10,
+        "count": 7,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
           "compare_javascript_export_shapes",
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
-          "execute_node_characterization",
-          "prepare_node_characterization",
-          "run_controlled_replay",
           "trace_application_feature",
           "trace_javascript_semantics"
         ]
@@ -178,7 +173,7 @@
       {
         "id": "session",
         "surface": "session",
-        "count": 22,
+        "count": 21,
         "tools": [
           "binary_session",
           "build_call_path",
@@ -198,7 +193,6 @@
           "list_unknowns",
           "open_binary",
           "record_unknown",
-          "run_replay_machine",
           "update_unknown",
           "verify_reconstruction",
           "verify_unknown_resolution"
@@ -344,7 +338,6 @@
       "capabilities": [
         "compare_managed_members",
         "import_managed_reconstruction",
-        "plan_managed_runtime_correlation",
         "project_managed_application_graph",
         "verify_managed_native_boundaries"
       ]
@@ -365,9 +358,6 @@
         "compare_javascript_export_shapes",
         "compare_source_to_bundle",
         "evaluate_reconstruction_coverage",
-        "execute_node_characterization",
-        "prepare_node_characterization",
-        "run_controlled_replay",
         "trace_application_feature",
         "trace_javascript_semantics"
       ]
@@ -445,7 +435,7 @@
     }
   ],
   "cli": {
-    "primary_count": 74,
+    "primary_count": 69,
     "commands": [
       "analyze",
       "analyze-javascript-application",
@@ -473,7 +463,6 @@
       "evaluate-reconstruction-coverage",
       "evidence-export",
       "evidence-import",
-      "execute-node-characterization",
       "extract-artifact",
       "function",
       "import-managed-reconstruction",
@@ -502,14 +491,10 @@
       "observe-javascript-runtime",
       "observe-native-ui",
       "observe-web-session",
-      "plan-managed-runtime-correlation",
-      "prepare-node-characterization",
       "project-managed-application-graph",
       "providers",
       "reconcile-javascript-runtime",
       "resolve-native-call-targets",
-      "run-controlled-replay",
-      "run-replay-machine",
       "search",
       "setup",
       "trace",
@@ -531,15 +516,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 74,
-      "mcp_tools": 122,
+      "cli_commands": 69,
+      "mcp_tools": 116,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "9f2b8a77ca7d972dedddf33294f5addb5fc7e00ce43ae5de21be989e0777871a",
+      "tools_sha256": "ff29fddb875d335c400902e846377990fa4276f04e4494a255dd3986a0fd7896",
       "prompts_sha256": "4762db348821fec787a5b8c6423f2c48a71f6f0ec2afee97b16ad69030ec504b",
-      "combined_sha256": "3a0e6d66df95b913797ce2e4548e97d409d6e8768023f8a7a23d8d85ae9d766f",
-      "providers_sha256": "c5a88a49990fafc8244972ee8ff543fc19995eb79db960da55f6a311e15340d1"
+      "combined_sha256": "73a4cdf4fc83b1728426931ff89e2113f1c8beb1b3bf337c179f2c349ce3c0f2",
+      "providers_sha256": "2ae8b85b20be338739e500549d275e78e875aaa10235d2ca283f0ade7787da90"
     }
   }
 }

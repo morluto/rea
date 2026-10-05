@@ -6,9 +6,7 @@ export type ProcessComparisonDimension =
   | "interaction"
   | "exit"
   | "filesystem"
-  | "protocol"
-  | "process"
-  | "shim";
+  | "process";
 
 /** Map declared trace sources to legacy process-comparison dimensions. */
 export const dimensionsForTraceSources = (
@@ -20,14 +18,7 @@ export const dimensionsForTraceSources = (
     else if (source === "interaction") dimensions.add("interaction");
     else if (source === "lifecycle") dimensions.add("exit");
     else if (source === "filesystem") dimensions.add("filesystem");
-    else if (
-      source === "http" ||
-      source === "websocket" ||
-      source === "replay_transition"
-    )
-      dimensions.add("protocol");
     else if (source === "process") dimensions.add("process");
-    else if (source === "shim") dimensions.add("shim");
   }
   return dimensions;
 };
@@ -56,22 +47,7 @@ export const traceCoversObservedDimension = (
       return sources.has("lifecycle");
     case "filesystem":
       return false;
-    case "protocol":
-      return (
-        (![...left.protocol_events, ...right.protocol_events].some(
-          ({ protocol }) => protocol === "http",
-        ) ||
-          sources.has("http")) &&
-        (![...left.protocol_events, ...right.protocol_events].some(
-          ({ protocol }) => protocol === "websocket",
-        ) ||
-          sources.has("websocket")) &&
-        (!any(left.replay_transitions, right.replay_transitions) ||
-          sources.has("replay_transition"))
-      );
     case "process":
       return sources.has("process");
-    case "shim":
-      return sources.has("shim");
   }
 };

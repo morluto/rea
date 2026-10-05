@@ -32,9 +32,7 @@ export const PROCESS_COMPARISON_DIMENSIONS = [
   "interaction",
   "exit",
   "filesystem",
-  "protocol",
   "process",
-  "shim",
 ] as const;
 
 /** Derive the overall comparison status from every process dimension. */
@@ -59,9 +57,7 @@ export const processCaptureComparisonSchema = z
     interaction: comparisonStatusSchema,
     exit: comparisonStatusSchema,
     filesystem: comparisonStatusSchema,
-    protocol: comparisonStatusSchema,
     process: comparisonStatusSchema,
-    shim: comparisonStatusSchema,
     first_divergence: z.discriminatedUnion("status", [
       z.object({ status: z.literal("none") }),
       z.object({ status: z.literal("unknown"), reason: z.string() }),
@@ -72,9 +68,7 @@ export const processCaptureComparisonSchema = z
           "interaction",
           "exit",
           "filesystem",
-          "protocol",
           "process",
-          "shim",
         ]),
         index: z.number().int().nonnegative(),
         left_at_ms: z.number().int().nonnegative().nullable(),
@@ -115,16 +109,8 @@ const terminalObservations = (capture: ProcessCapture): readonly unknown[] =>
     return left.sequence - right.sequence;
   });
 
-const filesystemObservations = (
-  capture: ProcessCapture,
-): readonly unknown[] => [
-  ...capture.filesystem_checkpoints,
-  {
-    name: "final",
-    files: capture.files_after,
-    effects: capture.filesystem_effects,
-  },
-];
+const filesystemObservations = (capture: ProcessCapture): readonly unknown[] =>
+  capture.filesystem_checkpoints;
 
 const sameJsonValue = (left: unknown, right: unknown): boolean => {
   const encodedLeft = canonicalize(left);
@@ -145,12 +131,8 @@ export const processDimensionObservations = (
       return [{ ...capture.exit, settlement: capture.settlement }];
     case "filesystem":
       return filesystemObservations(capture);
-    case "protocol":
-      return [...capture.protocol_events, ...capture.replay_transitions];
     case "process":
       return capture.process_samples;
-    case "shim":
-      return capture.shim_events;
   }
 };
 
@@ -268,9 +250,7 @@ const truncatedComparison = (): ProcessCaptureComparison => ({
   interaction: "truncated",
   exit: "truncated",
   filesystem: "truncated",
-  protocol: "truncated",
   process: "truncated",
-  shim: "truncated",
   first_divergence: {
     status: "unknown",
     reason: "At least one capture is truncated.",
@@ -320,21 +300,13 @@ const applyTraceVerdict = (
     interaction: statusFor("interaction"),
     exit: statusFor("exit"),
     filesystem: statusFor("filesystem"),
-    protocol: statusFor("protocol"),
     process: statusFor("process"),
-    shim: statusFor("shim"),
   };
 };
 
 type ComparisonDimensions = Pick<
   ProcessCaptureComparison,
-  | "terminal"
-  | "interaction"
-  | "exit"
-  | "filesystem"
-  | "protocol"
-  | "process"
-  | "shim"
+  "terminal" | "interaction" | "exit" | "filesystem" | "process"
 >;
 
 const compareDimensions = (
@@ -375,13 +347,7 @@ const compareDimensions = (
       filesystemObservations(left),
       filesystemObservations(right),
     ),
-    protocol: classify(
-      "protocol",
-      [...left.protocol_events, ...left.replay_transitions],
-      [...right.protocol_events, ...right.replay_transitions],
-    ),
     process: classify("process", left.process_samples, right.process_samples),
-    shim: classify("shim", left.shim_events, right.shim_events),
   };
 };
 

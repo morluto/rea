@@ -25,24 +25,18 @@ import {
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SnapshotResult } from "./FilesystemSnapshot.js";
 import { snapshotRoots } from "./FilesystemSnapshot.js";
-import type { LoopbackReplay } from "./LoopbackReplay.js";
+import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import {
   cleanupOwnedProcessGroup,
   observeOwnedProcessGroup,
 } from "../process/ProcessOwnership.js";
-import {
-  classifyFilesystemEffects,
-  ProcessCheckpoints,
-} from "./ProcessCheckpoints.js";
 import { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
   normalizeProcessElapsedTime,
   normalizeProcessSamples,
   normalizeProcessText,
-  normalizeProtocolEvents,
 } from "./ProcessNormalization.js";
-import type { CommandShimReplay } from "./CommandShimReplay.js";
 import { PROCESS_PROVIDER } from "./ProcessEvidence.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { scheduleProcessInterval, type ProcessTimer } from "./ProcessTimer.js";
@@ -67,7 +61,6 @@ interface CaptureResultOptions {
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
   readonly samples: readonly ProcessSample[];
-  readonly replay: LoopbackReplay;
   readonly before: SnapshotResult;
   readonly after: SnapshotResult;
   readonly truncated: boolean;
@@ -77,7 +70,6 @@ interface CaptureResultOptions {
   readonly renderedFrames: UnverifiedProcessCapture["rendered_frames"];
   readonly interactions: readonly InteractionEvent[];
   readonly checkpoints: readonly FilesystemCheckpoint[];
-  readonly shimEvents: UnverifiedProcessCapture["shim_events"];
   readonly settlement: ObservedProcessSettlement;
   readonly manifest: UnverifiedProcessCapture["manifest"];
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
@@ -94,12 +86,30 @@ export type ObservedProcessSettlement =
       "state" | "elapsed_ms"
     >;
 
-/** Capture observations that cannot yet claim final cleanup or reactive state. */
+/** Capture observations before owned-resource cleanup has been verified. */
 export type PendingProcessCapture = Omit<
   UnverifiedProcessCapture,
-  "cleanup" | "reactive_run" | "settlement"
+  "cleanup" | "settlement"
 > & {
   readonly settlement: ObservedProcessSettlement;
+};
+
+/** Wait for trailing PTY callbacks before the capture becomes immutable. */
+export const settleProcessCaptureJournal = async (
+  journal: readonly ProcessCaptureEventJournalEntry[],
+  quietMs = 25,
+  maxWaitMs = 500,
+): Promise<void> => {
+  const deadline = Date.now() + maxWaitMs;
+  let observed = journal.length;
+  let lastChangeAt = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 4));
+    if (journal.length !== observed) {
+      observed = journal.length;
+      lastChangeAt = Date.now();
+    } else if (Date.now() - lastChangeAt >= quietMs) return;
+  }
 };
 
 export const buildCaptureResult = (
@@ -112,10 +122,6 @@ export const buildCaptureResult = (
     "Sensitive scripted input values are redacted from process capture Evidence.";
   const filesystemObservationUnknown =
     "No filesystem observation paths were selected; filesystem effects remain unknown.";
-  const protocolEvents = normalizeProtocolEvents(
-    options.replay.events,
-    options.scenario,
-  );
   const hasFilesystemObservations =
     options.scenario.filesystem_observation_paths.length > 0;
   return {
@@ -139,9 +145,6 @@ export const buildCaptureResult = (
       options.rootPid,
     ),
     filesystem_checkpoints: options.checkpoints,
-    shim_events: options.shimEvents,
-    protocol_events: protocolEvents,
-    replay_transitions: options.replay.transitions,
     event_journal: options.eventJournal,
     files_before: options.before.files,
     files_after: options.after.files,
@@ -156,7 +159,6 @@ export const buildCaptureResult = (
         ? ["Process-tree sampling ended with an incomplete observation."]
         : []),
       "Filesystem observations are before/after snapshots, not syscall traces.",
-      "The harness does not enforce external network isolation.",
       "Inherited host environment variables are not recorded and may affect results.",
       ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
       ...(hasSensitiveScriptedInput ? [sensitiveInputUnknown] : []),
@@ -168,12 +170,12 @@ export const buildCaptureResult = (
           "Process trees are sampled and may omit short-lived descendants.",
       },
       {
-        scope: "network",
-        reason: "External network isolation is not enforced by this adapter.",
-      },
-      {
         scope: "environment",
         reason: "Inherited host environment variables are not recorded.",
+      },
+      {
+        scope: "network",
+        reason: "Network activity is not observed by this capture.",
       },
       ...(!hasFilesystemObservations
         ? [
@@ -217,14 +219,10 @@ export const createRunManifest = async (
     completed_at: completedAt.toISOString(),
     scenario: scenarioCommitment,
     comparison_contract: comparisonContract,
-    shim_plan: scenario.command_shims,
-    replay_plan: scenario.replay,
     full_scenario_sha256: digestProcessCommitment(scenarioCommitment),
     comparison_contract_sha256: digestProcessCommitment(comparisonContract),
     executable_sha256: executableSha256,
     normalization_sha256: digestProcessCommitment(scenario.normalization),
-    shim_plan_sha256: digestProcessCommitment(scenario.command_shims),
-    replay_plan_sha256: digestProcessCommitment(scenario.replay),
   };
 };
 
@@ -346,11 +344,8 @@ const processCaptureCleanupHost: ProcessCaptureCleanupHost = {
 
 export const releaseProcessResources = async (options: {
   readonly timers: ReadonlySet<ProcessTimer>;
-  readonly replay: LoopbackReplay | undefined;
   readonly terminal: IPty | undefined;
   readonly renderer: TerminalRenderer | undefined;
-  readonly shimReplay: CommandShimReplay | undefined;
-  readonly checkpoints: ProcessCheckpoints | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
   readonly capturedProcessGroupIds: readonly number[];
@@ -360,24 +355,9 @@ export const releaseProcessResources = async (options: {
   for (const timer of options.timers) timer.cancel();
   let failure: string | undefined;
   try {
-    await options.replay?.close();
-  } catch {
-    failure = "loopback replay cleanup failed";
-  }
-  try {
-    await options.shimReplay?.close();
-  } catch {
-    failure ??= "command shim replay cleanup failed";
-  }
-  try {
     await options.renderer?.dispose();
   } catch {
     failure ??= "terminal renderer cleanup failed";
-  }
-  try {
-    await options.checkpoints?.dispose();
-  } catch {
-    failure ??= "filesystem checkpoint cleanup failed";
   }
   if (options.terminal !== undefined && host.platform !== "win32") {
     for (const processGroupId of new Set(options.capturedProcessGroupIds)) {
@@ -405,7 +385,6 @@ export const captureTerminalFrames = (options: {
   readonly temporaryRoot: string;
   readonly onOutput: () => void;
   readonly renderer: TerminalRenderer;
-  readonly checkpoints: ProcessCheckpoints;
   readonly recordEvent: RecordProcessCaptureEvent;
 }): (() => boolean) => {
   let outputBytes = 0;
@@ -434,11 +413,8 @@ export const captureTerminalFrames = (options: {
       at_ms: atMs,
       data: normalized,
     });
-    // Queue the observed output before publishing it: reactive subscribers may
-    // synchronously resize the terminal in response to this journal entry.
     options.renderer.write(data, atMs);
     options.recordEvent("frames", sequence);
-    options.checkpoints.observeTerminal(normalized);
   });
   return () => truncated;
 };

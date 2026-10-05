@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { compareArtifacts } from "../domain/artifactComparison.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -16,7 +16,7 @@ import { toCallToolResult } from "./toolResult.js";
 export const registerArtifactComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[7],
+  contract: ReturnType<typeof toolContract<"compare_artifacts">>,
 ): void => {
   server.registerTool(
     contract.name,

@@ -3,122 +3,44 @@ import {
   processTraceSpecificationSchema,
   type ProcessTraceSpecification,
 } from "./processTraceComparison.js";
-const terminal = { sequence: 0, at_ms: 900, data: "Ready" };
-const processStarted = {
-  at_ms: 1,
+
+const ready = { sequence: 0, at_ms: 10, data: "ready" };
+const worker = {
+  at_ms: 20,
   pid: 1,
   parent_pid: 0,
   command: "worker",
   process_group_id: 1,
   session_id: 1,
 };
-const http = {
-  sequence: 0,
-  at_ms: 2,
-  protocol: "http" as const,
-  direction: "request" as const,
-  method: "GET",
-  path: "/status",
-  data: "",
-  outcome: "unmatched" as const,
-};
-const websocket = {
-  sequence: 1,
-  at_ms: 3,
-  protocol: "websocket" as const,
-  direction: "received" as const,
-  method: null,
-  path: "/ws",
-  data: "done",
-  outcome: "matched" as const,
-};
-const partialSpecification = (): ProcessTraceSpecification => ({
+const specification = (): ProcessTraceSpecification => ({
   events: [
     {
       id: "ready",
       source: "terminal_raw",
-      exact: terminal,
+      exact: ready,
       cardinality: { kind: "required" },
     },
     {
       id: "worker",
       source: "process",
-      exact: processStarted,
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "status",
-      source: "http",
-      exact: http,
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "done",
-      source: "websocket",
-      exact: websocket,
+      exact: worker,
       cardinality: { kind: "required" },
     },
   ],
   language: {
     kind: "partial_order",
-    happens_before: [
-      { before: "ready", after: "worker" },
-      { before: "ready", after: "status" },
-      { before: "worker", after: "done" },
-      { before: "status", after: "done" },
-    ],
-    not_before: [{ event: "done", anchor: "ready" }],
-    unordered_groups: [{ events: ["worker", "status"] }],
+    happens_before: [{ before: "ready", after: "worker" }],
+    not_before: [],
+    unordered_groups: [],
     prefix: ["ready"],
-    suffix: ["done"],
+    suffix: ["worker"],
   },
 });
+
 describe("process trace specification", () => {
-  it("accepts event sets and cardinalities beyond the former fixed ceilings", () => {
-    const ids = Array.from({ length: 257 }, (_, index) => `event-${index}`);
-    const events = ids.map((id) => ({
-      id,
-      source: "terminal_raw" as const,
-      exact: { id },
-      cardinality: { kind: "required" as const },
-    }));
-    const trace = processTraceSpecificationSchema.safeParse({
-      events: [
-        {
-          id: "repeated",
-          source: "terminal_raw",
-          exact: "event",
-          cardinality: { kind: "exact", count: 10_001 },
-        },
-      ],
-      language: {
-        kind: "finite_traces",
-        variants: [
-          {
-            id: "long-trace",
-            trace: Array.from({ length: 10_001 }, () => "repeated"),
-          },
-        ],
-      },
-    });
-    expect(trace.success).toBe(true);
-
-    const eventSet = processTraceSpecificationSchema.safeParse({
-      events,
-      language: {
-        kind: "partial_order",
-        happens_before: ids.slice(1).map((after, index) => ({
-          before: ids[index] ?? "",
-          after,
-        })),
-        prefix: Array.from({ length: 4_097 }, () => ids[0] ?? ""),
-      },
-    });
-    expect(eventSet.success).toBe(true);
-  });
-
-  it("rejects cycles, implicit concurrency, overlap, and unsatisfiable variants", () => {
-    const base = partialSpecification();
+  it("rejects cycles, implicit ordering gaps, invalid ignores, and unsatisfiable variants", () => {
+    const base = specification();
     expect(
       processTraceSpecificationSchema.safeParse({
         ...base,
@@ -128,26 +50,20 @@ describe("process trace specification", () => {
             { before: "ready", after: "worker" },
             { before: "worker", after: "ready" },
           ],
-          unordered_groups: [{ events: ["status", "done"] }],
         },
       }).success,
     ).toBe(false);
     expect(
       processTraceSpecificationSchema.safeParse({
-        events: base.events.slice(0, 3),
-        language: {
-          kind: "partial_order",
-          happens_before: [{ before: "ready", after: "status" }],
-          not_before: [{ event: "worker", anchor: "ready" }],
-          unordered_groups: [],
-        },
+        ...base,
+        language: { kind: "partial_order" },
       }).success,
     ).toBe(false);
     expect(
       processTraceSpecificationSchema.safeParse({
         events: [
           {
-            id: "invalid-ignore",
+            id: "bad",
             source: "terminal_raw",
             exact: "ready",
             ignore_fields: ["at_ms"],
@@ -155,38 +71,7 @@ describe("process trace specification", () => {
         ],
         language: {
           kind: "finite_traces",
-          variants: [{ id: "one", trace: ["invalid-ignore"] }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      processTraceSpecificationSchema.safeParse({
-        events: [
-          {
-            id: "invalid-ignore",
-            source: "terminal_raw",
-            exact: terminal,
-            ignore_fields: ["at_ms"],
-          },
-        ],
-        language: {
-          kind: "finite_traces",
-          variants: [{ id: "one", trace: ["invalid-ignore"] }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      processTraceSpecificationSchema.safeParse({
-        events: base.events.slice(0, 2),
-        language: { kind: "partial_order" },
-      }).success,
-    ).toBe(false);
-    expect(
-      processTraceSpecificationSchema.safeParse({
-        events: [base.events[0], { ...base.events[0], id: "duplicate" }],
-        language: {
-          kind: "partial_order",
-          unordered_groups: [{ events: ["ready", "duplicate"] }],
+          variants: [{ id: "one", trace: ["bad"] }],
         },
       }).success,
     ).toBe(false);
@@ -201,18 +86,6 @@ describe("process trace specification", () => {
         language: {
           kind: "finite_traces",
           variants: [{ id: "once", trace: ["ready"] }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      processTraceSpecificationSchema.safeParse({
-        events: [base.events[0]],
-        language: {
-          kind: "finite_traces",
-          variants: [
-            { id: "first", trace: ["ready"] },
-            { id: "duplicate", trace: ["ready"] },
-          ],
         },
       }).success,
     ).toBe(false);

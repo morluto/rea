@@ -5,6 +5,7 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   correlateStaticAndRuntime,
+  staticRuntimeCorrelationInputSchema,
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
@@ -44,9 +45,7 @@ const processComparison = (
     interaction: terminal === "truncated" ? "truncated" : "unchanged",
     exit: terminal === "truncated" ? "truncated" : "unchanged",
     filesystem: terminal === "truncated" ? "truncated" : "unchanged",
-    protocol: terminal === "truncated" ? "truncated" : "unchanged",
     process: terminal === "truncated" ? "truncated" : "unchanged",
-    shim: terminal === "truncated" ? "truncated" : "unchanged",
     first_divergence:
       terminal === "changed"
         ? {
@@ -88,7 +87,7 @@ const processComparison = (
 const mapping = (
   runtime: Evidence,
   expected: "cochanged" | "static_only" | "runtime_only" | "both_unchanged",
-  dimension: "terminal" | "interaction" | "exit" | "shim" = "terminal",
+  dimension: string = "terminal",
 ) => ({
   static_comparisons: [staticComparison],
   runtime_comparisons: [runtime],
@@ -115,14 +114,17 @@ const mapping = (
 });
 
 describe("static/runtime correlation", () => {
-  it("accepts interaction and shim runtime dimensions", () => {
+  it("accepts real runtime dimensions and rejects removed protocol dimensions", () => {
     const runtime = processComparison("unchanged");
     expect(
       correlateStaticAndRuntime(mapping(runtime, "static_only", "interaction")),
     ).toMatchObject({ status: "correlated" });
-    expect(
-      correlateStaticAndRuntime(mapping(runtime, "static_only", "shim")),
-    ).toMatchObject({ status: "correlated" });
+    for (const dimension of ["protocol", "shim"] as const)
+      expect(
+        staticRuntimeCorrelationInputSchema.safeParse(
+          mapping(runtime, "static_only", dimension),
+        ).success,
+      ).toBe(false);
   });
 
   it("keeps consistent cochange as a hypothesis with complete citations", () => {

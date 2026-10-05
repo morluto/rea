@@ -261,10 +261,10 @@ rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
 rea analyze /absolute/path/to/app --snapshot /absolute/path/to/analysis/app.json
 ```
 
-Exact CLI evidence replays happen before any provider process starts. In MCP sessions,
+Exact CLI cached-evidence reads happen before any provider process starts. In MCP sessions,
 pass `snapshot_path` to `open_binary` to import a snapshot atomically while
 opening its matching target; MCP providers may still start before a cached call
-is replayed. Pass `snapshot_path` and, when required, `overwrite: true` to
+result is returned. Pass `snapshot_path` and, when required, `overwrite: true` to
 `close_binary` to save atomically before Hopper resources are released. If the
 save fails, REA deliberately leaves the session open.
 
@@ -306,17 +306,17 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Tool family               | Count | Examples                                                                                                                                                  |
 | ------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Native inspection         |    39 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
-| Investigation workflows   |    15 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
+| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
-| Managed PE/CLI            |     8 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, runtime-correlation plans, and build comparisons                  |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, capture comparisons, and browser scenarios                         |
-| Electron analysis         |     5 | renderer observation, static app mapping, static/runtime reconciliation, and click/wait scenarios                                                         |
+| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                             |
+| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                            |
+| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                               |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                  |
-| Application workflows     |    10 | cross-layer feature traces, build comparisons, historical source mapping, return-shape comparison, Linux replay, and reconstruction checks                |
-| Workspace and observation |    22 | sessions, evidence bundles, navigation context, finite replay machines, process/artifact/function comparisons, and open-question tracking                 |
+| Application workflows     |     7 | cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks                       |
+| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                         |
 
-The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness implements controlled behavioral capture.
+The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness records direct behavioral captures.
 
 ## Current status
 
@@ -327,9 +327,8 @@ REA supports native application, JavaScript, Electron, .NET, and browser investi
 - **JavaScript and Electron:** Map modules, imports, source maps, routes, IPC channels, storage, and native add-ons without running the app. Compare builds and trace a feature across the recovered graph. Dynamic and ambiguous relationships remain unresolved. See [JavaScript application workflows](docs/javascript-application-workflows.md).
 - **Websites:** Inspect a selected page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and screenshots requested by the call. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
 - **Electron and Node runtime observation:** Inspect selected Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
-- **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. Runtime-correlation plans are supported, but an executor is not implemented. See [managed-code analysis](docs/managed-code-analysis.md).
+- **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. See [managed-code analysis](docs/managed-code-analysis.md).
 - **Controlled behavior capture:** Run process, browser, or Electron scenarios with the target, actions, and lifecycle declared in each request, then compare the resulting evidence. Missing observations cannot establish that two runs behaved the same way.
-- **JavaScript replay:** Run selected extracted modules in the Linux sandbox. Each execution request is bound to the exact plan digest; replay also requires the isolation controls described in [controlled JavaScript replay](docs/controlled-javascript-replay.md).
 - **Evidence and comparison:** Save results with artifact identity, provider, locations, confidence, and limitations. Export or import bundles, compare artifacts and functions, and connect static findings to runtime observations without claiming causality from correlation.
 - **Open questions:** Track unresolved findings, contradictions, and follow-up probes. Reconstruction checks report pass, fail, or unknown rather than treating missing evidence as a pass.
 - **Guided workflows:** Start six [MCP investigation workflows](docs/mcp-prompts.md) with suggestions based on your current session.
@@ -396,10 +395,9 @@ The [current status](#current-status) section describes shipped capabilities. Th
 
 ### Next
 
-1. **Test replay isolation:** add hostile fixtures and test the Linux replay sandbox across more kernels.
-2. **Connect more application layers:** add static extractors and runtime observations to feature traces.
-3. **Extend .NET analysis:** improve comparisons of obfuscated assemblies and connect managed findings to verified native analysis. See the [managed-code guide](docs/managed-code-analysis.md).
-4. **Compare more runtime behavior:** expand process, protocol, filesystem, reconnect, and version-comparison coverage.
+1. **Connect more application layers:** add static extractors and runtime observations to feature traces.
+2. **Extend .NET analysis:** improve comparisons of obfuscated assemblies and connect managed findings to verified native analysis. See the [managed-code guide](docs/managed-code-analysis.md).
+3. **Compare more runtime behavior:** expand process, protocol, filesystem, reconnect, and version-comparison coverage.
 
 ### Later
 
@@ -537,7 +535,7 @@ The session also reports active work and cleanup status. If a caller times out, 
 `setup` returns `1` for `planned`, `needs_confirmation`, or `needs_human`
 because configuration is not ready; rerun it after approval or remediation.
 `doctor` returns `1` when required checks for its readiness scope are unhealthy.
-Unavailable optional replay prerequisites remain visible as informational
+Unavailable optional provider prerequisites remain visible as informational
 diagnostics and do not block setup or unrelated providers. Output format, full envelopes,
 filters, and token controls never change the operation status.
 
@@ -562,9 +560,9 @@ Closing a session shuts down REA's bridge and removes its temporary socket direc
 ## Process capture
 
 Process capture runs the exact executable and scenario declared in the request,
-with the requested working directory, filesystem roots, environment, and
-network behavior. The process runs with your user permissions; Process Capture
-records behavior and is not a security sandbox.
+with the requested working directory and environment. Filesystem observation
+paths select what to snapshot. The process runs with your user permissions;
+Process Capture records behavior and is not a security sandbox.
 
 Capture a scenario or compare two saved Process Capture Evidence records:
 
@@ -575,9 +573,9 @@ rea compare-process-captures authority.json reconstruction.json
 ```
 
 The comparison reports each observed dimension separately and identifies the
-first terminal, interaction, exit, filesystem, protocol, process, or shim
-divergence. See [Process Capture](docs/process-capture.md) for scenario
-fields, command-shim replay, checkpoint triggers, limits, and safety behavior.
+first terminal, interaction, exit, filesystem, or process divergence.
+See [Process Capture](docs/process-capture.md) for scenario fields, limits, and
+evidence boundaries.
 
 REA installs a prebuilt PTY backend for supported macOS, Linux, and Windows
 architectures. If the capability check reports that the backend is unavailable,
@@ -596,7 +594,7 @@ verified or absent.
 
 Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets. Your agent or model provider has its own data policy.
 
-Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Extracted JavaScript replay runs in a separate Linux sandbox and requires the isolation controls described in [controlled JavaScript replay](docs/controlled-javascript-replay.md).
+Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Static JavaScript analysis does not execute extracted modules; use direct browser, Electron, or process capture when runtime behavior is needed.
 
 Windows Ghidra operations are blocked until REA implements the required process ownership, private-directory permissions, and safe-path checks. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 

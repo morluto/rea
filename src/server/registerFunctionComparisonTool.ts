@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import {
   createEvidence,
   parseEvidence,
@@ -23,7 +23,7 @@ import { toCallToolResult } from "./toolResult.js";
 export const registerFunctionComparisonTool = (
   server: McpServer,
   session: BinarySessionPort,
-  contract: (typeof SESSION_TOOL_CONTRACTS)[8],
+  contract: ReturnType<typeof toolContract<"compare_functions">>,
 ): void => {
   server.registerTool(
     contract.name,

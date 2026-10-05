@@ -2,12 +2,6 @@ import { z } from "zod";
 import { jsonValueSchema } from "./jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
-import type {
-  ProcessReactiveStatus,
-  ProcessReactiveTransitionRecord,
-} from "./processReactiveRuntime.js";
-import { processReactiveRunSchema } from "./processCaptureReactiveSchema.js";
-import type { ReplayTransitionRecord } from "./replayMachineRuntime.js";
 import { collectProcessCaptureIssues } from "./processCaptureValidation.js";
 
 export * from "./processScenario.js";
@@ -37,7 +31,7 @@ export interface InteractionEvent {
   readonly sequence: number;
   readonly scheduled_at_ms: number;
   readonly dispatched_at_ms: number;
-  readonly type: "input" | "resize" | "stdin_close" | "signal";
+  readonly type: "input" | "resize" | "signal";
   readonly data: string;
   readonly outcome: "dispatched" | "target_exited" | "failed";
 }
@@ -101,48 +95,13 @@ export interface ProcessSample {
   readonly session_id: number | null;
 }
 
-/**
- * Named filesystem state whose effects are relative to the prior checkpoint.
- */
+/** Initial or final filesystem snapshot selected for observation. */
 export interface FilesystemCheckpoint {
   readonly name: string;
   readonly at_ms: number;
   readonly files: readonly FileState[];
   readonly effects: readonly FileEffect[];
   readonly truncated: boolean;
-}
-
-/** Recorded deterministic dependency invocation and route-match outcome. */
-export interface ShimEvent {
-  readonly sequence: number;
-  readonly at_ms: number;
-  readonly command: string;
-  readonly route_index: number | null;
-  readonly arguments: readonly string[];
-  readonly working_directory: string;
-  readonly outcome: "matched" | "unmatched" | "exhausted";
-}
-
-/** A bounded loopback replay observation. */
-export interface ProtocolEvent {
-  readonly sequence: number;
-  readonly at_ms: number;
-  readonly protocol: "http" | "websocket";
-  readonly direction: "request" | "response" | "received" | "sent";
-  readonly method: string | null;
-  readonly path: string | null;
-  readonly data: string;
-  readonly outcome:
-    | "matched"
-    | "unmatched"
-    | "script_exhausted"
-    | "disconnected"
-    | "invalid_state"
-    | "guard_failed"
-    | "transition_exhausted"
-    | "invalid_capture"
-    | "unexpected_reconnect"
-    | "limit_exhausted";
 }
 
 /** Capture collection whose members participate in global observation order. */
@@ -153,9 +112,6 @@ export const PROCESS_CAPTURE_EVENT_COLLECTIONS = [
   "lifecycle",
   "process_samples",
   "filesystem_checkpoints",
-  "shim_events",
-  "protocol_events",
-  "replay_transitions",
 ] as const;
 
 export type ProcessCaptureEventCollection =
@@ -166,18 +122,6 @@ export interface ProcessCaptureEventJournalEntry {
   readonly capture_order: number;
   readonly collection: ProcessCaptureEventCollection;
   readonly index: number;
-}
-
-/** Ordered control input that terminated or superseded a reactive run. */
-export interface ProcessReactiveControlRecord {
-  readonly sequence: number;
-  readonly kind:
-    | "state_deadline"
-    | "scenario_deadline"
-    | "target_lost"
-    | "cancelled"
-    | "cleanup_failed";
-  readonly after_capture_order: number;
 }
 
 /** Shared observation callback used by every process-capture producer. */
@@ -216,14 +160,10 @@ export interface UnverifiedProcessCapture {
     readonly completed_at: string;
     readonly scenario: Readonly<Record<string, unknown>>;
     readonly comparison_contract: Readonly<Record<string, unknown>>;
-    readonly shim_plan: readonly unknown[];
-    readonly replay_plan: Readonly<Record<string, unknown>>;
     readonly full_scenario_sha256: string;
     readonly comparison_contract_sha256: string;
     readonly executable_sha256: string;
     readonly normalization_sha256: string;
-    readonly shim_plan_sha256: string;
-    readonly replay_plan_sha256: string;
   };
   readonly normalization: z.infer<typeof normalizationSchema>;
   readonly frames: readonly TerminalFrame[];
@@ -237,16 +177,6 @@ export interface UnverifiedProcessCapture {
   readonly settlement: ProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
-  readonly shim_events: readonly ShimEvent[];
-  readonly protocol_events: readonly ProtocolEvent[];
-  readonly replay_transitions: readonly ReplayTransitionRecord[];
-  readonly reactive_run:
-    | ({
-        readonly active_state: string;
-        readonly transitions: readonly ProcessReactiveTransitionRecord[];
-        readonly controls: readonly ProcessReactiveControlRecord[];
-      } & ProcessReactiveStatus)
-    | null;
   /**
    * Global observation order across independently recorded collections.
    *
@@ -265,8 +195,6 @@ export interface UnverifiedProcessCapture {
       | "exit"
       | "process"
       | "filesystem"
-      | "protocol"
-      | "shim"
       | "cleanup"
       | "network"
       | "environment";
@@ -327,9 +255,9 @@ const fileEffectSchema = z.discriminatedUnion("status", [
   }),
 ]);
 /** Exact serialized shape of a process capture. */
-const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
-  {
-    manifest: z.object({
+const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> =
+  z.strictObject({
+    manifest: z.strictObject({
       rea_version: z.string().min(1),
       provider_version: z.string().min(1),
       platform: z.string().min(1),
@@ -339,14 +267,10 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
       completed_at: z.iso.datetime(),
       scenario: z.record(z.string(), jsonValueSchema),
       comparison_contract: z.record(z.string(), jsonValueSchema),
-      shim_plan: z.array(jsonValueSchema),
-      replay_plan: z.record(z.string(), jsonValueSchema),
       full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      shim_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      replay_plan_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
     normalization: normalizationSchema,
     frames: z.array(
@@ -374,7 +298,7 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
         sequence: z.number().int().nonnegative(),
         scheduled_at_ms: z.number().int().nonnegative(),
         dispatched_at_ms: z.number().int().nonnegative(),
-        type: z.enum(["input", "resize", "stdin_close", "signal"]),
+        type: z.enum(["input", "resize", "signal"]),
         data: z.string(),
         outcome: z.enum(["dispatched", "target_exited", "failed"]),
       }),
@@ -408,60 +332,13 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
     ),
     filesystem_checkpoints: z.array(
       z.object({
-        name: z.string(),
+        name: z.enum(["before", "after_settlement"]),
         at_ms: z.number().int().nonnegative(),
         files: z.array(fileStateSchema),
         effects: z.array(fileEffectSchema),
         truncated: z.boolean(),
       }),
     ),
-    shim_events: z.array(
-      z.object({
-        sequence: z.number().int().nonnegative(),
-        at_ms: z.number().int().nonnegative(),
-        command: z.string(),
-        route_index: z.number().int().nonnegative().nullable(),
-        arguments: z.array(z.string()),
-        working_directory: z.string(),
-        outcome: z.enum(["matched", "unmatched", "exhausted"]),
-      }),
-    ),
-    protocol_events: z.array(
-      z.object({
-        sequence: z.number().int().nonnegative(),
-        at_ms: z.number().int().nonnegative(),
-        protocol: z.enum(["http", "websocket"]),
-        direction: z.enum(["request", "response", "received", "sent"]),
-        method: z.string().nullable(),
-        path: z.string().nullable(),
-        data: z.string(),
-        outcome: z.enum([
-          "matched",
-          "unmatched",
-          "script_exhausted",
-          "disconnected",
-          "invalid_state",
-          "guard_failed",
-          "transition_exhausted",
-          "invalid_capture",
-          "unexpected_reconnect",
-          "limit_exhausted",
-        ]),
-      }),
-    ),
-    replay_transitions: z
-      .array(
-        z.object({
-          sequence: z.number().int().nonnegative(),
-          at_ms: z.number().int().nonnegative(),
-          transition_id: z.string().min(1),
-          state_before: z.string().min(1),
-          state_after: z.string().min(1),
-          sensitive_aliases: z.array(z.string().min(1)),
-        }),
-      )
-      .default([]),
-    reactive_run: processReactiveRunSchema.nullable().default(null),
     event_journal: z
       .array(
         z.object({
@@ -484,8 +361,6 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
           "exit",
           "process",
           "filesystem",
-          "protocol",
-          "shim",
           "cleanup",
           "network",
           "environment",
@@ -497,8 +372,7 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> = z.object(
       owned_process_group: z.literal("verified"),
       temporary_root: z.literal("removed"),
     }),
-  },
-);
+  });
 
 /** Exact serialized shape plus all process-capture semantic invariants. */
 export const processCaptureSchema = processCaptureShapeSchema.superRefine(

@@ -97,7 +97,7 @@ correspondence is a separately identified cross-layer inference.
 Every observation and edge carries all of the following:
 
 - an authority, such as artifact bytes, AST analysis, static relationship
-  inference, passive CDP runtime, cross-layer reconciliation, controlled replay,
+  inference, passive CDP runtime, and cross-layer reconciliation,
   native analysis, historical reference, or user assertion;
 - an epistemic state: `observed`, `inferred`, `unknown`, or `unavailable`;
 - confidence independently bounded as exact, high, medium, low, or unknown;

@@ -94,11 +94,6 @@ const sourceOwnedClaims = ({
     targets: [obfuscated.target],
   }),
   completionClaim({
-    claimId: "managed.runtime-correlation-admission-plan",
-    scenarioId: "runtime-correlation-admission-plan",
-    targets: [obfuscated.target],
-  }),
-  completionClaim({
     claimId: "managed.mvid-and-token-drift",
     scenarioId: "mvid-and-token-drift",
     targets: [left.target, right.target],

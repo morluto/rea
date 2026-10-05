@@ -51,14 +51,12 @@ const scenario = (
             executable_path: "/opt/chromium",
           },
     start_url: { url: "https://app.example.test/" },
-    allowed_origins: ["https://app.example.test"],
     actions: Array.from({ length: options.actions ?? 1 }, (_, index) => ({
       step_id: `wait_${index}`,
       action: "wait_for_timeout",
       duration_ms: 1,
     })),
     storage: {},
-    request_replay: { mode: "disabled" },
     secrets: [],
     capture: {
       after_each_step: options.captures ?? ["url"],

@@ -53,7 +53,6 @@ export function browserScenario(browser, origin) {
         },
       ],
     },
-    allowed_origins: [origin],
     environment: {
       viewport: { width: 1_280, height: 720, device_scale_factor: 1.25 },
       locale: "en-US",
@@ -83,7 +82,6 @@ export function browserScenario(browser, origin) {
       },
     ],
     storage: duplicateOriginStorage(origin),
-    request_replay: { mode: "disabled" },
     secrets: [
       {
         secret_id: "verifier_url",

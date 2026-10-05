@@ -8,6 +8,7 @@ import {
 } from "./reconstructionVerification.js";
 import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCapture.fixture.js";
+import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 
@@ -58,9 +59,7 @@ const processResult = (
   interaction: "unchanged",
   exit: "unchanged",
   filesystem: "unchanged",
-  protocol: "unchanged",
   process: "unchanged",
-  shim: "unchanged",
   first_divergence:
     terminal === "changed"
       ? {
@@ -176,7 +175,7 @@ const artifactComparison = (
   );
 
 describe("reconstruction verification", () => {
-  it("accepts interaction and shim behavioral claim dimensions", () => {
+  it("accepts real process dimensions and rejects removed protocol dimensions", () => {
     const left = source("1", "controlled-replay");
     const right = source("2", "controlled-replay");
     const result = {
@@ -185,9 +184,7 @@ describe("reconstruction verification", () => {
       interaction: "changed",
       exit: "unchanged",
       filesystem: "unchanged",
-      protocol: "unchanged",
       process: "unchanged",
-      shim: "unchanged",
       first_divergence: {
         status: "found",
         dimension: "interaction",
@@ -215,10 +212,10 @@ describe("reconstruction verification", () => {
             },
             {
               kind: "behavioral",
-              claim_id: "shim",
-              title: "Shim remains equivalent",
+              claim_id: "process",
+              title: "Process behavior remains equivalent",
               comparison_evidence_id: comparison.evidence_id,
-              dimension: "shim",
+              dimension: "process",
             },
           ],
         },
@@ -227,6 +224,22 @@ describe("reconstruction verification", () => {
     ).toMatchObject({
       summary: { total: 2, passed: 1, failed: 1, unknown: 0 },
     });
+    for (const dimension of ["protocol", "shim"] as const) {
+      expect(
+        reconstructionSpecificationSchema.safeParse({
+          name: "Removed process dimension",
+          claims: [
+            {
+              kind: "behavioral",
+              claim_id: dimension,
+              title: "Unsupported dimension",
+              comparison_evidence_id: comparison.evidence_id,
+              dimension,
+            },
+          ],
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("passes a complete authoritative claim with two-sided citations", () => {

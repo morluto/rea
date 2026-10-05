@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { PROCESS_COMPARISON_DIMENSIONS } from "./processComparison.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");
@@ -16,16 +17,7 @@ const commonClaim = {
 const behavioralClaimSchema = z.object({
   ...commonClaim,
   kind: z.literal("behavioral"),
-  dimension: z.enum([
-    "overall",
-    "terminal",
-    "interaction",
-    "exit",
-    "filesystem",
-    "protocol",
-    "process",
-    "shim",
-  ]),
+  dimension: z.enum(["overall", ...PROCESS_COMPARISON_DIMENSIONS]),
 });
 const functionClaimSchema = z.object({
   ...commonClaim,

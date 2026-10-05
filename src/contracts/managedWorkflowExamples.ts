@@ -307,26 +307,3 @@ export const MANAGED_NATIVE_VERIFICATION_EXAMPLE = {
   managed_boundaries: boundaryEvidence(),
   native_observations: [nativeExportEvidence()],
 };
-
-/** Minimal valid managed runtime-correlation planning request. */
-export const MANAGED_RUNTIME_CORRELATION_EXAMPLE = {
-  static_members: runtimeExampleEvidence,
-  method: {
-    token: "0x06000001",
-    signature_sha256: "3".repeat(64),
-    normalized_il_sha256: "5".repeat(64),
-  },
-  requested_effect: "attach",
-  host: {
-    os: "linux",
-    clr_family: "dotnet",
-    architecture: "x86_64",
-  },
-  bounds: {
-    timeout_ms: 5_000,
-    max_threads: 32,
-    max_output_bytes: 65_536,
-    allow_network: false,
-    allow_ui: false,
-  },
-};

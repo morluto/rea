@@ -7,7 +7,7 @@ import type {
   DoctorProviderInspection,
   DoctorScope,
 } from "./Doctor.js";
-import { doctorHealthy, isOptionalDoctorCheck } from "./DoctorDiagnostics.js";
+import { doctorHealthy } from "./DoctorDiagnostics.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
@@ -58,7 +58,6 @@ export const scopeDoctorChecks = (
   const coreChecks = input.checks.filter(
     ({ name }) =>
       !isProviderCheck(name, input.providers.providerInspections) &&
-      !isOptionalDoctorCheck(name) &&
       name !== "skill:identity" &&
       !name.startsWith("registration:"),
   );

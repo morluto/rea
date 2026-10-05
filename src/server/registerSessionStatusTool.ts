@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { buildCapabilityInventory } from "../application/CapabilityInventory.js";
-import { SESSION_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import type { ClientFeatureAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
@@ -17,7 +17,7 @@ type ToolAvailability = ReturnType<typeof buildCapabilityInventory>[number];
 export interface SessionStatusToolOptions {
   readonly server: McpServer;
   readonly session: BinarySessionPort;
-  readonly contract: (typeof SESSION_TOOL_CONTRACTS)[2];
+  readonly contract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => SessionAvailability;
 }

@@ -11,6 +11,7 @@ import {
   comparisonStatusSchema,
   processCaptureComparisonSchema,
 } from "./processCapture.js";
+import { PROCESS_COMPARISON_DIMENSIONS } from "./processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -24,15 +25,7 @@ const functionDimensionSchema = z.enum([
   "strings_names",
   "cfg",
 ]);
-const runtimeDimensionSchema = z.enum([
-  "terminal",
-  "interaction",
-  "exit",
-  "filesystem",
-  "protocol",
-  "process",
-  "shim",
-]);
+const runtimeDimensionSchema = z.enum(PROCESS_COMPARISON_DIMENSIONS);
 const expectedPatternSchema = z.enum([
   "cochanged",
   "static_only",

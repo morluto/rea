@@ -10,7 +10,6 @@ const SKILL_FILES = [
   "references/javascript-applications.md",
   "references/runtime-observation.md",
   "references/evidence-workflows.md",
-  "references/controlled-replay.md",
 ] as const;
 
 interface CanonicalSkillFile {
