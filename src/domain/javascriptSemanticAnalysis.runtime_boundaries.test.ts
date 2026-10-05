@@ -84,6 +84,24 @@ describe("JavaScript semantic analysis: runtime boundaries 1", () => {
     expect(ir.timerOperations).toEqual([]);
   });
 
+  it("does not invent request fields or option keys from dynamic properties", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const key = resolveKey();
+      fetch("https://example.test", { [key]: 1, body: "x" });
+      spawn("/bin/tool", { [key]: vars });
+    `);
+    expect(
+      ir.requestOperations.flatMap(({ fields }) =>
+        fields.map(({ name }) => name),
+      ),
+    ).toEqual(["body"]);
+    expect(
+      ir.childProcessSpawns.some(
+        ({ environmentSupplied }) => environmentSupplied,
+      ),
+    ).toBe(false);
+  });
+
   it("retains every added semantic effect family", () => {
     const ir = analyzeJavaScriptSemantics(
       `

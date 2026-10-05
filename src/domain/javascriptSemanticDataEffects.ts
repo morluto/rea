@@ -370,7 +370,9 @@ const requestFields = (
   if (!t.isObjectExpression(candidate)) return [];
   return candidate.properties.flatMap((property) => {
     if (!t.isObjectProperty(property)) return [];
-    const name = propertyName(property.key);
+    // `{[key]: 1}` sends no knowable field name; reporting `key` would invent
+    // a request field that may not exist.
+    const name = semanticStaticPropertyName(property.key, property.computed);
     if (name.length === 0) return [];
     return [
       {

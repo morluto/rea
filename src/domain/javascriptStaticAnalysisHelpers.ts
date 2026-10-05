@@ -296,11 +296,23 @@ const calleeNameAt = (node: t.Node): string => {
   if (t.isImport(node)) return "import";
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     const object = t.isNode(node.object) ? calleeNameAt(node.object) : "";
-    const property = propertyName(node.property);
+    // A dynamic key commits no name: `target[method]()` must not be reported as
+    // `target.method`, which would fabricate a runtime call shape.
+    const property = memberPropertyName(node);
     return object === "" ? property : `${object}.${property}`;
   }
   return "";
 };
+
+/** Read a member property only when its syntax commits an exact name. */
+const memberPropertyName = (
+  node: t.MemberExpression | t.OptionalMemberExpression,
+): string =>
+  node.computed &&
+  !t.isStringLiteral(node.property) &&
+  !t.isNumericLiteral(node.property)
+    ? `[computed@${String(node.property.start ?? -1)}]`
+    : propertyName(node.property);
 
 /** Return a string literal value without evaluating an expression. */
 export const stringValue = (

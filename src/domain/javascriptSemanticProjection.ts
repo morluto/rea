@@ -226,7 +226,12 @@ const callableName = (node: t.Node, parent: t.Node | null): string | null => {
     t.isObjectMethod(node)
   ) {
     if (t.isPrivateName(node.key)) return `#${node.key.id.name}`;
-    return propertyName(node.key) || `[computed@${String(node.start ?? -1)}]`;
+    // `{[key]() {}}` names nothing statically; reading `key` off the key node
+    // would report the variable name as the method name.
+    return (
+      semanticStaticPropertyName(node.key, node.computed) ||
+      `[computed@${String(node.start ?? -1)}]`
+    );
   }
   if (
     parent !== null &&
@@ -490,18 +495,32 @@ const commonJsExportName = (node: t.Node): string | undefined => {
   if (t.isIdentifier(node, { name: "exports" })) return "default";
   if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
     return undefined;
-  const name = propertyName(node.property);
-  if (t.isIdentifier(node.object, { name: "exports" })) return name || "*";
+  const key = memberKey(node);
+  // `exports[key]`/`module.exports[key]` assign an export whose name is not
+  // knowable. Report the wildcard rather than the variable name, and never
+  // collapse it into `default`, which would claim a real default export.
+  if (key === null) return "*";
+  if (t.isIdentifier(node.object, { name: "exports" })) return key || "*";
   if (
     t.isMemberExpression(node.object) &&
     t.isIdentifier(node.object.object, { name: "module" }) &&
-    propertyName(node.object.property) === "exports"
+    memberKey(node.object) === "exports"
   )
-    return name || "default";
+    return key || "default";
   if (
     t.isIdentifier(node.object, { name: "module" }) &&
-    propertyName(node.property) === "exports"
+    memberKey(node) === "exports"
   )
     return "default";
   return undefined;
 };
+
+/** Exact member key, or null when a computed key commits no name. */
+const memberKey = (
+  node: t.MemberExpression | t.OptionalMemberExpression,
+): string | null =>
+  node.computed &&
+  !t.isStringLiteral(node.property) &&
+  !t.isNumericLiteral(node.property)
+    ? null
+    : propertyName(node.property);

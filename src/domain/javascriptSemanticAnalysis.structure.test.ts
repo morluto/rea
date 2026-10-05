@@ -319,6 +319,28 @@ describe("JavaScript semantic analysis: structure 2", () => {
     );
   });
 
+  it("does not invent export or method names from dynamic keys", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const key = resolveKey();
+      exports[key] = addon;
+      module.exports[key] = addon;
+      const target = { [key]() { return 1; } };
+      class Holder { [key]() { return 2; } }
+    `);
+    // The assignment is real, but its name is not knowable, so the only
+    // honest exported_name is the wildcard.
+    expect(
+      ir.moduleLinks
+        .filter(({ kind }) => kind === "commonjs-export")
+        .map(({ exportedName }) => exportedName),
+    ).toEqual(["*", "*"]);
+    const names = ir.callables.map(({ name }) => name);
+    expect(names).not.toContain("key");
+    expect(names.filter((name) => name?.startsWith("[computed@")).length).toBe(
+      2,
+    );
+  });
+
   it("keeps function, class, and method identities separate from bindings", () => {
     const ir = analyzeJavaScriptSemantics(`
       class Service {

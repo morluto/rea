@@ -317,7 +317,9 @@ const objectProperty = (
   object?.properties.find(
     (property): property is t.ObjectMethod | t.ObjectProperty =>
       (t.isObjectMethod(property) || t.isObjectProperty(property)) &&
-      propertyName(property.key) === name,
+      // `{[env]: vars}` has a dynamic key; treating it as `env` would claim
+      // the caller supplied an environment when the real key is unknown.
+      semanticStaticPropertyName(property.key, property.computed) === name,
   ) ?? null;
 
 const objectBinding = (
